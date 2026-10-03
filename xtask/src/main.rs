@@ -8425,7 +8425,9 @@ fn cmd_utf8_test(features: &[&str], expect_pass: bool) -> Result<()> {
          {status_follows_the_cursor} ({status_row_says})"
     );
 
-    let passed = broken_line_survived
+    let no_kernel_error = no_kernel_error_lines(context, &serial, &[]);
+    let passed = no_kernel_error
+        && broken_line_survived
         && wide_takes_two_cells
         && column_counts_characters
         && deleted_a_character
@@ -8585,7 +8587,8 @@ fn cmd_profile_test(features: &[&str], expect_pass: bool) -> Result<()> {
     println!("{context}: ~/.profile won over /etc/profile = {the_user_profile_wins}");
     println!("{context}: a missing profile said nothing = {missing_is_silent}");
 
-    let passed = every_line_ran && the_user_profile_wins && missing_is_silent;
+    let no_kernel_error = no_kernel_error_lines(context, &serial, &[]);
+    let passed = no_kernel_error && every_line_ran && the_user_profile_wins && missing_is_silent;
     if passed {
         println!("{context}: PASS");
         if expect_pass {
@@ -11943,7 +11946,8 @@ fn cmd_history_test(features: &[&str], expect_pass: bool) -> Result<()> {
     );
     println!("{context}: a missing history said nothing = {missing_is_silent}");
 
-    let passed = recalled_the_previous_run && oldest_first && missing_is_silent;
+    let no_kernel_error = no_kernel_error_lines(context, &serial, &[]);
+    let passed = no_kernel_error && recalled_the_previous_run && oldest_first && missing_is_silent;
     if passed {
         println!("{context}: PASS");
         if expect_pass {
@@ -12199,7 +12203,9 @@ fn cmd_fp_test(features: &[&str], expect_pass: bool) -> Result<()> {
         bail!("{context}: the child did not run, so the spawn judgement asserts nothing")
     }
 
-    let passed = fresh_at_start
+    let no_kernel_error = no_kernel_error_lines(context, &serial, &[]);
+    let passed = no_kernel_error
+        && fresh_at_start
         && sum_survived
         && parent_kept_xmm0
         && folded_the_fp_fault
@@ -12961,7 +12967,8 @@ fn cmd_serial_test(features: &[&str], expect_pass: bool) -> Result<()> {
         bail!("{context}: the exercise did not finish, so the count asserts nothing")
     }
 
-    if all_intact {
+    let no_kernel_error = no_kernel_error_lines(context, &serial, &[]);
+    if all_intact && no_kernel_error {
         println!("{context}: PASS");
         if expect_pass {
             Ok(())
@@ -13112,7 +13119,15 @@ fn cmd_complete_test(features: &[&str], expect_pass: bool) -> Result<()> {
     );
     println!("{context}: the candidates followed PATH = {followed_the_path}");
 
-    let passed = single_completed
+    // **補完した `/data/lines` は ELF ではなく、シェルが実行しに行って載せられない**（補完が語を完成させたことを、
+    // その語で実行しに行った行で見る形）。**この `[ERROR]` は既定の回で出るのが正しいので、理由つきで許す。**
+    let no_kernel_error = no_kernel_error_lines(
+        context,
+        &serial,
+        &["spawn: /data/lines could not be loaded: Parse(TooShort)"],
+    );
+    let passed = no_kernel_error
+        && single_completed
         && grew_to_the_common_prefix
         && announced_the_count
         && listed_on_the_second_tab
@@ -14297,7 +14312,9 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
          at the colored cells - they say nothing about where the text landed"
     );
 
-    if started
+    let no_kernel_error = no_kernel_error_lines(context, &serial, &[]);
+    if no_kernel_error
+        && started
         && arrows_moved
         && hjkl_moved
         && typed
@@ -14776,7 +14793,9 @@ fn cmd_view_test(features: &[&str]) -> Result<()> {
             .collect::<Vec<Option<usize>>>()
     );
 
-    if finished_after.is_some()
+    let no_kernel_error = no_kernel_error_lines(context, &serial, &[]);
+    if no_kernel_error
+        && finished_after.is_some()
         && opened_at_the_top
         && saw_past_the_first_screen
         && came_back_to_the_top
@@ -14793,6 +14812,39 @@ fn cmd_view_test(features: &[&str]) -> Result<()> {
     } else {
         bail!("{context}: FAILED")
     }
+}
+
+/// シェルから走らせる試験に共通の判定——**カーネルが `[ERROR]` の行を 1 本も出していない**（2026-10-03）。
+///
+/// **プログラムの出力の一致だけを見る試験は、正常に終わった後にカーネルが会計の誤りを出し、シェルが「cannot run」と
+/// 表示する形を見逃していた**（`brk` の会計。`docs/troubleshooting.md` の 2026-10-03 の項）。**「cannot run」を禁じる形に
+/// しないのは、無い名前を打って「cannot run」を狙いの合図にする判定が多数あるからである**——**カーネルの `[ERROR]` の
+/// 行は、どの試験でも「出ないのが正しい」**（わざと出す破壊テストは、その試験の反転した側で捕まる）。
+///
+/// **`allowed` は、その試験の既定の回で出るのが正しい `[ERROR]` の行の断片である**（例: 補完の試験が、データのファイルを
+/// 実行して載せられない行）。**理由の無い行は書かない**——書くときは、その試験の doc に理由を書く。
+///
+/// 判定の行を出し、真偽を返す（判定の行の形はソケットの試験と同じ）。
+fn no_kernel_error_lines(context: &str, serial: &str, allowed: &[&str]) -> bool {
+    let stripped = strip_ansi(serial);
+    let errors: Vec<&str> = stripped
+        .lines()
+        .map(str::trim)
+        .filter(|line| line.contains("[ERROR]"))
+        .filter(|line| !allowed.iter().any(|piece| line.contains(piece)))
+        .take(3)
+        .collect();
+    let held = errors.is_empty();
+    if allowed.is_empty() {
+        println!("{context}: no [ERROR] line = {held} (the first were {errors:?})");
+    } else {
+        println!(
+            "{context}: no [ERROR] line = {held} (the first were {errors:?}; {} line(s) allowed with a \
+             reason: {allowed:?})",
+            allowed.len()
+        );
+    }
+    held
 }
 
 /// シリアルのログから ANSI のエスケープ列を落とす（ES-d）。
@@ -16718,6 +16770,9 @@ fn judge_shell_session(
 
     // **判定を名前つきの一覧にする（`ADR-0063` の (b3) の (b)）。** **台本で駆動したときは
     // [`SCRIPT_SKIPS`] の判定を見ない**——**見なかったことと、落ちた名前を行に出す。**
+    // **カーネルの `[ERROR]` の行が無いことを判定に入れる**（2026-10-03。それまでは出すだけで判定に使っていなかった
+    // ——止まって検出される破壊テストの理由を出力に残すために 2026-09-26 に足した行である。判定にしても、その役は残る）。
+    let no_kernel_error = no_kernel_error_lines(context, serial, &[]);
     let judgements: &[(&str, bool)] = &[
         ("ready", ready),
         ("ended", ended),
@@ -16811,6 +16866,7 @@ fn judge_shell_session(
         ("no_early_timer_wake", no_early_timer_wake),
         ("woke_only_for_the_reason", woke_only_for_the_reason),
         ("timer_kept_the_deadline", timer_kept_the_deadline),
+        ("no_kernel_error", no_kernel_error),
     ];
     let skipped: Vec<&str> = judgements
         .iter()
@@ -16827,17 +16883,6 @@ fn judge_shell_session(
     }
     if !failed.is_empty() {
         println!("{context}: (info) judgements that did not hold: {failed:?}");
-    }
-    // **カーネルが出力した `[ERROR]` の行を出す**（2026-09-26。計器の外の破壊を絞る段）——**判定に使っていない
-    // ので、止まって検出される破壊テスト（BKL の再取得・DF の監視）の理由が出力に無かった。** **出すだけで、判定には
-    // 使わない。**
-    let kernel_errors: Vec<&str> = serial
-        .lines()
-        .filter(|line| line.contains("[ERROR]"))
-        .take(3)
-        .collect();
-    if !kernel_errors.is_empty() {
-        println!("{context}: (info) the kernel reported: {kernel_errors:?}");
     }
     if failed.is_empty() {
         println!("{context}: PASS");
@@ -18748,7 +18793,11 @@ fn cmd_persist_zi_test(rebuild_between: bool) -> Result<()> {
          (kernel {kernel_checksum:?}, host {host_checksum:?})"
     );
 
-    if saved
+    // **2 回の起動のどちらにも、カーネルの `[ERROR]` の行が無い**（2026-10-03）。
+    let no_kernel_error = no_kernel_error_lines(&format!("{context} boot 1"), &first, &[])
+        & no_kernel_error_lines(&format!("{context} boot 2"), &second, &[]);
+    if no_kernel_error
+        && saved
         && device_carries_the_edit
         && structure_is_sound
         && did_not_halt
@@ -18884,7 +18933,15 @@ fn cmd_persist_env_test(rebuild_between: bool, ignore_file: bool) -> Result<()> 
          (printed {printed:?}, the device says {expected:?})"
     );
 
-    if saved && device_carries_the_edit && read_from_the_file && ring3_sees_the_new_value {
+    // **2 回の起動のどちらにも、カーネルの `[ERROR]` の行が無い**（2026-10-03）。
+    let no_kernel_error = no_kernel_error_lines(&format!("{context} boot 1"), &first, &[])
+        & no_kernel_error_lines(&format!("{context} boot 2"), &second, &[]);
+    if no_kernel_error
+        && saved
+        && device_carries_the_edit
+        && read_from_the_file
+        && ring3_sees_the_new_value
+    {
         println!("{context}: PASS");
         if rebuild_between || ignore_file {
             bail!("{context}: the sabotage was NOT caught; every judgement still held")
@@ -18954,10 +19011,12 @@ fn cmd_keymap_test(sabotage: bool) -> Result<()> {
         })
         .unwrap_or(false);
     println!("{context}: the device carries KEYMAP=us = {device_carries_the_keymap}");
+    // **1 回目の起動にも、カーネルの `[ERROR]` の行が無い**（2026-10-03。2 回目はシェルの判定が見る）。
+    let no_kernel_error = no_kernel_error_lines(&format!("{context} boot 1"), &first, &[]);
 
-    if !saved || !device_carries_the_keymap {
+    if !saved || !device_carries_the_keymap || !no_kernel_error {
         println!("{context}: FAILED");
-        bail!("{context}: boot 1 did not put KEYMAP=us on the device")
+        bail!("{context}: boot 1 did not put KEYMAP=us on the device without a kernel error")
     }
 
     println!("=== {context}: boot 2 (sendkey, keeping the disk)");
@@ -19219,7 +19278,11 @@ fn cmd_persist_test(rebuild_between: bool) -> Result<()> {
          {checksum_agrees} (kernel {kernel_checksum:?}, host {host_checksum:?})"
     );
 
-    if first_kept
+    // **2 回の起動のどちらにも、カーネルの `[ERROR]` の行が無い**（2026-10-03）。
+    let no_kernel_error = no_kernel_error_lines(&format!("{context} boot 1"), &first, &[])
+        & no_kernel_error_lines(&format!("{context} boot 2"), &second, &[]);
+    if no_kernel_error
+        && first_kept
         && first_flushed
         && device_carries_the_change
         && kept_the_disk
