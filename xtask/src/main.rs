@@ -24110,7 +24110,8 @@ const SMP_AP_TESTS: &[CriticalTest] = &[
         feature: "ap-trampoline-without-nxe-test",
         expected_markers: &[
             "cpu-state: ap 1 left the trampoline with EFER.NXE clear (EFER=0x500",
-            "cpu-state: ap 1 CR0=0x80010033 CR4=0x668 EFER=0xd00 matches the BSP",
+            // **EFER は 0xd01 である**（2026-10-04 に `syscall` 命令を入口に足して、SCE が立った。それまでは 0xd00）。
+            "cpu-state: ap 1 CR0=0x80010033 CR4=0x668 EFER=0xd01 matches the BSP",
             "cpu-state: halting",
         ],
         forbidden_markers: &["started AP(s) match the BSP's CR0, CR4 and EFER"],
@@ -24126,7 +24127,8 @@ const SMP_AP_TESTS: &[CriticalTest] = &[
         feature: "bsp-enters-with-nxe-clear-test",
         expected_markers: &[
             "it was clear when the kernel was entered, so the kernel set it: EFER 0x500 -> 0xd00",
-            "EFER.LME, LMA, NXE set",
+            // **要るビットの行**（2026-10-04 に、先頭に SCE が入った。それまでは `EFER.LME, LMA, NXE set`）。
+            "EFER.SCE, LME, LMA, NXE set",
             "cpu-state: ap 1 left the trampoline with EFER=0xd00, EFER.NXE=1 (expected 1)",
             "cpu-state: 1 started AP(s) match the BSP's CR0, CR4 and EFER",
             "init: starting /bin/zash",
