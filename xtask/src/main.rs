@@ -10330,6 +10330,9 @@ const MACHINE_VARIANT_CHECKS: &[(&str, VariantExpect)] = &[
     // **注入した機械チェックが #MC として見える形で止まる**（2026-09-24。`ADR-0018` の Addendum 9）。
     // **起動方法は `pc-default` と同じで、名前だけを分ける**——**`--full` の項目名が重ならないため。**
     ("pc-mce", VariantExpect::PromptThenMachineCheck),
+    // **注入した NMI が、NMI のスタック（IST3）の上で処理されて止まる**（2026-10-04）。**起動方法は `pc-default` と
+    // 同じで、名前だけを分ける。**
+    ("pc-nmi", VariantExpect::PromptThenNmi),
     // **製造元ごとの表の両方で判定される**（2026-09-24。運用者の決定）。**既定の qemu64 は
     // AMD なので、Intel の表は `pc-intel` とVirtualBox だけが通る。**
     (
@@ -10449,6 +10452,17 @@ const MACHINE_VARIANT_SABOTAGES: &[(&str, &str, bool, VariantExpect)] = &[
         false,
         VariantExpect::MachineCheckShutsDown,
     ),
+    // **デバッグ例外・NMI・機械チェックのゲートに IST を与えない**（2026-10-04）——**起動時の IDT の確かめが、
+    // 3 つが IST に載っていないことを名指しして止まる。** **この 3 つは割り込みを禁じていても届くので、スタックの
+    // 番地が当てにならない瞬間（`syscall` 命令の入口）を作る前に、載っていることを起動のたびに確かめる。**
+    (
+        "pc-default",
+        "entry-stacks-not-assigned-test",
+        false,
+        VariantExpect::StopsWith(
+            "idt: the debug exception, NMI or machine check is not on its own IST stack",
+        ),
+    ),
 ];
 
 /// 機械の変種で、何が起きれば正しいか。
@@ -10516,7 +10530,13 @@ enum VariantExpect {
     /// [`qemu_shut_the_machine_down`]）。
     /// **CR4.MCE を落とした破壊テストの実行に使う**——**0 だと SDM のとおり shutdown になることを見る。**
     MachineCheckShutsDown,
+    /// プロンプトの後に monitor から NMI を注入し（[`NMI_INJECTION`]）、**カーネルの例外の処理が NMI（ベクタ 2）を
+    /// 名指しして止まり、その処理が NMI のスタック（IST3）の上で走っていた**（2026-10-04）。
+    PromptThenNmi,
 }
+
+/// NMI を注入する monitor の命令（2026-10-04）。**QEMU は、全部の CPU へ NMI を届ける。**
+const NMI_INJECTION: &str = "nmi";
 
 /// 機械チェックを注入する monitor の命令（2026-09-24）。**CPU 0 のバンク 1 へ、訂正できない
 /// （UC）・処理器の文脈が壊れた（PCC）誤りを入れる**（`status` は VAL・UC・EN・PCC）。
@@ -11217,10 +11237,18 @@ fn cmd_machine_variant(
     // **打鍵を送る回だけ monitor を開く**（HW-e-2。[`VariantExpect::PromptKeyAndLines`]）。
     let wants_keys = matches!(expect, VariantExpect::PromptKeyAndLines { .. });
     // **機械チェックを注入する回も monitor を開く**（2026-09-24）。
+    // **NMI を注入する回も同じ経路を使う**（2026-10-04）。**注入する命令だけが違う。**
     let wants_machine_check = matches!(
         expect,
-        VariantExpect::PromptThenMachineCheck | VariantExpect::MachineCheckShutsDown
+        VariantExpect::PromptThenMachineCheck
+            | VariantExpect::MachineCheckShutsDown
+            | VariantExpect::PromptThenNmi
     );
+    let injection = if matches!(expect, VariantExpect::PromptThenNmi) {
+        NMI_INJECTION
+    } else {
+        MACHINE_CHECK_INJECTION
+    };
     let wants_monitor = wants_keys || wants_machine_check;
     let monitor_socket = run.monitor_socket("variant");
     if wants_monitor {
@@ -11273,14 +11301,14 @@ fn cmd_machine_variant(
             // QEMU が命令を処理せずに捨てることがある**（実測。2026-09-24。`sendkey` の回は打鍵の間を
             // おくので、閉じる前に処理されていた）。
             let sent = connect_monitor_with_retry(&monitor_socket)
-                .and_then(|mut stream| query_monitor(&mut stream, MACHINE_CHECK_INJECTION));
+                .and_then(|mut stream| query_monitor(&mut stream, injection));
             match sent {
                 Ok(_) => println!(
-                    "machine-variant {}: (info) the QEMU monitor took `{MACHINE_CHECK_INJECTION}`",
+                    "machine-variant {}: (info) the QEMU monitor took `{injection}`",
                     variant.name
                 ),
                 Err(e) => println!(
-                    "machine-variant {}: could not inject the machine check: {e}",
+                    "machine-variant {}: could not inject `{injection}`: {e}",
                     variant.name
                 ),
             }
@@ -11515,7 +11543,24 @@ fn cmd_machine_variant(
                 reached && halted
             );
             println!("{context}: the machine did not shut down = {}", !shut_down);
-            ready && reached && halted && !shut_down
+            // **処理が機械チェックのスタック（IST4）の上で走っていた**（2026-10-04）。**例外の処理が、自分のフレームの
+            // 番地を、この CPU の TSS の IST4 と突き合わせて出す行である。**
+            let on_ist = text.contains("on IST4=true");
+            println!("{context}: the handler ran on the machine check stack (IST4) = {on_ist}");
+            ready && reached && halted && !shut_down && on_ist
+        }
+        VariantExpect::PromptThenNmi => {
+            let reached = text.contains("exception: vector=2 ");
+            let halted = text.contains("halting");
+            let on_ist = text.contains("on IST3=true");
+            println!("{context}: the_shell_printed_its_prompt = {ready}");
+            println!(
+                "{context}: the injected NMI arrived as vector 2 and halted = {} (vector 2 {reached}, \
+                 halting {halted})",
+                reached && halted
+            );
+            println!("{context}: the handler ran on the NMI stack (IST3) = {on_ist}");
+            ready && reached && halted && on_ist
         }
         VariantExpect::MachineCheckShutsDown => {
             let reached = text.contains("vector=18");
@@ -24049,6 +24094,20 @@ const SMP_AP_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
+    // **AP の TSS へ、デバッグ例外のスタックの頂点を 1 ページずらして入れる**（2026-10-04）。**AP を起こすときの
+    // 読み戻しの確かめが、どの AP のどの番号かを名指しして止まる。** BSP の確かめは BSP の TSS しか見ないので、
+    // AP の側にも同じ確かめが要る。**AP は名指しの行を出して止まり、BSP が出す確かめの行は出ない。**
+    CriticalTest {
+        name: "ap-entry-stack-shifted",
+        feature: "ap-entry-stack-shifted-test",
+        expected_markers: &["smp: ap 1 has the wrong stack in its TSS for IST5 (#DB)"],
+        forbidden_markers: &[
+            "cpu-state: ap 1: the five IST stacks",
+            "smp: ap 1 switched to the production page table",
+        ],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
     // AP の CPU ごとのスタックのページに置いた 1 バイト（ret）を実行する（2026-10-02）。**像の `.data` とは別の経路
     // （稼働中の表へ 1 枚ずつ足す経路）で写したページの実行禁止を見る。** 実行するのは BSP で、AP を起こす前である。
     CriticalTest {
@@ -31431,7 +31490,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 62,
-    full: 464,
+    full: 467,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

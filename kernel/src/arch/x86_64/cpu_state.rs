@@ -1317,6 +1317,10 @@ pub fn check_aps_match_bsp(logger: &mut Logger<Serial>, started: usize) {
             failed = true;
             continue;
         }
+        // **AP が読み戻した、自分の TSS の IST の頂点を出す**（2026-10-04。AP は控えるだけで、行は BSP が出す）。
+        if !crate::arch::x86_64::ap_bring_up::report_interrupt_stacks(logger, slot) {
+            failed = true;
+        }
         // **AP がトランポリンを出た直後（BSP の値をコピーする前）の EFER.NXE**（2026-10-02）。**控えが在るのは、
         // 上の控え（起動の終わり）より前である。**
         let from_trampoline = AP_EFER_FROM_TRAMPOLINE[slot].load(Ordering::SeqCst);

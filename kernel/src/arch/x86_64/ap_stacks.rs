@@ -21,7 +21,7 @@ mod tests {
     ///
     /// 本番のコードではなくテスト側に置いてある。production 側に同じ式を
     /// 2 本持つと片方だけが古くなるので、照合する側にだけ独立に書く。
-    /// 並び = ガード + kernel + ガード + IST1 + ガード + IST2（`AP_STACK_STRIDE`）。
+    /// 並び = ガード + kernel + （ガード + IST）が 5 組（`AP_STACK_STRIDE`）。
     fn kernel_top_from_the_layout(slot: usize) -> u64 {
         AP_STACK_REGION_BASE
             + (slot as u64) * AP_STACK_STRIDE
@@ -73,8 +73,11 @@ mod tests {
         // **P-c-1 でカーネルスタックを 64KiB から 128KiB へ広げたので、
         // 測り直した**（2026-08-28。起動ログの `smp: mapped per-CPU stacks` の行）。
         // **釘は測って打つものなので、算術で導かない。**
-        assert_eq!(bottom, 0xffff_8100_0002_c000);
-        assert_eq!(recorded_top, 0xffff_8100_0004_c000);
+        //
+        // **IST を 2 本から 5 本へ増やしたので、測り直した**（2026-10-04。1 コアぶんの幅が 60KiB 広がり、スロット 1 の
+        // 先頭が `0xffff_8100_0002_b000` から `0xffff_8100_0003_a000` へ動いた。同じ行の実測）。
+        assert_eq!(bottom, 0xffff_8100_0003_b000);
+        assert_eq!(recorded_top, 0xffff_8100_0005_b000);
     }
 }
 
@@ -102,21 +105,25 @@ const AP_STACK_REGION_BASE: u64 = 0xffff_8100_0000_0000;
 
 /// 1 コアぶんのスタック領域の大きさ。BSP の `StackBlock` と同じ構成にする。
 ///
-/// ガード（4KiB）+ kernel（64KiB）+ ガード + IST1（16KiB）+ ガード + IST2（16KiB）。
+/// ガード（4KiB）+ kernel + （ガード + IST（16KiB））が 5 組——IST1（ダブルフォルト）・IST2（ページフォルト）・
+/// IST3（NMI）・IST4（機械チェック）・IST5（デバッグ例外）の順である（IST3 から IST5 は 2026-10-04 に足した。
+/// 理由は `gdt::NMI_IST_INDEX` の doc）。
 /// ガードは各スタックの下に置く（スタックは下へ伸びるので、溢れると下のガードに
-/// 当たる）。BSP の `StackBlock` と同じ並びである。
+/// 当たる）。BSP の `StackBlock` と同じ考え方の並びである。
 const AP_STACK_STRIDE: u64 = (crate::arch::x86_64::stack::GUARD_SIZE
     + crate::arch::x86_64::stack::KERNEL_STACK_SIZE
-    + crate::arch::x86_64::stack::GUARD_SIZE
-    + crate::arch::x86_64::stack::IST_STACK_SIZE
-    + crate::arch::x86_64::stack::GUARD_SIZE
-    + crate::arch::x86_64::stack::IST_STACK_SIZE) as u64;
+    + AP_IST_COUNT
+        * (crate::arch::x86_64::stack::GUARD_SIZE + crate::arch::x86_64::stack::IST_STACK_SIZE))
+    as u64;
+
+/// AP の 1 コアぶんに置く IST のスタックの本数（IST1 から IST5）。
+const AP_IST_COUNT: usize = 5;
 
 /// AP 用スタックをマップする（S3-b-2b-2）。
 ///
 /// # ガードページはマップせずに「開けておく」
 ///
-/// 3 本のスタックの下に 1 ページずつ、マップしない穴を残す。BSP 側は静的配置の
+/// 6 本のスタック（通常のスタックと、IST の 5 本）の下に 1 ページずつ、マップしない穴を残す。BSP 側は静的配置の
 /// 上で `unmap_4kib` して穴を開けているが、こちらは最初からマップしないので
 /// 分割も解除も要らない。direct map（2MiB ページ）に手を入れずに済むのが、
 /// この置き方を選んだ理由の 1 つである。
@@ -124,7 +131,7 @@ const AP_STACK_STRIDE: u64 = (crate::arch::x86_64::stack::GUARD_SIZE
 /// # 契約（境界の関数。2026-09-28）
 ///
 /// - `slot` は AP のスロットの番号（1 から `MAX_CPUS - 1`）である。フレームは `allocator` から取り、結果は `logger` へ出す。
-/// - 返す 3 つの頂点は、本番のページテーブルにだけある**仮想アドレス**（`PML4[258]` の中）である。各スタックの下の
+/// - 返す 6 つの頂点は、本番のページテーブルにだけある**仮想アドレス**（`PML4[258]` の中）である。各スタックの下の
 ///   1 ページは、マップしない穴（ガード）のまま残す。フレームかマップが足りなければ `None` を返す（それまでにマップした
 ///   ページは外さない）。
 /// - 呼んでよいのは、起動の単一の文脈（AP はまだ走っていない）で、本番のページテーブルが CR3 に載った後である。
@@ -146,14 +153,11 @@ pub unsafe fn map_ap_stacks<const CAP: usize>(
     let mut table = unsafe { ActivePageTable::current(common::addr::direct_map()) };
 
     // (ガードのページ数, 本体のバイト数) を下から順に。
-    let layout = [
-        crate::arch::x86_64::stack::KERNEL_STACK_SIZE as u64,
-        crate::arch::x86_64::stack::IST_STACK_SIZE as u64,
-        crate::arch::x86_64::stack::IST_STACK_SIZE as u64,
-    ];
+    let mut layout = [crate::arch::x86_64::stack::IST_STACK_SIZE as u64; 1 + AP_IST_COUNT];
+    layout[0] = crate::arch::x86_64::stack::KERNEL_STACK_SIZE as u64;
 
     let mut cursor = base;
-    let mut tops = [0u64; 3];
+    let mut tops = [0u64; 1 + AP_IST_COUNT];
     let free_before = allocator.free_frame_count();
     // **この CPU の分の範囲を、ページの権限の一覧（`crate::page_survey`）に登録する。** ページ数は CPU の数で
     // 変わるので、要約の値には入れない。
@@ -209,11 +213,15 @@ pub unsafe fn map_ap_stacks<const CAP: usize>(
 
     logger.info(format_args!(
         "smp: mapped per-CPU stacks for slot {slot} at {base:#x} (PML4[258], not [257] which a \
-         sabotage VA depends on): kernel top {:#x}, IST1 top {:#x}, IST2 top {:#x}; \
-         {} frame(s) consumed (pages plus page tables), guards left unmapped",
+         sabotage VA depends on): kernel top {:#x}, IST1 top {:#x}, IST2 top {:#x}, IST3 top \
+         {:#x}, IST4 top {:#x}, IST5 top {:#x}; {} frame(s) consumed (pages plus page tables), \
+         guards left unmapped",
         tops[0],
         tops[1],
         tops[2],
+        tops[3],
+        tops[4],
+        tops[5],
         free_before - free_after
     ));
 
@@ -221,6 +229,9 @@ pub unsafe fn map_ap_stacks<const CAP: usize>(
         kernel_top: tops[0],
         double_fault_top: tops[1],
         page_fault_top: tops[2],
+        nmi_top: tops[3],
+        machine_check_top: tops[4],
+        debug_top: tops[5],
     })
 }
 

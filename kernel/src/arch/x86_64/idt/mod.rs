@@ -1886,7 +1886,8 @@ struct DescriptorTablePointer {
 /// 全 256 ベクタに割り込みゲート（DPL 0）を入れる。`double_fault_ist_index`
 /// を指定すると、ダブルフォルト（ベクタ 8）だけがその IST スタックへ、
 /// `page_fault_ist_index` を指定すると、ページフォルト（ベクタ 14）だけが
-/// その IST スタックへ切り替わる（M5-b、ADR-0019 §3.1）。
+/// その IST スタックへ切り替わる（M5-b、ADR-0019 §3.1）。**デバッグ例外（1）・NMI（2）・機械チェック（18）は、
+/// 引数に依らず、それぞれの IST（`gdt::DEBUG_IST_INDEX` ほか）へ切り替わる**（2026-10-04）。
 ///
 /// # Safety
 ///
@@ -1897,6 +1898,16 @@ struct DescriptorTablePointer {
 /// - IST インデックスを指定する場合、TSS の当該 IST エントリに有効で
 ///   マップ済みのスタック上端が設定済みであること。
 pub unsafe fn init(double_fault_ist_index: Option<u8>, page_fault_ist_index: Option<u8>) {
+    // 破壊テスト (2026-10-04, entry-stacks-not-assigned-test): デバッグ例外・NMI・機械チェックのゲートに IST を
+    // 与えない（以前の形）。**起動時の確かめ（`interrupt_readiness::verify_entry_stacks`）が、3 つが IST に
+    // 載っていないことを名指しして止まる。**
+    let entry_ist = |index: usize| -> Option<u8> {
+        if cfg!(feature = "entry-stacks-not-assigned-test") {
+            None
+        } else {
+            Some(index as u8)
+        }
+    };
     // SAFETY: 起動時の単一実行文脈であり、他に誰もこの static に触れていない。
     unsafe {
         let idt = addr_of!(IDT) as *mut [IdtEntry; IDT_ENTRY_COUNT];
@@ -1906,9 +1917,15 @@ pub unsafe fn init(double_fault_ist_index: Option<u8>, page_fault_ist_index: Opt
             // #PF はスタックオーバーフローで発生しうるため、溢れたスタックの
             // 上でハンドラを動かすとさらに #PF が起きて #DF へ昇格し、CR2 が
             // 失われる（ADR-0019 §3.1）。
+            // **デバッグ例外（1）・NMI（2）・機械チェック（18）も IST を使う**（2026-10-04）。**この 3 つは
+            // 割り込みを禁じていても届く**ので、スタックの番地が当てにならない瞬間（`syscall` 命令の入口の、
+            // スタックを切り替える前の数命令）に届いても、自分のスタックの上で動くようにしておく。
             let ist = match vector {
+                1 => entry_ist(crate::arch::x86_64::gdt::DEBUG_IST_INDEX),
+                2 => entry_ist(crate::arch::x86_64::gdt::NMI_IST_INDEX),
                 8 => double_fault_ist_index,
                 14 => page_fault_ist_index,
+                18 => entry_ist(crate::arch::x86_64::gdt::MACHINE_CHECK_IST_INDEX),
                 _ => None,
             };
             (*idt)[vector] = IdtEntry::new(
@@ -2311,11 +2328,15 @@ unsafe fn fold_excursion(interrupted: &Interrupted<'_>) -> ! {
 /// 切り替わる。IST2 を決め打つと正当なフレームを破損と判定し、プログラムを終了させて処理できるはずの #PF が
 /// 終了処理されなくなる。**期待は、実際に構成した側と同じ出所から引く。**
 ///
-/// **枝は 3 つある。** IST1 / IST2 / IST 無しの 3 つに加えて、
+/// **枝は 3 つある。** IST を持つ／IST 無し、に加えて、
 /// **「IST 番号を持つが、その番号のスタックを据えていない」場合は偽を返す。**
-/// 据えているのは IST1（#DF）と IST2（#PF）の 2 本だけなので、それ以外の番号を
-/// 指すゲートがあれば**期待するスタックが決められない。** 決められないまま
+/// 据えていない番号を指すゲートがあれば**期待するスタックが決められない。** 決められないまま
 /// 終了処理するより、終了処理せずに dump+halt へ落とすほうが安全側である。
+///
+/// **IST のスタックの範囲は、この CPU の TSS から引く**（`gdt::interrupt_stack_top`。2026-10-04）。
+/// それまでは IST1 と IST2 を、静的なスタックの範囲（BSP のもの）で決め打っていた。デバッグ例外（IST5）を足すと
+/// 枝が増えるので、番号から TSS を引く 1 つの形にした。Ring 3 から来るデバッグ例外（TF を立てた単発の実行）は、
+/// この確かめを通って畳まれる。
 fn exception_frame_is_trustworthy(vector: u8, cs: u64, handler_rsp: u64) -> bool {
     let cs_is_known = cs == crate::arch::x86_64::gdt::USER_CODE_SELECTOR.bits() as u64
         || cs == crate::arch::x86_64::gdt::USER_CODE32_SELECTOR.bits() as u64;
@@ -2324,16 +2345,13 @@ fn exception_frame_is_trustworthy(vector: u8, cs: u64, handler_rsp: u64) -> bool
     }
 
     let (bottom, top) = match entry(vector as usize).and_then(|gate| gate.ist_index()) {
-        Some(index) if index as usize == crate::arch::x86_64::gdt::DOUBLE_FAULT_IST_INDEX => {
-            let ist = crate::arch::x86_64::stack::double_fault_stack_range();
-            (ist.bottom.as_u64(), ist.top.as_u64())
-        }
-        Some(index) if index as usize == crate::arch::x86_64::gdt::PAGE_FAULT_IST_INDEX => {
-            let ist = crate::arch::x86_64::stack::page_fault_stack_range();
-            (ist.bottom.as_u64(), ist.top.as_u64())
-        }
-        // 据えていない IST 番号を指すゲートは、こちらの想定が崩れている。
-        Some(_) => return false,
+        // **下端は「頂点 − `IST_STACK_SIZE`」で求める。IST の 5 本が同じ大きさであることが前提である**（BSP の
+        // `stack` と AP の `ap_stacks` が、どれも `IST_STACK_SIZE` で取る）。大きさを変える IST を作るなら、ここを直す。
+        Some(index) => match crate::arch::x86_64::gdt::interrupt_stack_top(index as usize) {
+            Some(top) => (top - crate::arch::x86_64::stack::IST_STACK_SIZE as u64, top),
+            // 据えていない IST 番号を指すゲートは、こちらの想定が崩れている。
+            None => return false,
+        },
         None => crate::arch::x86_64::ring3::excursion_stack_range(),
     };
     handler_rsp >= bottom && handler_rsp < top
@@ -2502,19 +2520,23 @@ unsafe extern "sysv64" fn exception_entry(context: *const ExceptionContext, rsp_
     // 確かめる。切り替わっていなければ、壊れた可能性のあるスタックの上で
     // ハンドラが動いている（#PF がスタックオーバーフローで起きた場合、これが
     // 効いていないと #DF へ昇格して CR2 が失われる。ADR-0019 §3.1）。
-    let ist_stack = match vector {
-        8 => Some((1u8, crate::arch::x86_64::stack::double_fault_stack_range())),
-        14 => Some((2u8, crate::arch::x86_64::stack::page_fault_stack_range())),
-        _ => None,
-    };
-    if let Some((ist_number, ist)) = ist_stack {
+    //
+    // **ゲートが IST を持つベクタは、どれも同じ形で確かめる**（2026-10-04。デバッグ例外・NMI・機械チェックを
+    // 足した）。**範囲は、この CPU の TSS から引く**——AP の IST のスタックは BSP のものと別の番地に在る。
+    // **ゲートが IST を持たない構成（破壊テスト）では、この行は出ない。**
+    let ist_stack = entry(vector as usize)
+        .and_then(|gate| gate.ist_index())
+        .and_then(|index| {
+            crate::arch::x86_64::gdt::interrupt_stack_top(index as usize).map(|top| (index, top))
+        });
+    if let Some((ist_number, top)) = ist_stack {
+        // **IST の 5 本が同じ大きさであることが前提である**（`exception_frame_is_trustworthy` の同じ式の説明）。
+        let bottom = top - crate::arch::x86_64::stack::IST_STACK_SIZE as u64;
         let handler_rsp = context as *const ExceptionContext as u64;
-        let on_ist = common::addr::VirtAddr::new(handler_rsp).is_some_and(|rsp| ist.contains(rsp));
+        let on_ist = (bottom..=top).contains(&handler_rsp);
         let _ = writeln!(
             serial,
-            "[ERROR]   handler frame at {handler_rsp:#018x}, IST{ist_number} stack {:#x}..{:#x}, on IST{ist_number}={on_ist}",
-            ist.bottom.as_u64(),
-            ist.top.as_u64()
+            "[ERROR]   handler frame at {handler_rsp:#018x}, IST{ist_number} stack {bottom:#x}..{top:#x}, on IST{ist_number}={on_ist}"
         );
     }
 

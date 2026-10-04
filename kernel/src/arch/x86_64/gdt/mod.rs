@@ -83,6 +83,43 @@ pub const DOUBLE_FAULT_IST_INDEX: usize = 1;
 /// 動くようにするため、IDT の #PF ゲートでこの番号を指定する（ADR-0019 §3.1）。
 pub const PAGE_FAULT_IST_INDEX: usize = 2;
 
+/// NMI（ベクタ 2）に割り当てる IST の番号（1 始まり。2026-10-04）。
+///
+/// **NMI・機械チェック・デバッグ例外の 3 つは、割り込みを禁じていても届く。** `syscall` 命令の入口は、カーネルのスタックへ
+/// 切り替える前の数命令を、Ring 0 のままユーザーの RSP で走る。その間にこの 3 つが届くと、IST が無ければ、CPU は
+/// ユーザーが決めた番地へフレームを積む。**入口を足す前に、3 つとも自分のスタックへ移しておく。**
+///
+/// **3 つを 1 本にまとめない。** IST は入るたびに同じ頂点から積むので、同じ番号を分け合うと、片方の処理の途中にもう
+/// 片方が届いたとき、前のフレームを上書きする（デバッグ例外の処理中の NMI、どちらかの処理中の機械チェック）。
+pub const NMI_IST_INDEX: usize = 3;
+
+/// 機械チェック（ベクタ 18）に割り当てる IST の番号（1 始まり。2026-10-04）。理由は [`NMI_IST_INDEX`] の doc。
+pub const MACHINE_CHECK_IST_INDEX: usize = 4;
+
+/// デバッグ例外（ベクタ 1）に割り当てる IST の番号（1 始まり。2026-10-04）。理由は [`NMI_IST_INDEX`] の doc。
+pub const DEBUG_IST_INDEX: usize = 5;
+
+/// TSS の IST へ入れる、スタックの頂点の組（CPU ごと）。
+///
+/// # 契約（境界の型。2026-10-04）
+///
+/// - どの値も、その CPU から見える、有効でマップ済みのスタックの上端（仮想アドレス）である。5 本は、通常のスタックとも
+///   互いとも重ならない。
+/// - 作るのは、スタックを用意する側（BSP は `stack`、AP は `ap_stacks`）で、[`init`] と [`init_for_cpu`] へ渡す。
+#[derive(Clone, Copy)]
+pub struct InterruptStackTops {
+    /// IST1（ダブルフォルト）の頂点。
+    pub double_fault: u64,
+    /// IST2（ページフォルト）の頂点。
+    pub page_fault: u64,
+    /// IST3（NMI）の頂点。
+    pub nmi: u64,
+    /// IST4（機械チェック）の頂点。
+    pub machine_check: u64,
+    /// IST5（デバッグ例外）の頂点。
+    pub debug: u64,
+}
+
 /// GDT と TSS はコアごとに持つ（seam整備3c、ADR-0023）。各コアが自分の GDT を
 /// 構築して `lgdt`/`ltr` し、自分の TSS（RSP0・IST）を持つ。GDT も per-CPU に
 /// するのは、共有 GDT にすると TSS ディスクリプタ（long mode で 16 バイト = 2
@@ -118,12 +155,12 @@ struct DescriptorTablePointer {
 /// - 起動時に 1 回だけ呼ぶこと。
 /// - 呼び出し時点で割り込みが禁止されていること。GDT の入れ替え中に割り込みが
 ///   入ると、古いセレクタと新しいテーブルが混ざった状態でハンドラへ入る。
-/// - `double_fault_stack_top` と `page_fault_stack_top` が、通常のスタックとも
-///   互いとも別の、有効でマップ済みのスタック上端であること。
-pub unsafe fn init(double_fault_stack_top: u64, page_fault_stack_top: u64) {
+/// - `tops` の 5 つが、通常のスタックとも互いとも別の、有効でマップ済みの
+///   スタック上端であること（[`InterruptStackTops`] の契約）。
+pub unsafe fn init(tops: InterruptStackTops) {
     // SAFETY: 呼び出し側の契約をそのまま引き継ぐ。bootstrap processor は
     // スロット 0 である（`cpu_id()` が据わる前も 0 を返す）。
-    unsafe { init_for_cpu(0, double_fault_stack_top, page_fault_stack_top) }
+    unsafe { init_for_cpu(0, tops) }
 }
 
 /// 指定したスロットの GDT / TSS を構築してロードする（S3-b-2b-2）。
@@ -151,15 +188,18 @@ pub unsafe fn init(double_fault_stack_top: u64, page_fault_stack_top: u64) {
 /// - IST の頂点が、**このコアから見えるアドレス**であること（AP が本番 CR3 へ
 ///   移った後に使うなら、本番テーブルに存在する VA であること）。
 /// - 各コアにつき 1 回だけ呼ぶこと。割り込みは禁止されていること。
-pub unsafe fn init_for_cpu(index: usize, double_fault_stack_top: u64, page_fault_stack_top: u64) {
+pub unsafe fn init_for_cpu(index: usize, tops: InterruptStackTops) {
     // TSS を先に埋める。GDT の TSS ディスクリプタがそのアドレスを指すため。
     // SAFETY: 起動時の単一実行文脈であり、他に誰もこの static に触れていない。
     // 自コアのスロットへ書く（`this_cpu_ptr` の契約: `this` は有効な static、
     // 書き込みは単一文脈内）。
     unsafe {
         let tss = PerCpu::slot_ptr(addr_of_mut!(TSS), index);
-        (*tss).interrupt_stack_table[DOUBLE_FAULT_IST_INDEX - 1] = double_fault_stack_top;
-        (*tss).interrupt_stack_table[PAGE_FAULT_IST_INDEX - 1] = page_fault_stack_top;
+        (*tss).interrupt_stack_table[DOUBLE_FAULT_IST_INDEX - 1] = tops.double_fault;
+        (*tss).interrupt_stack_table[PAGE_FAULT_IST_INDEX - 1] = tops.page_fault;
+        (*tss).interrupt_stack_table[NMI_IST_INDEX - 1] = tops.nmi;
+        (*tss).interrupt_stack_table[MACHINE_CHECK_IST_INDEX - 1] = tops.machine_check;
+        (*tss).interrupt_stack_table[DEBUG_IST_INDEX - 1] = tops.debug;
         // RSP0 は特権レベルが下がる遷移（ユーザー → カーネル）で使われる。
         // ユーザーモードを導入する M5 以降まで実際には効かないが、
         // 0 のままにしておくと、その時点で気づきにくい形で壊れる。
@@ -378,6 +418,26 @@ pub fn double_fault_stack_top() -> u64 {
         let tss = PerCpu::this_cpu_ptr(addr_of_mut!(TSS));
         (*tss).interrupt_stack_table[DOUBLE_FAULT_IST_INDEX - 1]
     }
+}
+
+/// この CPU の TSS に入っている、IST の `ist_index` 番（1 始まり）のスタックの頂点。
+///
+/// **番号が 1 から 7 の外か、その番号に何も据えていなければ `None` を返す**（0 のままの欄は、据えていない欄である）。
+///
+/// # 契約（境界の関数。2026-10-04）
+///
+/// - この CPU の TSS を読むだけで、何も変えない。**AP では AP 自身のスタックの番地が返る**——例外の処理が「いま
+///   どの IST の上に居るはずか」を確かめるときは、静的なスタックの範囲（BSP のもの）ではなく、こちらから引く。
+pub fn interrupt_stack_top(ist_index: usize) -> Option<u64> {
+    if !(1..=7).contains(&ist_index) {
+        return None;
+    }
+    // SAFETY: 読み取りのみ。init 以降は書き換えない。自コアのスロットを読む。
+    let top = unsafe {
+        let tss = PerCpu::this_cpu_ptr(addr_of_mut!(TSS));
+        (*tss).interrupt_stack_table[ist_index - 1]
+    };
+    (top != 0).then_some(top)
 }
 
 /// TSS の RSP0 を更新する（M5-c、コンテキストスイッチのたびに呼ぶ）。

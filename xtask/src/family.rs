@@ -211,6 +211,7 @@ pub const PATH_RULES: &[PathRule] = &[
             "kernel/userland/syscall-test.rs",
             "kernel/userland/fault-test.rs",
             "kernel/userland/nx-*.rs",
+            "kernel/userland/debug-trap.rs",
             "kernel/userland/spin.rs",
             "kernel/userland/hello.rs",
             "kernel/userland/chello.c",

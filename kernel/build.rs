@@ -110,6 +110,8 @@ fn build_user_programs(manifest_dir: &str, out_dir: &str) {
         "nx-data",
         "nx-rodata",
         "nx-brk",
+        // **TF を立てて、デバッグ例外で終了させられる**（2026-10-04。デバッグ例外を IST へ移したときに足した）。
+        "debug-trap",
         "syscall-test",
         "spawn-test",
         "ls",

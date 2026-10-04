@@ -369,6 +369,7 @@ kernel::arch::x86_64::stack::tests::a_range_contains_its_own_bounds
 kernel::arch::x86_64::stack::tests::each_stack_sits_directly_above_its_guard
 kernel::arch::x86_64::stack::tests::the_block_is_exactly_the_sum_of_its_parts
 kernel::arch::x86_64::stack::tests::the_canary_differs_from_the_heap_poison
+kernel::arch::x86_64::stack::tests::the_entry_ist_block_puts_each_stack_directly_above_its_guard
 kernel::arch::x86_64::stack::tests::the_guards_are_a_multiple_of_the_alignment
 kernel::arch::x86_64::stack::tests::the_kernel_guard_is_exactly_one_aligned_page
 kernel::arch::x86_64::stack::tests::the_stacks_are_a_multiple_of_the_required_alignment

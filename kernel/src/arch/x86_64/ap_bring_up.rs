@@ -6,8 +6,12 @@
 
 use core::fmt::Write as _;
 
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
 use common::arch::x86_64::cpu;
+use common::log::Logger;
 use common::machine::pc::serial::Serial;
+use common::percpu::MAX_CPUS;
 
 /// AP 1 本ぶんのスタックの所在（S3-b-2b-2）。
 ///
@@ -26,6 +30,12 @@ pub struct ApStacks {
     pub double_fault_top: u64,
     /// IST2（ページフォルト）の頂点。
     pub page_fault_top: u64,
+    /// IST3（NMI）の頂点（2026-10-04）。
+    pub nmi_top: u64,
+    /// IST4（機械チェック）の頂点（2026-10-04）。
+    pub machine_check_top: u64,
+    /// IST5（デバッグ例外）の頂点（2026-10-04）。
+    pub debug_top: u64,
 }
 
 /// AP が本番の世界へ移るときに BSP から受け取るもの（S3-b-2b-2）。
@@ -45,6 +55,120 @@ pub struct ApBringUp {
     pub stacks: ApStacks,
     /// このコアのスロット。
     pub slot: usize,
+}
+
+/// AP が読み戻した、自分の TSS の IST1 から IST5 の頂点（2026-10-04）。**AP が控え、BSP が行に出す。**
+///
+/// **AP は自分では行を出さない。** AP を起こしている間、BSP は「起動した合図」だけを待って先へ進むので、AP が出す
+/// 行を増やすと、AP の行と BSP の行の順序が実行ごとに入れ替わる（実測。起動ログの参照と食い違った）。**CR0・CR4・
+/// EFER の突き合わせ（`cpu_state` の `record_this_ap`）と同じ形にする**——AP は値を控え、BSP が後でまとめて出す。
+static AP_INTERRUPT_STACK_TOPS: [[AtomicU64; INTERRUPT_STACK_COUNT]; MAX_CPUS] =
+    [const { [const { AtomicU64::new(0) }; INTERRUPT_STACK_COUNT] }; MAX_CPUS];
+/// AP が、上の控えを書き終えたか。
+static AP_INTERRUPT_STACKS_RECORDED: [AtomicBool; MAX_CPUS] =
+    [const { AtomicBool::new(false) }; MAX_CPUS];
+
+/// IST のスタックの本数（IST1 から IST5）。
+const INTERRUPT_STACK_COUNT: usize = 5;
+
+/// IST の番号と、行に出す名前（IST1 から IST5 の順）。
+const INTERRUPT_STACK_NAMES: [(usize, &str); INTERRUPT_STACK_COUNT] = [
+    (crate::arch::x86_64::gdt::DOUBLE_FAULT_IST_INDEX, "#DF"),
+    (crate::arch::x86_64::gdt::PAGE_FAULT_IST_INDEX, "#PF"),
+    (crate::arch::x86_64::gdt::NMI_IST_INDEX, "NMI"),
+    (crate::arch::x86_64::gdt::MACHINE_CHECK_IST_INDEX, "#MC"),
+    (crate::arch::x86_64::gdt::DEBUG_IST_INDEX, "#DB"),
+];
+
+/// この AP の TSS の IST（1 から 5）を読み戻し、BSP から渡された頂点と突き合わせる（2026-10-04）。**違えば、どの AP の
+/// どの番号かを名指しして止まる。** 合っていれば、読んだ値を控える（行は BSP が出す。[`report_interrupt_stacks`]）。
+///
+/// # なぜ AP でも確かめるのか
+///
+/// **TSS は CPU ごとに持つ。** BSP の確かめ（`interrupt_readiness::verify_entry_stacks`）は、BSP の TSS しか見ない。
+/// AP の TSS の欄が 0 のままだったり、別の番地を指していたりすると、その AP に NMI や機械チェックが届いた瞬間に、
+/// 当てにならないスタックへフレームを積む。**ゲートの番号は全 CPU で共有する IDT に在り、BSP が確かめている**ので、
+/// ここでは TSS の中身だけを見る。
+///
+/// # 何を見るか
+///
+/// - IST1 から IST5 の欄が、渡された頂点（[`ApStacks`]）と同じであること。
+/// - 5 本が互いに別であること（同じ番号を分け合うと、片方の処理中に届いたもう片方が、前のフレームを上書きする）。
+///
+/// **止まるときの行は、呼ぶ側が開いたシリアルへ出す**（AP の起こしは、BKL へ参加する前なので直に開いている。開く所を
+/// 増やさない）。
+fn verify_interrupt_stacks_on_this_ap(port: &mut Serial, slot: usize, stacks: &ApStacks) {
+    use crate::arch::x86_64::gdt;
+
+    let handed_over = [
+        stacks.double_fault_top,
+        stacks.page_fault_top,
+        stacks.nmi_top,
+        stacks.machine_check_top,
+        stacks.debug_top,
+    ];
+    let mut tops = [0u64; INTERRUPT_STACK_COUNT];
+    for (at, (index, name)) in INTERRUPT_STACK_NAMES.into_iter().enumerate() {
+        // **据えていない欄は 0 として扱う**（`interrupt_stack_top` は `None` を返す）。
+        let in_tss = gdt::interrupt_stack_top(index).unwrap_or(0);
+        tops[at] = in_tss;
+        if in_tss != handed_over[at] {
+            let _ = writeln!(
+                port,
+                "[ERROR] smp: ap {slot} has the wrong stack in its TSS for IST{index} ({name}): \
+                 the TSS holds {in_tss:#x} but the stack handed over tops at {:#x}; an exception \
+                 on that IST would push its frame somewhere else; halting",
+                handed_over[at]
+            );
+            cpu::halt_forever();
+        }
+    }
+    let distinct = (0..tops.len()).all(|a| (a + 1..tops.len()).all(|b| tops[a] != tops[b]));
+    if !distinct {
+        let _ = writeln!(
+            port,
+            "[ERROR] smp: ap {slot} has two IST entries in its TSS pointing at the same stack \
+             ({tops:#x?}); a second exception would overwrite the first one's frame; halting"
+        );
+        cpu::halt_forever();
+    }
+    if slot < MAX_CPUS {
+        for (cell, top) in AP_INTERRUPT_STACK_TOPS[slot].iter().zip(tops) {
+            cell.store(top, Ordering::SeqCst);
+        }
+        AP_INTERRUPT_STACKS_RECORDED[slot].store(true, Ordering::SeqCst);
+    }
+}
+
+/// AP（`slot`）が読み戻した IST の頂点を、行に出す（2026-10-04。BSP が呼ぶ）。**BSP の行と同じ形で、1 本ずつ出す。**
+///
+/// **AP は、渡された頂点と違えば自分で止まっている**（`verify_interrupt_stacks_on_this_ap`）。ここへ来た値は、
+/// AP が「渡された頂点と同じで、5 本が互いに別」と確かめた後のものである。**控えが無ければ、そう出して偽を返す。**
+///
+/// # 契約（境界の関数）
+///
+/// - 呼ぶのは BSP で、AP が起動の終わりまで進んだ後である（`cpu_state` の `check_aps_match_bsp` が、AP の控えを
+///   待った後に呼ぶ）。読むだけで、何も変えない。
+pub fn report_interrupt_stacks(logger: &mut Logger<Serial>, slot: usize) -> bool {
+    if slot >= MAX_CPUS || !AP_INTERRUPT_STACKS_RECORDED[slot].load(Ordering::SeqCst) {
+        logger.error(format_args!(
+            "cpu-state: ap {slot} did not record the IST stacks it read back from its TSS"
+        ));
+        return false;
+    }
+    let tops = [0, 1, 2, 3, 4].map(|at| AP_INTERRUPT_STACK_TOPS[slot][at].load(Ordering::SeqCst));
+    for ((index, name), top) in INTERRUPT_STACK_NAMES.into_iter().zip(tops) {
+        logger.info(format_args!(
+            "cpu-state: ap {slot}: its TSS holds the top {top:#x} for IST{index} ({name}), the \
+             stack it was handed [read back by the AP, which halts on a mismatch]"
+        ));
+    }
+    let distinct = (0..tops.len()).all(|a| (a + 1..tops.len()).all(|b| tops[a] != tops[b]));
+    logger.info(format_args!(
+        "cpu-state: ap {slot}: the five IST stacks (#DF, #PF, NMI, #MC, #DB) are all different = \
+         {distinct}"
+    ));
+    distinct
 }
 
 /// AP を本番 CR3 と per-CPU スタックへ移す（S3-b-2b-2）。戻らない。
@@ -157,6 +281,14 @@ pub unsafe fn bring_up_application_processor(
         );
     }
 
+    // 破壊テスト (2026-10-04, ap-entry-stack-shifted-test): デバッグ例外のスタックの頂点を、1 ページずらして TSS へ
+    // 入れる。**下の読み戻しの確かめ（[`verify_interrupt_stacks_on_this_ap`]）が、どの AP のどの番号かを名指しして
+    // 止まる。**
+    let debug_top_for_the_tss = if cfg!(feature = "ap-entry-stack-shifted-test") {
+        info.stacks.debug_top - 4096
+    } else {
+        info.stacks.debug_top
+    };
     // 1. 自分の GDT / TSS を載せる。索引は引数で受け取ったものである
     //    （`cpu_id()` はまだ使えない。GDT が載って初めて正しくなる）。
     // SAFETY: slot は BSP が割り当てた 0..MAX_CPUS の値。IST の頂点は本番
@@ -165,8 +297,13 @@ pub unsafe fn bring_up_application_processor(
     unsafe {
         crate::arch::x86_64::gdt::init_for_cpu(
             info.slot,
-            info.stacks.double_fault_top,
-            info.stacks.page_fault_top,
+            crate::arch::x86_64::gdt::InterruptStackTops {
+                double_fault: info.stacks.double_fault_top,
+                page_fault: info.stacks.page_fault_top,
+                nmi: info.stacks.nmi_top,
+                machine_check: info.stacks.machine_check_top,
+                debug: debug_top_for_the_tss,
+            },
         );
     }
 
@@ -226,6 +363,10 @@ pub unsafe fn bring_up_application_processor(
         );
         cpu::halt_forever();
     }
+
+    // **この AP の TSS に、渡された 5 本の頂点が入っていることを読み戻して確かめる**（2026-10-04）。**`cpu_id()` が
+    // 正しくなった後に置く**——読み戻しは、自分のスロットの TSS を `cpu_id()` で引く。
+    verify_interrupt_stacks_on_this_ap(&mut serial, info.slot, &info.stacks);
 
     // 3. CR3 と RSP を隣接して切り替え、入口へ `call` で入る（System V の入口の決まりに合わせる。2026-09-28）。
     // SAFETY: `production_root` は BSP が動いている本番テーブルの物理で、

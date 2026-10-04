@@ -156,6 +156,38 @@ static mut STACKS: StackBlock = StackBlock {
     page_fault: [0; IST_STACK_SIZE],
 };
 
+/// NMI・機械チェック・デバッグ例外の IST スタック（IST3 から IST5。2026-10-04）。
+///
+/// **[`StackBlock`] とは別の塊にしてある。** あちらの並びは、カーネルスタックのガードページの位置と、高水位の計測が
+/// 前提にしている。3 本を足すためにあちらを動かさない。**並びの考え方は同じである**——各スタックの直下に犠牲領域を
+/// 置き、カナリアで見る。
+///
+/// **なぜ 3 本とも別なのかは、`gdt::NMI_IST_INDEX` の doc に在る。**
+#[repr(C, align(4096))]
+struct EntryIstBlock {
+    /// NMI のスタックが溢れたときに最初に壊れる犠牲領域。
+    nmi_guard: [u8; GUARD_SIZE],
+    /// NMI 用の IST スタック（IST3）。
+    nmi: [u8; IST_STACK_SIZE],
+    /// 機械チェックのスタックが溢れたときに最初に壊れる犠牲領域。
+    machine_check_guard: [u8; GUARD_SIZE],
+    /// 機械チェック用の IST スタック（IST4）。
+    machine_check: [u8; IST_STACK_SIZE],
+    /// デバッグ例外のスタックが溢れたときに最初に壊れる犠牲領域。
+    debug_guard: [u8; GUARD_SIZE],
+    /// デバッグ例外用の IST スタック（IST5）。
+    debug: [u8; IST_STACK_SIZE],
+}
+
+static mut ENTRY_IST_STACKS: EntryIstBlock = EntryIstBlock {
+    nmi_guard: [0; GUARD_SIZE],
+    nmi: [0; IST_STACK_SIZE],
+    machine_check_guard: [0; GUARD_SIZE],
+    machine_check: [0; IST_STACK_SIZE],
+    debug_guard: [0; GUARD_SIZE],
+    debug: [0; IST_STACK_SIZE],
+};
+
 /// スタックの範囲（下端と上端）。上端は排他で、スタックポインタの初期値になる。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct StackRange {
@@ -311,20 +343,74 @@ pub fn page_fault_guard_range() -> StackRange {
     range_from(double_fault_stack_range().top, GUARD_SIZE as u64)
 }
 
+/// [`EntryIstBlock`] の `slot` 番目（0 = NMI、1 = 機械チェック、2 = デバッグ例外）の、犠牲領域とスタックの範囲。
+fn entry_ist_ranges(slot: u64) -> (StackRange, StackRange) {
+    let base =
+        VirtAddr::new(addr_of!(ENTRY_IST_STACKS) as u64).expect("a .bss address is canonical");
+    let guard_bottom = base
+        .checked_add(slot * (GUARD_SIZE + IST_STACK_SIZE) as u64)
+        .expect("the stack block stays within the canonical range");
+    let guard = range_from(guard_bottom, GUARD_SIZE as u64);
+    (guard, range_from(guard.top, IST_STACK_SIZE as u64))
+}
+
+/// NMI 用 IST スタック（IST3）の範囲（BSP のもの。2026-10-04）。
+pub fn nmi_stack_range() -> StackRange {
+    entry_ist_ranges(0).1
+}
+
+/// 機械チェック用 IST スタック（IST4）の範囲（BSP のもの。2026-10-04）。
+pub fn machine_check_stack_range() -> StackRange {
+    entry_ist_ranges(1).1
+}
+
+/// デバッグ例外用 IST スタック（IST5）の範囲（BSP のもの。2026-10-04）。
+pub fn debug_stack_range() -> StackRange {
+    entry_ist_ranges(2).1
+}
+
+/// NMI・機械チェック・デバッグ例外のスタックの直下にある犠牲領域（この順）。
+fn entry_ist_guard_ranges() -> [StackRange; 3] {
+    [
+        entry_ist_ranges(0).0,
+        entry_ist_ranges(1).0,
+        entry_ist_ranges(2).0,
+    ]
+}
+
+/// BSP の TSS の IST へ入れる、5 本のスタックの頂点（2026-10-04）。**起動の順序の側（`main.rs`）は、これを
+/// `gdt::init` へ渡すだけである。**
+pub fn bsp_interrupt_stack_tops() -> crate::arch::x86_64::gdt::InterruptStackTops {
+    crate::arch::x86_64::gdt::InterruptStackTops {
+        double_fault: double_fault_stack_range().top.as_u64(),
+        page_fault: page_fault_stack_range().top.as_u64(),
+        nmi: nmi_stack_range().top.as_u64(),
+        machine_check: machine_check_stack_range().top.as_u64(),
+        debug: debug_stack_range().top.as_u64(),
+    }
+}
+
 /// IST スタックの犠牲領域をカナリアで埋める。
 ///
 /// スタックを使い始める前に呼ぶこと。**カーネルスタックのガードページには
 /// カナリアを敷かない**（そのページは M5-b で unmap してガードページにする。
 /// カナリアを敷いても unmap で消えるうえ、unmap 後の読み戻しは #PF になる）。
-/// カナリアを敷くのは IST1（ダブルフォルト）と IST2（ページフォルト）の
-/// 犠牲領域だけである。
+/// カナリアを敷くのは IST1（ダブルフォルト）と IST2（ページフォルト）、それに IST3 から IST5
+/// （NMI・機械チェック・デバッグ例外。2026-10-04）の犠牲領域である。
 ///
 /// # Safety
 ///
 /// 犠牲領域がまだ誰にも使われていないこと。`_start` の最初期に 1 回だけ
 /// 呼ぶ前提。
 pub unsafe fn init_guards() {
-    for range in [double_fault_guard_range(), page_fault_guard_range()] {
+    let [nmi_guard, machine_check_guard, debug_guard] = entry_ist_guard_ranges();
+    for range in [
+        double_fault_guard_range(),
+        page_fault_guard_range(),
+        nmi_guard,
+        machine_check_guard,
+        debug_guard,
+    ] {
         // SAFETY: range は静的構造体の範囲であり、呼び出し側の契約により
         // まだ誰も使っていない。書き込むのは犠牲領域だけで、スタック本体には
         // 触れない。
@@ -337,7 +423,12 @@ pub unsafe fn init_guards() {
 /// IST の犠牲領域がどれも無傷かどうか。破壊されていれば IST スタックが
 /// 溢れている。カーネルスタックはガードページで見るため、ここには含めない。
 pub fn guards_intact() -> bool {
-    double_fault_guard_intact() && page_fault_guard_intact()
+    double_fault_guard_intact() && page_fault_guard_intact() && entry_ist_guards_intact()
+}
+
+/// NMI・機械チェック・デバッグ例外のスタックの犠牲領域が、3 つとも無傷か（2026-10-04）。
+pub fn entry_ist_guards_intact() -> bool {
+    entry_ist_guard_ranges().into_iter().all(guard_intact)
 }
 
 pub fn double_fault_guard_intact() -> bool {
@@ -723,6 +814,25 @@ mod tests {
             0,
             "ガードページがページ境界に載っていること"
         );
+    }
+
+    /// NMI・機械チェック・デバッグ例外の塊も、各スタックの直下が犠牲領域で、隙間が無いこと（2026-10-04）。
+    /// **範囲を導く式（`entry_ist_ranges`）は、3 本が同じ大きさで順に並ぶことを前提にしている。**
+    #[test]
+    fn the_entry_ist_block_puts_each_stack_directly_above_its_guard() {
+        use core::mem::offset_of;
+
+        let stride = GUARD_SIZE + IST_STACK_SIZE;
+        assert_eq!(offset_of!(EntryIstBlock, nmi_guard), 0);
+        assert_eq!(offset_of!(EntryIstBlock, nmi), GUARD_SIZE);
+        assert_eq!(offset_of!(EntryIstBlock, machine_check_guard), stride);
+        assert_eq!(
+            offset_of!(EntryIstBlock, machine_check),
+            stride + GUARD_SIZE
+        );
+        assert_eq!(offset_of!(EntryIstBlock, debug_guard), stride * 2);
+        assert_eq!(offset_of!(EntryIstBlock, debug), stride * 2 + GUARD_SIZE);
+        assert_eq!(core::mem::size_of::<EntryIstBlock>(), stride * 3);
     }
 
     #[test]

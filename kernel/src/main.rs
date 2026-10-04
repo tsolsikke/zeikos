@@ -379,10 +379,7 @@ pub unsafe extern "sysv64" fn _start(boot_info: *const BootInfo) -> ! {
     // ページフォルト用の IST スタックは通常のカーネルスタックとも互いとも
     // 別の静的領域である。
     unsafe {
-        gdt::init(
-            stack::double_fault_stack_range().top.as_u64(),
-            stack::page_fault_stack_range().top.as_u64(),
-        );
+        gdt::init(stack::bsp_interrupt_stack_tops());
     }
 
     // IDT をロードする。ここも .bss の静的領域だけで完結する。
@@ -4091,6 +4088,10 @@ fn report_idt(logger: &mut Logger<Serial>) {
         cpu::halt_forever();
     }
 
+    // **割り込みを禁じていても届く 3 つの例外が、それぞれ専用のスタックに載っていること**（2026-10-04）。
+    // 中身は CPU 固有の置き場に在る。載っていなければ、名指しして止まる。
+    kernel::arch::x86_64::interrupt_readiness::verify_entry_stacks(logger);
+
     // スタブ表の刻み幅と、IDT エントリがそれを指していることを検証する。IDT は
     // base + n * STUB_SIZE でエントリを作るので、この前提が崩れると全エントリが誤った
     // アドレスを指す。同じ式で検算すると循環するので、アセンブラが付けた独立のラベルと
@@ -5633,6 +5634,15 @@ static NX_STACK_ELF: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/nx-stack.
 static NX_DATA_ELF: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/nx-data.elf"));
 static NX_BRK_ELF: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/nx-brk.elf"));
 static NX_RODATA_ELF: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/nx-rodata.elf"));
+
+/// 埋め込んだユーザープログラム `debug-trap` の ELF（2026-10-04）。**単発の実行の旗を立てて、終了させられる**
+/// （`kernel/userland/debug-trap.rs`）。
+static DEBUG_TRAP_ELF: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/debug-trap.elf"));
+
+/// `debug-trap` が止まる位置（entry からの相対。2026-10-04）。**`nop` の次の `ud2` である**——実行し終えた命令の
+/// 次の番地が報告される。**`kernel/userland/debug-trap.rs` の命令の並びと対になっている。** 例外が起きなかったときの
+/// 受け皿も同じ位置である（そのときは、無効な命令の例外で終わる）。
+const DEBUG_TRAP_STOP_OFFSET: u64 = 11;
 
 /// 埋め込んだユーザープログラム `syscall-test` の ELF（S9-b-3-2a）。
 static SYSCALL_TEST_ELF: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/syscall-test.elf"));
@@ -8924,6 +8934,14 @@ enum UserProgramOutcome {
         /// 跳ぶ先の番地。**止まる番地でもある。**
         target: u64,
     },
+    /// 単発の実行の旗を自分で立て、命令を 1 つ実行した所で終了させられる（2026-10-04）。
+    ///
+    /// **判定は CPU の置き場が持つ**（`kernel::arch::x86_64::ring3::stopped_after_one_step_at`）。ここに書くのは、
+    /// 止まる位置だけである。
+    StopsAfterOneStep {
+        /// 止まる位置（entry からの相対）。
+        stop_offset: u64,
+    },
 }
 
 /// 走らせるプログラム 1 本分の記述（S9-b-3-2a）。
@@ -9052,6 +9070,22 @@ const USER_PROGRAMS: &[UserProgram] = &[
         probes_abi: false,
         status_meanings: &[],
         argv: &[b"nx-brk"],
+        enters_with_direction_flag: None,
+    },
+    // **単発の実行の旗を立てて、その例外で終了させられる**（2026-10-04）。**この例外は専用のスタックで配送される。**
+    // 畳む前の確かめ（処理が、その例外のゲートが指すスタックの上で走っていること）を通るので、畳まれて終われば、
+    // 専用のスタックの上で配送されたことになる（`kernel/userland/debug-trap.rs`）。
+    UserProgram {
+        name: "debug-trap",
+        image: DEBUG_TRAP_ELF,
+        outcome: UserProgramOutcome::StopsAfterOneStep {
+            stop_offset: DEBUG_TRAP_STOP_OFFSET,
+        },
+        receiver_offset: DEBUG_TRAP_STOP_OFFSET,
+        expected_write: None,
+        probes_abi: false,
+        status_meanings: &[],
+        argv: &[b"debug-trap"],
         enters_with_direction_flag: None,
     },
     UserProgram {
@@ -9557,6 +9591,19 @@ fn check_user_program_outcome(
                     "user-run: {name} did not stop fetching an instruction at {target:#x}; it ended \
                      some other way (the line above has how). A `ud2` sits at that address, so ending \
                      there with an invalid-opcode fault means the page was executable"
+                ));
+                return Err(UserLoadError::FoldMismatch);
+            }
+        }
+        UserProgramOutcome::StopsAfterOneStep { stop_offset } => {
+            // **止まり方は、上の `left Ring 3` の行に出ている。** 判定は CPU の置き場が持つ。
+            let stop = entry + stop_offset;
+            if !kernel::arch::x86_64::ring3::stopped_after_one_step_at(stop) {
+                logger.error(format_args!(
+                    "user-run: {name} was not stopped by the single-step exception at {stop:#x} \
+                     (entry + {stop_offset:#x}); it ended some other way (the line above has \
+                     how). A `ud2` sits at that address, so ending there with an invalid-opcode \
+                     fault means the single-step exception never came"
                 ));
                 return Err(UserLoadError::FoldMismatch);
             }
@@ -12400,6 +12447,16 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "stack-overflow-df-test",
         cfg!(feature = "stack-overflow-df-test"),
         "溢れさせ、#PF に IST を与えず #DF へ昇格させる",
+    ),
+    (
+        "ap-entry-stack-shifted-test",
+        cfg!(feature = "ap-entry-stack-shifted-test"),
+        "起こした CPU の、例外の専用のスタックの頂点を 1 ページずらして据える",
+    ),
+    (
+        "entry-stacks-not-assigned-test",
+        cfg!(feature = "entry-stacks-not-assigned-test"),
+        "割り込みを禁じていても届く 3 つの例外に、専用のスタックを与えない",
     ),
     (
         "task-switch-drop-reg",

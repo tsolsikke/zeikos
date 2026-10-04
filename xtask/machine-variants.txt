@@ -29,6 +29,8 @@ pc-no-virtio     pc                256M    file      none      dir    -
 media-only       pc                256M    file      none      media  -
 # 機械チェックを注入する回（2026-09-24。ADR-0018 の Addendum 9）。起こし方は pc-default と同じ。
 pc-mce           pc                256M    file      virtio    dir    -
+# NMI を注入する回（2026-10-04。NMI を IST へ移したとき）。起こし方は pc-default と同じ。
+pc-nmi           pc                256M    file      virtio    dir    -
 # 製造元ごとの判定を両方回す（2026-09-24。運用者の決定——Intel と AMD の両方に対応する）。
 # EPYC は AMD の型で、TCG が持たない機能は QEMU が落とす（警告を出す）。
 # 既定の qemu64 の製造元だけを GenuineIntel にしたものが Intel の回である。

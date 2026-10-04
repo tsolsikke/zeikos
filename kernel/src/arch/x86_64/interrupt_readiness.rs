@@ -504,3 +504,84 @@ pub unsafe fn spin_with_interrupts_enabled(
         cpu::disable_interrupts();
     }
 }
+
+/// デバッグ例外・NMI・機械チェックが、それぞれの IST に載っていることを確かめる（2026-10-04）。**載っていなければ、
+/// 名指しして止まる。**
+///
+/// # なぜ起動のたびに確かめるのか
+///
+/// **この 3 つは、割り込みを禁じていても届く。** `syscall` 命令の入口は、カーネルのスタックへ切り替える前の数命令を、
+/// Ring 0 のままユーザーの RSP で走る。その間に届いた例外が IST を使わなければ、CPU はユーザーが決めた番地へ
+/// フレームを積む。**入口を足す前提なので、載っていることを毎回の起動で見る。**
+///
+/// # 何を見るか
+///
+/// - **ゲートの番号と、TSS の中身の両方。** ゲートが番号を持っていても、TSS のその欄が 0 なら、届いた瞬間に RSP が
+///   0 になる。TSS の値は、用意したスタックの頂点と突き合わせる。
+/// - **5 本（#DF・#PF・NMI・#MC・#DB）が互いに別のスタックであること。** 同じ番号を分け合うと、片方の処理中に
+///   届いたもう片方が、前のフレームを上書きする。
+/// - **犠牲領域のカナリアが無傷であること。**
+///
+/// # 契約（境界の関数。2026-10-04）
+///
+/// - BSP で、`gdt::init` と `idt::init` の後に呼ぶ。読むだけで、何も変えない（止まる場合を除く）。AP は、起こすときに
+///   同じ並びのスタックを据える（`ap_stacks`）。**AP の TSS は、AP を起こすときに AP 自身が読み戻して確かめる**
+///   （`ap_bring_up` の `verify_interrupt_stacks_on_this_ap`。行は、BSP が後で出す）。AP へ実際に NMI を届けて見る検査は、まだ無い。
+pub fn verify_entry_stacks(logger: &mut Logger<Serial>) {
+    use crate::arch::x86_64::stack;
+
+    let gates = [
+        (
+            1usize,
+            "#DB",
+            gdt::DEBUG_IST_INDEX,
+            stack::debug_stack_range(),
+        ),
+        (2, "NMI", gdt::NMI_IST_INDEX, stack::nmi_stack_range()),
+        (
+            18,
+            "#MC",
+            gdt::MACHINE_CHECK_IST_INDEX,
+            stack::machine_check_stack_range(),
+        ),
+    ];
+    let mut all_held = true;
+    for (vector, name, wanted, range) in gates {
+        let gate = idt::entry(vector).and_then(|e| e.ist_index());
+        // **据えていない欄は 0 と出す**（`interrupt_stack_top` は `None` を返す）。
+        let in_tss = gdt::interrupt_stack_top(wanted).unwrap_or(0);
+        let held = gate == Some(wanted as u8) && in_tss == range.top.as_u64();
+        all_held &= held;
+        // **番号は数で出す**（IST を持たないゲートは 0）。起動ログの参照は「値 (expected 値)」の形を読むので、
+        // 括弧の入れ子になる `Some(5)` の形で出さない。
+        let gate_number = gate.unwrap_or(0);
+        logger.info(format_args!(
+            "idt: {name} (vector {vector}) uses IST {gate_number} (expected {wanted}), where 0 \
+             means the gate has no IST, and the TSS holds the top {in_tss:#x} (expected {:#x}) of \
+             the stack starting at {:#x}: on its own stack = {held}",
+            range.top.as_u64(),
+            range.bottom.as_u64()
+        ));
+    }
+    let tops = [
+        gdt::interrupt_stack_top(gdt::DOUBLE_FAULT_IST_INDEX),
+        gdt::interrupt_stack_top(gdt::PAGE_FAULT_IST_INDEX),
+        gdt::interrupt_stack_top(gdt::NMI_IST_INDEX),
+        gdt::interrupt_stack_top(gdt::MACHINE_CHECK_IST_INDEX),
+        gdt::interrupt_stack_top(gdt::DEBUG_IST_INDEX),
+    ];
+    let distinct = (0..tops.len()).all(|a| (a + 1..tops.len()).all(|b| tops[a] != tops[b]));
+    let guards = stack::entry_ist_guards_intact();
+    logger.info(format_args!(
+        "idt: the five IST stacks (#DF, #PF, NMI, #MC, #DB) are all different = {distinct}; the \
+         guards below the NMI, #MC and #DB stacks are intact = {guards}"
+    ));
+    if !(all_held && distinct && guards) {
+        logger.error(format_args!(
+            "idt: the debug exception, NMI or machine check is not on its own IST stack; each of \
+             them can arrive with interrupts off, so each needs a stack that does not depend on \
+             RSP; halting"
+        ));
+        cpu::halt_forever();
+    }
+}

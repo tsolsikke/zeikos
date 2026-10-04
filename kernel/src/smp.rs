@@ -468,15 +468,22 @@ fn wait_ticks(count: u64) {
 }
 
 /// BSP が各スロットぶん用意する引き継ぎ表。AP が自分のスロットを読む。
-static AP_BRINGUP: [AtomicU64; MAX_APS * 4] = [const { AtomicU64::new(0) }; MAX_APS * 4];
+static AP_BRINGUP: [AtomicU64; MAX_APS * AP_BRINGUP_FIELDS] =
+    [const { AtomicU64::new(0) }; MAX_APS * AP_BRINGUP_FIELDS];
+
+/// 引き継ぎ表の、1 スロットぶんの欄の数（本番の表の根、通常のスタックの頂点、IST の 5 本の頂点）。
+const AP_BRINGUP_FIELDS: usize = 7;
 
 /// 引き継ぎ表へ書く（BSP 側）。
 fn store_bringup(slot: usize, info: &ApBringUp) {
-    let base = (slot - 1) * 4;
+    let base = (slot - 1) * AP_BRINGUP_FIELDS;
     AP_BRINGUP[base].store(info.production_root, Ordering::SeqCst);
     AP_BRINGUP[base + 1].store(info.stacks.kernel_top, Ordering::SeqCst);
     AP_BRINGUP[base + 2].store(info.stacks.double_fault_top, Ordering::SeqCst);
     AP_BRINGUP[base + 3].store(info.stacks.page_fault_top, Ordering::SeqCst);
+    AP_BRINGUP[base + 4].store(info.stacks.nmi_top, Ordering::SeqCst);
+    AP_BRINGUP[base + 5].store(info.stacks.machine_check_top, Ordering::SeqCst);
+    AP_BRINGUP[base + 6].store(info.stacks.debug_top, Ordering::SeqCst);
 }
 
 /// AP（`slot`）の通常カーネルスタックの範囲を返す（S4-c-3-2a）。
@@ -491,7 +498,8 @@ fn store_bringup(slot: usize, info: &ApBringUp) {
 /// # IST を含めなくてよい根拠
 ///
 /// タイマのベクタは IST を使わない。`idt::init` が IST を割り当てるのは
-/// ベクタ 8（#DF）と 14（#PF）だけで、他はすべて `None` である。
+/// ベクタ 8（#DF）と 14（#PF）、それに 1（#DB）・2（NMI）・18（#MC）だけで（後の 3 つは 2026-10-04）、
+/// 他はすべて `None` である。
 /// Ring 0 から Ring 0 への割り込みではスタックが切り替わらないので、
 /// AP がタイマで入ったときの `rsp` は、この通常スタックの内側にある。
 /// したがって `schedule_switch` が保存する値も範囲の内側に入る。
@@ -504,7 +512,7 @@ pub fn ap_kernel_stack_range(slot: usize) -> Option<(u64, u64)> {
 
 /// 引き継ぎ表から読む（AP 側）。
 fn load_bringup(slot: usize) -> Option<ApBringUp> {
-    let base = (slot - 1) * 4;
+    let base = (slot - 1) * AP_BRINGUP_FIELDS;
     let root = AP_BRINGUP.get(base)?.load(Ordering::SeqCst);
     if root == 0 {
         return None;
@@ -515,6 +523,9 @@ fn load_bringup(slot: usize) -> Option<ApBringUp> {
             kernel_top: AP_BRINGUP[base + 1].load(Ordering::SeqCst),
             double_fault_top: AP_BRINGUP[base + 2].load(Ordering::SeqCst),
             page_fault_top: AP_BRINGUP[base + 3].load(Ordering::SeqCst),
+            nmi_top: AP_BRINGUP[base + 4].load(Ordering::SeqCst),
+            machine_check_top: AP_BRINGUP[base + 5].load(Ordering::SeqCst),
+            debug_top: AP_BRINGUP[base + 6].load(Ordering::SeqCst),
         },
         slot,
     })
