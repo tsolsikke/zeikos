@@ -113,6 +113,11 @@ fn build_user_programs(manifest_dir: &str, out_dir: &str) {
         // **TF を立てて、デバッグ例外で終了させられる**（2026-10-04。デバッグ例外を IST へ移したときに足した）。
         "debug-trap",
         "syscall-test",
+        // **`syscall` 命令の入口の試験**（2026-10-04）。両方の入口で同じ結果になること、TF を立てて呼ぶこと、
+        // 32 ビットの区画から呼ぶこと。
+        "syscall-insn",
+        "debug-trap-syscall",
+        "compat-syscall",
         "spawn-test",
         "ls",
         "cat",

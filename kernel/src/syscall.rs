@@ -2915,7 +2915,7 @@ pub(crate) unsafe extern "sysv64" fn syscall_entry(
 
     // **どの入口から来たかを数える**（2026-10-04。`int 0x80` か、`syscall` 命令か）。見分けるのは `arch` である
     // （フレームの目印を、共通の側に出さない）。**ここから先は、どちらの入口でも同じ道を通る。**
-    ctx.note_system_call_entrance();
+    ctx.note_system_call_entrance(sp_at_call);
 
     // 番号と 6 つの引数を、Linux のレジスタの形で読む（`abi`）。**書き戻しの前に読む。** **読んだ結果は写し直さずに
     // 使う**——最適化しないビルドでは、写し直した分だけこの関数のスタックが増える（`hello` の遠征のスタックで見た）。
@@ -3017,6 +3017,9 @@ pub(crate) unsafe extern "sysv64" fn syscall_entry(
     // 終わらせる。** 正準でない番地へ戻ろうとすると、出口の `iretq` がカーネルの中で例外を起こし、カーネルが止まる。
     // **今は、戻り先を書き換える経路が無いので、ここへは来ない**——`syscall` 命令は、命令の次の番地を戻り先にする
     // ので、ユーザーの番地の上限いっぱいに命令を置けるようになると当たる。シグナルから戻る経路でも、同じ確かめを通す。
+    // 試しの形 (2026-10-04, syscall-return-noncanonical-test): 戻り先を、正準でない番地に書き換える（`arch`）。
+    #[cfg(feature = "syscall-return-noncanonical-test")]
+    ctx.corrupt_return_address_for_the_test();
     if !ctx.returns_to_user_address() {
         // **BKL は自分で解く**（下は longjmp で、`Drop` を走らせない。`exit` と同じ形）。
         drop(bkl.take());

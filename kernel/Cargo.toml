@@ -528,6 +528,23 @@ entry-stacks-not-assigned-test = []
 # AP の TSS へ、デバッグ例外のスタックの頂点を 1 ページずらして入れる（2026-10-04）。AP を起こすときの読み戻しの
 # 確かめが、どの AP のどの番号かを名指しして止まる。AP を起こす検査（`--smp-ap-test`）が走らせる。
 ap-entry-stack-shifted-test = []
+# `syscall` 命令の入口の試験と破壊テスト（2026-10-04）。
+# 試しの形（破壊ではない）: `syscall` 命令から来た最初の呼び出しの戻り先を、正準でない番地に書き換える。戻る直前の
+# 確かめが、そのプロセスを終わらせる（カーネルは止まらない）。
+syscall-return-noncanonical-test = []
+# 戻る直前の確かめを外す。上の形と組み合わせると、確かめが終わらせた記録（13）が出なくなる。本物の Intel の石では
+# 出口の iretq がカーネルの中で #GP を起こすが、QEMU の TCG は Ring 3 へ移ってからページフォルトにする（実測）。
+syscall-return-check-off-test = ["syscall-return-noncanonical-test"]
+# `syscall` 命令で入るときに、NT を落とさない（SFMASK から外す）。NT を立てて呼ぶと、出口の iretq が
+# カーネルの中で #GP を起こして止まる。
+sfmask-keeps-nt-test = []
+# `syscall` 命令のスタブが、カーネルのスタックへ切り替えない。入口の確かめ（カーネルへ入ったスタックが、
+# 遠征のスタックの中に在ること）が止める。
+syscall-stub-keeps-user-stack-test = []
+# BSP で `syscall` 命令の入口を据えない（MSR も SCE も書かない）。読み戻しの確かめが、BSP を名指しして止まる。
+bsp-skips-syscall-entry-test = []
+# AP で `syscall` 命令の入口を据えない。BSP が AP の控えを比べて、AP を名指しして止まる。
+ap-skips-syscall-entry-test = []
 # `#MF`（ベクタ16）を畳めなくする（`ADR-0058`）。Ring 3 の浮動小数点の
 # 例外で、カーネルが止まる形へ戻る。
 fp-mf-not-foldable-test = []

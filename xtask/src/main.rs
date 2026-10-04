@@ -484,6 +484,75 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
+    // **`syscall` 命令の入口**（2026-10-04）。**試しの形 1 つと、破壊テスト 4 つ。**
+    //
+    // **戻り先を正準でない番地にした形**（試しの形。破壊ではない）。**戻る直前の確かめが、そのプロセスだけを
+    // 終わらせる**——`syscall-insn` が、一般保護例外（13）として、書き換えた番地で畳まれる。カーネルの例外の記録は出ない。
+    CriticalTest {
+        name: "syscall-return-noncanonical",
+        feature: "syscall-return-noncanonical-test",
+        expected_markers: &[
+            "user-run: syscall-insn left Ring 3 (exited=false status=0 folded=true vector=13 rip=0x800000000000",
+        ],
+        forbidden_markers: &["exception: vector=13"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // **戻る直前の確かめを外す**（上の形と組み合わせる）。**確かめが終わらせた記録（一般保護例外・13）が出なくなる。**
+    //
+    // **QEMU の TCG は、正準でない番地への `iretq` をカーネルの中では止めない**（実測。2026-10-04）——Ring 3 へ
+    // 移ってから、その番地の命令の取り出しがページフォルト（14）になり、プロセスが畳まれる。**本物の Intel の石では、
+    // `iretq` がカーネルの中で一般保護例外を起こす**（SDM の IRET の記述。この環境では確かめられない）。
+    // **だから、この破壊テストが QEMU で見るのは「確かめが働いていない」ことである**——13 ではなく 14 で終わる。
+    CriticalTest {
+        name: "syscall-return-check-off",
+        feature: "syscall-return-check-off-test",
+        expected_markers: &[
+            "user-run: syscall-insn left Ring 3 (exited=false status=0 folded=true vector=14 rip=0x800000000000",
+        ],
+        forbidden_markers: &["folded=true vector=13 rip=0x800000000000"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // **入るときに NT を落とさない。** **読み戻しの確かめは通る**（あるべき値も同じ定数から作る）。`syscall-insn` が
+    // NT を立てて呼んだ戻りで、`iretq` がカーネルの中で一般保護例外を起こして止まる。
+    CriticalTest {
+        name: "sfmask-keeps-nt",
+        feature: "sfmask-keeps-nt-test",
+        expected_markers: &[
+            "SFMASK=0x43700 (expected 0x43700)",
+            "exception: vector=13 (#GP",
+            "cs=0x0008",
+        ],
+        forbidden_markers: &["user-run: syscall-insn left Ring 3"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // **スタブが、カーネルのスタックへ切り替えない。** **入口の確かめが、スタックの番地を見て止める。**
+    CriticalTest {
+        name: "syscall-stub-keeps-user-stack",
+        feature: "syscall-stub-keeps-user-stack-test",
+        expected_markers: &[
+            "syscall entry: the kernel was entered on a stack outside the excursion stack",
+            "entrance Instruction",
+        ],
+        forbidden_markers: &["user-run: syscall-insn left Ring 3"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // **BSP で入口を据えない。** **読み戻しの確かめが、最初のユーザープログラムより前に止める。**
+    CriticalTest {
+        name: "bsp-skips-syscall-entry",
+        feature: "bsp-skips-syscall-entry-test",
+        expected_markers: &[
+            "SCE=0 (expected 1)",
+            "cpu-state: the syscall entry of the BSP is not as intended",
+            "cpu-state: halting",
+        ],
+        forbidden_markers: &["user-run: hello"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
     // **全ゲートの飛び先の監視（2026-09-24。`ADR-0018` の Addendum 9）。** **測定用 IPI のスタブが
     // 共通の入口を飛ばす。** **ゲートはスタブを指したままなので、ゲートの検査は通り、sti-check 3b
     // だけが落ちて sti を断る。**
@@ -21405,6 +21474,12 @@ const DIRECT_SERIAL_PORT_ALLOWLIST: &[DirectSerialPortSite] = &[
         reason: "スタブ入口の境界違反の報告。違反した状態で呼び出しを増やさない",
     },
     DirectSerialPortSite {
+        file: "kernel/src/arch/x86_64/system_call_entry.rs",
+        item: "note_system_call_entrance",
+        reason: "システムコールの入口が、遠征のスタックの外でカーネルへ入った報告（2026-10-04）。\
+                 BKL を取った後だが、スタックが当てにならない状態なので、呼び出しを増やさずに止まる",
+    },
+    DirectSerialPortSite {
         file: "kernel/src/arch/x86_64/idt/mod.rs",
         item: "check_direction_flag",
         reason: "スタブ入口で DF=1 が Rust へ届いた報告。BKL を取る前に呼び、停止する経路である",
@@ -24106,6 +24181,16 @@ const SMP_AP_TESTS: &[CriticalTest] = &[
             "cpu-state: ap 1: the five IST stacks",
             "smp: ap 1 switched to the production page table",
         ],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // **AP で `syscall` 命令の入口を据えない**（2026-10-04）。**BSP が AP の控えを比べて、AP を名指しして止まる。**
+    // スタブは CPU ごとに別なので、BSP の値が正しいことは、AP について何も示さない。
+    CriticalTest {
+        name: "ap-skips-syscall-entry",
+        feature: "ap-skips-syscall-entry-test",
+        expected_markers: &["cpu-state: the syscall entry of ap 1 is not as intended"],
+        forbidden_markers: &[],
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
@@ -31491,7 +31576,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 62,
-    full: 467,
+    full: 473,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

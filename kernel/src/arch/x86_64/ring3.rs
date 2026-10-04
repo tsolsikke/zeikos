@@ -1206,6 +1206,24 @@ pub fn stopped_after_one_step_at(stop: u64) -> bool {
     folded() && excursion_fault_number() == 1 && fault_rip() == stop && (fault_cs() & 0b11) == 3
 }
 
+/// 直前の遠征が、互換モード（32 ビットのコード区画）から打った `syscall` 命令で終わらせられたか（2026-10-04。
+/// 純粋な読み）。`instruction` は、その `syscall` 命令の番地である。
+///
+/// **見るのは 4 つである**——例外で終了させられたこと、ベクタが 6（無効な命令）であること、32 ビットのユーザーの
+/// コード区画から来たこと、止まった番地が命令の位置か、その次であること。**止まる番地は、CPU の製造元で違う**——
+/// Intel の石は命令そのものを無効として `#UD` を起こす（命令の位置）。AMD の石は `CSTAR` の飛び先へ来て、スタブが
+/// 終わらせる（戻り先＝命令の次の位置を記録する）。
+///
+/// # 契約（境界の関数）
+///
+/// - 遠征から戻った後に呼ぶ。読むだけで、何も変えない。
+pub fn stopped_at_compat_system_call(instruction: u64) -> bool {
+    folded()
+        && excursion_fault_number() == 6
+        && fault_cs() == u64::from(crate::arch::x86_64::gdt::USER_CODE32_SELECTOR.bits())
+        && (fault_rip() == instruction || fault_rip() == instruction + 2)
+}
+
 /// 直前の遠征が、`target` の番地から命令を取り出そうとして止められたか（2026-10-03。純粋な読み）。
 ///
 /// **見るのは 5 つである**——例外で終了させられたこと、ベクタが 14（#PF）であること、止まった番地と CR2 の両方が

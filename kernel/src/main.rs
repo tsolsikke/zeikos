@@ -5647,6 +5647,59 @@ static DEBUG_TRAP_ELF: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/debug-t
 /// 受け皿も同じ位置である（そのときは、無効な命令の例外で終わる）。
 const DEBUG_TRAP_STOP_OFFSET: u64 = 11;
 
+/// 埋め込んだユーザープログラム `syscall-insn`・`debug-trap-syscall`・`compat-syscall` の ELF（2026-10-04）。
+/// **`syscall` 命令の入口の試験である**（`kernel/userland/syscall-insn.rs` ほか）。
+static SYSCALL_INSN_ELF: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/syscall-insn.elf"));
+static DEBUG_TRAP_SYSCALL_ELF: &[u8] =
+    include_bytes!(concat!(env!("OUT_DIR"), "/debug-trap-syscall.elf"));
+static COMPAT_SYSCALL_ELF: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/compat-syscall.elf"));
+
+/// `syscall-insn` が `write` で送るはずのバイト列（2026-10-04）。**両方の入口で 1 回ずつ送る。**
+const SYSCALL_INSN_MESSAGE: &str = "syscall-insn wrote this\n";
+
+/// `syscall-insn` の終了状態の意味（2026-10-04）。**`kernel/userland/syscall-insn.rs` の doc と対になっている。**
+const SYSCALL_INSN_STATUS: &[(u64, &str)] = &[
+    (1, "the probe return value was not PROBE_RETURN"),
+    (2, "write gave different results through the two entrances"),
+    (3, "brk(0) gave different results through the two entrances"),
+    (
+        4,
+        "the clock call gave different results through the two entrances",
+    ),
+    (
+        5,
+        "the unimplemented number did not return -ENOSYS through both entrances",
+    ),
+    (
+        6,
+        "the bad pointer did not return -EFAULT through both entrances",
+    ),
+    (
+        7,
+        "the return address register did not hold the return address after the call",
+    ),
+    (
+        8,
+        "the saved flags register did not hold the flags from before the call",
+    ),
+    (
+        9,
+        "a register that must be preserved changed across the call",
+    ),
+    (10, "the call with the direction flag set went wrong"),
+    (11, "the call with the nested-task flag set went wrong"),
+    (12, "the call with the alignment-check flag set went wrong"),
+    (13, "the call right after a stack-segment load went wrong"),
+];
+
+/// `debug-trap-syscall` が止まる位置（entry からの相対。2026-10-04）。**`syscall` 命令の次の `nop` の、その次の
+/// `ud2` である**（`kernel/userland/debug-trap-syscall.rs` の命令の並びと対になっている）。
+const DEBUG_TRAP_SYSCALL_STOP_OFFSET: u64 = 18;
+
+/// `compat-syscall` が `syscall` 命令を打つ位置（entry からの相対。2026-10-04）。**`kernel/userland/compat-syscall.rs`
+/// の `.org 0x20` と対になっている。**
+const COMPAT_SYSCALL_OFFSET: u64 = 0x20;
+
 /// 埋め込んだユーザープログラム `syscall-test` の ELF（S9-b-3-2a）。
 static SYSCALL_TEST_ELF: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/syscall-test.elf"));
 
@@ -8945,6 +8998,14 @@ enum UserProgramOutcome {
         /// 止まる位置（entry からの相対）。
         stop_offset: u64,
     },
+    /// 32 ビットのコード区画へ移ってからシステムコールの命令を打ち、そこで終了させられる（2026-10-04）。
+    ///
+    /// **判定は CPU の置き場が持つ**（`kernel::arch::x86_64::ring3::stopped_at_compat_system_call`）。止まる位置は
+    /// CPU の製造元で違うので、ここに書くのは命令の位置だけである。
+    RefusedFromCompatibilityMode {
+        /// 命令の位置（entry からの相対）。
+        instruction_offset: u64,
+    },
 }
 
 /// 走らせるプログラム 1 本分の記述（S9-b-3-2a）。
@@ -9121,6 +9182,52 @@ const USER_PROGRAMS: &[UserProgram] = &[
         argv: &[b"syscall-test", b"alpha"],
         // **`std` の後で `int 0x80` を打つ**（`kernel/userland/syscall-test.rs` の 69 番）。
         enters_with_direction_flag: Some(kernel::arch::x86_64::idt::EntryPath::Syscall),
+    },
+    // **`syscall` 命令の入口**（2026-10-04）。**同じ呼び出しを両方の入口で打って、結果が同じことを見る。** 6 つの引数が
+    // 届くこと、戻った後の汎用の値、旗を立てたまま呼んでも止まらないことも見る（`kernel/userland/syscall-insn.rs`）。
+    UserProgram {
+        name: "syscall-insn",
+        image: SYSCALL_INSN_ELF,
+        outcome: UserProgramOutcome::Exit { status: 0 },
+        // 使わない（失敗は終了状態で報せる）。
+        receiver_offset: 0,
+        expected_write: Some(SYSCALL_INSN_MESSAGE),
+        probes_abi: true,
+        status_meanings: SYSCALL_INSN_STATUS,
+        argv: &[b"syscall-insn"],
+        // **方向の旗を立てたまま、命令の入口から入る。**
+        enters_with_direction_flag: Some(kernel::arch::x86_64::EntryPath::Syscall),
+    },
+    // **単発の実行の旗を立ててから、命令の入口でカーネルへ入る**（2026-10-04）。**例外は、戻った後のユーザーの側で
+    // 起きる**（入るときに、その旗を落とす）。カーネルの中で起きていれば、畳まれずに止まる。
+    UserProgram {
+        name: "debug-trap-syscall",
+        image: DEBUG_TRAP_SYSCALL_ELF,
+        outcome: UserProgramOutcome::StopsAfterOneStep {
+            stop_offset: DEBUG_TRAP_SYSCALL_STOP_OFFSET,
+        },
+        receiver_offset: DEBUG_TRAP_SYSCALL_STOP_OFFSET,
+        expected_write: None,
+        probes_abi: false,
+        status_meanings: &[],
+        argv: &[b"debug-trap-syscall"],
+        enters_with_direction_flag: None,
+    },
+    // **32 ビットのコード区画から、命令の入口を打つ**（2026-10-04）。**32 ビットの呼び出しは受け付けないので、
+    // このプロセスだけが終わる。** 終わり方は CPU の製造元で違う（`kernel/userland/compat-syscall.rs`）。
+    UserProgram {
+        name: "compat-syscall",
+        image: COMPAT_SYSCALL_ELF,
+        outcome: UserProgramOutcome::RefusedFromCompatibilityMode {
+            instruction_offset: COMPAT_SYSCALL_OFFSET,
+        },
+        // 断られずに戻ってきたときの受け皿は、命令の次に在る。
+        receiver_offset: COMPAT_SYSCALL_OFFSET + 2,
+        expected_write: None,
+        probes_abi: false,
+        status_meanings: &[],
+        argv: &[b"compat-syscall"],
+        enters_with_direction_flag: None,
     },
 ];
 
@@ -9594,6 +9701,19 @@ fn check_user_program_outcome(
                     "user-run: {name} did not stop fetching an instruction at {target:#x}; it ended \
                      some other way (the line above has how). A `ud2` sits at that address, so ending \
                      there with an invalid-opcode fault means the page was executable"
+                ));
+                return Err(UserLoadError::FoldMismatch);
+            }
+        }
+        UserProgramOutcome::RefusedFromCompatibilityMode { instruction_offset } => {
+            // **止まり方は、上の `left Ring 3` の行に出ている。** 判定は CPU の置き場が持つ。
+            let instruction = entry + instruction_offset;
+            if !kernel::arch::x86_64::ring3::stopped_at_compat_system_call(instruction) {
+                logger.error(format_args!(
+                    "user-run: {name} was not ended at its system call instruction in the 32-bit \
+                     code segment ({instruction:#x}, entry + {instruction_offset:#x}); it ended \
+                     some other way (the line above has how). The kernel accepts no 32-bit calls, \
+                     so the process must end there with an invalid-opcode fault"
                 ));
                 return Err(UserLoadError::FoldMismatch);
             }
@@ -12450,6 +12570,36 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "stack-overflow-df-test",
         cfg!(feature = "stack-overflow-df-test"),
         "溢れさせ、#PF に IST を与えず #DF へ昇格させる",
+    ),
+    (
+        "syscall-return-noncanonical-test",
+        cfg!(feature = "syscall-return-noncanonical-test"),
+        "命令の入口から来た最初の呼び出しの戻り先を、正準でない番地に書き換える（試しの形）",
+    ),
+    (
+        "syscall-return-check-off-test",
+        cfg!(feature = "syscall-return-check-off-test"),
+        "戻る直前の、戻り先の確かめを外す",
+    ),
+    (
+        "sfmask-keeps-nt-test",
+        cfg!(feature = "sfmask-keeps-nt-test"),
+        "命令の入口で、入れ子のタスクの旗を落とさない",
+    ),
+    (
+        "syscall-stub-keeps-user-stack-test",
+        cfg!(feature = "syscall-stub-keeps-user-stack-test"),
+        "命令の入口のスタブが、カーネルのスタックへ切り替えない",
+    ),
+    (
+        "bsp-skips-syscall-entry-test",
+        cfg!(feature = "bsp-skips-syscall-entry-test"),
+        "最初の CPU で、命令の入口を据えない",
+    ),
+    (
+        "ap-skips-syscall-entry-test",
+        cfg!(feature = "ap-skips-syscall-entry-test"),
+        "起こした CPU で、命令の入口を据えない",
     ),
     (
         "ap-entry-stack-shifted-test",

@@ -70,7 +70,24 @@ pub const COMPAT_SYSTEM_CALL_MARK: u64 = 0x101;
 /// - **NT（`0x4000`）**: 立ったまま入ると、出口の `iretq` が `#GP` になり、カーネルが止まる。割り込みゲートは CPU が
 ///   落とすが、`syscall` 命令は落とさない。
 /// - **IOPL（`0x3000`）**: ユーザーは変えられないが、落としておく（Linux と同じ）。
-pub const FLAGS_CLEARED_ON_ENTRY: u64 = 0x200 | 0x100 | 0x400 | 0x4_0000 | 0x4000 | 0x3000;
+///
+/// 破壊テスト (2026-10-04, sfmask-keeps-nt-test): NT を落とさない。**あるべき値もこの定数から作るので、読み戻しの
+/// 確かめは通る**——NT を立てて `syscall` 命令を打ったプログラムの戻りで、`iretq` がカーネルの中で `#GP` を起こす。
+pub const FLAGS_CLEARED_ON_ENTRY: u64 = if cfg!(feature = "sfmask-keeps-nt-test") {
+    0x200 | 0x100 | 0x400 | 0x4_0000 | 0x3000
+} else {
+    0x200 | 0x100 | 0x400 | 0x4_0000 | 0x4000 | 0x3000
+};
+
+/// スタブが、カーネルのスタックへ切り替えるか（アセンブラの条件に渡す）。
+///
+/// 破壊テスト (2026-10-04, syscall-stub-keeps-user-stack-test): 切り替えない。**ユーザーのスタックの上で、カーネルが
+/// 走る。** 入口の確かめ（[`IrqContext::note_system_call_entrance`]）が、スタックの番地を見て止める。
+const STUB_SWITCHES_STACK: usize = if cfg!(feature = "syscall-stub-keeps-user-stack-test") {
+    0
+} else {
+    1
+};
 
 /// ユーザーの番地の上限（これより下だけがユーザーの番地である）。
 ///
@@ -115,7 +132,9 @@ macro_rules! system_call_stubs {
             concat!($instruction_stub, ":"),
             // ユーザーの RSP を退避し、この CPU の TSS の RSP0 へ切り替える。**レジスタは 1 つも壊さない。**
             "  mov qword ptr [rip + {scratch} + {scratch_offset}], rsp",
+            "  .if {switch_stack}",
             "  mov rsp, qword ptr [rip + {tss} + {rsp0_offset}]",
+            "  .endif",
             "  push {user_ss}",
             "  push qword ptr [rip + {scratch} + {scratch_offset}]",
             "  push r11",
@@ -144,6 +163,7 @@ macro_rules! system_call_stubs {
             user_cs32 = const gdt::USER_CODE32_SELECTOR.bits(),
             mark = const SYSTEM_CALL_INSTRUCTION_MARK,
             compat_mark = const COMPAT_SYSTEM_CALL_MARK,
+            switch_stack = const STUB_SWITCHES_STACK,
         );
     };
 }
@@ -246,13 +266,43 @@ impl IrqContext {
     ///
     /// **フレームのベクタの欄で見分ける**——`syscall` 命令のスタブは [`SYSTEM_CALL_INSTRUCTION_MARK`] を積み、
     /// `int 0x80` のスタブはベクタの番号を積む。ベクタの欄を、共通の側に出さない（`ADR-0072` の 3）。
-    pub(crate) fn note_system_call_entrance(&self) {
+    ///
+    /// **カーネルへ入ったスタックが、遠征のスタックの中に在ることも確かめる**（`rsp_at_call` は、スタブが `call` の
+    /// 直前に読んだ RSP）。`int 0x80` では CPU が、`syscall` 命令ではスタブが、TSS の RSP0 へ切り替える。**切り替えて
+    /// いなければ、カーネルはユーザーが決めたスタックの上で走っている。** 名指しして止まる。
+    pub(crate) fn note_system_call_entrance(&self, rsp_at_call: u64) {
         let entrance = if self.vector == SYSTEM_CALL_INSTRUCTION_MARK {
             Entrance::Instruction
         } else {
             Entrance::Interrupt
         };
         ENTRANCES[entrance as usize].fetch_add(1, Ordering::Relaxed);
+        let (bottom, top) = crate::arch::x86_64::ring3::excursion_stack_range();
+        if !(bottom..top).contains(&rsp_at_call) {
+            use core::fmt::Write as _;
+            let mut serial = Serial::primary();
+            serial.init();
+            let _ = writeln!(
+                serial,
+                "[ERROR] syscall entry: the kernel was entered on a stack outside the excursion \
+                 stack (rsp at call {rsp_at_call:#x}, the excursion stack is {bottom:#x}..{top:#x}, \
+                 entrance {entrance:?}); the stub or the CPU did not switch to the kernel stack"
+            );
+            let _ = writeln!(serial, "[ERROR] halting (cli + hlt loop)");
+            cpu::halt_forever();
+        }
+    }
+
+    /// 試しの形 (2026-10-04, syscall-return-noncanonical-test。破壊ではない): `syscall` 命令から来た最初の呼び出しの
+    /// 戻り先を、正準でない番地に書き換える。**戻る直前の確かめ（[`returns_to_user_address`](Self::returns_to_user_address)）
+    /// が、そのプロセスを終わらせること**を見る。今は、戻り先を書き換える経路がほかに無いので、この形で作る。
+    #[cfg(feature = "syscall-return-noncanonical-test")]
+    pub(crate) fn corrupt_return_address_for_the_test(&mut self) {
+        if self.vector == SYSTEM_CALL_INSTRUCTION_MARK
+            && ENTRANCES[Entrance::Instruction as usize].load(Ordering::Relaxed) == 1
+        {
+            self.rip = 0x0000_8000_0000_0000;
+        }
     }
 
     /// このフレームの戻り先が、ユーザーの範囲の正準な番地か（[`USER_ADDRESS_LIMIT`] より下か）。
@@ -261,6 +311,13 @@ impl IrqContext {
     /// カーネルが止まる。カーネルの番地へ戻ろうとするフレームも、ここで断る。**今は、戻り先を書き換える経路が無い**
     /// ので、偽になることは無い。シグナルから戻る経路（ユーザーが戻り先を用意する）でも、同じ確かめを通す。
     pub(crate) fn returns_to_user_address(&self) -> bool {
+        // 破壊テスト (2026-10-04, syscall-return-check-off-test): 確かめない。戻り先を正準でない番地にした形と
+        // 組み合わせる。**本物の Intel の石では、出口の `iretq` がカーネルの中で `#GP` を起こす。** **QEMU の TCG は
+        // そこでは止めず、Ring 3 へ移ってからページフォルトにする**（実測）ので、検査が見るのは「確かめが終わらせた
+        // 記録（13）が出ない」ことである。
+        if cfg!(feature = "syscall-return-check-off-test") {
+            return true;
+        }
         self.rip < USER_ADDRESS_LIMIT
     }
 }
@@ -346,6 +403,13 @@ pub fn expected_msrs(cpu: usize) -> Option<SystemCallMsrs> {
 /// - NMI・機械チェック・デバッグ例外が IST に載っていること（このモジュールの doc の「入った直後の数命令」）。
 /// - 起動の途中で、割り込みを禁じたまま、CPU ごとに 1 回だけ呼ぶこと。
 pub unsafe fn enable_on_this_cpu(cpu_index: usize) -> bool {
+    // 破壊テスト (2026-10-04, bsp-skips-syscall-entry-test / ap-skips-syscall-entry-test): BSP か AP で、据えない。
+    // **読み戻しの確かめが、その CPU を名指しして止まる。**
+    if (cfg!(feature = "bsp-skips-syscall-entry-test") && cpu_index == 0)
+        || (cfg!(feature = "ap-skips-syscall-entry-test") && cpu_index != 0)
+    {
+        return false;
+    }
     let Some(msrs) = expected_msrs(cpu_index) else {
         return false;
     };
