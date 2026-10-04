@@ -23600,6 +23600,28 @@ fn commit_subject_head(subject: &str) -> Result<(&str, Option<&str>), &'static s
     Ok((kind, scope))
 }
 
+/// 課題キーの頭（`CLAUDE.md` の「コミットメッセージ」。運用者の決定。2026-10-04）。**この後に数字が続く。**
+///
+/// **キーを書くのはコミットメッセージの 3 行目だけである**（コードと文書には書かない）ので、ここにも頭だけを置く。
+const COMMIT_ISSUE_KEY_PREFIX: &str = "ZEIKOS-";
+
+/// 行の全体が課題キー 1 つか（前後の空白は見ない）。
+fn is_issue_key_line(line: &str) -> bool {
+    line.trim()
+        .strip_prefix(COMMIT_ISSUE_KEY_PREFIX)
+        .is_some_and(|digits| !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// 行のどこかに課題キー（頭と、続く数字）が在るか。
+fn mentions_issue_key(line: &str) -> bool {
+    line.match_indices(COMMIT_ISSUE_KEY_PREFIX).any(|(at, _)| {
+        line[at + COMMIT_ISSUE_KEY_PREFIX.len()..]
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_digit())
+    })
+}
+
 /// 1 つのコミットメッセージを見る。**純粋関数である。**
 ///
 /// # なぜ切り出すのか
@@ -23635,11 +23657,26 @@ fn commit_message_findings(
         ));
     }
 
+    // **課題キーは 3 行目に、それだけを書く**（2026-10-04。運用者の決定）。**履歴全体へ当てる**——それより前の
+    // コミットはキーを 1 つも持たない（実測）。**キーが在ること自体は求めない**（課題に結び付かないコミットも在りうる）。
+    let key_line = lines.get(2).is_some_and(|line| is_issue_key_line(line));
+    for (index, line) in lines.iter().enumerate() {
+        if mentions_issue_key(line) && !(index == 2 && key_line) {
+            findings.push(format!(
+                "{short}: line {} mentions an issue key; the key goes on the third line, alone \
+                 (CLAUDE.md の「コミットメッセージ」): {subject}",
+                index + 1
+            ));
+        }
+    }
+
     if body_rule {
+        // **課題キーの行は本文に数えない**——キーだけで終わるコミットも、キーの後に 5 行書くコミットも通る。
         let body = lines
             .iter()
+            .enumerate()
             .skip(2)
-            .filter(|line| !line.trim().is_empty())
+            .filter(|(index, line)| !line.trim().is_empty() && !(*index == 2 && key_line))
             .count();
         if body != 0 && !COMMIT_BODY_LINES.contains(&body) {
             findings.push(format!(
@@ -35349,6 +35386,36 @@ disk0: rd_bytes=2105856 wr_bytes=2097152 rd_operations=524
         let gap = both("docs: halt_forever の数");
         assert_eq!(gap.len(), 1, "{gap:?}");
         assert!(gap[0].contains("Japanese and ASCII"));
+
+        // **課題キーの置き場**（2026-10-04）。**3 行目にそれだけ、以外は落ちる。**
+        let key = format!("{COMMIT_ISSUE_KEY_PREFIX}0");
+        for (message, line) in [
+            // 件名に書いた。
+            (format!("docs: {key}の件名"), "line 1"),
+            // 2 行目（空けるべき行）に書いた。**2 行目の空行の規則と、置き場の規則の両方に当たる。**
+            (format!("docs: 件名\n{key}\n本文1。\n本文2。"), "line 2"),
+            // 3 行目に、ほかの言葉と並べた。**キーの行と見なさないので、本文の 1 行として数える。**
+            (format!("docs: 件名\n\n{key} の対応。\n本文2。"), "line 3"),
+            // 本文の途中に書いた。
+            (format!("docs: 件名\n\n本文1。\n{key}\n本文3。"), "line 4"),
+            // 3 行目に正しく書いた上で、本文にも書いた。
+            (
+                format!("docs: 件名\n\n{key}\n本文1。\n{key}を参照。"),
+                "line 5",
+            ),
+        ] {
+            let found = both(&message);
+            assert!(
+                found
+                    .iter()
+                    .any(|f| f.contains(line) && f.contains("issue key")),
+                "{message:?}: {found:?}"
+            );
+        }
+        // **課題キーの行は本文に数えない。** キーの後が 1 行なら「1 行」、6 行なら「6 行」で落ちる。
+        assert!(both(&format!("docs: 件名\n\n{key}\n一行だけ。"))[0].contains("1 line(s)"));
+        let six = format!("docs: 件名\n\n{key}\n1。\n2。\n3。\n4。\n5。\n6。");
+        assert!(both(&six)[0].contains("6 line(s)"));
     }
 
     /// **落ちてはならない側も見る。** 通るべき形で findings が出ないこと。
@@ -35363,6 +35430,21 @@ disk0: rd_bytes=2105856 wr_bytes=2097152 rd_operations=524
         assert!(both("feat: 件名\n\n1。\n2。\n3。\n4。\n5。").is_empty());
         // 末尾の改行が余分にあっても数に入らない。
         assert!(both("fix: 件名\n\n1。\n2。\n\n").is_empty());
+        // **3 行目の課題キー**（2026-10-04。運用者の決定）。キーだけ、キーと本文 2 行、キーと本文 5 行。
+        let key = format!("{COMMIT_ISSUE_KEY_PREFIX}0");
+        assert!(both(&format!("docs: 件名\n\n{key}")).is_empty());
+        assert!(both(&format!("docs: 件名\n\n{key}\n")).is_empty());
+        assert!(both(&format!("feat(syscall): 件名\n\n{key}\n1。\n2。")).is_empty());
+        assert!(both(&format!("feat: 件名\n\n{key}\n1。\n2。\n3。\n4。\n5。")).is_empty());
+        // 桁の多い番号。頭だけで数字が続かない語（OS の名前の大文字の形）は、キーとして扱わない。
+        assert!(both(&format!(
+            "docs: 件名\n\n{COMMIT_ISSUE_KEY_PREFIX}12345\n1。\n2。"
+        ))
+        .is_empty());
+        assert!(both(&format!(
+            "docs: 件名\n\n{COMMIT_ISSUE_KEY_PREFIX}は頭だけ。\n2。"
+        ))
+        .is_empty());
         // 7 つの型すべて。範囲のあり・なしの両方（2026-09-26。運用者の決定）。
         for prefix in COMMIT_SUBJECT_PREFIXES {
             assert!(both(&format!("{prefix}: 件名")).is_empty(), "{prefix}");
