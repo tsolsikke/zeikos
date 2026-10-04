@@ -2401,6 +2401,14 @@ VirtualBoxの計数でベクタ0x42が打鍵4バイトで+4、8259のベクタ0x
 - 推測（確かめていない）: 2つが実際に重なる場面は、作っていない。NMIの処理は「レジスタを出して止まる」なので、処理の途中に2つ目のNMIが届いて同じIST3を上書きしても、止まる結果は変わらない見込みである。NMIから戻る処理（`iretq`でNMIの受け付けが開く）を書く段では、入れ子の扱いを設計し直す必要がある。
 - 確かめていないこと: APに届いたNMIが、APのIST3の上で処理されること。`pc-nmi`の変種はCPUが1つで、APを起こさない。APのTSSに5本の頂点が正しく入っていることは、APを起こすときの読み戻しで確かめている（上の表）。実際にAPへ届けて見る検査は、まだ無い。
 
+### `syscall`命令の入口を決めるレジスタを、読んで出す（2026-10-04）
+
+`syscall`命令の入口を足す前に、入口を決めるレジスタを読んで起動ログに出す行を入れた。振る舞いは変えていない。書き込みはせず、`EFER.SCE`は0のままである。
+
+- 読むのは、EFER（SCEとNXEを名前つきで出す）・STAR・LSTAR・CSTAR・SFMASK・`IA32_SYSENTER_CS`である。4つのMSRと`IA32_SYSENTER_CS`は、CPUIDが在ると示したときだけ読む（無いMSRを読むと`#GP`になる）。
+- BSPとAPで、同じ形の行が1本ずつ出る。`syscall-entry: cpu 0: EFER=0xd00 with SCE=0 (expected 0) and NXE=1 (expected 1); STAR=0x0 LSTAR=0x0 CSTAR=0x0 SFMASK=0x0 SYSENTER_CS=0x0 …`と、`cpu-state: ap 1 syscall-entry: …`（QEMUの実測。どれも0だった）。APは自分のレジスタを読んで控え、行はBSPが出す。
+- 起動ログの参照に入るので、値が変われば差として出る。入口を足す段で値を書いたら、同じ行が読み戻しになる（そのときに、あるべき値をこの行へ足す）。
+
 ### 文体の検査を補助スクリプトからxtaskへ移した範囲
 
 `docs/coding-standards.md` §1の文体規則のうち、**機械的に判定できる2つを`cargo xtask check`へ移した**（base 17）。

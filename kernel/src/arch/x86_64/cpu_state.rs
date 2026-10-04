@@ -999,9 +999,106 @@ fn read_this_cpu() -> [u64; 3] {
     ]
 }
 
+/// この CPU の、`syscall` 命令の入口を決めるレジスタを読んだもの（2026-10-04）。**記録の行に出すための型である。**
+///
+/// **BSP と AP が、同じ形の行を 1 本ずつ出す**（[`check_and_report`] と、AP の起こし）。**今は読むだけで、書かない**
+/// ——`EFER.SCE` は 0 のままで、`syscall` 命令は入口になっていない。**入口を足す段で値を書いたら、同じ行が読み戻しに
+/// なる**（そのときは、この行に「あるべき値」を足す）。
+///
+/// # 契約（境界の型）
+///
+/// - [`SystemCallEntryState::read`] は、この CPU のレジスタを読むだけで、何も変えない。いつ、どの CPU から呼んでもよい。
+/// - **AP は自分では行を出さない**——読んだ値を控え（[`record_this_ap`]）、BSP が後で出す（[`check_aps_match_bsp`]）。
+///   AP が出す行を増やすと、AP の行と BSP の行の順序が実行ごとに入れ替わる（`docs/troubleshooting.md` の 2026-10-04 の項）。
+#[derive(Clone, Copy)]
+pub struct SystemCallEntryState {
+    efer: u64,
+    msrs: Option<common::arch::x86_64::cpu::SystemCallMsrs>,
+}
+
+impl SystemCallEntryState {
+    /// この CPU のレジスタを読む。
+    pub fn read() -> Self {
+        Self {
+            efer: common::arch::x86_64::cpu::read_efer().raw(),
+            msrs: common::arch::x86_64::cpu::read_system_call_msrs(),
+        }
+    }
+
+    /// 控えの置き場へ入れる形（EFER、MSR が在るか、STAR・LSTAR・CSTAR・SFMASK・SYSENTER_CS の順）。
+    fn to_cells(self) -> [u64; SYSTEM_CALL_ENTRY_CELLS] {
+        match self.msrs {
+            Some(m) => [
+                self.efer,
+                1,
+                m.star,
+                m.lstar,
+                m.cstar,
+                m.sfmask,
+                m.sysenter_cs,
+            ],
+            None => [self.efer, 0, 0, 0, 0, 0, 0],
+        }
+    }
+
+    /// 控えの置き場から戻す（[`to_cells`](Self::to_cells) の逆）。
+    fn from_cells(cells: [u64; SYSTEM_CALL_ENTRY_CELLS]) -> Self {
+        Self {
+            efer: cells[0],
+            msrs: (cells[1] != 0).then_some(common::arch::x86_64::cpu::SystemCallMsrs {
+                star: cells[2],
+                lstar: cells[3],
+                cstar: cells[4],
+                sfmask: cells[5],
+                sysenter_cs: cells[6],
+            }),
+        }
+    }
+}
+
+/// [`SystemCallEntryState`] を控える欄の数。
+const SYSTEM_CALL_ENTRY_CELLS: usize = 7;
+
+/// AP が読んだ [`SystemCallEntryState`] の控え（2026-10-04）。**AP が [`record_this_ap`] で書き、BSP が
+/// [`check_aps_match_bsp`] で行に出す。** 書き終えたことは、`AP_RECORDED` が示す（CR0・CR4・EFER の控えと一緒に書く）。
+static AP_SYSTEM_CALL_ENTRY: [[AtomicU64; SYSTEM_CALL_ENTRY_CELLS]; MAX_CPUS] =
+    [const { [const { AtomicU64::new(0) }; SYSTEM_CALL_ENTRY_CELLS] }; MAX_CPUS];
+
+impl core::fmt::Display for SystemCallEntryState {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        use common::arch::x86_64::cpu::Efer;
+        let sce = u8::from(self.efer & Efer::SYSCALL_ENABLE != 0);
+        let nxe = u8::from(self.efer & Efer::NO_EXECUTE_ENABLE != 0);
+        write!(
+            f,
+            "EFER={:#x} with SCE={sce} (expected 0) and NXE={nxe} (expected 1); ",
+            self.efer
+        )?;
+        match self.msrs {
+            Some(msrs) => write!(
+                f,
+                "STAR={:#x} LSTAR={:#x} CSTAR={:#x} SFMASK={:#x} SYSENTER_CS={:#x} [read from \
+                 the MSRs; the kernel has not written them, and the syscall instruction is not \
+                 an entry while SCE is 0]",
+                msrs.star, msrs.lstar, msrs.cstar, msrs.sfmask, msrs.sysenter_cs
+            ),
+            None => write!(
+                f,
+                "this CPU does not report the syscall and sysenter MSRs in CPUID, so they were \
+                 not read"
+            ),
+        }
+    }
+}
+
 /// CR0・CR4・EFER を読み、1 行出し、棚卸しを崩すビットが立っていれば止める。**BSP の値を控える。**
 /// **製造元を CPUID で見分け、その製造元の表で判定する**（2026-09-24。運用者の決定）。
 pub fn check_and_report(logger: &mut Logger<Serial>) {
+    // **`syscall` 命令の入口を決めるレジスタを、読んで出す**（2026-10-04）。AP も同じ形の行を出す。
+    logger.info(format_args!(
+        "syscall-entry: cpu 0: {}",
+        SystemCallEntryState::read()
+    ));
     let [cr0, cr4, efer] = read_this_cpu();
     for (slot, value) in BSP_STATE.iter().zip([cr0, cr4, efer]) {
         slot.store(value, Ordering::SeqCst);
@@ -1149,6 +1246,13 @@ pub fn record_this_ap(slot: usize) {
         return;
     }
     for (cell, value) in AP_STATE[slot].iter().zip(read_this_cpu()) {
+        cell.store(value, Ordering::SeqCst);
+    }
+    // **`syscall` 命令の入口を決めるレジスタも、読んで控える**（2026-10-04。行は BSP が出す）。
+    for (cell, value) in AP_SYSTEM_CALL_ENTRY[slot]
+        .iter()
+        .zip(SystemCallEntryState::read().to_cells())
+    {
         cell.store(value, Ordering::SeqCst);
     }
     AP_RECORDED[slot].store(true, Ordering::SeqCst);
@@ -1321,6 +1425,13 @@ pub fn check_aps_match_bsp(logger: &mut Logger<Serial>, started: usize) {
         if !crate::arch::x86_64::ap_bring_up::report_interrupt_stacks(logger, slot) {
             failed = true;
         }
+        // **AP が読んだ、`syscall` 命令の入口を決めるレジスタを出す**（2026-10-04。BSP の行と同じ形）。
+        let entry_cells = [0, 1, 2, 3, 4, 5, 6]
+            .map(|index| AP_SYSTEM_CALL_ENTRY[slot][index].load(Ordering::SeqCst));
+        logger.info(format_args!(
+            "cpu-state: ap {slot} syscall-entry: {} [read by the AP]",
+            SystemCallEntryState::from_cells(entry_cells)
+        ));
         // **AP がトランポリンを出た直後（BSP の値をコピーする前）の EFER.NXE**（2026-10-02）。**控えが在るのは、
         // 上の控え（起動の終わり）より前である。**
         let from_trampoline = AP_EFER_FROM_TRAMPOLINE[slot].load(Ordering::SeqCst);

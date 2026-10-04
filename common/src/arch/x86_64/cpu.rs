@@ -569,6 +569,63 @@ pub fn read_efer() -> Efer {
     Efer(unsafe { read_msr(IA32_EFER) })
 }
 
+/// `syscall` 命令の入口を決める MSR の番号（Intel SDM Vol.4 の表 2-2、AMD64 APM Vol.2 の 6.1.1）。
+const IA32_STAR: u32 = 0xC000_0081;
+const IA32_LSTAR: u32 = 0xC000_0082;
+const IA32_CSTAR: u32 = 0xC000_0083;
+const IA32_FMASK: u32 = 0xC000_0084;
+/// `sysenter` 命令が読む、カーネルのコード区画のセレクタ。**0 なら `sysenter` は `#GP` になる。**
+const IA32_SYSENTER_CS: u32 = 0x174;
+
+/// `syscall` 命令と `sysenter` 命令の入口を決める MSR の、読んだ値の組（2026-10-04）。
+///
+/// **読むだけの型である。** 書く側は、入口を足す段で、この型の欄と同じ並びで足す——書いた値を、同じ型で読み戻して
+/// 比べられるようにしてある。
+///
+/// - `star`: `syscall` で入るときと `sysret` で戻るときの、区画のセレクタの基点（上位 32 ビット）。
+/// - `lstar`: 64 ビットのコードが打った `syscall` の飛び先。
+/// - `cstar`: 互換モード（32 ビットの区画）のコードが打った `syscall` の飛び先（AMD の石だけが使う）。
+/// - `sfmask`: `syscall` で入るときに RFLAGS から落とすビット。
+/// - `sysenter_cs`: `sysenter` の区画のセレクタ。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct SystemCallMsrs {
+    pub star: u64,
+    pub lstar: u64,
+    pub cstar: u64,
+    pub sfmask: u64,
+    pub sysenter_cs: u64,
+}
+
+/// `syscall` 命令の MSR（STAR・LSTAR・CSTAR・SFMASK）と `sysenter` の MSR が、この CPU に在るか。
+///
+/// **前者は `CPUID.80000001H:EDX[11]`（SYSCALL/SYSRET）、後者は `CPUID.01H:EDX[11]`（SEP）が示す。**
+/// 拡張の葉が `0x8000_0001` に届かない CPU では、前者は無い。
+pub fn system_call_msrs_exist() -> bool {
+    // **`unsafe` は要らない**——`__cpuid` は x86_64 では safe fn である（葉 0 と 0x8000_0000 はすべての x86_64 が持つ）。
+    let extended_leaves = core::arch::x86_64::__cpuid(0x8000_0000).eax;
+    let syscall = extended_leaves >= 0x8000_0001
+        && core::arch::x86_64::__cpuid(0x8000_0001).edx & (1 << 11) != 0;
+    let sysenter = core::arch::x86_64::__cpuid(1).edx & (1 << 11) != 0;
+    syscall && sysenter
+}
+
+/// `syscall` 命令と `sysenter` 命令の MSR を読む。**この CPU に無ければ `None`**（[`system_call_msrs_exist`]）。
+pub fn read_system_call_msrs() -> Option<SystemCallMsrs> {
+    if !system_call_msrs_exist() {
+        return None;
+    }
+    // SAFETY: 5 つの MSR が在ることは、直前に CPUID で確かめた。読むだけで、何も変えない。
+    Some(unsafe {
+        SystemCallMsrs {
+            star: read_msr(IA32_STAR),
+            lstar: read_msr(IA32_LSTAR),
+            cstar: read_msr(IA32_CSTAR),
+            sfmask: read_msr(IA32_FMASK),
+            sysenter_cs: read_msr(IA32_SYSENTER_CS),
+        }
+    })
+}
+
 /// CPU が Local APIC を持つか（`CPUID.01H:EDX[9]`）。
 ///
 /// **`IA32_APIC_BASE` を読む前に確かめる。** Local APIC を持たない CPU では
