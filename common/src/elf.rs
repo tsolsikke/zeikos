@@ -46,10 +46,21 @@ const ELF_MAGIC: [u8; 4] = [0x7f, b'E', b'L', b'F'];
 const ELFCLASS64: u8 = 2;
 const ELFDATA2LSB: u8 = 1; // リトルエンディアン
 const ET_EXEC: u16 = 2;
+/// 位置独立の像（共有オブジェクトの形）。**静的リンクの位置独立の実行ファイル（静的 PIE）は、この形で出る。**
+const ET_DYN: u16 = 3;
 const EM_X86_64: u16 = 62;
 
 /// `Elf64_Phdr.p_type` の値。ロード可能なセグメントを示す。
 pub const PT_LOAD: u32 = 1;
+
+/// `p_type`: 動的リンカのパス。**これを持つ像は、動的リンクを求めている。**
+pub const PT_INTERP: u32 = 3;
+/// `p_type`: プログラムヘッダの表そのものの位置。
+pub const PT_PHDR: u32 = 6;
+/// `p_type`: スレッドローカルの領域の雛形（TLS）。**置くのは libc の起動のコードで、ローダーは写さない。**
+pub const PT_TLS: u32 = 7;
+/// `p_type`: スタックの権限の求め（GNU の拡張）。`p_flags` の X が、実行できるスタックを求める印である。
+pub const PT_GNU_STACK: u32 = 0x6474_e551;
 
 /// `Elf64_Phdr.p_flags` の実行可のビット。
 pub const PF_X: u32 = 1;
@@ -97,6 +108,11 @@ pub enum ElfError {
     SegmentMemorySmallerThanFile,
     /// `p_vaddr + p_memsz` が u64 を超える。
     SegmentAddressOverflow,
+    /// `ET_EXEC` でも `ET_DYN` でもない（[`ElfHeaders::parse`]。再配置可能なオブジェクトやコアダンプ）。
+    NotExecutableOrPositionIndependent,
+    /// プログラムヘッダの表が、渡された先頭の部分に収まっていない（[`ElfHeaders::parse`]）。
+    /// **表そのものはファイルの中に在る**——読んだ先頭の部分より後ろに置かれているだけである。
+    ProgramHeadersBeyondHead,
 }
 
 /// ページ単位で写すローダーが、区画の並びを受け付けられない理由（[`Elf::check_load_layout`]）。
@@ -252,17 +268,7 @@ impl<'a> Elf<'a> {
     pub fn program_headers(&self) -> impl Iterator<Item = ProgramHeader> + '_ {
         (0..self.ph_num as usize).map(move |i| {
             let base = self.ph_off + i * PHDR_SIZE;
-            let ph = &self.data[base..base + PHDR_SIZE];
-            ProgramHeader {
-                p_type: read_u32(ph, 0),
-                p_flags: read_u32(ph, 4),
-                p_offset: read_u64(ph, 8),
-                p_vaddr: read_u64(ph, 16),
-                p_paddr: read_u64(ph, 24),
-                p_filesz: read_u64(ph, 32),
-                p_memsz: read_u64(ph, 40),
-                p_align: read_u64(ph, 48),
-            }
+            program_header_at(&self.data[base..base + PHDR_SIZE])
         })
     }
 
@@ -293,6 +299,291 @@ impl<'a> Elf<'a> {
     pub fn segment_data(&self, ph: &ProgramHeader) -> Result<&'a [u8], ElfError> {
         Ok(&self.data[file_range(self.data.len(), ph)?])
     }
+}
+
+/// 像の種類（[`ElfHeaders`]）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ElfKind {
+    /// 決まった番地へ載せる実行ファイル（`ET_EXEC`）。
+    Executable,
+    /// どの番地へ載せてもよい像（`ET_DYN`）。**載せる側が、ずらす量を決める。**
+    PositionIndependent,
+}
+
+/// ファイルの先頭の部分だけから読んだ、ELF64 のヘッダとプログラムヘッダの表（2026-10-05）。
+///
+/// # なぜ [`Elf`] と別に持つか
+///
+/// **[`Elf::parse`] は、ファイルの全体をバイト列で受け取る。** 数 MiB の実行ファイルを載せるときに、全体を 1 つの
+/// 配列へ読んでから検査する形は取れない。**こちらは、先頭の部分（ヘッダとプログラムヘッダの表が入っている所）と、
+/// ファイルの長さの数だけを受け取る。** 区画の中身は、載せる側がファイルから直に読む。
+///
+/// **`ET_DYN` も受ける。** [`Elf::parse`] は `ET_EXEC` だけを受ける（bootloader が `kernel.elf` を読むのに使う）。
+///
+/// # 構築後に成り立っている不変条件
+///
+/// **フィールドは private で、構築できるのは [`ElfHeaders::parse`] だけである。**
+///
+/// - `e_phentsize` が 56 で、プログラムヘッダの表の全体が `head` の中に在る
+/// - 全プログラムヘッダについて、ファイルの中の範囲 `[p_offset, p_offset + p_filesz)` が `file_len` に収まり、
+///   `p_memsz >= p_filesz` で、`p_vaddr + p_memsz` があふれない
+///
+/// **どんな入力でもパニックしない**（このモジュールの doc と同じ性質）。
+#[derive(Debug)]
+pub struct ElfHeaders<'a> {
+    head: &'a [u8],
+    file_len: u64,
+    kind: ElfKind,
+    entry_point: u64,
+    ph_off: usize,
+    ph_num: u16,
+}
+
+impl<'a> ElfHeaders<'a> {
+    /// ファイルの先頭の部分 `head` と、ファイルの長さ `file_len` から、ヘッダを検査する。
+    ///
+    /// **`head` は、ファイルの先頭から読んだバイト列である**（`head.len() <= file_len` であること。長ければ
+    /// `file_len` で切って扱う）。**プログラムヘッダの表が `head` に収まっていなければ、
+    /// [`ElfError::ProgramHeadersBeyondHead`] で断る**——表がファイルの外を指しているなら
+    /// [`ElfError::ProgramHeaderOutOfBounds`] である（2 つを分ける。前者は像の壊れではない）。
+    pub fn parse(head: &'a [u8], file_len: u64) -> Result<Self, ElfError> {
+        let head = if (head.len() as u64) > file_len {
+            // `file_len` は `head.len()` より小さいので、`usize` に収まる。
+            &head[..file_len as usize]
+        } else {
+            head
+        };
+        if head.len() < EHDR_SIZE {
+            return Err(ElfError::TooShort);
+        }
+        if head[0..4] != ELF_MAGIC {
+            return Err(ElfError::BadMagic);
+        }
+        if head[EI_CLASS_OFFSET] != ELFCLASS64 {
+            return Err(ElfError::NotElf64);
+        }
+        if head[EI_DATA_OFFSET] != ELFDATA2LSB {
+            return Err(ElfError::NotLittleEndian);
+        }
+        let kind = match read_u16(head, E_TYPE) {
+            ET_EXEC => ElfKind::Executable,
+            ET_DYN => ElfKind::PositionIndependent,
+            _ => return Err(ElfError::NotExecutableOrPositionIndependent),
+        };
+        if read_u16(head, E_MACHINE) != EM_X86_64 {
+            return Err(ElfError::NotX86_64);
+        }
+        let e_entry = read_u64(head, E_ENTRY);
+        let e_phoff = read_u64(head, E_PHOFF);
+        let e_phentsize = read_u16(head, E_PHENTSIZE);
+        let e_phnum = read_u16(head, E_PHNUM);
+        // **1 エントリの大きさを、表の長さより先に確かめる**（[`Elf::parse`] の同じ箇所の理由）。
+        if e_phentsize as usize != PHDR_SIZE {
+            return Err(ElfError::BadProgramHeaderEntrySize);
+        }
+        let ph_table_end = (PHDR_SIZE as u64)
+            .checked_mul(u64::from(e_phnum))
+            .and_then(|len| e_phoff.checked_add(len))
+            .ok_or(ElfError::ProgramHeaderOutOfBounds)?;
+        if ph_table_end > file_len {
+            return Err(ElfError::ProgramHeaderOutOfBounds);
+        }
+        if ph_table_end > head.len() as u64 {
+            return Err(ElfError::ProgramHeadersBeyondHead);
+        }
+        let headers = Self {
+            head,
+            file_len,
+            kind,
+            entry_point: e_entry,
+            // `ph_table_end <= head.len()` なので、`usize` に収まる。
+            ph_off: e_phoff as usize,
+            ph_num: e_phnum,
+        };
+        for ph in headers.program_headers() {
+            file_range_in(file_len, &ph)?;
+            if ph.p_memsz < ph.p_filesz {
+                return Err(ElfError::SegmentMemorySmallerThanFile);
+            }
+            ph.p_vaddr
+                .checked_add(ph.p_memsz)
+                .ok_or(ElfError::SegmentAddressOverflow)?;
+        }
+        Ok(headers)
+    }
+
+    /// 像の種類。
+    pub fn kind(&self) -> ElfKind {
+        self.kind
+    }
+
+    /// ヘッダに書いてある入口（`e_entry`）。**`ET_DYN` では、ずらす前の値である。**
+    pub fn entry_point(&self) -> u64 {
+        self.entry_point
+    }
+
+    /// ファイルの長さ（[`ElfHeaders::parse`] に渡された数）。
+    pub fn file_len(&self) -> u64 {
+        self.file_len
+    }
+
+    /// プログラムヘッダの数。
+    pub fn program_header_count(&self) -> u16 {
+        self.ph_num
+    }
+
+    /// 全プログラムヘッダを走査する（切り出しが範囲内であることは、この型の不変条件による）。
+    pub fn program_headers(&self) -> impl Iterator<Item = ProgramHeader> + '_ {
+        (0..self.ph_num as usize).map(move |i| {
+            let base = self.ph_off + i * PHDR_SIZE;
+            program_header_at(&self.head[base..base + PHDR_SIZE])
+        })
+    }
+
+    /// `PT_LOAD` の区画だけを走査する。
+    pub fn load_segments(&self) -> impl Iterator<Item = ProgramHeader> + '_ {
+        self.program_headers().filter(|ph| ph.p_type == PT_LOAD)
+    }
+
+    /// ページ単位で写すローダーのために、`PT_LOAD` の並びを確かめる（[`check_load_layout`]）。
+    pub fn check_load_layout(&self) -> Result<(), LayoutError> {
+        check_load_layout(self.load_segments())
+    }
+
+    /// 載せる位置を決める（純粋な論理）。**区画の並び（[`Self::check_load_layout`]）は、別に確かめること。**
+    ///
+    /// - `ET_EXEC` は、ずらさない（ずらす量は 0）。
+    /// - `ET_DYN` は、`policy.position_independent_base` だけずらす。
+    ///
+    /// **通った計画について、次が成り立つ。**
+    ///
+    /// - `PT_LOAD` が 1 つ以上在る
+    /// - 動的リンクを求めていない（`PT_INTERP` が無い）
+    /// - 実行できるスタックを求めていない（`PT_GNU_STACK` に X が無い）
+    /// - どの `PT_LOAD` も、ずらした後の `[始まり, 終わり)` があふれず、`policy.window` の中に在る
+    /// - 像の端から端まで（最初の区画の始まりのページから、最後の区画の終わりまで）が `policy.max_span` 以下である
+    pub fn plan(&self, policy: &LoadPolicy) -> Result<LoadPlan, PlacementError> {
+        let bias = match self.kind {
+            ElfKind::Executable => 0,
+            ElfKind::PositionIndependent => policy.position_independent_base,
+        };
+        let mut lowest: Option<u64> = None;
+        let mut highest = 0u64;
+        let mut program_headers_at = None;
+        for (index, ph) in self.program_headers().enumerate() {
+            match ph.p_type {
+                PT_INTERP => return Err(PlacementError::NeedsInterpreter),
+                PT_GNU_STACK if ph.p_flags & PF_X != 0 => {
+                    return Err(PlacementError::ExecutableStack)
+                }
+                PT_PHDR => {
+                    program_headers_at = Some(
+                        ph.p_vaddr
+                            .checked_add(bias)
+                            .ok_or(PlacementError::AddressOverflow { index })?,
+                    );
+                }
+                PT_LOAD => {
+                    let start = ph
+                        .p_vaddr
+                        .checked_add(bias)
+                        .ok_or(PlacementError::AddressOverflow { index })?;
+                    let end = start
+                        .checked_add(ph.p_memsz)
+                        .ok_or(PlacementError::AddressOverflow { index })?;
+                    if start < policy.window.0 || end > policy.window.1 {
+                        return Err(PlacementError::OutsideWindow { index, start, end });
+                    }
+                    lowest = Some(lowest.map_or(start, |low| low.min(start)));
+                    highest = highest.max(end);
+                    // **`PT_PHDR` が無い像のために、表を覆う区画からも番地を導く。**
+                    let table = self.ph_off as u64;
+                    if program_headers_at.is_none()
+                        && ph.p_offset <= table
+                        && table < ph.p_offset.saturating_add(ph.p_filesz)
+                    {
+                        program_headers_at = Some(start + (table - ph.p_offset));
+                    }
+                }
+                _ => {}
+            }
+        }
+        let Some(lowest) = lowest else {
+            return Err(PlacementError::NoLoadSegment);
+        };
+        let base = lowest & !(LOAD_PAGE_SIZE - 1);
+        let span = highest - base;
+        if span > policy.max_span {
+            return Err(PlacementError::ImageTooLarge {
+                span,
+                limit: policy.max_span,
+            });
+        }
+        let entry = self
+            .entry_point
+            .checked_add(bias)
+            .ok_or(PlacementError::EntryOverflow)?;
+        Ok(LoadPlan {
+            kind: self.kind,
+            bias,
+            entry,
+            base,
+            end: highest,
+            program_headers_at,
+            program_header_count: self.ph_num,
+        })
+    }
+}
+
+/// 載せる側が決める、置いてよい範囲と上限（[`ElfHeaders::plan`]）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoadPolicy {
+    /// `ET_DYN` の像に足す量（ページの境界であること）。**`ET_EXEC` には足さない。**
+    pub position_independent_base: u64,
+    /// 区画を置いてよい範囲 `[始まり, 終わり)`。
+    pub window: (u64, u64),
+    /// 像の端から端までの上限（バイト）。
+    pub max_span: u64,
+}
+
+/// 載せる位置の計画（[`ElfHeaders::plan`] が返す）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LoadPlan {
+    /// 像の種類。
+    pub kind: ElfKind,
+    /// 区画の `p_vaddr` に足す量（`ET_EXEC` では 0）。
+    pub bias: u64,
+    /// 入口の番地（ずらした後）。
+    pub entry: u64,
+    /// 像の始まり（最初の区画が載るページの先頭。ずらした後）。
+    pub base: u64,
+    /// 像の終わり（最後の区画の終わり。ずらした後。ページの境界へは切り上げていない）。
+    pub end: u64,
+    /// プログラムヘッダの表の番地（ずらした後）。**表がどの区画にも載らない像では `None`。**
+    /// Linux の起動の取り決めの `AT_PHDR` に渡す値である。
+    pub program_headers_at: Option<u64>,
+    /// プログラムヘッダの数（`AT_PHNUM` に渡す値）。
+    pub program_header_count: u16,
+}
+
+/// 載せる位置を決められない理由（[`ElfHeaders::plan`]）。`index` は、プログラムヘッダの表の中の番号である。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PlacementError {
+    /// `PT_LOAD` が 1 つも無い。
+    NoLoadSegment,
+    /// `PT_INTERP` を持つ。**動的リンクは扱わない。**
+    NeedsInterpreter,
+    /// `PT_GNU_STACK` が、実行できるスタックを求めている。**書けるページは実行できない、という決まりで
+    /// 写すので、受け付けない。** Linux は、こういう像も読み込む——断るのは、このカーネルの決まりである。
+    ExecutableStack,
+    /// ずらした後の番地があふれる。
+    AddressOverflow { index: usize },
+    /// 入口の番地が、ずらすとあふれる。
+    EntryOverflow,
+    /// 区画が、置いてよい範囲の外に在る。
+    OutsideWindow { index: usize, start: u64, end: u64 },
+    /// 像の端から端までが、上限を越える。
+    ImageTooLarge { span: u64, limit: u64 },
 }
 
 /// ページ単位（[`LOAD_PAGE_SIZE`]）で写すローダーのために、`PT_LOAD` の並びを確かめる（純粋な論理）。
@@ -348,6 +639,33 @@ pub fn check_load_layout(segments: impl Iterator<Item = ProgramHeader>) -> Resul
             }
         }
         previous = Some((ph.p_vaddr, end, permissions));
+    }
+    Ok(())
+}
+
+/// 56 バイトの切り出しから、プログラムヘッダを読む。
+fn program_header_at(ph: &[u8]) -> ProgramHeader {
+    ProgramHeader {
+        p_type: read_u32(ph, 0),
+        p_flags: read_u32(ph, 4),
+        p_offset: read_u64(ph, 8),
+        p_vaddr: read_u64(ph, 16),
+        p_paddr: read_u64(ph, 24),
+        p_filesz: read_u64(ph, 32),
+        p_memsz: read_u64(ph, 40),
+        p_align: read_u64(ph, 48),
+    }
+}
+
+/// 区画のファイルの中の範囲が、長さ `file_len` のファイルに収まることを確かめる（[`ElfHeaders::parse`]）。
+/// **[`file_range`] と同じ確かめを、バイト列ではなく長さの数に対して行う。**
+fn file_range_in(file_len: u64, ph: &ProgramHeader) -> Result<(), ElfError> {
+    let end = ph
+        .p_offset
+        .checked_add(ph.p_filesz)
+        .ok_or(ElfError::SegmentFileRangeOutOfBounds)?;
+    if end > file_len {
+        return Err(ElfError::SegmentFileRangeOutOfBounds);
     }
     Ok(())
 }
@@ -844,6 +1162,389 @@ mod tests {
                 elf.segment_data(&ph).expect("the range is in file"),
                 &[1, 2, 3]
             );
+        }
+    }
+    // ---- ヘッダだけで検査する入口（[`ElfHeaders`]。2026-10-05） ----
+
+    /// プログラムヘッダを 1 つ、56 バイトで作る。
+    fn phdr(p_type: u32, flags: u32, offset: u64, vaddr: u64, filesz: u64, memsz: u64) -> Vec<u8> {
+        let mut out = vec![0u8; PHDR_SIZE];
+        out[0..4].copy_from_slice(&p_type.to_le_bytes());
+        out[4..8].copy_from_slice(&flags.to_le_bytes());
+        out[8..16].copy_from_slice(&offset.to_le_bytes());
+        out[16..24].copy_from_slice(&vaddr.to_le_bytes());
+        out[24..32].copy_from_slice(&vaddr.to_le_bytes());
+        out[32..40].copy_from_slice(&filesz.to_le_bytes());
+        out[40..48].copy_from_slice(&memsz.to_le_bytes());
+        out[48..56].copy_from_slice(&0x1000u64.to_le_bytes());
+        out
+    }
+
+    /// ヘッダとプログラムヘッダの表だけの、ファイルの先頭の部分を作る（区画の中身は置かない）。
+    fn build_head(e_type: u16, entry: u64, phdrs: &[Vec<u8>]) -> Vec<u8> {
+        let mut buf = vec![0u8; EHDR_SIZE];
+        buf[0..4].copy_from_slice(&ELF_MAGIC);
+        buf[EI_CLASS_OFFSET] = ELFCLASS64;
+        buf[EI_DATA_OFFSET] = ELFDATA2LSB;
+        buf[E_TYPE..E_TYPE + 2].copy_from_slice(&e_type.to_le_bytes());
+        buf[E_MACHINE..E_MACHINE + 2].copy_from_slice(&EM_X86_64.to_le_bytes());
+        buf[E_ENTRY..E_ENTRY + 8].copy_from_slice(&entry.to_le_bytes());
+        buf[E_PHOFF..E_PHOFF + 8].copy_from_slice(&(EHDR_SIZE as u64).to_le_bytes());
+        buf[E_PHENTSIZE..E_PHENTSIZE + 2].copy_from_slice(&(PHDR_SIZE as u16).to_le_bytes());
+        buf[E_PHNUM..E_PHNUM + 2].copy_from_slice(&(phdrs.len() as u16).to_le_bytes());
+        for ph in phdrs {
+            buf.extend_from_slice(ph);
+        }
+        buf
+    }
+
+    /// 静的 PIE の形——読むだけ・実行・読むだけ・読み書きの 4 つの区画と、TLS とスタックの求め
+    /// （musl で静的リンクした実行ファイルを `readelf` で見た並びに合わせた）。
+    fn static_pie_head() -> Vec<u8> {
+        build_head(
+            ET_DYN,
+            0x1040,
+            &[
+                phdr(PT_LOAD, PF_R, 0, 0, 0x800, 0x800),
+                phdr(PT_LOAD, PF_R | PF_X, 0x1000, 0x1000, 0x2000, 0x2000),
+                phdr(PT_LOAD, PF_R, 0x3000, 0x3000, 0x800, 0x800),
+                phdr(PT_LOAD, PF_R | PF_W, 0x4000, 0x4000, 0x400, 0x3000),
+                phdr(PT_TLS, PF_R, 0x4000, 0x4000, 0x20, 0x50),
+                phdr(PT_GNU_STACK, PF_R | PF_W, 0, 0, 0, 0),
+            ],
+        )
+    }
+
+    /// 試験で使う、載せる側の決まり（ずらす量 0x40_0000、範囲は 0x40_0000 から 512 GiB、上限 32 MiB）。
+    const POLICY: LoadPolicy = LoadPolicy {
+        position_independent_base: 0x40_0000,
+        window: (0x40_0000, 0x80_0000_0000),
+        max_span: 32 * 1024 * 1024,
+    };
+
+    #[test]
+    fn a_static_pie_is_accepted_and_placed_at_the_base() {
+        let head = static_pie_head();
+        let headers = ElfHeaders::parse(&head, 0x5000).expect("the head is valid");
+        assert_eq!(headers.kind(), ElfKind::PositionIndependent);
+        assert_eq!(headers.load_segments().count(), 4);
+        headers.check_load_layout().expect("the layout is valid");
+
+        let plan = headers.plan(&POLICY).expect("it can be placed");
+        assert_eq!(plan.bias, 0x40_0000);
+        assert_eq!(plan.entry, 0x40_1040);
+        assert_eq!(plan.base, 0x40_0000);
+        assert_eq!(plan.end, 0x40_7000);
+        // 表は最初の区画に載っている（ファイルの 64 バイト目から）。
+        assert_eq!(plan.program_headers_at, Some(0x40_0040));
+        assert_eq!(plan.program_header_count, 6);
+    }
+
+    #[test]
+    fn an_executable_is_placed_without_a_bias() {
+        let head = build_head(
+            ET_EXEC,
+            0x40_1000,
+            &[phdr(PT_LOAD, PF_R | PF_X, 0, 0x40_0000, 0x2000, 0x2000)],
+        );
+        let headers = ElfHeaders::parse(&head, 0x2000).unwrap();
+        assert_eq!(headers.kind(), ElfKind::Executable);
+        let plan = headers.plan(&POLICY).unwrap();
+        assert_eq!(plan.bias, 0);
+        assert_eq!(plan.entry, 0x40_1000);
+        assert_eq!((plan.base, plan.end), (0x40_0000, 0x40_2000));
+    }
+
+    /// **[`Elf::parse`] と同じ像を、同じ理由で断る**（先頭の部分だけを見ても、確かめは緩まない）。
+    #[test]
+    fn the_head_parser_rejects_what_the_whole_file_parser_rejects() {
+        let good = static_pie_head();
+        assert!(ElfHeaders::parse(&good, 0x5000).is_ok());
+
+        assert_eq!(
+            ElfHeaders::parse(&good[..EHDR_SIZE - 1], 0x5000).unwrap_err(),
+            ElfError::TooShort
+        );
+        let mut bad = good.clone();
+        bad[0] = 0;
+        assert_eq!(
+            ElfHeaders::parse(&bad, 0x5000).unwrap_err(),
+            ElfError::BadMagic
+        );
+        let mut bad = good.clone();
+        bad[EI_CLASS_OFFSET] = 1;
+        assert_eq!(
+            ElfHeaders::parse(&bad, 0x5000).unwrap_err(),
+            ElfError::NotElf64
+        );
+        let mut bad = good.clone();
+        bad[EI_DATA_OFFSET] = 2;
+        assert_eq!(
+            ElfHeaders::parse(&bad, 0x5000).unwrap_err(),
+            ElfError::NotLittleEndian
+        );
+        let mut bad = good.clone();
+        patch_u16(&mut bad, E_MACHINE, 183);
+        assert_eq!(
+            ElfHeaders::parse(&bad, 0x5000).unwrap_err(),
+            ElfError::NotX86_64
+        );
+        let mut bad = good.clone();
+        patch_u16(&mut bad, E_PHENTSIZE, 55);
+        assert_eq!(
+            ElfHeaders::parse(&bad, 0x5000).unwrap_err(),
+            ElfError::BadProgramHeaderEntrySize
+        );
+        // 再配置可能なオブジェクト（ET_REL = 1）とコアダンプ（ET_CORE = 4）は断る。
+        for e_type in [0u16, 1, 4] {
+            let mut bad = good.clone();
+            patch_u16(&mut bad, E_TYPE, e_type);
+            assert_eq!(
+                ElfHeaders::parse(&bad, 0x5000).unwrap_err(),
+                ElfError::NotExecutableOrPositionIndependent,
+                "e_type {e_type}"
+            );
+        }
+        // 区画がファイルの外を指す（ファイルの長さを 1 バイト短く言う）。
+        assert_eq!(
+            ElfHeaders::parse(&good, 0x43ff).unwrap_err(),
+            ElfError::SegmentFileRangeOutOfBounds
+        );
+        // `p_memsz < p_filesz`。
+        let mut bad = good.clone();
+        patch_u64(&mut bad, TEST_PHDR_OFFSET + P_MEMSZ, 0x7ff);
+        assert_eq!(
+            ElfHeaders::parse(&bad, 0x5000).unwrap_err(),
+            ElfError::SegmentMemorySmallerThanFile
+        );
+        // `p_vaddr + p_memsz` があふれる。
+        let mut bad = good.clone();
+        patch_u64(&mut bad, TEST_PHDR_OFFSET + P_VADDR, u64::MAX - 0x10);
+        assert_eq!(
+            ElfHeaders::parse(&bad, 0x5000).unwrap_err(),
+            ElfError::SegmentAddressOverflow
+        );
+        // `p_offset + p_filesz` があふれる。
+        let mut bad = good.clone();
+        patch_u64(&mut bad, TEST_PHDR_OFFSET + P_OFFSET, u64::MAX - 0x10);
+        assert_eq!(
+            ElfHeaders::parse(&bad, 0x5000).unwrap_err(),
+            ElfError::SegmentFileRangeOutOfBounds
+        );
+    }
+
+    /// **表が「読んだ先頭の部分の外」に在ることと、「ファイルの外」に在ることを分ける。**
+    #[test]
+    fn a_table_beyond_the_head_is_told_apart_from_a_table_beyond_the_file() {
+        let good = static_pie_head();
+        // 表の途中までしか読んでいない（ファイルは十分に長い）。
+        assert_eq!(
+            ElfHeaders::parse(&good[..good.len() - 1], 0x5000).unwrap_err(),
+            ElfError::ProgramHeadersBeyondHead
+        );
+        // ファイルそのものが、表の終わりより短い。
+        assert_eq!(
+            ElfHeaders::parse(&good, good.len() as u64 - 1).unwrap_err(),
+            ElfError::ProgramHeaderOutOfBounds
+        );
+        // 表の位置があふれる。
+        let mut bad = good.clone();
+        patch_u64(&mut bad, E_PHOFF, u64::MAX - 8);
+        assert_eq!(
+            ElfHeaders::parse(&bad, 0x5000).unwrap_err(),
+            ElfError::ProgramHeaderOutOfBounds
+        );
+        // 先頭の部分がファイルより長く渡されても、ファイルの長さで切って扱う。
+        let mut long = good.clone();
+        long.resize(0x6000, 0xEE);
+        assert!(ElfHeaders::parse(&long, 0x5000).is_ok());
+    }
+
+    #[test]
+    fn an_image_that_asks_for_a_dynamic_linker_is_refused() {
+        let head = build_head(
+            ET_DYN,
+            0x1000,
+            &[
+                phdr(PT_INTERP, PF_R, 0x200, 0x200, 0x1c, 0x1c),
+                phdr(PT_LOAD, PF_R | PF_X, 0, 0, 0x2000, 0x2000),
+            ],
+        );
+        let headers = ElfHeaders::parse(&head, 0x2000).unwrap();
+        assert_eq!(headers.plan(&POLICY), Err(PlacementError::NeedsInterpreter));
+    }
+
+    /// **実行できるスタックを求める像は断る**（Linux は受け付ける。書けて実行もできる写像を作らない決まりのため）。
+    #[test]
+    fn an_image_that_asks_for_an_executable_stack_is_refused() {
+        let mut phdrs = vec![phdr(PT_LOAD, PF_R | PF_X, 0, 0, 0x2000, 0x2000)];
+        phdrs.push(phdr(PT_GNU_STACK, PF_R | PF_W | PF_X, 0, 0, 0, 0));
+        let head = build_head(ET_DYN, 0x1000, &phdrs);
+        let headers = ElfHeaders::parse(&head, 0x2000).unwrap();
+        assert_eq!(headers.plan(&POLICY), Err(PlacementError::ExecutableStack));
+        // 実行の印が無ければ受ける（`PT_GNU_STACK` が無い像も受ける）。
+        phdrs[1] = phdr(PT_GNU_STACK, PF_R | PF_W, 0, 0, 0, 0);
+        let head = build_head(ET_DYN, 0x1000, &phdrs);
+        assert!(ElfHeaders::parse(&head, 0x2000)
+            .unwrap()
+            .plan(&POLICY)
+            .is_ok());
+    }
+
+    #[test]
+    fn an_image_without_a_load_segment_cannot_be_placed() {
+        let head = build_head(ET_DYN, 0, &[phdr(PT_TLS, PF_R, 0, 0, 0, 0x10)]);
+        let headers = ElfHeaders::parse(&head, 0x1000).unwrap();
+        assert_eq!(headers.plan(&POLICY), Err(PlacementError::NoLoadSegment));
+    }
+
+    #[test]
+    fn a_segment_outside_the_window_is_refused() {
+        // `ET_EXEC` が、範囲の下（0x40_0000 より下）に区画を持つ。
+        let head = build_head(
+            ET_EXEC,
+            0x1000,
+            &[phdr(PT_LOAD, PF_R | PF_X, 0, 0x1000, 0x1000, 0x1000)],
+        );
+        let headers = ElfHeaders::parse(&head, 0x1000).unwrap();
+        assert_eq!(
+            headers.plan(&POLICY),
+            Err(PlacementError::OutsideWindow {
+                index: 0,
+                start: 0x1000,
+                end: 0x2000
+            })
+        );
+        // `ET_DYN` が、ずらすと範囲の上を越える。
+        let head = build_head(
+            ET_DYN,
+            0,
+            &[phdr(PT_LOAD, PF_R, 0, 0x7f_ffc0_0000, 0, 0x1000)],
+        );
+        let headers = ElfHeaders::parse(&head, 0x1000).unwrap();
+        assert!(matches!(
+            headers.plan(&POLICY),
+            Err(PlacementError::OutsideWindow { index: 0, .. })
+        ));
+    }
+
+    #[test]
+    fn a_bias_that_overflows_is_refused() {
+        // `p_vaddr + p_memsz` はあふれないが、ずらす量を足すとあふれる。
+        let head = build_head(
+            ET_DYN,
+            0,
+            &[phdr(PT_LOAD, PF_R, 0, u64::MAX - 0x2000, 0, 0x1000)],
+        );
+        let headers = ElfHeaders::parse(&head, 0x1000).unwrap();
+        assert_eq!(
+            headers.plan(&POLICY),
+            Err(PlacementError::AddressOverflow { index: 0 })
+        );
+        // 入口だけがあふれる。
+        let head = build_head(
+            ET_DYN,
+            u64::MAX - 0x10,
+            &[phdr(PT_LOAD, PF_R | PF_X, 0, 0, 0x1000, 0x1000)],
+        );
+        let headers = ElfHeaders::parse(&head, 0x1000).unwrap();
+        assert_eq!(headers.plan(&POLICY), Err(PlacementError::EntryOverflow));
+    }
+
+    /// **像の端から端までの上限**——ちょうどは通り、1 バイト越えると断る。
+    #[test]
+    fn the_image_span_is_bounded() {
+        let limit = POLICY.max_span;
+        let head = build_head(
+            ET_DYN,
+            0,
+            &[
+                phdr(PT_LOAD, PF_R | PF_X, 0, 0, 0x1000, 0x1000),
+                phdr(PT_LOAD, PF_R | PF_W, 0x1000, 0x1000, 0, limit - 0x1000),
+            ],
+        );
+        let headers = ElfHeaders::parse(&head, 0x1000).unwrap();
+        assert_eq!(headers.plan(&POLICY).unwrap().end, 0x40_0000 + limit);
+        let head = build_head(
+            ET_DYN,
+            0,
+            &[
+                phdr(PT_LOAD, PF_R | PF_X, 0, 0, 0x1000, 0x1000),
+                phdr(PT_LOAD, PF_R | PF_W, 0x1000, 0x1000, 0, limit - 0x1000 + 1),
+            ],
+        );
+        let headers = ElfHeaders::parse(&head, 0x1000).unwrap();
+        assert_eq!(
+            headers.plan(&POLICY),
+            Err(PlacementError::ImageTooLarge {
+                span: limit + 1,
+                limit
+            })
+        );
+    }
+
+    /// **プログラムヘッダの表の番地**——`PT_PHDR` が在ればそれを、無ければ表を覆う区画から導く。どの区画にも
+    /// 載っていなければ `None`。
+    #[test]
+    fn the_program_header_address_comes_from_pt_phdr_or_the_covering_segment() {
+        // `PT_PHDR` が在る。
+        let head = build_head(
+            ET_DYN,
+            0x1000,
+            &[
+                phdr(PT_PHDR, PF_R, 0x40, 0x9040, 0x70, 0x70),
+                phdr(PT_LOAD, PF_R | PF_X, 0, 0x9000, 0x2000, 0x2000),
+            ],
+        );
+        let plan = ElfHeaders::parse(&head, 0x2000)
+            .unwrap()
+            .plan(&POLICY)
+            .unwrap();
+        assert_eq!(plan.program_headers_at, Some(0x40_9040));
+        // 表を覆う区画が無い（区画がファイルの 0x1000 から始まる）。
+        let head = build_head(
+            ET_DYN,
+            0x1000,
+            &[phdr(PT_LOAD, PF_R | PF_X, 0x1000, 0x1000, 0x1000, 0x1000)],
+        );
+        let plan = ElfHeaders::parse(&head, 0x2000)
+            .unwrap()
+            .plan(&POLICY)
+            .unwrap();
+        assert_eq!(plan.program_headers_at, None);
+    }
+
+    /// **並びの確かめは、ヘッダだけの入口からも同じものが効く**（書けて実行もできる区画を断る）。
+    #[test]
+    fn the_layout_rules_apply_to_the_head_parser_too() {
+        let head = build_head(
+            ET_DYN,
+            0,
+            &[phdr(PT_LOAD, PF_R | PF_W | PF_X, 0, 0, 0x1000, 0x1000)],
+        );
+        let headers = ElfHeaders::parse(&head, 0x1000).unwrap();
+        assert_eq!(
+            headers.check_load_layout(),
+            Err(LayoutError::WritableAndExecutable { index: 0 })
+        );
+    }
+
+    /// **どんなバイト列でもパニックしない。** 正しい先頭の部分の 1 バイトを、全部の位置で、いくつかの値に
+    /// 書き換えて通す（結果は問わない。落ちないことだけを見る）。
+    #[test]
+    fn the_head_parser_never_panics_on_corrupted_heads() {
+        let good = static_pie_head();
+        for at in 0..good.len() {
+            for value in [0x00u8, 0x01, 0x7f, 0x80, 0xff] {
+                let mut bad = good.clone();
+                bad[at] = value;
+                for file_len in [0u64, 63, 64, good.len() as u64, 0x5000, u64::MAX] {
+                    if let Ok(headers) = ElfHeaders::parse(&bad, file_len) {
+                        let _ = headers.check_load_layout();
+                        let _ = headers.plan(&POLICY);
+                    }
+                }
+            }
         }
     }
 }
