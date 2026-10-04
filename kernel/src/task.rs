@@ -68,8 +68,8 @@ const MAIN_TASK: usize = 0;
 /// を明文の規則にしている**（`task/scheduler.rs` の doc）。**512 バイトの領域は
 /// 参照で渡すしかない**ので、規則に触れずに置ける場所がここになる。
 /// **触るのは [`schedule_switch`] だけで、そこは IF=0 かつ BKL の内側である。**
-static mut FP_AREAS: [crate::arch::x86_64::FpArea; TASK_COUNT] =
-    [crate::arch::x86_64::FpArea::fresh(); TASK_COUNT];
+static mut FP_AREAS: [crate::arch::x86_64::UserRegisters; TASK_COUNT] =
+    [crate::arch::x86_64::UserRegisters::fresh(); TASK_COUNT];
 
 /// AP 用アイドルタスクの添字（S4-c-2）。AP の既定タスクである（S4-c-3-1）。
 ///
@@ -2437,13 +2437,23 @@ fn schedule_switch(current_sp: u64) -> u64 {
         // SAFETY: IF=0 かつ BKL の内側で、この配列に触るのはここだけである。
         // 添字は `current` と `next` で、どちらも `TASK_COUNT` 未満である
         // （`pick_next` と `current_index` の値域）。
+        //
+        // **FS と GS の基底も、同じ 1 点で入れ替える**（2026-10-05。`arch` の `UserRegisters`）。**置き場の名前は
+        // `FP_AREAS` のままだが、中身は「ユーザーの実行の文脈が持つレジスタ」の組である。**
         unsafe {
             let areas = &mut *core::ptr::addr_of_mut!(FP_AREAS);
-            crate::arch::x86_64::save_fp_state(&mut areas[current]);
+            crate::arch::x86_64::save_user_registers(&mut areas[current]);
             // 破壊テスト (W1-c-4, fp-switch-no-restore): 載せない（保存は残す）。**入ったタスクが出た側の
             // XMM の値のまま走る。**
-            #[cfg(not(feature = "fp-switch-no-restore"))]
-            crate::arch::x86_64::restore_fp_state(&areas[next]);
+            // 破壊テスト (2026-10-05, fs-base-switch-no-restore): FP だけを載せ、基底を載せない。**入ったタスクが、
+            // 出た側の FS の基底のまま走る。**
+            #[cfg(all(
+                not(feature = "fp-switch-no-restore"),
+                not(feature = "fs-base-switch-no-restore")
+            ))]
+            crate::arch::x86_64::restore_user_registers(&areas[next]);
+            #[cfg(feature = "fs-base-switch-no-restore")]
+            crate::arch::x86_64::restore_fp_state(areas[next].fp());
         }
 
         set_current_index(next);

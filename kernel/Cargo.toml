@@ -545,6 +545,18 @@ syscall-stub-keeps-user-stack-test = []
 bsp-skips-syscall-entry-test = []
 # AP で `syscall` 命令の入口を据えない。BSP が AP の控えを比べて、AP を名指しして止まる。
 ap-skips-syscall-entry-test = []
+# FS・GS の基底の保存と復元の破壊テスト（2026-10-05）。
+# タスクの切り替えで、基底を載せない。入ったタスクが、出た側の FS の基底のまま走る（2 本を同時に走らせる検査が見る）。
+fs-base-switch-no-restore = []
+# プログラムを走らせる直前に、基底を 0 に戻さない。子が、親の基底のまま始まる。
+fs-base-spawn-no-fresh = []
+# 子から戻ったときに、親の基底を戻さない。親が、子の基底のまま走り続ける。
+fs-base-spawn-no-restore = []
+# arch_prctl が、基底にする番地を確かめない。カーネルの番地や正準でない番地が、そのまま通る。本物の石では
+# 正準でない値の書き込みがカーネルの中で #GP になるが、QEMU の TCG は例外にしない（実測）。
+arch-prctl-skips-address-check = []
+# arch_prctl の ARCH_GET_FS が、レジスタを読まずに 0 を返す。
+arch-prctl-get-fs-returns-zero = []
 # `#MF`（ベクタ16）を畳めなくする（`ADR-0058`）。Ring 3 の浮動小数点の
 # 例外で、カーネルが止まる形へ戻る。
 fp-mf-not-foldable-test = []

@@ -651,6 +651,43 @@ pub unsafe fn write_system_call_msrs(msrs: SystemCallMsrs) -> bool {
     true
 }
 
+/// FS と GS の基底の MSR（Intel SDM Vol.4 の表 2-2）。**長モードの CPU には必ず在る。**
+const IA32_FS_BASE: u32 = 0xC000_0100;
+const IA32_GS_BASE: u32 = 0xC000_0101;
+
+/// FS の基底を読む。
+pub fn read_fs_base() -> u64 {
+    // SAFETY: `IA32_FS_BASE` は長モードの CPU に必ず在る（このコードは長モードでしか走らない）。読むだけである。
+    unsafe { read_msr(IA32_FS_BASE) }
+}
+
+/// GS の基底を読む。
+pub fn read_gs_base() -> u64 {
+    // SAFETY: `IA32_GS_BASE` は長モードの CPU に必ず在る。読むだけである。
+    unsafe { read_msr(IA32_GS_BASE) }
+}
+
+/// FS の基底を書く。
+///
+/// # Safety
+///
+/// - `value` が正準な番地であること。**正準でない値を書くと `#GP` になる。**
+/// - 走っているコードが、FS を通した番地の指定に頼っていないこと（基底が変わると、指す先が変わる）。
+pub unsafe fn write_fs_base(value: u64) {
+    // SAFETY: 呼び出し側の契約。MSR は長モードの CPU に必ず在る。
+    unsafe { write_msr(IA32_FS_BASE, value) }
+}
+
+/// GS の基底を書く。
+///
+/// # Safety
+///
+/// [`write_fs_base`] と同じ（GS について）。
+pub unsafe fn write_gs_base(value: u64) {
+    // SAFETY: 呼び出し側の契約。MSR は長モードの CPU に必ず在る。
+    unsafe { write_msr(IA32_GS_BASE, value) }
+}
+
 /// CPU が Local APIC を持つか（`CPUID.01H:EDX[9]`）。
 ///
 /// **`IA32_APIC_BASE` を読む前に確かめる。** Local APIC を持たない CPU では

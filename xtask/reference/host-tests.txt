@@ -386,6 +386,8 @@ kernel::arch::x86_64::stack::tests::the_entry_ist_block_puts_each_stack_directly
 kernel::arch::x86_64::stack::tests::the_guards_are_a_multiple_of_the_alignment
 kernel::arch::x86_64::stack::tests::the_kernel_guard_is_exactly_one_aligned_page
 kernel::arch::x86_64::stack::tests::the_stacks_are_a_multiple_of_the_required_alignment
+kernel::arch::x86_64::user_registers::tests::a_fresh_context_has_no_segment_bases
+kernel::arch::x86_64::user_registers::tests::only_user_addresses_may_become_a_segment_base
 kernel::boot::tests::the_end_of_boot_is_announced_exactly_once
 kernel::console::dirty::tests::a_fully_offscreen_update_is_ignored
 kernel::console::dirty::tests::a_new_region_has_nothing_to_transfer

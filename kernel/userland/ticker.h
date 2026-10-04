@@ -9,10 +9,16 @@
  *
  * **判定は行の順序ではなく内容で見る。** 終わりに 1 行出す。
  *
- *   ticker X done rounds=N name_ok=true sum_ok=true
+ *   ticker X done rounds=N name_ok=true tls_ok=true sum_ok=true
  *
  *   name_ok  自分の `.data` の名前が、書いた値のままだった（CR3 の入れ替え）
+ *   tls_ok   FS の基底が、自分が入れた番地のままだった（FS の基底の入れ替え。2026-10-05）
  *   sum_ok   途中の和が毎周期待値どおりだった（FP の入れ替え）
+ *
+ * **FS の基底は、2 本で違う番地にする**——**2 本は同じ本体なので、同じ番地を入れると、入れ替えを省いても値が
+ * 揃って見える。** `A` は配列の 0 番目、`B` は 1 番目を指す。**毎周、基底をカーネルに訊いて比べる**
+ * （`arch_prctl` の `ARCH_GET_FS`）。訊いた番地が自分のものなら、`fs:0` から目印も読む。**先に訊くのは、基底が
+ * 別の番地（0 を含む）のまま `fs:0` を読むと、ページフォルトで終わってしまい、判定の行が出なくなるからである。**
  *
  * **足す量を 2 本で変える**——**同じ量だと、入れ替えを省いても値が揃って見えうる。**
  *
@@ -27,9 +33,33 @@
  * 比較を畳みうる。** **畳まれると、空間を取り違えても `name_ok` は真のままである。** */
 static volatile char ticker_name[8] = "?";
 
+/* FS の基底の先に置く語（2026-10-05）。**2 本で別の要素を使う**（上の説明）。 */
+static volatile unsigned long ticker_tls[2];
+
+#define TICKER_ARCH_PRCTL 158
+#define TICKER_ARCH_SET_FS 0x1002
+#define TICKER_ARCH_GET_FS 0x1003
+
+static long ticker_arch_prctl(long code, unsigned long address) {
+    long result;
+    __asm__ volatile("int $0x80"
+                     : "=a"(result)
+                     : "a"((long)TICKER_ARCH_PRCTL), "D"(code), "S"(address)
+                     : "rcx", "r11", "memory");
+    return result;
+}
+
 int main(void) {
     const char me = TICKER_NAME;
     ticker_name[0] = me;
+
+    /* 自分の要素へ目印を書き、その番地を FS の基底にする。もう片方の要素には、違う値を置く。 */
+    const int tls_index = (me == 'A') ? 0 : 1;
+    const unsigned long tls_mark = 0x7150000000000000UL | (unsigned long)me;
+    ticker_tls[tls_index] = tls_mark;
+    ticker_tls[1 - tls_index] = ~tls_mark;
+    const unsigned long tls_base = (unsigned long)&ticker_tls[tls_index];
+    int tls_ok = ticker_arch_prctl(TICKER_ARCH_SET_FS, tls_base) == 0;
 
     /* **2 進で割り切れる量にして、和を厳密に比べる。** */
     const double step = TICKER_STEP;
@@ -44,6 +74,16 @@ int main(void) {
         if (ticker_name[0] != me) {
             name_ok = 0;
         }
+        unsigned long base_now = 0;
+        if (ticker_arch_prctl(TICKER_ARCH_GET_FS, (unsigned long)&base_now) != 0 || base_now != tls_base) {
+            tls_ok = 0;
+        } else {
+            unsigned long through_fs;
+            __asm__ volatile("movq %%fs:0, %0" : "=r"(through_fs));
+            if (through_fs != tls_mark) {
+                tls_ok = 0;
+            }
+        }
         if (accumulator != step * (double)TICKER_ADDS_PER_ROUND * (double)(done + 1)) {
             sum_ok = 0;
         }
@@ -57,6 +97,11 @@ int main(void) {
         write(STDOUT, " name_ok=true", 13);
     } else {
         write(STDOUT, " name_ok=false", 14);
+    }
+    if (tls_ok) {
+        write(STDOUT, " tls_ok=true", 12);
+    } else {
+        write(STDOUT, " tls_ok=false", 13);
     }
     puts(sum_ok ? " sum_ok=true" : " sum_ok=false");
 

@@ -553,6 +553,34 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
+    // **`arch_prctl` の破壊テスト 2 つ**（2026-10-05）。**起動時の `syscall-test` の 72 番から 78 番が見る。**
+    //
+    // **基底にする番地を確かめない。** **正準でない番地が、断られずに通る**——`syscall-test` が 75 番で終わる。
+    //
+    // **QEMU の TCG は、正準でない値を基底の MSR へ書いても例外にしない**（実測。2026-10-05）。**本物の石では、
+    // その書き込みがカーネルの中で一般保護例外になる**（SDM の WRMSR の記述。この環境では確かめられない）。
+    // **だから、この破壊テストが QEMU で見るのは「確かめが働いていない」ことである**——`-EPERM` が返らない。
+    CriticalTest {
+        name: "arch-prctl-skips-address-check",
+        feature: "arch-prctl-skips-address-check",
+        expected_markers: &[
+            "user-run: syscall-test exited with status 75, expected 0 (a non-canonical address was accepted as a segment base, or it changed the base)",
+        ],
+        forbidden_markers: &[],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // **基底を訊かれて、レジスタを読まずに 0 を返す。** `syscall-test` が 73 番で終わる。
+    CriticalTest {
+        name: "arch-prctl-get-fs-returns-zero",
+        feature: "arch-prctl-get-fs-returns-zero",
+        expected_markers: &[
+            "user-run: syscall-test exited with status 73, expected 0 (arch_prctl did not report the FS base that was set)",
+        ],
+        forbidden_markers: &[],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
     // **全ゲートの飛び先の監視（2026-09-24。`ADR-0018` の Addendum 9）。** **測定用 IPI のスタブが
     // 共通の入口を飛ばす。** **ゲートはスタブを指したままなので、ゲートの検査は通り、sti-check 3b
     // だけが落ちて sti を断る。**
@@ -5156,6 +5184,9 @@ const FP_TEST_SABOTAGES: &[&str] = &[
     "fp-no-fresh-state",
     "fp-spawn-no-save",
     "fp-mf-not-foldable-test",
+    // **FS の基底の、子の起動の前後**（2026-10-05）。
+    "fs-base-spawn-no-fresh",
+    "fs-base-spawn-no-restore",
 ];
 
 /// `concurrent-test` を「通らないこと」で実行する破壊テスト（W1-c-4。`ADR-0060`）。
@@ -5169,6 +5200,8 @@ const FP_TEST_SABOTAGES: &[&str] = &[
 /// `foreground-claimable-from-any-slot` は、それぞれその判定だけを落とす形である。**
 const CONCURRENT_TEST_SABOTAGES: &[&str] = &[
     "fp-switch-no-restore",
+    // **FS の基底の、タスクの切り替え**（2026-10-05）。
+    "fs-base-switch-no-restore",
     "task-switch-keep-recovery",
     "task-switch-no-cr3",
     "ring3-slot-always-zero",
@@ -7483,6 +7516,27 @@ const SABOTAGE_JUDGEMENTS: &[NamedJudgement] = &[
         key: "wait-window-is-wide",
         signs: &["a reaped child can be started again = false", "the first wait line was None"],
         note: "the wake is lost in the widened window, so the first wait's line is absent (None is the observation here)",
+        reached: true,
+    },
+    NamedJudgement {
+        check: "concurrent test",
+        key: "fs-base-switch-no-restore",
+        signs: &["each program kept its own fs base = false"],
+        note: "",
+        reached: true,
+    },
+    NamedJudgement {
+        check: "fp test",
+        key: "fs-base-spawn-no-fresh",
+        signs: &["a freshly started program has no fs base = false"],
+        note: "",
+        reached: true,
+    },
+    NamedJudgement {
+        check: "fp test",
+        key: "fs-base-spawn-no-restore",
+        signs: &["the parent kept its fs base across spawn = false"],
+        note: "",
         reached: true,
     },
     NamedJudgement {
@@ -12298,6 +12352,26 @@ fn cmd_fp_test(features: &[&str], expect_pass: bool) -> Result<()> {
     // **計測**——**TCG が `#XM` を配送しないことを、出力に残しておく。**
     let simd_did_not_fire = stripped.contains("the SIMD exception did not fire");
 
+    // **判定 6**——**新しく始まったプログラムは、FS の基底を持たない**（2026-10-05）。**親は基底を入れてから子を
+    // 起動する。** 子が訊いた基底が 0 であることを見る（子が走るのは、`init` が起動した回の 1 本だけである）。
+    let child_bases: Vec<&str> = stripped
+        .lines()
+        .map(|line| line.trim())
+        .filter(|line| line.starts_with("fp: child fs base at start = "))
+        .collect();
+    let child_started_without_fs_base =
+        child_bases.len() == 1 && child_bases[0].ends_with("0x0000000000000000");
+    // **判定 7**——**子の起動を跨いで、親の FS の基底が残る**（2026-10-05）。**子は、自分の番地を基底に入れて終わる。**
+    // 1 本目（子が走った回）が主張を担う。
+    let parent_bases: Vec<&str> = stripped
+        .lines()
+        .map(|line| line.trim())
+        .filter(|line| line.starts_with("fp: fs base after spawn kept = "))
+        .collect();
+    let parent_kept_fs_base = parent_bases
+        .first()
+        .is_some_and(|line| line.ends_with("= true"));
+
     // **合図**——**子が走っていなければ、判定 3 は何も主張していない。**
     let child_ran = stripped.matches("fpchild: clobbered xmm0").count() == 1;
 
@@ -12319,6 +12393,14 @@ fn cmd_fp_test(features: &[&str], expect_pass: bool) -> Result<()> {
          kernel = {folded_the_fp_fault} (the script ran to the end = {script_finished})"
     );
     println!("{context}: single-stepping itself folded the program too = {folded_the_debug_fault}");
+    println!(
+        "{context}: a freshly started program has no fs base = {child_started_without_fs_base} \
+         (the lines were {child_bases:?})"
+    );
+    println!(
+        "{context}: the parent kept its fs base across spawn = {parent_kept_fs_base} (the lines \
+         were {parent_bases:?})"
+    );
     println!(
         "{context}: (info) QEMU's TCG did not deliver #XM, so only #MF is observed here = \
          {simd_did_not_fire}"
@@ -12355,6 +12437,8 @@ fn cmd_fp_test(features: &[&str], expect_pass: bool) -> Result<()> {
         && parent_kept_xmm0
         && folded_the_fp_fault
         && folded_the_debug_fault
+        && child_started_without_fs_base
+        && parent_kept_fs_base
         && script_finished;
 
     if passed {
@@ -12570,6 +12654,10 @@ fn cmd_concurrent_test(features: &[&str], expect_pass: bool) -> Result<()> {
     // **判定 5**——FP を入れ替える。
     let fp_kept_apart = done_a.is_some_and(|line| line.ends_with(" sum_ok=true"))
         && done_b.is_some_and(|line| line.ends_with(" sum_ok=true"));
+    // **FS の基底を取り違えない**（2026-10-05）。**2 本は、違う番地を基底に入れ、毎周カーネルに訊いて比べる**
+    // （`kernel/userland/ticker.h`）。**切り替えで基底を入れ替えなければ、片方が、もう片方の基底のまま走る。**
+    let fs_base_kept_apart = done_a.is_some_and(|line| line.contains(" tls_ok=true "))
+        && done_b.is_some_and(|line| line.contains(" tls_ok=true "));
 
     // **判定 6**——起こしっぱなしは前景を取らない。
     // **回数を固定しない**——**(b2) で 2 本目を起動し直すようにしたので、1 で書くと動く**
@@ -12636,6 +12724,7 @@ fn cmd_concurrent_test(features: &[&str], expect_pass: bool) -> Result<()> {
          switch = {cr3_loads:?})"
     );
     println!("{context}: each program kept its own floating-point state = {fp_kept_apart}");
+    println!("{context}: each program kept its own fs base = {fs_base_kept_apart}");
     println!(
         "{context}: the detached program was refused the foreground once per start = \
          {foreground_refused_once} (refused {refused:?} time(s) for {detached_starts} start(s))"
@@ -12663,6 +12752,7 @@ fn cmd_concurrent_test(features: &[&str], expect_pass: bool) -> Result<()> {
         && recoveries_kept_apart
         && spaces_kept_apart
         && fp_kept_apart
+        && fs_base_kept_apart
         && foreground_refused_once
         && reaped_child_can_restart
         && stale_handle_refused
@@ -31578,7 +31668,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 62,
-    full: 473,
+    full: 478,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

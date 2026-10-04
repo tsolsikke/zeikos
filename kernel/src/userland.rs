@@ -1961,11 +1961,25 @@ unsafe fn run_loaded_program(
     // **前のプログラムが XMM へ残した値が、次のプログラムから読めてはならない。**
     //
     // 破壊テストでの確認: `fp-no-fresh-state` では戻さない。**前の値がそのまま見える。**
-    #[cfg(not(feature = "fp-no-fresh-state"))]
-    // SAFETY: [`crate::arch::x86_64::FpArea::fresh`] は `fxsave` の形に沿った並びで、
-    // MXCSR も予約ビットを立てていない（`#GP` にならない）。
+    //
+    // **FS と GS の基底も、0 から始める**（2026-10-05。`arch` の `UserRegisters`）。**新しいプログラムは、前の
+    // プログラム（子なら、親）のスレッドローカルの領域を指さずに始まる。**
+    //
+    // 破壊テストでの確認: `fs-base-spawn-no-fresh` では、FP だけを戻して基底を戻さない。**子が、親の基底のまま
+    // 始まる。**
+    #[cfg(all(
+        not(feature = "fp-no-fresh-state"),
+        not(feature = "fs-base-spawn-no-fresh")
+    ))]
+    // SAFETY: [`crate::arch::x86_64::UserRegisters::fresh`] の FP は `fxsave` の形に沿った並びで、
+    // MXCSR も予約ビットを立てていない（`#GP` にならない）。基底は 0 で、正準な番地である。
     unsafe {
-        crate::arch::x86_64::restore_fp_state(&crate::arch::x86_64::FpArea::fresh())
+        crate::arch::x86_64::restore_user_registers(&crate::arch::x86_64::UserRegisters::fresh())
+    };
+    #[cfg(feature = "fs-base-spawn-no-fresh")]
+    // SAFETY: 上と同じ（FP の部分だけを戻す）。
+    unsafe {
+        crate::arch::x86_64::restore_fp_state(crate::arch::x86_64::UserRegisters::fresh().fp())
     };
     // **カーネルスタックの高水位を、Ring 3 へ落ちる直前にも出す**（`ADR-0068` の (c)。
     // 運用者の決定。2026-09-23）。
@@ -2507,11 +2521,14 @@ pub fn spawn(
     //
     // 破壊テストでの確認: `fp-spawn-no-save` では控えない。**親が `spawn` を跨いで
     // 浮動小数点の値を保てなくなる。**
+    //
+    // **FS と GS の基底も、一緒に控える**（2026-10-05。`arch` の `UserRegisters`）。子は基底を 0 から始め、
+    // 自分で入れ直しうる。
     #[cfg(not(feature = "fp-spawn-no-save"))]
     let parent_fp = {
-        let mut area = crate::arch::x86_64::FpArea::fresh();
+        let mut area = crate::arch::x86_64::UserRegisters::fresh();
         // SAFETY: 単一の実行文脈で、この領域はこの関数の中にしかない。
-        unsafe { crate::arch::x86_64::save_fp_state(&mut area) };
+        unsafe { crate::arch::x86_64::save_user_registers(&mut area) };
         area
     };
 
@@ -2520,10 +2537,24 @@ pub fn spawn(
 
     // **親の FP の状態を戻す。** **子が XMM に残したものを消す**ので、
     // 情報の漏れも同時に塞がる（決定 4 と同じ向きである）。
-    #[cfg(not(feature = "fp-spawn-no-save"))]
-    // SAFETY: `parent_fp` は直前に `fxsave` が書いた 512 バイトである。
+    //
+    // 破壊テストでの確認: `fs-base-spawn-no-restore` では、FP だけを戻して基底を戻さない。**親が、子の基底
+    // （子が入れていなければ 0）のまま走り続ける。**
+    #[cfg(all(
+        not(feature = "fp-spawn-no-save"),
+        not(feature = "fs-base-spawn-no-restore")
+    ))]
+    // SAFETY: `parent_fp` は、直前に `save_user_registers` が書いたものである。
     unsafe {
-        crate::arch::x86_64::restore_fp_state(&parent_fp)
+        crate::arch::x86_64::restore_user_registers(&parent_fp)
+    };
+    #[cfg(all(
+        not(feature = "fp-spawn-no-save"),
+        feature = "fs-base-spawn-no-restore"
+    ))]
+    // SAFETY: `parent_fp` の FP の部分は、直前に `fxsave` が書いた 512 バイトである。
+    unsafe {
+        crate::arch::x86_64::restore_fp_state(parent_fp.fp())
     };
 
     // **子の終わり方をここで読む。** 戻す前に読まなければ、親のもので上書きされる。

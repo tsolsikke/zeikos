@@ -36,10 +36,11 @@ use core::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use common::addr::{DirectMap, PhysAddr};
 
 use crate::abi::linux::x86_64::{
-    stat_bytes, STAT_LEN, SYS_ACCEPT, SYS_BIND, SYS_BRK, SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT,
-    SYS_EXIT, SYS_FTRUNCATE, SYS_GETDENTS64, SYS_IOCTL, SYS_LISTEN, SYS_LSEEK, SYS_MEMFD_CREATE,
-    SYS_MKDIR, SYS_MMAP, SYS_NANOSLEEP, SYS_OPEN, SYS_POLL, SYS_READ, SYS_RECVMSG, SYS_RMDIR,
-    SYS_SENDMSG, SYS_SOCKET, SYS_STAT, SYS_UNLINK, SYS_WRITE,
+    stat_bytes, ARCH_GET_FS, ARCH_GET_GS, ARCH_SET_FS, ARCH_SET_GS, STAT_LEN, SYS_ACCEPT,
+    SYS_ARCH_PRCTL, SYS_BIND, SYS_BRK, SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT, SYS_EXIT,
+    SYS_FTRUNCATE, SYS_GETDENTS64, SYS_IOCTL, SYS_LISTEN, SYS_LSEEK, SYS_MEMFD_CREATE, SYS_MKDIR,
+    SYS_MMAP, SYS_NANOSLEEP, SYS_OPEN, SYS_POLL, SYS_READ, SYS_RECVMSG, SYS_RMDIR, SYS_SENDMSG,
+    SYS_SOCKET, SYS_STAT, SYS_UNLINK, SYS_WRITE,
 };
 use crate::abi::linux::{
     cmsg_one_fd_bytes, dirent64_record, dirent64_record_len, fb_fix_screeninfo_bytes,
@@ -871,6 +872,10 @@ unsafe fn dispatch(
             unsafe { sys_brk(args[0], direct_map) }
         }
         SYS_LSEEK => sys_lseek(args[0], args[1], args[2]),
+        SYS_ARCH_PRCTL => {
+            // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+            unsafe { sys_arch_prctl(args[0], args[1], page_table_root, direct_map) }
+        }
         SYS_CLOCK_GETTIME => {
             // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
             unsafe { sys_clock_gettime(args[0], args[1], page_table_root, direct_map) }
@@ -4197,6 +4202,60 @@ unsafe fn sys_clock_gettime(
     };
     // SAFETY: slice は検証済みで、長さは TIMESPEC_LEN ちょうどである。
     unsafe { copy_to_user(&slice, 0, &buf) };
+    0
+}
+
+/// `arch_prctl(code, address)` の本体（2026-10-05）。**FS と GS の基底を、入れる・訊く。**
+///
+/// Linux 向けの libc は、起動の途中で `ARCH_SET_FS` を呼び、スレッドローカルの領域（TLS）の番地を FS の基底に
+/// 入れる。**基底は「ユーザーの実行の文脈が持つレジスタ」で、切り替えと、子の起動の前後で保存・復元される**
+/// （`arch` の `user_registers`）。
+///
+/// - `ARCH_SET_FS`・`ARCH_SET_GS`: `address` を基底にする。**ユーザーの範囲の正準な番地でなければ `-EPERM`**
+///   （Linux と同じ値。カーネルの番地と、正準でない番地を断る）。
+/// - `ARCH_GET_FS`・`ARCH_GET_GS`: 今の基底を、`address` の指す 8 バイトへ書く。**書けない番地なら `-EFAULT`。**
+/// - それ以外の `code`: `-EINVAL`（Linux には、影のスタックなどの `code` も在る。受けていない）。
+///
+/// **GS も、ユーザーに使わせる。** カーネルは GS を使わず、`swapgs` も無いので、ユーザーの GS の基底はカーネルの
+/// 動きに関わらない。
+///
+/// # Safety
+///
+/// `page_table_root` / `direct_map` が稼働中のテーブルのものであること（遠征の中で呼ぶ）。
+unsafe fn sys_arch_prctl(
+    code: u64,
+    address: u64,
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+) -> u64 {
+    let read = match code {
+        ARCH_SET_FS => {
+            return if crate::arch::x86_64::set_user_fs_base(address) {
+                0
+            } else {
+                (-EPERM) as u64
+            };
+        }
+        ARCH_SET_GS => {
+            return if crate::arch::x86_64::set_user_gs_base(address) {
+                0
+            } else {
+                (-EPERM) as u64
+            };
+        }
+        ARCH_GET_FS => crate::arch::x86_64::user_fs_base(),
+        ARCH_GET_GS => crate::arch::x86_64::user_gs_base(),
+        _ => return (-EINVAL) as u64,
+    };
+    // **踏み込む前に検証する。**
+    // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+    let Some(slice) =
+        (unsafe { validate_user_range_for_write(page_table_root, direct_map, address, 8) })
+    else {
+        return (-EFAULT) as u64;
+    };
+    // SAFETY: slice は検証済みで、長さは 8 ちょうどである。
+    unsafe { copy_to_user(&slice, 0, &read.to_le_bytes()) };
     0
 }
 

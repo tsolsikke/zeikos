@@ -8934,6 +8934,22 @@ const SYSCALL_TEST_STATUS: &[(u64, &str)] = &[
         71,
         "mmap asking for PROT_EXEC did not return -EPERM",
     ),
+    (
+        72,
+        "arch_prctl could not set the FS base, or the value behind it could not be read through it",
+    ),
+    (73, "arch_prctl did not report the FS base that was set"),
+    (74, "the GS base could not be set, read through or reported"),
+    (
+        75,
+        "a non-canonical address was accepted as a segment base, or it changed the base",
+    ),
+    (76, "a kernel address was accepted as a segment base"),
+    (77, "an unknown arch_prctl code did not return -EINVAL"),
+    (
+        78,
+        "arch_prctl did not return -EFAULT for a destination it cannot write",
+    ),
 ];
 
 /// `fault-test` が起こす #PF のエラーコード（S9-b-3-2a）。
@@ -12600,6 +12616,31 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "ap-skips-syscall-entry-test",
         cfg!(feature = "ap-skips-syscall-entry-test"),
         "起こした CPU で、命令の入口を据えない",
+    ),
+    (
+        "fs-base-switch-no-restore",
+        cfg!(feature = "fs-base-switch-no-restore"),
+        "タスクの切り替えで、スレッドローカルの領域の基底を載せない",
+    ),
+    (
+        "fs-base-spawn-no-fresh",
+        cfg!(feature = "fs-base-spawn-no-fresh"),
+        "プログラムを走らせる直前に、スレッドローカルの領域の基底を 0 に戻さない",
+    ),
+    (
+        "fs-base-spawn-no-restore",
+        cfg!(feature = "fs-base-spawn-no-restore"),
+        "子から戻ったときに、親のスレッドローカルの領域の基底を戻さない",
+    ),
+    (
+        "arch-prctl-skips-address-check",
+        cfg!(feature = "arch-prctl-skips-address-check"),
+        "arch_prctl が、基底にする番地を確かめない",
+    ),
+    (
+        "arch-prctl-get-fs-returns-zero",
+        cfg!(feature = "arch-prctl-get-fs-returns-zero"),
+        "arch_prctl が、基底を訊かれて 0 を返す",
     ),
     (
         "ap-entry-stack-shifted-test",

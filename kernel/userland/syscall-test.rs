@@ -111,6 +111,13 @@
 //! - `67` `memfd_create`＋`ftruncate`＋`mmap` した共有メモリへ書いた値が読み戻せなかった（`ADR-0065`）
 //! - `68` 共有メモリでない fd（stdin）の `mmap` が `-EBADF` を返さなかった（`ADR-0065`）
 //! - `71` 実行できる保護（`PROT_EXEC`）を求めた `mmap` が `-EPERM` を返さなかった（2026-10-03）
+//! - `72` `arch_prctl(ARCH_SET_FS)` が 0 を返さなかった、または `fs:0` から、基底の先に置いた値が読めなかった（2026-10-05）
+//! - `73` `arch_prctl(ARCH_GET_FS)` が、入れた基底を返さなかった
+//! - `74` GS で同じこと（`ARCH_SET_GS`・`gs:0`・`ARCH_GET_GS`）ができなかった
+//! - `75` 正準でない番地を基底にする求めが `-EPERM` を返さなかった、または基底が変わってしまった
+//! - `76` カーネルの番地を基底にする求めが `-EPERM` を返さなかった
+//! - `77` 知らない `code` が `-EINVAL` を返さなかった
+//! - `78` 書けない番地を渡した `ARCH_GET_FS` が `-EFAULT` を返さなかった
 //! - `69` 方向フラグを立てたまま打った `clock_gettime` が 0 を返さなかった（2026-09-24。
 //!   **判定の本体はカーネルの入口の監視である**——こちらは前提を作り、戻り値だけを見る）
 //! - `70` 読み込み先が読み取り専用のページ（このプログラムの `.rodata`）の `read` が `-EFAULT` を返さなかった
@@ -1331,6 +1338,105 @@ core::arch::global_asm!(
     "  mov rdi, r12",
     "  int 0x80",
 
+    // --- 72〜78: `arch_prctl`（2026-10-05）。FS と GS の基底を入れる・訊く ---
+    // スタックに 4 語取る。[rsp] が FS の基底の先、[rsp+8] が訊いた FS の基底の受け皿、[rsp+16] が GS の基底の先、
+    // [rsp+24] が訊いた GS の基底の受け皿である。
+    "  sub rsp, 32",
+    "  mov rax, {tls_mark_fs}",
+    "  mov qword ptr [rsp], rax",
+    "  mov rax, {tls_mark_gs}",
+    "  mov qword ptr [rsp + 16], rax",
+    // 72: FS の基底を入れ、`fs:0` から読む。
+    "  mov eax, {sys_arch_prctl}",
+    "  mov edi, {arch_set_fs}",
+    "  mov rsi, rsp",
+    "  int 0x80",
+    "  mov edi, 72",
+    "  test rax, rax",
+    "  jne 9f",
+    "  mov rax, qword ptr fs:[0]",
+    "  cmp rax, qword ptr [rsp]",
+    "  jne 9f",
+    // 73: FS の基底を訊く。入れた番地（rsp）が返る。
+    "  mov eax, {sys_arch_prctl}",
+    "  mov edi, {arch_get_fs}",
+    "  lea rsi, [rsp + 8]",
+    "  int 0x80",
+    "  mov edi, 73",
+    "  test rax, rax",
+    "  jne 9f",
+    "  cmp qword ptr [rsp + 8], rsp",
+    "  jne 9f",
+    // 74: GS で同じこと。**FS の基底は、そのまま残っている**ことも見る。
+    "  mov eax, {sys_arch_prctl}",
+    "  mov edi, {arch_set_gs}",
+    "  lea rsi, [rsp + 16]",
+    "  int 0x80",
+    "  mov edi, 74",
+    "  test rax, rax",
+    "  jne 9f",
+    "  mov rax, qword ptr gs:[0]",
+    "  cmp rax, qword ptr [rsp + 16]",
+    "  jne 9f",
+    "  mov eax, {sys_arch_prctl}",
+    "  mov edi, {arch_get_gs}",
+    "  lea rsi, [rsp + 24]",
+    "  int 0x80",
+    "  mov edi, 74",
+    "  test rax, rax",
+    "  jne 9f",
+    "  lea rax, [rsp + 16]",
+    "  cmp qword ptr [rsp + 24], rax",
+    "  jne 9f",
+    "  mov rax, qword ptr fs:[0]",
+    "  cmp rax, qword ptr [rsp]",
+    "  jne 9f",
+    // 75: 正準でない番地は -EPERM。**基底は変わらない。**
+    "  mov eax, {sys_arch_prctl}",
+    "  mov edi, {arch_set_fs}",
+    "  mov rsi, 0x0000800000000000",
+    "  int 0x80",
+    "  mov edi, 75",
+    "  cmp rax, {minus_eperm}",
+    "  jne 9f",
+    "  mov rax, qword ptr fs:[0]",
+    "  cmp rax, qword ptr [rsp]",
+    "  jne 9f",
+    // 76: カーネルの番地は -EPERM。
+    "  mov eax, {sys_arch_prctl}",
+    "  mov edi, {arch_set_fs}",
+    "  mov rsi, 0xffffffff80100000",
+    "  int 0x80",
+    "  mov edi, 76",
+    "  cmp rax, {minus_eperm}",
+    "  jne 9f",
+    // 77: 知らない code は -EINVAL。
+    "  mov eax, {sys_arch_prctl}",
+    "  mov edi, 0x1fff",
+    "  mov rsi, rsp",
+    "  int 0x80",
+    "  mov edi, 77",
+    "  cmp rax, {minus_einval}",
+    "  jne 9f",
+    // 78: 書けない番地（カーネルの番地）へ訊いた結果を書かせると -EFAULT。
+    "  mov eax, {sys_arch_prctl}",
+    "  mov edi, {arch_get_fs}",
+    "  mov rsi, 0xffffffff80100000",
+    "  int 0x80",
+    "  mov edi, 78",
+    "  cmp rax, {minus_efault}",
+    "  jne 9f",
+    // 基底を 0 へ戻して、スタックを戻す。
+    "  mov eax, {sys_arch_prctl}",
+    "  mov edi, {arch_set_fs}",
+    "  xor esi, esi",
+    "  int 0x80",
+    "  mov eax, {sys_arch_prctl}",
+    "  mov edi, {arch_set_gs}",
+    "  xor esi, esi",
+    "  int 0x80",
+    "  add rsp, 32",
+
     // 69: 方向フラグを立てたまま `int 0x80` を打つ（2026-09-24）。**入口が DF を降ろすことの
     // 前提を作る**——カーネルはこの入場を数え、数えられなければ止まる
     // （`kernel/src/main.rs` の `check_direction_flag_premise`）。**書き戻しのある呼び出しを
@@ -1539,6 +1645,13 @@ core::arch::global_asm!(
     prot_rw = const PROT_RW,
     prot_rx = const PROT_RX,
     minus_eperm = const MINUS_EPERM,
+    sys_arch_prctl = const 158u32,
+    arch_set_gs = const 0x1001u32,
+    arch_set_fs = const 0x1002u32,
+    arch_get_fs = const 0x1003u32,
+    arch_get_gs = const 0x1004u32,
+    tls_mark_fs = const 0x715a_11ce_0000_f5f5u64,
+    tls_mark_gs = const 0x715a_11ce_0000_6565u64,
     map_shared = const MAP_SHARED,
     minus_ebadf_shm = const MINUS_EBADF_SHM,
     sys_socket = const SYS_SOCKET,

@@ -14,6 +14,7 @@ pub mod ring3;
 pub mod stack;
 pub mod system_call_entry;
 pub mod task_frame;
+pub mod user_registers;
 pub mod worker_bodies;
 
 // 共通の側から呼ぶ境界の関数と型（`ADR-0071` の決定 1 の 2。2026-09-28）。共通の側（`main.rs` を除く）は、
@@ -59,3 +60,7 @@ pub use stack::{
 };
 pub use system_call_entry::refuse_system_call_return;
 pub use task_frame::{build_initial_context, raise_yield_interrupt};
+pub use user_registers::{
+    restore_user_registers, restore_user_segment_bases, save_user_registers, set_user_fs_base,
+    set_user_gs_base, user_fs_base, user_gs_base, UserRegisters,
+};

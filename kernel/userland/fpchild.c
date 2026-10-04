@@ -32,6 +32,23 @@ int main(void) {
     put_hex(value);
     puts("");
 
+    /* **FS の基底も、0 から始まる**（2026-10-05）。親は、基底を入れてからこの子を起動している。
+     * **訊いた後で、自分の番地を入れて終わる**——親へ戻ったときに、親の基底が戻されることの前提を作る。 */
+    unsigned long base_at_start = ~0UL;
+    long asked;
+    __asm__ volatile("int $0x80"
+                     : "=a"(asked)
+                     : "a"(158L), "D"(0x1003L), "S"((unsigned long)&base_at_start)
+                     : "rcx", "r11", "memory");
+    write(STDOUT, "fp: child fs base at start = ", 29);
+    put_hex(asked == 0 ? base_at_start : ~0UL);
+    puts("");
+    unsigned long child_tls = CHILD_MARK;
+    __asm__ volatile("int $0x80"
+                     : "=a"(asked)
+                     : "a"(158L), "D"(0x1002L), "S"((unsigned long)&child_tls)
+                     : "rcx", "r11", "memory");
+
     value = CHILD_MARK;
     __asm__ volatile("movq %0, %%xmm0" : : "r"(value) : "xmm0");
     puts("fpchild: clobbered xmm0");

@@ -31,6 +31,22 @@ static void set_xmm0_low(unsigned long value) {
     __asm__ volatile("movq %0, %%xmm0" : : "r"(value) : "xmm0");
 }
 
+/* FS の基底の先に置く語（2026-10-05）。**親が基底を入れてから子を起動し、戻った後も同じ基底であることを見る。** */
+static volatile unsigned long parent_tls = 0x7715a11ce0000aaaUL;
+
+#define FPTEST_ARCH_PRCTL 158
+#define FPTEST_ARCH_SET_FS 0x1002
+#define FPTEST_ARCH_GET_FS 0x1003
+
+static long arch_prctl(long code, unsigned long address) {
+    long result;
+    __asm__ volatile("int $0x80"
+                     : "=a"(result)
+                     : "a"((long)FPTEST_ARCH_PRCTL), "D"(code), "S"(address)
+                     : "rcx", "r11", "memory");
+    return result;
+}
+
 static long spawn_child(const char *path) {
     static const char *argv[] = {"fpchild", 0};
     static const char *envp[] = {0};
@@ -74,6 +90,10 @@ int main(void) {
     puts("");
 
     /* 決定2の遠征の側。**子を起動しても親の XMM が残ること。** */
+    /* **FS の基底も、子の起動を跨いで残ること**（2026-10-05）。子は基底を 0 から始め、自分の番地を入れて終わる。 */
+    const unsigned long parent_base = (unsigned long)&parent_tls;
+    arch_prctl(FPTEST_ARCH_SET_FS, parent_base);
+
     set_xmm0_low(PARENT_MARK);
     long spawned = spawn_child("/bin/fpchild");
     unsigned long after = xmm0_low();
@@ -82,6 +102,16 @@ int main(void) {
     write(STDOUT, " (child returned ", 17);
     putu((unsigned long)spawned);
     puts(")");
+
+    /* **基底を訊いてから読む**——別の番地（0 を含む）のまま `fs:0` を読むと、ページフォルトで終わる。 */
+    unsigned long base_after = 0;
+    int kept = arch_prctl(FPTEST_ARCH_GET_FS, (unsigned long)&base_after) == 0 && base_after == parent_base;
+    if (kept) {
+        unsigned long through_fs;
+        __asm__ volatile("movq %%fs:0, %0" : "=r"(through_fs));
+        kept = through_fs == 0x7715a11ce0000aaaUL;
+    }
+    puts(kept ? "fp: fs base after spawn kept = true" : "fp: fs base after spawn kept = false");
 
     /* **次に起動するプログラムのために、目印を残して終わる**——決定4の破壊テストは
      * これを見る（`fp-no-fresh-state` では、次のプログラムがこれを読む）。 */
