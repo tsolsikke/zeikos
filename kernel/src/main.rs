@@ -1940,6 +1940,9 @@ extern "sysv64" fn kernel_main() -> ! {
         cpu::halt_forever();
     }
 
+    // **システムコールが、どの入口から何回来たかを出す**（2026-10-04）。数えるのは CPU 固有の置き場である。
+    kernel::arch::x86_64::system_call_entry::report_entrances(&mut logger);
+
     // **ユーザープログラムを走らせた後にも、貸し借りを突き合わせる（S11-5）。**
     //
     // **上の行はプログラムを走らせる前の状態しか主張していない。**
@@ -11809,9 +11812,9 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "gs: を読む関数を像に残す（呼ばない）",
     ),
     (
-        "cpu-state-sees-sce-test",
-        cfg!(feature = "cpu-state-sees-sce-test"),
-        "EFER.SCE が立っているものとして棚卸しの前提を判定する（MSR は書かない）",
+        "cpu-state-sees-sce-clear-test",
+        cfg!(feature = "cpu-state-sees-sce-clear-test"),
+        "EFER.SCE が落ちているものとしてカーネルが要るビットを判定する（MSR は書かない）",
     ),
     (
         "idt-stub-skips-common-entry-test",

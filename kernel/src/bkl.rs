@@ -144,11 +144,18 @@ pub const NON_ACQUIRING_ENTRIES: &[(&str, &str)] = &[
 /// 遠征に固有である。** 遠征は AP を起動するより前の単一コア区間に閉じているので、
 /// 解放から longjmp までの区間で他コアと競合しない。**この前提は上の一覧の
 /// `exception` の理由と同じもので、失効するとしたら同時に失効する。**
-pub const UNWINDLESS_RELEASE_ENTRIES: &[(&str, &str)] = &[(
-    "syscall_entry (SYS_EXIT)",
-    "ring3::leave_user_mode は longjmp で Drop を走らせないので、分岐の中で明示的に \
-     drop する。触るのは IN_RING3 と RECOVERY だけで、遠征の単一コア区間に閉じている",
-)];
+pub const UNWINDLESS_RELEASE_ENTRIES: &[(&str, &str)] = &[
+    (
+        "syscall_entry (SYS_EXIT)",
+        "ring3::leave_user_mode は longjmp で Drop を走らせないので、分岐の中で明示的に \
+         drop する。触るのは IN_RING3 と RECOVERY だけで、遠征の単一コア区間に閉じている",
+    ),
+    (
+        "syscall_entry (戻り先がユーザーの番地でない)",
+        "戻らずにプロセスを終わらせる（2026-10-04）。SYS_EXIT と同じく longjmp で出るので、\
+         分岐の中で明示的に drop する",
+    ),
+];
 
 /// 単一の大域ロック。
 struct BigKernelLock {

@@ -2345,7 +2345,7 @@ VirtualBoxの計数でベクタ0x42が打鍵4バイトで+4、8259のベクタ0x
 |---|---|---|
 | 基本の検査「the kernel uses no fs:/gs: operand and no swapgs, fsgsbase or SMAP instruction」 | 既定のイメージの逆アセンブルで0個 | 279,064行で0個 |
 | `--full`「the FS/GS and SMAP check catches kernel-uses-gs-test」 | 破壊テストのイメージで、基本の検査の項目が`%gs:`を名指しして落ちる | 破壊テストのイメージに`mov %gs:0x0,%rax`が1つ残った（手でビルドして数えた） |
-| `critical-test cpu-state-sees-sce`（破壊テスト） | **`cpu-state: EFER.SCE is 1`と棚卸しの文言で止まり、最初のユーザープログラムが走らない** | 通った |
+| `critical-test cpu-state-sees-sce-clear`（破壊テスト。2026-10-04に向きを逆にした） | **`cpu-state: EFER.SCE is 0, but the kernel needs it to be 1`で止まり、最初のユーザープログラムが走らない。** それまでは`cpu-state-sees-sce`（立っているものとして判定し、棚卸しの文言で止まる）だった。`syscall`命令を入口に足して、SCEは「1であるべき」になった | 通った |
 | `critical-test bsp-keeps-cd`（破壊テスト。2026-09-24） | **ファームウェアがCDを立てて渡し、カーネルが落とさない形で、`cpu-state: CR0.CD is 1, but the kernel needs it to be 0`で止まり、最初のユーザープログラムが走らない** | 通った。**CR0が`0x80010033 -> 0xc0010033`になり、監視がCR0.CDを名指しした** |
 | `smp-ap-test ap-keeps-its-own-control-registers`（破壊テスト。2026-09-24） | **APがBSPの値をコピーしない形で、`cpu-state: ap 1 differs from the BSP in CR0`と`CD set on the AP`と棚卸しの文言で止まり、まとめの行が出ない** | 通った。**CR0・CR4・EFERの違いを名前で出した**（NE・WP・NW・CD、DE・MCE、NXE）。**2026-10-02からは、EFERは違わない**（トランポリンがNXEも立てるので、コピーしなくてもBSPと同じ`0xd00`になる）。期待はCR0の行なので、判定は変わらない |
 | `critical-test cpu-state-sees-an-unclassified-bit`（破壊テスト。2026-09-24） | **その製造元で分類していない最初のビットが立って見える形で、`[WARN] cpu-state: EFER.SVME is 1 and is not classified yet`が出て、止まらず、最初のユーザープログラムが走る**（QEMUの既定はAMDなのでEFER.SVME） | 通った |

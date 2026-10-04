@@ -579,8 +579,8 @@ const IA32_SYSENTER_CS: u32 = 0x174;
 
 /// `syscall` 命令と `sysenter` 命令の入口を決める MSR の、読んだ値の組（2026-10-04）。
 ///
-/// **読むだけの型である。** 書く側は、入口を足す段で、この型の欄と同じ並びで足す——書いた値を、同じ型で読み戻して
-/// 比べられるようにしてある。
+/// **読む側と書く側が、同じ型を使う**（[`read_system_call_msrs`] と [`write_system_call_msrs`]）——書いた値を、
+/// 同じ型で読み戻して比べられる。
 ///
 /// - `star`: `syscall` で入るときと `sysret` で戻るときの、区画のセレクタの基点（上位 32 ビット）。
 /// - `lstar`: 64 ビットのコードが打った `syscall` の飛び先。
@@ -624,6 +624,31 @@ pub fn read_system_call_msrs() -> Option<SystemCallMsrs> {
             sysenter_cs: read_msr(IA32_SYSENTER_CS),
         }
     })
+}
+
+/// `syscall` 命令と `sysenter` 命令の MSR を書く。**この CPU に無ければ、何も書かずに偽を返す**
+/// （[`system_call_msrs_exist`]）。
+///
+/// **`EFER.SCE` は、ここでは立てない。** 飛び先を書き終えてから、呼ぶ側が立てる（[`write_efer`]）。
+///
+/// # Safety
+///
+/// `msrs` が、この CPU の入口として正しいこと——`lstar` と `cstar` は、カーネルのスタックへ切り替えるスタブの番地で、
+/// `star` の区画のセレクタは、載っている GDT の並びに合っていること。**誤った値を書くと、`syscall` 命令が、カーネルの
+/// 権限のまま、意図しない番地へ飛ぶ。**
+pub unsafe fn write_system_call_msrs(msrs: SystemCallMsrs) -> bool {
+    if !system_call_msrs_exist() {
+        return false;
+    }
+    // SAFETY: 5 つの MSR が在ることは、直前に CPUID で確かめた。値は呼び出し側の契約。
+    unsafe {
+        write_msr(IA32_STAR, msrs.star);
+        write_msr(IA32_LSTAR, msrs.lstar);
+        write_msr(IA32_CSTAR, msrs.cstar);
+        write_msr(IA32_FMASK, msrs.sfmask);
+        write_msr(IA32_SYSENTER_CS, msrs.sysenter_cs);
+    }
+    true
 }
 
 /// CPU が Local APIC を持つか（`CPUID.01H:EDX[9]`）。

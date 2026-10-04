@@ -471,12 +471,13 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
+    // **EFER.SCE が落ちているものとして判定する**（2026-10-04 に向きを逆にした。それまでは「立っているものとして
+    // 判定する」形だった）。**`syscall` 命令を入口に足して、SCE は「1 であるべき」になった。**
     CriticalTest {
-        name: "cpu-state-sees-sce",
-        feature: "cpu-state-sees-sce-test",
+        name: "cpu-state-sees-sce-clear",
+        feature: "cpu-state-sees-sce-clear-test",
         expected_markers: &[
-            "cpu-state: EFER.SCE is 1",
-            "redo the inventory in ADR-0018 Addendum 9",
+            "cpu-state: EFER.SCE is 0, but the kernel needs it to be 1",
             "cpu-state: halting",
         ],
         forbidden_markers: &["user-run: hello"],

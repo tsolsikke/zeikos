@@ -24,7 +24,7 @@ use common::machine::pc::serial::Serial;
 use common::percpu::{PerCpu, MAX_CPUS};
 
 use layout::{
-    tss_descriptor, user_segment_descriptor, SegmentSelector, TaskStateSegment, KERNEL_CODE_ACCESS,
+    tss_descriptor, user_segment_descriptor, SegmentSelector, KERNEL_CODE_ACCESS,
     KERNEL_CODE_FLAGS, KERNEL_DATA_ACCESS, KERNEL_DATA_FLAGS, USER_CODE32_FLAGS, USER_CODE64_FLAGS,
     USER_CODE_ACCESS, USER_DATA_ACCESS, USER_DATA_FLAGS,
 };
@@ -131,8 +131,14 @@ pub struct InterruptStackTops {
 /// 指し、構築・ロードされるテーブルは従来と同一だった。
 /// **いまは各コアが自分のスロットを構築して `lgdt` / `ltr` する。**
 static mut GDT: PerCpu<[u64; GDT_ENTRY_COUNT]> = PerCpu::new([[0; GDT_ENTRY_COUNT]; MAX_CPUS]);
-static mut TSS: PerCpu<TaskStateSegment> =
+///
+/// **`TSS` は、`syscall` 命令の入口のスタブからも読まれる**（2026-10-04。`system_call_entry`）。スタブは、自分の CPU の
+/// TSS の RSP0 を、この記号からの決まった位置で読む——[`PerCpu`] は中身の配列と同じ配置（`repr(transparent)`）で、
+/// `TaskStateSegment` は `repr(C, packed)` である。**そのために、CPU 固有の置き場の中へだけ見せている。**
+pub(in crate::arch::x86_64) static mut TSS: PerCpu<TaskStateSegment> =
     PerCpu::new([const { TaskStateSegment::new() }; MAX_CPUS]);
+
+pub(in crate::arch::x86_64) use layout::TaskStateSegment;
 
 /// `lgdt` / `sgdt` が扱うディスクリプタテーブルレジスタの形。
 ///

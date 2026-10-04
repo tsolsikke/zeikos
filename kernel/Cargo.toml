@@ -704,8 +704,9 @@ syscall-entry-keeps-df-test = []
 # 棚卸しの根拠の見張りの破壊（2026-09-24。ADR-0018 の Addendum 9）。
 # gs: を読む関数を像に残す（呼ばない）。基底の項目（逆アセンブルで fs:・gs: を数える）が捕まえる。
 kernel-uses-gs-test = []
-# EFER.SCE が立っているものとして判定する（MSR は書かない）。起動の途中の cpu-state の行で止まる。
-cpu-state-sees-sce-test = []
+# EFER.SCE が落ちているものとして判定する（MSR は書かない）。起動の途中の cpu-state の行で止まる。
+# 2026-10-04 に向きを逆にした（syscall 命令を入口に足して、SCE が「1 であるべき」になった）。
+cpu-state-sees-sce-clear-test = []
 # 測定用 IPI のスタブが共通の入口を飛ばして irq_entry へ直に飛ぶ。sti-check 3b で止まる。
 idt-stub-skips-common-entry-test = []
 # AP が BSP の CR0・CR4・EFER を写さない（直す前の形。2026-09-24）。起床のまとめの後の突き合わせで止まる。

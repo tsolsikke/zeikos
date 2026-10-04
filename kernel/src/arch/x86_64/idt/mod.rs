@@ -47,7 +47,8 @@ use common::machine::pc::serial::Serial;
 use common::percpu::{PerCpu, MAX_CPUS};
 
 use crate::arch::x86_64::gdt::KERNEL_CODE_SELECTOR;
-use context::{ExceptionContext, IrqContext};
+use context::ExceptionContext;
+pub(in crate::arch::x86_64) use context::IrqContext;
 use decode::{error_code_kind, ErrorCodeKind, PageFaultErrorCode, SelectorErrorCode};
 use layout::{exception_name, GateType, IdtEntry};
 
@@ -204,12 +205,12 @@ core::arch::global_asm!(
 /// この導出が正しいことは手計算に頼らず、ハンドラ入口で実測した RSP を
 /// 検証している（[`check_stack_alignment`]）。
 #[cfg(not(feature = "misalign-test"))]
-const STACK_ALIGN_ADJUST: usize = 8;
+pub(in crate::arch::x86_64) const STACK_ALIGN_ADJUST: usize = 8;
 
 /// 境界検証がほんとうに働くかを確かめるための、意図的に壊した値
 /// （`--interrupt-test misaligned`）。
 #[cfg(feature = "misalign-test")]
-const STACK_ALIGN_ADJUST: usize = 0;
+pub(in crate::arch::x86_64) const STACK_ALIGN_ADJUST: usize = 0;
 
 /// 共通の入口が方向フラグ（DF）を降ろすか（2026-09-24）。**1 なら `cld` を出す。**
 ///

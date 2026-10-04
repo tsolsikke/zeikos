@@ -368,6 +368,15 @@ pub unsafe fn bring_up_application_processor(
     // 正しくなった後に置く**——読み戻しは、自分のスロットの TSS を `cpu_id()` で引く。
     verify_interrupt_stacks_on_this_ap(&mut serial, info.slot, &info.stacks);
 
+    // **この AP でも、`syscall` 命令を入口にする**（2026-10-04）。**飛び先は、この AP のスタブである**（スタブが、この
+    // AP の TSS の RSP0 を読む）。**`EFER.SCE` は、ここで初めて立つ**——BSP の EFER をコピーするときには SCE を外して
+    // あり（`cpu_state` の `adopt_bsp_state_on_this_ap`）、飛び先を書き終えた後に立てる（BSP と同じ順）。
+    // **読み戻しは、起動の終わりに控え、BSP が比べる**
+    // （`cpu_state` の `record_this_ap` と `check_aps_match_bsp`）。
+    // SAFETY: `info.slot` はこの AP のスロットで、GDT・TSS・IDT は上で載せた（IST の 5 本は、直前に読み戻して
+    // 確かめた）。割り込みは禁止のままである。
+    let _ = unsafe { crate::arch::x86_64::system_call_entry::enable_on_this_cpu(info.slot) };
+
     // 3. CR3 と RSP を隣接して切り替え、入口へ `call` で入る（System V の入口の決まりに合わせる。2026-09-28）。
     // SAFETY: `production_root` は BSP が動いている本番テーブルの物理で、
     // `kernel_top` はそのテーブルに存在する VA である。間に何も置かない。

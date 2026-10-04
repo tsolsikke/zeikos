@@ -3,7 +3,10 @@
 //! # なぜ要るのか
 //!
 //! **「ユーザーが変えられて、カーネルが前提にしている CPU の状態」の棚卸しは、いまの形に依って
-//! いる**——CR0.AM・CR4.SMAP・CR4.FSGSBASE・CR4.PKE・CR4.OSXSAVE・EFER.SCE が 0 であること。
+//! いる**——CR0.AM・CR4.SMAP・CR4.FSGSBASE・CR4.PKE・CR4.OSXSAVE が 0 であること。
+//! **`EFER.SCE` は、2026-10-04 に「0 であること」から「1 であること」へ移した**——`syscall` 命令を入口に足したためで
+//! ある。「立っていれば止まる」見張りは、「SCE が 1 で、飛び先と区画と落とす旗（STAR・LSTAR・CSTAR・SFMASK・
+//! `IA32_SYSENTER_CS`）が決めた値である」ことの読み戻しへ置き換わった（[`SystemCallEntryState`]）。
 //! **どれかを立てる変更をすると、棚卸しの結論が黙って偽になる**（通る理由が変わる種類）。
 //! **ここで起動のたびに読み、立っていたら止める。** **値は起動ログの参照にも載る**
 //! ——**棚卸しに関わらないビット（SMEP・UMIP など）が変わっても、参照の突き合わせが落ちる。**
@@ -46,7 +49,7 @@ impl Register {
 }
 
 /// 棚卸しが 0 であることに依っているビット（在りか・ビット・名前・立てたときに崩れる結論）。
-pub const INVENTORY_BITS: [(Register, u32, &str, &str); 7] = [
+pub const INVENTORY_BITS: [(Register, u32, &str, &str); 6] = [
     (
         Register::Cr0,
         18,
@@ -76,12 +79,6 @@ pub const INVENTORY_BITS: [(Register, u32, &str, &str); 7] = [
         18,
         "CR4.OSXSAVE",
         "Ring 3 could use AVX state that fxsave does not save",
-    ),
-    (
-        Register::Efer,
-        0,
-        "EFER.SCE",
-        "the syscall instruction would become a 4th entry that skips the IDT stubs",
     ),
     // **全ビットの分類で足した**（2026-09-24）。**PVI が立つと、Ring 3 の `cli`・`sti` が `#GP` ではなく
     // VIF を変える**（Intel SDM の CLI の擬似コード）——**棚卸しの「IF は Ring 3 から変えられない」が依る。**
@@ -190,7 +187,7 @@ impl Scope {
 /// - **AP**: トランポリンが、ページングを有効にする前に LME と一緒に立てる。**直す前は、トランポリンを出た
 ///   直後の EFER は 0x500（NXE が 0）で、BSP の値をコピーして初めて 1 になっていた**（同じ日の実測）。
 ///   **トランポリンを出た直後の値を AP が控え、BSP が確かめる**（[`check_aps_match_bsp`]）。
-pub const REQUIRED_BITS: [(Register, u32, &str, bool, Scope, &str); 25] = [
+pub const REQUIRED_BITS: [(Register, u32, &str, bool, Scope, &str); 26] = [
     (
         Register::Cr0,
         0,
@@ -305,6 +302,18 @@ pub const REQUIRED_BITS: [(Register, u32, &str, bool, Scope, &str); 25] = [
         Scope::Both,
         "the execute-disable bit of a page table entry is reserved while NXE is clear, so an entry \
          that sets it would raise #PF",
+    ),
+    // **`syscall` 命令を入口に足したので、「0 であるべき」（棚卸し）から移した**（2026-10-04）。**Intel と AMD が同じ
+    // 0 番に同じ意味で置く**（SDM Vol.3A 2.2.1 の IA32_EFER、APM Vol.2 3.1.7 の EFER）。**立っているだけでは足りない**
+    // ——飛び先と区画と落とす旗が決めた値であることは、[`SystemCallEntryState`] の読み戻しが見る。
+    (
+        Register::Efer,
+        0,
+        "EFER.SCE",
+        true,
+        Scope::Both,
+        "Linux programs enter the kernel with the syscall instruction, which raises #UD while SCE \
+         is clear",
     ),
     // **全ビットの分類で足した**（2026-09-24）。
     (
@@ -901,6 +910,13 @@ pub unsafe fn establish_required_bits_on_bsp() {
     NO_EXECUTE_CPUID[1].store(u64::from(cpuid.extended_features_edx), Ordering::SeqCst);
     ESTABLISHED_EFER[0].store(efer_at_entry, Ordering::SeqCst);
     ESTABLISHED_EFER[1].store(read_efer().raw(), Ordering::SeqCst);
+
+    // **`syscall` 命令を入口にする**（2026-10-04）。**上の控え（NXE の前後の EFER）の後に置く**——あの行は NXE に
+    // ついての行で、SCE を混ぜない。**書けたかどうかは、ここでは見ない**——読み戻しの確かめ（[`check_and_report`]）が、
+    // あるべき値と比べて、違えば止まる。
+    // SAFETY: BSP のスロットは 0 で、GDT・TSS・IDT は呼び出し側が直前に載せた（NMI・機械チェック・デバッグ例外は
+    // IST に載っている）。起動の最初期で、割り込みは禁止のままである。
+    let _ = unsafe { crate::arch::x86_64::system_call_entry::enable_on_this_cpu(0) };
 }
 
 /// [`establish_required_bits_on_bsp`] の前後の CR0 と、実行禁止の対応と EFER.NXE を出す（ロガーが使えるように
@@ -1001,9 +1017,9 @@ fn read_this_cpu() -> [u64; 3] {
 
 /// この CPU の、`syscall` 命令の入口を決めるレジスタを読んだもの（2026-10-04）。**記録の行に出すための型である。**
 ///
-/// **BSP と AP が、同じ形の行を 1 本ずつ出す**（[`check_and_report`] と、AP の起こし）。**今は読むだけで、書かない**
-/// ——`EFER.SCE` は 0 のままで、`syscall` 命令は入口になっていない。**入口を足す段で値を書いたら、同じ行が読み戻しに
-/// なる**（そのときは、この行に「あるべき値」を足す）。
+/// **BSP と AP が、同じ形の行を 1 本ずつ出す**（[`check_and_report`] と [`check_aps_match_bsp`]）。**値は、起動の
+/// 途中で書いてある**（`system_call_entry::enable_on_this_cpu`）ので、この行は読み戻しである。**あるべき値を並べて
+/// 出し、違えば止まる**（[`SystemCallEntryState::holds`]）。`LSTAR` と `CSTAR` は、CPU ごとに別のスタブを指す。
 ///
 /// # 契約（境界の型）
 ///
@@ -1012,14 +1028,17 @@ fn read_this_cpu() -> [u64; 3] {
 ///   AP が出す行を増やすと、AP の行と BSP の行の順序が実行ごとに入れ替わる（`docs/troubleshooting.md` の 2026-10-04 の項）。
 #[derive(Clone, Copy)]
 pub struct SystemCallEntryState {
+    /// どの CPU の値か（あるべき値が、CPU ごとに違う）。
+    cpu: usize,
     efer: u64,
     msrs: Option<common::arch::x86_64::cpu::SystemCallMsrs>,
 }
 
 impl SystemCallEntryState {
-    /// この CPU のレジスタを読む。
-    pub fn read() -> Self {
+    /// この CPU（`cpu` 番）のレジスタを読む。
+    pub fn read(cpu: usize) -> Self {
         Self {
+            cpu,
             efer: common::arch::x86_64::cpu::read_efer().raw(),
             msrs: common::arch::x86_64::cpu::read_system_call_msrs(),
         }
@@ -1041,9 +1060,17 @@ impl SystemCallEntryState {
         }
     }
 
+    /// `SCE` が立っていて、5 つの MSR が、その CPU のあるべき値と同じか。
+    pub fn holds(&self) -> bool {
+        self.efer & common::arch::x86_64::cpu::Efer::SYSCALL_ENABLE != 0
+            && self.msrs.is_some()
+            && self.msrs == crate::arch::x86_64::system_call_entry::expected_msrs(self.cpu)
+    }
+
     /// 控えの置き場から戻す（[`to_cells`](Self::to_cells) の逆）。
-    fn from_cells(cells: [u64; SYSTEM_CALL_ENTRY_CELLS]) -> Self {
+    fn from_cells(cpu: usize, cells: [u64; SYSTEM_CALL_ENTRY_CELLS]) -> Self {
         Self {
+            cpu,
             efer: cells[0],
             msrs: (cells[1] != 0).then_some(common::arch::x86_64::cpu::SystemCallMsrs {
                 star: cells[2],
@@ -1071,21 +1098,37 @@ impl core::fmt::Display for SystemCallEntryState {
         let nxe = u8::from(self.efer & Efer::NO_EXECUTE_ENABLE != 0);
         write!(
             f,
-            "EFER={:#x} with SCE={sce} (expected 0) and NXE={nxe} (expected 1); ",
+            "EFER={:#x} with SCE={sce} (expected 1) and NXE={nxe} (expected 1); ",
             self.efer
         )?;
-        match self.msrs {
-            Some(msrs) => write!(
+        let expected = crate::arch::x86_64::system_call_entry::expected_msrs(self.cpu);
+        match (self.msrs, expected) {
+            (Some(msrs), Some(wanted)) => write!(
                 f,
-                "STAR={:#x} LSTAR={:#x} CSTAR={:#x} SFMASK={:#x} SYSENTER_CS={:#x} [read from \
-                 the MSRs; the kernel has not written them, and the syscall instruction is not \
-                 an entry while SCE is 0]",
-                msrs.star, msrs.lstar, msrs.cstar, msrs.sfmask, msrs.sysenter_cs
+                "STAR={:#x} (expected {:#x}) LSTAR={:#x} (expected {:#x}) CSTAR={:#x} (expected \
+                 {:#x}) SFMASK={:#x} (expected {:#x}) SYSENTER_CS={:#x} (expected {:#x}) [read \
+                 back from the MSRs after the kernel wrote them]: as intended = {}",
+                msrs.star,
+                wanted.star,
+                msrs.lstar,
+                wanted.lstar,
+                msrs.cstar,
+                wanted.cstar,
+                msrs.sfmask,
+                wanted.sfmask,
+                msrs.sysenter_cs,
+                wanted.sysenter_cs,
+                self.holds()
             ),
-            None => write!(
+            (Some(_), None) => write!(
+                f,
+                "there is no syscall entry stub for cpu {}: as intended = false",
+                self.cpu
+            ),
+            (None, _) => write!(
                 f,
                 "this CPU does not report the syscall and sysenter MSRs in CPUID, so they were \
-                 not read"
+                 not read: as intended = false"
             ),
         }
     }
@@ -1094,11 +1137,20 @@ impl core::fmt::Display for SystemCallEntryState {
 /// CR0・CR4・EFER を読み、1 行出し、棚卸しを崩すビットが立っていれば止める。**BSP の値を控える。**
 /// **製造元を CPUID で見分け、その製造元の表で判定する**（2026-09-24。運用者の決定）。
 pub fn check_and_report(logger: &mut Logger<Serial>) {
-    // **`syscall` 命令の入口を決めるレジスタを、読んで出す**（2026-10-04）。AP も同じ形の行を出す。
-    logger.info(format_args!(
-        "syscall-entry: cpu 0: {}",
-        SystemCallEntryState::read()
-    ));
+    // **`syscall` 命令の入口を決めるレジスタを、読み戻して出す**（2026-10-04）。AP も同じ形の行を出す。**値は
+    // [`establish_required_bits_on_bsp`] が書いてある。あるべき値と違えば、最初のユーザープログラムより前に止まる**
+    // ——飛び先や区画が違うまま `syscall` 命令を受けると、カーネルの権限のまま、意図しない所へ飛ぶ。
+    let entry = SystemCallEntryState::read(0);
+    logger.info(format_args!("syscall-entry: cpu 0: {entry}"));
+    if !entry.holds() {
+        logger.error(format_args!(
+            "cpu-state: the syscall entry of the BSP is not as intended (the line above has the \
+             values); the syscall instruction must not become an entry with a wrong target, \
+             segment base or flag mask"
+        ));
+        logger.error(format_args!("cpu-state: halting"));
+        common::arch::x86_64::halt_forever();
+    }
     let [cr0, cr4, efer] = read_this_cpu();
     for (slot, value) in BSP_STATE.iter().zip([cr0, cr4, efer]) {
         slot.store(value, Ordering::SeqCst);
@@ -1106,10 +1158,11 @@ pub fn check_and_report(logger: &mut Logger<Serial>) {
     BSP_RECORDED.store(true, Ordering::SeqCst);
     let signature = read_vendor_signature();
     let vendor = Vendor::from_signature(&signature);
-    // 破壊テスト (2026-09-24, cpu-state-sees-sce): EFER.SCE が立っているものとして判定する。
-    // **MSR は書かない**——**`syscall` 命令が本当に入口になる形は作らない。**
-    #[cfg(feature = "cpu-state-sees-sce-test")]
-    let efer = efer | common::arch::x86_64::cpu::Efer::SYSCALL_ENABLE;
+    // 破壊テスト (2026-09-24, cpu-state-sees-sce-clear。2026-10-04 に向きを逆にした): EFER.SCE が落ちているものとして
+    // 判定する。**MSR は書かない。** **それまでは「立っているものとして判定する」形だった**——`syscall` 命令を入口に
+    // 足して、SCE が「0 であるべき」から「1 であるべき」へ移ったので、破壊テストも逆になった。
+    #[cfg(feature = "cpu-state-sees-sce-clear-test")]
+    let efer = efer & !common::arch::x86_64::cpu::Efer::SYSCALL_ENABLE;
     // 破壊テスト (2026-09-24, cpu-state-sees-an-unclassified-bit): **その製造元で「分類していない」最初のビット**が
     // 立っているものとして判定する（レジスタは書かない）。**[WARN] が名前つきで出て、起動は止まらない。**
     // **QEMU の既定（AMD）では EFER.SVME である。**
@@ -1139,7 +1192,7 @@ pub fn check_and_report(logger: &mut Logger<Serial>) {
     logger.info(format_args!(
         "cpu-state: CR0={cr0:#x} CR4={cr4:#x} EFER={efer:#x}; the inventory of user-changeable CPU \
          state (ADR-0018 Addendum 9) rests on CR0.AM, CR4.SMAP, CR4.FSGSBASE, CR4.PKE, \
-         CR4.OSXSAVE, CR4.PVI and EFER.SCE being 0"
+         CR4.OSXSAVE and CR4.PVI being 0"
     ));
     let mut violated = false;
     for (_, _, name, must_be_set, _, needs) in required_violations(vendor, values) {
@@ -1227,7 +1280,12 @@ pub unsafe fn adopt_bsp_state_on_this_ap(slot: usize) {
         return;
     }
     let [cr0, cr4, efer] = [0, 1, 2].map(|index| BSP_STATE[index].load(Ordering::SeqCst));
-    // SAFETY: 呼び出し側の契約。3 つとも同じカーネルの BSP が長モードで使っている値である。
+    // **`EFER.SCE` は、ここではコピーしない**（2026-10-04）。**BSP の値は SCE が立っているが、この AP は、まだ
+    // `syscall` 命令の飛び先（LSTAR ほか）を書いていない。** 立てるのは、飛び先を書き終えた後の 1 か所だけにする
+    // （`system_call_entry::enable_on_this_cpu`。BSP と同じ順）。**起動の終わりの突き合わせ（[`check_aps_match_bsp`]）は、
+    // その後の値を BSP と比べる**ので、そこでは SCE も含めて一致する。
+    let efer = efer & !common::arch::x86_64::cpu::Efer::SYSCALL_ENABLE;
+    // SAFETY: 呼び出し側の契約。3 つとも同じカーネルの BSP が長モードで使っている値である（EFER は SCE を除く）。
     unsafe {
         common::arch::x86_64::cpu::write_cr4(cr4);
         common::arch::x86_64::cpu::write_efer(common::arch::x86_64::cpu::Efer::from_raw(efer));
@@ -1251,7 +1309,7 @@ pub fn record_this_ap(slot: usize) {
     // **`syscall` 命令の入口を決めるレジスタも、読んで控える**（2026-10-04。行は BSP が出す）。
     for (cell, value) in AP_SYSTEM_CALL_ENTRY[slot]
         .iter()
-        .zip(SystemCallEntryState::read().to_cells())
+        .zip(SystemCallEntryState::read(slot).to_cells())
     {
         cell.store(value, Ordering::SeqCst);
     }
@@ -1428,10 +1486,18 @@ pub fn check_aps_match_bsp(logger: &mut Logger<Serial>, started: usize) {
         // **AP が読んだ、`syscall` 命令の入口を決めるレジスタを出す**（2026-10-04。BSP の行と同じ形）。
         let entry_cells = [0, 1, 2, 3, 4, 5, 6]
             .map(|index| AP_SYSTEM_CALL_ENTRY[slot][index].load(Ordering::SeqCst));
+        let entry = SystemCallEntryState::from_cells(slot, entry_cells);
         logger.info(format_args!(
-            "cpu-state: ap {slot} syscall-entry: {} [read by the AP]",
-            SystemCallEntryState::from_cells(entry_cells)
+            "cpu-state: ap {slot} syscall-entry: {entry} [read by the AP]"
         ));
+        if !entry.holds() {
+            logger.error(format_args!(
+                "cpu-state: the syscall entry of ap {slot} is not as intended (the line above has \
+                 the values); every CPU needs its own stub in LSTAR and CSTAR, because the stub \
+                 reads that CPU's kernel stack"
+            ));
+            failed = true;
+        }
         // **AP がトランポリンを出た直後（BSP の値をコピーする前）の EFER.NXE**（2026-10-02）。**控えが在るのは、
         // 上の控え（起動の終わり）より前である。**
         let from_trampoline = AP_EFER_FROM_TRAMPOLINE[slot].load(Ordering::SeqCst);
@@ -1512,7 +1578,8 @@ mod tests {
     /// VirtualBox（Intel）の BSP で同じ値だった。**
     const CR0: u64 = 0x8001_0033;
     const CR4: u64 = 0x668;
-    const EFER: u64 = 0xd00;
+    // **2026-10-04 に 0xd00 から変わった**（`syscall` 命令を入口に足して、SCE が立った。起動ログの実測）。
+    const EFER: u64 = 0xd01;
     const MEASURED: [u64; 3] = [CR0, CR4, EFER];
     const VENDORS: [Vendor; 3] = [Vendor::Intel, Vendor::Amd, Vendor::Other];
 
@@ -1540,7 +1607,8 @@ mod tests {
         assert_eq!(names([CR0, CR4 | 1 << 16, EFER]), vec!["CR4.FSGSBASE"]);
         assert_eq!(names([CR0, CR4 | 1 << 22, EFER]), vec!["CR4.PKE"]);
         assert_eq!(names([CR0, CR4 | 1 << 18, EFER]), vec!["CR4.OSXSAVE"]);
-        assert_eq!(names([CR0, CR4, EFER | 1]), vec!["EFER.SCE"]);
+        // **EFER.SCE は、2026-10-04 に「0 であるべき」から外した**（立っているのが正しい）。
+        assert_eq!(names([CR0, CR4, EFER | 1]), Vec::<&str>::new());
         assert_eq!(names([CR0, CR4 | 1 << 1, EFER]), vec!["CR4.PVI"]);
     }
 
@@ -1577,19 +1645,19 @@ mod tests {
                       OSXMMEXCPT set; LA57, PCIDE, CET";
         assert_eq!(
             format!("{}", RequiredSummary(Vendor::Intel)),
-            format!("{common}, PKS, UINTR clear; EFER.LME, LMA, NXE set")
+            format!("{common}, PKS, UINTR clear; EFER.SCE, LME, LMA, NXE set")
         );
         assert_eq!(
             format!("{}", RequiredSummary(Vendor::Amd)),
-            format!("{common} clear; EFER.LME, LMA, NXE set; LMSLE, FFXSR, TCE, UAIE clear")
+            format!("{common} clear; EFER.SCE, LME, LMA, NXE set; LMSLE, FFXSR, TCE, UAIE clear")
         );
         assert_eq!(
             format!("{}", RequiredSummary(Vendor::Other)),
-            format!("{common} clear; EFER.LME, LMA, NXE set")
+            format!("{common} clear; EFER.SCE, LME, LMA, NXE set")
         );
         assert_eq!(
             VENDORS.map(required_count),
-            [21, 23, 19],
+            [22, 24, 20],
             "Intel, AMD, other"
         );
     }
@@ -1615,7 +1683,7 @@ mod tests {
                 .collect();
             assert_eq!(
                 names,
-                vec!["CR0.NE", "CR0.WP", "CR0.NW", "CR0.CD", "EFER.NXE", "CR4.MCE"],
+                vec!["CR0.NE", "CR0.WP", "CR0.NW", "CR0.CD", "EFER.NXE", "EFER.SCE", "CR4.MCE"],
                 "{vendor:?}"
             );
         }

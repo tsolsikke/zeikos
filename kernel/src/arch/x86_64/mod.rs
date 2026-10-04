@@ -12,6 +12,7 @@ pub mod interrupt_readiness;
 pub mod paging;
 pub mod ring3;
 pub mod stack;
+pub mod system_call_entry;
 pub mod task_frame;
 pub mod worker_bodies;
 
@@ -56,4 +57,5 @@ pub use stack::{
     check_entry_stack_alignment, install_guard_page, kernel_stack_capacity,
     kernel_stack_high_water, kernel_stack_range, KERNEL_STACK_FILL,
 };
+pub use system_call_entry::refuse_system_call_return;
 pub use task_frame::{build_initial_context, raise_yield_interrupt};

@@ -2913,6 +2913,10 @@ pub(crate) unsafe extern "sysv64" fn syscall_entry(
     // 既存の境界計算が syscall 経路でも正しいことの裏取り（IRQ と同じ検査。ベクタは `arch` が文脈から読む。9e-2）。
     ctx.check_stack_alignment(sp_at_call, "syscall");
 
+    // **どの入口から来たかを数える**（2026-10-04。`int 0x80` か、`syscall` 命令か）。見分けるのは `arch` である
+    // （フレームの目印を、共通の側に出さない）。**ここから先は、どちらの入口でも同じ道を通る。**
+    ctx.note_system_call_entrance();
+
     // 番号と 6 つの引数を、Linux のレジスタの形で読む（`abi`）。**書き戻しの前に読む。** **読んだ結果は写し直さずに
     // 使う**——最適化しないビルドでは、写し直した分だけこの関数のスタックが増える（`hello` の遠征のスタックで見た）。
     let request = crate::abi::linux::x86_64::read_request(ctx);
@@ -3008,6 +3012,17 @@ pub(crate) unsafe extern "sysv64" fn syscall_entry(
 
     // 戻り値を、Linux のレジスタの形で書き戻す（`abi`）。
     crate::abi::linux::x86_64::write_return(ctx, ret);
+
+    // **戻り先が、ユーザーの範囲の正準な番地であることを確かめる**（2026-10-04）。**違えば、戻らずにそのプロセスを
+    // 終わらせる。** 正準でない番地へ戻ろうとすると、出口の `iretq` がカーネルの中で例外を起こし、カーネルが止まる。
+    // **今は、戻り先を書き換える経路が無いので、ここへは来ない**——`syscall` 命令は、命令の次の番地を戻り先にする
+    // ので、ユーザーの番地の上限いっぱいに命令を置けるようになると当たる。シグナルから戻る経路でも、同じ確かめを通す。
+    if !ctx.returns_to_user_address() {
+        // **BKL は自分で解く**（下は longjmp で、`Drop` を走らせない。`exit` と同じ形）。
+        drop(bkl.take());
+        // SAFETY: Ring 3 からシステムコールで入った文脈で、遠征の中である。BKL は上で解いた。
+        unsafe { crate::arch::x86_64::refuse_system_call_return(ctx, sp_at_call) }
+    }
 
     // Ring 3 へ返る（stub の復元経路が iretq する）。立て直す（S8-b）。
     // 立て直してから実際に iretq するまでは Ring 0 なのに真だが、例外による終了処理の判定は
