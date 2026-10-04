@@ -16801,8 +16801,20 @@ fn judge_shell_session(
     // **判定を名前つきの一覧にする（`ADR-0063` の (b3) の (b)）。** **台本で駆動したときは
     // [`SCRIPT_SKIPS`] の判定を見ない**——**見なかったことと、落ちた名前を行に出す。**
     // **カーネルの `[ERROR]` の行が無いことを判定に入れる**（2026-10-03。それまでは出すだけで判定に使っていなかった
-    // ——止まって検出される破壊テストの理由を出力に残すために 2026-09-26 に足した行である。判定にしても、その役は残る）。
+    // ——止まって検出される破壊テストの理由を出力に残すために 2026-09-26 に足した行である）。
     let no_kernel_error = no_kernel_error_lines(context, serial, &[]);
+    // **カーネルが出力した `[ERROR]` の行は、以前の形（`the kernel reported`）でも出す。** **止まって検出される破壊テスト
+    // （BKL の再取得・DF の監視）は、この行を狙いの判定の目印にしている**（[`SABOTAGE_JUDGEMENTS`] の 3 行）。
+    // **2026-10-03 に上の判定を足したとき、この行を判定の行で置き換えて消した。目印が出なくなり、全検査でその 3 項目が
+    // 「狙いの判定が偽にならなかった」として落ちた**（2026-10-04。`docs/troubleshooting.md`）。
+    if !no_kernel_error {
+        let kernel_errors: Vec<&str> = serial
+            .lines()
+            .filter(|line| line.contains("[ERROR]"))
+            .take(3)
+            .collect();
+        println!("{context}: (info) the kernel reported: {kernel_errors:?}");
+    }
     let judgements: &[(&str, bool)] = &[
         ("ready", ready),
         ("ended", ended),
