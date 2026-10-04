@@ -430,14 +430,24 @@ pub fn note_post_load_frames_returned(count: usize) {
     with_current_heap(|heap| heap.post_load_frames = heap.post_load_frames.saturating_sub(count));
 }
 
-/// ヒープの下端と上端と、載せた後に取ったフレームの数（H-a）。**どれもプロセスごとで、Ring 3 を走らせる間だけ
-/// 据えられる**（[`swap_current_heap`]）。
+/// ヒープの下端と上端、載せた後に取ったフレームの数、`mmap` の次の番地（H-a）。**どれもプロセスごとで、Ring 3 を
+/// 走らせる間だけ据えられる**（[`swap_current_heap`]）。
 #[derive(Clone, Copy)]
 pub struct Heap {
     /// イメージの末尾の次のページ。**`brk` はここより下げられない。**
     start: u64,
     /// いまの上端。
     break_at: u64,
+    /// 次に `mmap` でマップする番地（`crate::syscall::MMAP_BASE` から上へ。`ADR-0065`）。
+    ///
+    /// **プロセスごとに持つ**（2026-10-03）。**それまではスロットごとの `static` で、親と子と、続けて走るプロセスの
+    /// 間で共有されていた**（`MMAP_BASE` の doc に実測）。**[`take_mmap_range`](Self::take_mmap_range) が切り出す。**
+    mmap_next: u64,
+    /// このプロセスの最初の `mmap` が受け取った番地（まだ 1 度も `mmap` していなければ `None`）。
+    ///
+    /// **終わるときの記録の行に出す**（`user-mmap:`）。どのプロセスも [`crate::syscall::MMAP_BASE`] から始まる
+    /// ことを、ホスト側の検査がこの行で見る——ほかのプロセスと番地を分け合う形に戻ると、ここが基点より上になる。
+    mmap_first: Option<u64>,
     /// 載せた後にアロケータから取ったフレームの数（`mmap` の中間表と、`brk` の葉と中間表。`ADR-0065` の (a)）。
     /// **破棄の会計が `AddressSpace::frames_taken` に足す**（[`note_post_load_frames`] の doc）。
     post_load_frames: usize,
@@ -462,6 +472,8 @@ impl Heap {
     pub const EMPTY: Self = Self {
         start: 0,
         break_at: 0,
+        mmap_next: crate::syscall::MMAP_BASE,
+        mmap_first: None,
         post_load_frames: 0,
         taken: 0,
         given: 0,
@@ -476,6 +488,8 @@ impl Heap {
         Self {
             start,
             break_at: start,
+            mmap_next: crate::syscall::MMAP_BASE,
+            mmap_first: None,
             post_load_frames: 0,
             taken: 0,
             given: 0,
@@ -520,6 +534,34 @@ impl Heap {
     /// 載せた後に取ったフレームの数（破棄の会計が読む）。
     pub const fn post_load_frames(&self) -> usize {
         self.post_load_frames
+    }
+
+    /// `mmap` のために `bytes` ぶんの番地を切り出し、その先頭を返す（`crate::syscall` の `mmap` が呼ぶ。2026-10-03）。
+    ///
+    /// **切り出した番地は、このプロセスの中では戻らない。** `munmap` がまだ無いので、返ってくる範囲が無いためである。
+    /// Linux は `munmap` した範囲を後の `mmap` で使い直すので、ここは Linux と同じ形ではない。`munmap` と `mprotect` を
+    /// 入れる段で、次の番地を 1 つ持つこの形を、写像の表へ置き換える。
+    ///
+    /// **プロセスのヒープが据えられていなければ `None` を返す**（[`is_mapped`](Self::is_mapped)。`sys_brk` と同じ見方）。
+    /// 起動時の Ring 3 の試し（`kernel/src/main.rs` が命令列を直に置いて走らせる 4 つ）は、ヒープを据えずに Ring 3 へ
+    /// 入る。その間の置き場は [`EMPTY`](Self::EMPTY) なので、そこから番地を配ると、どのプロセスのものでもない番地が
+    /// 黙って進む。試しは `mmap` を呼ばないが、呼ぶ形に変わっても配らないように、ここで断る。
+    pub fn take_mmap_range(&mut self, bytes: u64) -> Option<u64> {
+        if !self.is_mapped() {
+            return None;
+        }
+        let base = self.mmap_next;
+        self.mmap_next = self.mmap_next.saturating_add(bytes);
+        self.mmap_first.get_or_insert(base);
+        Some(base)
+    }
+
+    /// 最初の `mmap` が受け取った番地と、次に切り出す番地（1 度も `mmap` していなければ `None`）。**判定行に出す。**
+    pub const fn mmap_addresses(&self) -> Option<(u64, u64)> {
+        match self.mmap_first {
+            Some(first) => Some((first, self.mmap_next)),
+            None => None,
+        }
     }
 }
 
@@ -1073,6 +1115,18 @@ pub fn load_user_program(
              will not be equal, and that is not a failure)",
             process.name
         ));
+        // **`mmap` の番地を出す。** **番地はプロセスごとに持ち、どのプロセスも基点から始まる**（`Heap` の
+        // `take_mmap_range`）。**`mmap` しなかったプロセスでは出さない**——起動ログの行を増やさない。
+        // **判定はホスト側が行う**（`socket-test`。2 本のプロセスが同じ共有メモリを順にマップする）。
+        if let Some((first, next)) = process.heap.mmap_addresses() {
+            logger.info(format_args!(
+                "user-mmap: {} had its first mmap at {first:#x} and would map next at {next:#x} \
+                 (every process starts at {:#x}; a first address above it means the addresses \
+                 were shared with another process)",
+                process.name,
+                crate::syscall::MMAP_BASE
+            ));
+        }
         // **書き戻しの計測（P-c-1）。**
         //
         // **回数と量は揺れない**（書きで開いたファイルを閉じた数と、イメージの長さで決まる）。
@@ -2846,5 +2900,76 @@ mod tests {
         assert!(super::DEFAULT_ENVIRONMENT
             .iter()
             .any(|line| line.starts_with(b"HOME=")));
+    }
+
+    /// 新しく作ったプロセスの `mmap` は、基点から始まる。**1 度も `mmap` していない間は、番地の記録が無い。**
+    #[test]
+    fn a_new_process_maps_from_the_base() {
+        let mut heap = super::Heap::from_image_end(0x40_1012);
+        assert_eq!(heap.mmap_addresses(), None);
+        assert_eq!(
+            heap.take_mmap_range(0x2000),
+            Some(crate::syscall::MMAP_BASE)
+        );
+        assert_eq!(
+            heap.take_mmap_range(0x1000),
+            Some(crate::syscall::MMAP_BASE + 0x2000)
+        );
+        assert_eq!(
+            heap.mmap_addresses(),
+            Some((
+                crate::syscall::MMAP_BASE,
+                crate::syscall::MMAP_BASE + 0x3000
+            ))
+        );
+    }
+
+    /// 2 本のプロセスは、互いの番地を進めない。**片方が先にマップしていても、もう片方は基点から始まる。**
+    /// **以前はスロットごとの `static` で、親と子と、続けて走るプロセスが同じ番地を分け合っていた。**
+    #[test]
+    fn two_processes_do_not_move_each_others_mmap_address() {
+        let mut parent = super::Heap::from_image_end(0x40_1012);
+        let mut child = super::Heap::from_image_end(0x40_a289);
+        assert_eq!(
+            parent.take_mmap_range(0x3000),
+            Some(crate::syscall::MMAP_BASE)
+        );
+        assert_eq!(
+            child.take_mmap_range(0x1000),
+            Some(crate::syscall::MMAP_BASE)
+        );
+        assert_eq!(
+            parent.take_mmap_range(0x1000),
+            Some(crate::syscall::MMAP_BASE + 0x3000)
+        );
+        assert_eq!(
+            child.take_mmap_range(0x1000),
+            Some(crate::syscall::MMAP_BASE + 0x1000)
+        );
+    }
+
+    /// 終わったプロセスの番地は、次のプロセスへ残らない。
+    #[test]
+    fn the_mmap_address_does_not_outlive_the_process() {
+        let mut first = super::Heap::from_image_end(0x40_1012);
+        assert_eq!(
+            first.take_mmap_range(0x5000),
+            Some(crate::syscall::MMAP_BASE)
+        );
+        // プロセスが終わると `Heap` は捨てられ、次のプロセスは載せるときに作り直す。
+        let mut second = super::Heap::from_image_end(0x40_1012);
+        assert_eq!(
+            second.take_mmap_range(0x1000),
+            Some(crate::syscall::MMAP_BASE)
+        );
+    }
+
+    /// ヒープを据えていない間の置き場（`EMPTY`）は、番地を配らない。**何度呼んでも断り、番地の記録も進まない。**
+    #[test]
+    fn the_idle_heap_hands_out_no_mmap_address() {
+        let mut idle = super::Heap::EMPTY;
+        assert_eq!(idle.take_mmap_range(0x1000), None);
+        assert_eq!(idle.take_mmap_range(0x1000), None);
+        assert_eq!(idle.mmap_addresses(), None);
     }
 }

@@ -728,7 +728,11 @@ kernel::task::tests::the_state_array_stays_small_enough_for_the_switch_frame
 kernel::task::tests::uninitialized_slots_are_never_chosen
 kernel::task::tests::workers_come_before_the_ring3_task
 kernel::task::tests::workers_rotate
+kernel::userland::tests::a_new_process_maps_from_the_base
 kernel::userland::tests::the_default_environment_carries_home
+kernel::userland::tests::the_idle_heap_hands_out_no_mmap_address
+kernel::userland::tests::the_mmap_address_does_not_outlive_the_process
+kernel::userland::tests::two_processes_do_not_move_each_others_mmap_address
 kernel::vfs::tests::a_new_table_holds_the_three_terminals_and_no_files
 kernel::vfs::tests::descriptors_are_handed_out_lowest_first
 kernel::vfs::tests::the_first_open_takes_descriptor_three

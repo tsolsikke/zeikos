@@ -1548,8 +1548,11 @@ unsafe fn mmap_screen_from_ring3(len: u64, prot: u64, direct_map: DirectMap) -> 
         return (-EINVAL) as u64;
     }
     let pages = len.div_ceil(PAGE);
-    let slot = crate::arch::x86_64::current_excursion_slot();
-    let base = MMAP_NEXT[slot].fetch_add(pages * PAGE, Ordering::SeqCst);
+    // **プロセスのヒープが据えられていなければ断る**（`Heap::take_mmap_range` の doc。`sys_brk` と同じ値で返す）。
+    let Some(base) = crate::userland::with_current_heap(|heap| heap.take_mmap_range(pages * PAGE))
+    else {
+        return (-ENOMEM) as u64;
+    };
     // **裏バッファは普通の RAM である**（MMIO ではない。`BackBuffer` の doc）ので、キャッシュしてよい。
     // **共有の印が付く**——**`AddressSpace::detach` が集めない**（この関数の doc）。
     let attributes = PagePermissions::user_shared(prot & PROT_WRITE != 0);
@@ -2077,11 +2080,12 @@ unsafe fn write_to_socket(
 
 /// `mmap` がマップする基点（プロセスごと）。**イメージ・ヒープ・スタックは `0x400000..0x800000` に
 /// 収まっているので、その上（PML4\[0\] の空き）へ順にマップする**（`ADR-0065`。ウィンドウの拡張は要らない）。
+///
+/// **次にマップする番地は、プロセスごとの `Heap` が持つ**（`crate::userland::Heap::take_mmap_range`。2026-10-03）。
+/// **それまではスロットごとの `static` だった**——親と、親が起動した子と、続けて走るプロセスが同じスロットを使うので、
+/// 番地は上へ進むだけで、どのプロセスも `MMAP_BASE` から始まらなかった（実測: 起動時の `syscall-test` が 1 ページ使った後、
+/// シェルの子の最初の `mmap` は `0x10001000`、次の子は `0x10003000` から始まった）。
 pub(crate) const MMAP_BASE: u64 = 0x1000_0000;
-
-/// 次に `mmap` でマップするアドレス（スロットごと。`MMAP_BASE` から上へ）。
-static MMAP_NEXT: [core::sync::atomic::AtomicU64; crate::arch::x86_64::USER_TASK_SLOTS] =
-    [const { core::sync::atomic::AtomicU64::new(MMAP_BASE) }; crate::arch::x86_64::USER_TASK_SLOTS];
 
 /// fd から共有メモリの添字を引く。**共有メモリでなければ `Err(-EBADF)`。**
 fn shm_of(fd: u64) -> Result<u8, u64> {
@@ -2176,11 +2180,12 @@ unsafe fn mmap_from_ring3(len: u64, prot: u64, fd: u64, offset: u64, direct_map:
     if want_pages > pages {
         return (-EINVAL) as u64;
     }
-    let slot = crate::arch::x86_64::current_excursion_slot();
-    let base = MMAP_NEXT[slot].fetch_add(
-        (want_pages * crate::shm::PAGE_SIZE) as u64,
-        core::sync::atomic::Ordering::SeqCst,
-    );
+    // **プロセスのヒープが据えられていなければ断る**（`Heap::take_mmap_range` の doc。`sys_brk` と同じ値で返す）。
+    let Some(base) = crate::userland::with_current_heap(|heap| {
+        heap.take_mmap_range((want_pages * crate::shm::PAGE_SIZE) as u64)
+    }) else {
+        return (-ENOMEM) as u64;
+    };
     // **共有メモリの葉に目印を立てる（`ADR-0065`）。** **`AddressSpace::detach` が集めず、`crate::shm` が
     // 参照数で返す。**
     let attributes = PagePermissions::user_shared(prot & PROT_WRITE != 0);

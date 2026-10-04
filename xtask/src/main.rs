@@ -9155,10 +9155,40 @@ fn cmd_socket_test(features: &[&str], expect_pass: bool) -> Result<()> {
     let epipe = g("writes to a closed peer ");
     let eof = g("EOF seen ");
 
+    // **`mmap` の番地（プロセスごと）。** **`user-mmap:` の行は、`mmap` したプロセスが終わるときに 1 行ずつ出る。**
+    // **長い行なので、`socket:` の行と同じく空白を 1 つにまとめてから読む。**
+    let mmap_lines: Vec<String> = lines
+        .iter()
+        .filter(|line| line.contains("[INFO] user-mmap: "))
+        .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+        .collect();
+    let count_mmap = |wanted: &str| {
+        mmap_lines
+            .iter()
+            .filter(|line| line.contains(wanted))
+            .count()
+    };
+
     let judgements: Vec<(&str, bool)> = vec![
         (
             "hello_went_round",
             count_line("sockc: hello reply=hello") == 1,
+        ),
+        (
+            // **`mmap` の番地はプロセスごとで、どのプロセスも基点（`0x10000000`）から始まる。** **`sockd` が生きている
+            // 間に `sockc` が 2 回走り（`shm` と `shmlate`）、3 本とも同じ共有メモリ（2 ページ）をマップする**——
+            // **`sockc` は 2 回とも基点から 2 ページ、`sockd` は自分の 2 度ぶんだけ進む。** **番地を分け合う形に戻ると、
+            // 後からマップした側が基点より上から始まる**（直す前の実測: 最初の `sockc` が `0x10001000`、次が
+            // `0x10003000`）。**基点より上から始まった行が 1 つも無いことも見る**（起動時の `syscall-test` の行を含む）。
+            "every_process_maps_from_the_base",
+            count_mmap(
+                "user-mmap: /bin/sockc had its first mmap at 0x10000000 and would map next at 0x10002000 ",
+            ) == 2
+                && count_mmap(
+                    "user-mmap: /bin/sockd had its first mmap at 0x10000000 and would map next at 0x10004000 ",
+                ) == 1
+                && count_mmap(" had its first mmap at 0x10000000 and would map next at ")
+                    == mmap_lines.len(),
         ),
         (
             // **1,536 バイトを 1,024 の輪で往復させ、バイト単位で一致した**——**輪が境を跨いで
