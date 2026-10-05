@@ -103,6 +103,7 @@ common::ext2::tests::a_directory_whose_entries_do_not_parse_is_refused_before_an
 common::ext2::tests::a_file_block_index_that_would_overflow_in_u32_is_out_of_range
 common::ext2::tests::a_hole_in_the_direct_blocks_reads_as_zeros
 common::ext2::tests::a_hole_reached_through_the_indirect_table_reads_as_zeros
+common::ext2::tests::a_management_prefix_past_the_image_is_refused
 common::ext2::tests::a_missing_indirect_table_reads_as_zeros
 common::ext2::tests::a_missing_name_is_not_found
 common::ext2::tests::a_name_that_is_already_there_is_refused
@@ -164,7 +165,9 @@ common::ext2::tests::separators_collapse_the_way_linux_collapses_them
 common::ext2::tests::skips_unused_entries_without_losing_the_rest
 common::ext2::tests::the_component_limit_bounds_the_work_not_the_termination
 common::ext2::tests::the_high_size_field_counts_only_for_regular_files
+common::ext2::tests::the_management_prefix_ends_where_the_inode_table_ends
 common::ext2::tests::the_new_entry_is_walkable_and_no_record_length_is_zero
+common::ext2::tests::the_volume_name_is_read_from_its_field
 common::ext2::tests::the_walk_can_resume_from_the_offset_it_reported
 common::ext2::tests::unlinking_a_directory_is_refused
 common::ext2::tests::unlinking_a_name_that_is_not_there_is_refused

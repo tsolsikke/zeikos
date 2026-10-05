@@ -5950,11 +5950,18 @@ fn copy_fs_image_to_frames(
             "fs-image: the direct map does not cover the handed-over image {base:#x}..{last:#x}; \
              halting"
         )),
-        FsImageCopyError::RamImageChecksumMismatch { found, expected } => {
+        FsImageCopyError::RamImageChecksumMismatch {
+            found,
+            found_bytes,
+            expected,
+            expected_bytes,
+        } => {
             logger.error(format_args!(
-                "fs-image: the handed-over image has checksum {found:#010x} but this kernel was \
-                 built for {expected:#010x} (the length matched, so the \\zeikos\\fs.img on the \
-                 boot medium is stale); halting"
+                "fs-image: the handed-over image has checksum {found:#010x} over its first \
+                 {found_bytes} byte(s), but this kernel was built for {expected:#010x} over \
+                 {expected_bytes} (the length matched, so the \\zeikos\\fs.img on the boot medium \
+                 is stale; this kernel's image carries the volume label {:?}); halting",
+                fsimage_info::VOLUME_LABEL
             ))
         }
     }
@@ -6011,7 +6018,12 @@ enum FsImageCopyError {
     /// direct map が渡されたイメージを覆っていない（同）。**コピーする前に確かめる。**
     RamImageNotCovered { base: u64, last: u64 },
     /// 渡されたイメージの検査値が、ビルドしたときの値と違う（同）。**長さが同じでも中身が古い形を検出する。**
-    RamImageChecksumMismatch { found: u32, expected: u32 },
+    RamImageChecksumMismatch {
+        found: u32,
+        found_bytes: usize,
+        expected: u32,
+        expected_bytes: usize,
+    },
 }
 
 /// イメージをフレームへ複製する検査部（T3-1）。**止めない。`Err` を返す。**
@@ -6226,6 +6238,21 @@ fn try_copy_fs_image_to_frames(
     // **0 で潰す形は破壊テストにならない。** イメージの末尾は既に 0 なので、書いても何も
     // 変わらない（**実測でそうなった**——破壊テストを立てたのに項目が通った）。
     // **「壊したつもりで壊れていない」を、破壊テストを走らせて検出した例である。**
+    //
+    // 破壊テスト (2026-10-05, fs-copy-corrupt-label): ボリュームの名前の欄の最後の 1 バイトを 0xFF にする。
+    // **管理用の部分の検査値が、ホストがファイルから計算した値と食い違う。** 解析は通る（名前は読まれない）。
+    #[cfg(feature = "fs-copy-corrupt-label-test")]
+    // SAFETY: 上と同じ範囲（像は superblock より長い）。破壊テストのために 1 バイトだけ変える。
+    unsafe {
+        destination
+            .add(
+                common::ext2::SUPERBLOCK_OFFSET
+                    + common::ext2::SUPERBLOCK_VOLUME_NAME
+                    + common::ext2::VOLUME_NAME_LEN
+                    - 1,
+            )
+            .write(0xFF);
+    }
     #[cfg(feature = "fs-copy-corrupt-tail-test")]
     // SAFETY: 上と同じ範囲。破壊テストのために末尾を 1 バイトだけ変える。
     unsafe {
@@ -6246,7 +6273,17 @@ fn try_copy_fs_image_to_frames(
     //
     // **費用は前と同じ位である**——**前も 2MiB のスライス比較で 2MiB を歩いていた。**
     let timing_loaded = common::arch::x86_64::read_timestamp_counter();
-    let checksum = image_checksum(copied);
+    // **検査値が覆うのは、管理用の部分だけである**（2026-10-05。先頭から、グループ 0 の inode の表の終わりまで。
+    // `common::ext2` の `management_prefix_len`）。**以前は像の全体を歩いていた**——像の大きさに比例して延び、
+    // 32 MiB で約 2.5 秒かかった（実測）。**ファイルの中身の違いは、ボリュームの名前の欄に書いた全体の検査値を
+    // 通して、この範囲の値に出る**（`kernel/build.rs`）。**像の全体のバイト一致は、像を取り出す検査が見る。**
+    //
+    // **解析できない像では、範囲が決まらない。** 0 バイトの検査値（0）を出して進む——すぐ下の確かめ
+    // （`verify_root_fs_image`）が、解析の失敗を名指しして止める。
+    let management_bytes = common::ext2::Ext2::parse(copied)
+        .and_then(|fs| fs.management_prefix_len())
+        .unwrap_or(0);
+    let checksum = image_checksum(&copied[..management_bytes]);
     let timing_summed = common::arch::x86_64::read_timestamp_counter();
 
     // **RAM のイメージからコピーした回は、検査値でも照合する**（`ADR-0068` の HW-d。レビューの 1 点）。
@@ -6258,10 +6295,19 @@ fn try_copy_fs_image_to_frames(
     // **装置から読んだ回は照合しない**——**持ち越しの構成（`--keep-disk` のグループ）では、`disk0.img` が
     // 前の起動で書いた中身を持っており、ビルドしたときの値と違うのが正しい。** **そちらはホストが
     // `disk0.img` から独立に計算して突き合わせる**（上の doc）。
-    if copied_from_ram && checksum != fsimage_info::IMAGE_CHECKSUM {
+    //
+    // **比べるのは、管理用の部分の検査値である**（2026-10-05）。**ビルドのときに、像の全体の検査値をボリュームの
+    // 名前の欄へ書いてあるので、中身だけが古い像も、この値が違う。** 範囲の決め方が `build.rs` と食い違っても、
+    // ここで止まる（範囲のバイト数も比べる）。
+    if copied_from_ram
+        && (checksum != fsimage_info::MANAGEMENT_CHECKSUM
+            || management_bytes != fsimage_info::MANAGEMENT_BYTES)
+    {
         return Err(FsImageCopyError::RamImageChecksumMismatch {
             found: checksum,
-            expected: fsimage_info::IMAGE_CHECKSUM,
+            found_bytes: management_bytes,
+            expected: fsimage_info::MANAGEMENT_CHECKSUM,
+            expected_bytes: fsimage_info::MANAGEMENT_BYTES,
         });
     }
 
@@ -6305,7 +6351,9 @@ fn try_copy_fs_image_to_frames(
     let (image_start, image_end) = kernel_image_phys_range();
     logger.info(format_args!(
         "fs-image-copy: copied {bytes} byte(s) to phys {:#x}..{:#x} ({frames} frame(s), \
-         2MiB-aligned={}), checksum={checksum:#010x}; the kernel image is {:#x}..{:#x}",
+         2MiB-aligned={}), checksum={checksum:#010x}; the checksum covers the first \
+         {management_bytes} byte(s) (the superblock through the inode table of group 0); the \
+         kernel image is {:#x}..{:#x}",
         base.as_u64(),
         base.as_u64() + bytes,
         base.as_u64() % (2 * 1024 * 1024) == 0,
@@ -12500,6 +12548,11 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "fs-copy-corrupt-tail-test",
         cfg!(feature = "fs-copy-corrupt-tail-test"),
         "像の複製の末尾 1 バイトを 0xFF で潰す",
+    ),
+    (
+        "fs-copy-corrupt-label-test",
+        cfg!(feature = "fs-copy-corrupt-label-test"),
+        "像の複製の、ボリュームの名前の欄の最後の 1 バイトを 0xFF にする",
     ),
     (
         "ext2-group-count-offset-test",

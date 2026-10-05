@@ -389,6 +389,9 @@ kill-fold-keep-bkl-test = []
 # 落とさなければ、取り出した像とのバイト一致がホスト側で落ちる。
 # **0 で潰す形は破壊にならない**——像の末尾は既に 0 である（実測）。
 fs-copy-corrupt-tail-test = []
+# 像の複製の、ボリュームの名前の欄の最後の 1 バイトを 0xFF にする。管理用の部分の検査値が、ホストが
+# ファイルから計算した値と食い違う。解析は通る。
+fs-copy-corrupt-label-test = []
 # 破壊（S12-b）: 空きブロック数の欄を 2 バイトずらして読む。common へ転送する。
 ext2-group-count-offset-test = ["common/ext2-group-count-offset-break"]
 # 変種（S12-b）: 割り当てたブロックを解放しない。**壊さない**——別の状態を作る

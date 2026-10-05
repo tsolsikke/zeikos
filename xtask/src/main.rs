@@ -4563,7 +4563,9 @@ fn cmd_fs_image_extract(features: &[&str]) -> Result<()> {
             let token = rest.split(|c: char| c == ';' || c.is_whitespace()).next()?;
             u32::from_str_radix(token.trim_start_matches("0x"), 16).ok()
         });
-    let host_image_checksum = fs::read(&built).ok().map(|bytes| image_checksum(&bytes));
+    let host_image_checksum = fs::read(&built)
+        .ok()
+        .and_then(|bytes| management_checksum(&bytes));
     let image_checksum_matches =
         kernel_image_checksum.is_some() && kernel_image_checksum == host_image_checksum;
     println!(
@@ -6562,6 +6564,13 @@ const SABOTAGE_JUDGEMENTS: &[NamedJudgement] = &[
         check: "fs extract",
         key: "fs-copy-corrupt-tail-test",
         signs: &["the extracted image matches the built image byte for byte = false"],
+        note: "",
+        reached: true,
+    },
+    NamedJudgement {
+        check: "fs extract",
+        key: "fs-copy-corrupt-label-test",
+        signs: &["the kernel's image checksum matches the host's = false"],
         note: "",
         reached: true,
     },
@@ -15487,6 +15496,20 @@ fn image_checksum(bytes: &[u8]) -> u32 {
     sum
 }
 
+/// 像の「管理用の部分」の検査値（2026-10-05）。**カーネルが起動ログに出す値と突き合わせる相手である。**
+///
+/// **範囲は、先頭から、グループ 0 の inode の表の終わりまでである**（`common::ext2` の `management_prefix_len`）。
+/// **以前は像の全体だった。** カーネルが像の全体を歩く時間が、像の大きさに比例して延びたので絞った
+/// （`docs/adr/0077-costs-that-grow-with-the-disk-image.md`）。**ファイルの中身の違いは、ボリュームの名前の欄に
+/// 書いた全体の検査値を通して、この範囲の値に出る。** 像の全体のバイト一致は、取り出した像との比べが見る。
+///
+/// **解析できない像は `None`**（カーネルの側は 0 バイトの検査値を出して、解析の失敗で止まる）。
+fn management_checksum(bytes: &[u8]) -> Option<u32> {
+    let fs = common::ext2::Ext2::parse(bytes).ok()?;
+    let length = fs.management_prefix_len().ok()?;
+    Some(image_checksum(&bytes[..length]))
+}
+
 /// イメージのロードの破壊テストの一覧（S13-c）。
 ///
 /// **先頭の欠けは、バイト一致の判定より前に、カーネルの ext2 の解析が `BadMagic` で起動を止める**
@@ -19001,7 +19024,9 @@ fn cmd_persist_zi_test(rebuild_between: bool) -> Result<()> {
     let structure_is_sound = fsck.status.success();
     println!("{context}: e2fsck says the device image is sound = {structure_is_sound}");
 
-    let host_checksum = fs::read(&disk).ok().map(|bytes| image_checksum(&bytes));
+    let host_checksum = fs::read(&disk)
+        .ok()
+        .and_then(|bytes| management_checksum(&bytes));
 
     println!("=== {context}: boot 2 (persist-check-test, keeping the disk)");
     let (second, _second_run) = capture_one_boot(
@@ -19503,7 +19528,9 @@ fn cmd_persist_test(rebuild_between: bool) -> Result<()> {
     );
 
     // **2 度目を起動する前の、装置の中身の検査値。** **カーネルが出す値と突き合わせる。**
-    let host_checksum = fs::read(&disk).ok().map(|bytes| image_checksum(&bytes));
+    let host_checksum = fs::read(&disk)
+        .ok()
+        .and_then(|bytes| management_checksum(&bytes));
 
     println!("=== {context}: boot 2 (default build, keeping the disk)");
     let disk_for_second = if rebuild_between {
@@ -29919,6 +29946,22 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
             &mut failed,
         );
 
+        // **管理用の部分の検査値の側**（2026-10-05）。**ボリュームの名前の欄の 1 バイトを変える。** 解析は通り、
+        // **カーネルが出す検査値が、ホストがファイルから計算した値と食い違う。**
+        total += 1;
+        begin_item(
+            Family::Fs,
+            "the fs extract catches a corrupted volume label",
+        );
+        let result = cmd_fs_image_extract(&["fs-copy-corrupt-label-test"]);
+        report_sabotage_verdict(
+            "fs extract",
+            "corrupt label",
+            &["fs-copy-corrupt-label-test"],
+            &result,
+            &mut failed,
+        );
+
         // **「読む側を複製へ向けたことの反証」は P-e で落とした。**
         // **埋め込みイメージを外したので、読む先が 1 つしかない**——**あの破壊テストが
         // 守っていた性質は構造的に真である**（`ADR-0034` の Addendum の引き継ぎの表）。
@@ -31695,7 +31738,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 62,
-    full: 479,
+    full: 480,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

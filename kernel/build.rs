@@ -902,9 +902,10 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
     // 出し続ける）。**`first_free` とは別に測る**——**あちらは「最初の
     // 空きの範囲の始まり」で、途中に穴があれば上端より手前になる。**
     let used_blocks = used_blocks(&image);
-    // **イメージの検査値（`ADR-0068` の HW-d）。** **カーネルが、渡された RAM ディスクのイメージがこのイメージで
-    // あることを確かめるのに使う**——**長さが同じで中身が古い `fs.img` は長さでは検出されない**
+    // **イメージの全体の検査値（`ADR-0068` の HW-d）。** **渡された RAM ディスクのイメージがこのイメージであることを
+    // 確かめるための値である**——**長さが同じで中身が古い `fs.img` は長さでは検出されない**
     // （VDI の作り直し忘れ、ESP の片方だけの差し替え。レビューの指摘。2026-09-23）。
+    // **2026-10-05 から、カーネルはこの値を直には比べない。** 下で、ボリュームの名前の欄へ書く。
     // **式はカーネルの `image_checksum` と同じ重み付き和である**（`byte * (index + 1)` の総和を
     // ラップさせて足す）。**2 つに増やさない。**
     let image_bytes =
@@ -915,6 +916,63 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
         .fold(0u32, |sum, (index, byte)| {
             sum.wrapping_add(u32::from(*byte).wrapping_mul(index as u32 + 1))
         });
+    // **像の全体の検査値を、ボリュームの名前の欄へ文字で書く**（2026-10-05）。
+    //
+    // **カーネルは、起動のたびに像の全体を歩かなくなった**——検査値が覆うのは、管理用の部分（先頭から inode の表の
+    // 終わりまで）だけである。**それだけだと、ファイルの中身だけが違う古い像を見分けられない**（大きさが同じなら、
+    // 管理用の部分は 1 バイトも変わらない。時刻は潰してある）。**全体の検査値を管理用の部分の中に置けば、中身が
+    // 1 バイトでも違う像は、管理用の部分の検査値も違う値になる。**
+    //
+    // **欄は `s_volume_name`（superblock の 120 バイト目から 16 バイト）である。** `e2label` や `dumpe2fs` で見える。
+    // 選んだ理由と、比べた欄は `docs/adr/0077-costs-that-grow-with-the-disk-image.md` に在る。
+    //
+    // **書くのは、全体の検査値を計算した後である**（欄が空の状態の値を書く。書いた後の像の全体の値ではない）。
+    const VOLUME_NAME_AT: usize = 1024 + 120;
+    let label = format!("zeikos-{checksum:08x}");
+    assert!(
+        label.len() < 16,
+        "the volume label must leave room for a NUL"
+    );
+    let mut image_bytes = image_bytes;
+    assert!(
+        image_bytes[VOLUME_NAME_AT..VOLUME_NAME_AT + 16]
+            .iter()
+            .all(|b| *b == 0),
+        "mke2fs left a volume name in the image; the build expects an empty one"
+    );
+    image_bytes[VOLUME_NAME_AT..VOLUME_NAME_AT + label.len()].copy_from_slice(label.as_bytes());
+    std::fs::write(&image, &image_bytes).expect("failed to write the volume label into the image");
+
+    // **管理用の部分の検査値**（印を書いた後の像から）。**範囲は `common::ext2` の `management_prefix_len` と同じ
+    // 決め方である**——ブロック 0 から、グループ 0 の inode の表の終わりまで。**ここでは superblock と記述子を
+    // 直に読む**（`build.rs` は `common` に依らない）。**カーネルは、RAM の像から起動した回に、自分で計算した値と
+    // この値を比べる。** 2 つの決め方が食い違えば、そこで止まる。
+    let le32 = |at: usize| {
+        u32::from_le_bytes([
+            image_bytes[at],
+            image_bytes[at + 1],
+            image_bytes[at + 2],
+            image_bytes[at + 3],
+        ]) as usize
+    };
+    let block_size = 1024usize << le32(1024 + 24);
+    let inodes_per_group = le32(1024 + 40);
+    let inode_size = u16::from_le_bytes([image_bytes[1024 + 88], image_bytes[1024 + 89]]) as usize;
+    let first_data_block = le32(1024 + 20);
+    let inode_table = le32((first_data_block + 1) * block_size + 8);
+    let management_bytes =
+        (inode_table + (inodes_per_group * inode_size).div_ceil(block_size)) * block_size;
+    assert!(
+        management_bytes <= image_bytes.len(),
+        "the inode table of group 0 runs past the image"
+    );
+    let management_checksum = image_bytes[..management_bytes]
+        .iter()
+        .enumerate()
+        .fold(0u32, |sum, (index, byte)| {
+            sum.wrapping_add(u32::from(*byte).wrapping_mul(index as u32 + 1))
+        });
+
     std::fs::write(
         format!("{out_dir}/fsimage_info.rs"),
         format!(
@@ -932,7 +990,10 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
              pub const INDIRECT_TABLE_BLOCK: usize = {indirect_table};\n\
              pub const FIRST_FREE_BLOCK: usize = {first_free};\n\
              pub const USED_BLOCKS: usize = {used_blocks};\n\
-             pub const IMAGE_CHECKSUM: u32 = {checksum:#010x};\n",
+             pub const IMAGE_CHECKSUM: u32 = {checksum:#010x};\n\
+             pub const VOLUME_LABEL: &str = {label:?};\n\
+             pub const MANAGEMENT_BYTES: usize = {management_bytes};\n\
+             pub const MANAGEMENT_CHECKSUM: u32 = {management_checksum:#010x};\n",
             DIRECT_MAX_BYTES + 1
         ),
     )

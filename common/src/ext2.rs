@@ -71,7 +71,7 @@ static ZERO_BLOCK: [u8; 65536] = [0; 65536];
 const EXT2_MAGIC: u16 = 0xEF53;
 
 /// superblock のイメージ内オフセット。**ブロックサイズに依らず 1024 で固定である。**
-const SUPERBLOCK_OFFSET: usize = 1024;
+pub const SUPERBLOCK_OFFSET: usize = 1024;
 
 /// superblock のうち、この module が読む範囲。
 const SUPERBLOCK_MIN_LEN: usize = 104;
@@ -120,6 +120,11 @@ const GROUP_DESCRIPTOR_FREE_INODES_COUNT: usize = 14;
 /// 囲いは要らない。**「ファイルしか作らないから動かさない」という前提が
 /// 消えたのである。**
 const GROUP_DESCRIPTOR_USED_DIRS_COUNT: usize = 16;
+
+/// `s_volume_name` の superblock 内オフセット（16 バイト。NUL で埋める）。
+pub const SUPERBLOCK_VOLUME_NAME: usize = 120;
+/// `s_volume_name` の長さ。
+pub const VOLUME_NAME_LEN: usize = 16;
 
 /// group descriptor 1 つのバイト数（ext2。ext4 の 64 バイトではない）。
 pub const GROUP_DESCRIPTOR_SIZE: usize = 32;
@@ -852,6 +857,47 @@ impl<'a> Ext2<'a> {
             }
         }
         Ok(descriptor)
+    }
+
+    /// 像の先頭の「管理用の部分」のバイト数（2026-10-05）。
+    ///
+    /// **ブロック 0 から、グループ 0 の inode の表の終わりまでである**——スーパーブロック、グループの記述子
+    /// （と、その後ろの予約のブロック）、ブロックと inode のビットマップ、inode の表が入る。`mke2fs` は、グループ 0 で
+    /// これらを先頭から続けて置く。
+    ///
+    /// **起動時の検査値が覆う範囲である**（カーネルと、ホストの検査の両方が、この関数で範囲を決める）。像の大きさや
+    /// ファイルの中身の量には依らない——inode の数で決まる。
+    ///
+    /// **グループが 2 つ以上の像でも、返すのはグループ 0 の分だけである**（いまの像は 1 グループ）。
+    ///
+    /// # 線がどう当たるか
+    ///
+    /// - **線2: 算術。** `inodes_per_group * inode_size` は u32 では溢れうるので、u64 で組み立てる
+    /// - **線3: 範囲。** 表の終わりが像の外へ出るなら [`Ext2Error::InodeTableOutOfRange`] で断る
+    pub fn management_prefix_len(&self) -> Result<usize, Ext2Error> {
+        let table = self.group_descriptor(0)?.inode_table;
+        let block_size = u64::from(self.block_size);
+        let table_bytes = u64::from(self.inodes_per_group) * u64::from(self.inode_size);
+        let table_blocks = table_bytes.div_ceil(block_size);
+        let end = (u64::from(table) + table_blocks).saturating_mul(block_size);
+        if end > self.image.len() as u64 {
+            return Err(Ext2Error::InodeTableOutOfRange {
+                inode: self.inodes_per_group,
+                needed: end,
+            });
+        }
+        Ok(end as usize)
+    }
+
+    /// ボリュームの名前の欄（`s_volume_name`。16 バイト。2026-10-05）。**`e2label` や `dumpe2fs` で見える欄である。**
+    ///
+    /// **像をビルドするときに、像の全体の検査値を、ここへ文字で書いている**（`kernel/build.rs`）。この欄は
+    /// 管理用の部分に入るので、ファイルの中身が 1 バイトでも違えば、管理用の部分の検査値も違う値になる。
+    ///
+    /// **像が欄まで届かなければ `None`**（[`Ext2::parse`] が保証するのは、superblock の手前の欄までである）。
+    pub fn volume_name(&self) -> Option<&'a [u8]> {
+        let start = SUPERBLOCK_OFFSET + SUPERBLOCK_VOLUME_NAME;
+        self.image.get(start..start + VOLUME_NAME_LEN)
     }
 
     /// inode を 1 つ読む（S10-a）。
@@ -2602,6 +2648,47 @@ mod tests {
                                  // （`dumpe2fs`の`Desired extra isize`）。**`s_min_extra_isize`(348)も同じ値だが、
                                  // 書く側が見るのは`want`のほうなので、そちらだけを置く。**
         put16(image, 350, 32);
+    }
+
+    /// 管理用の部分は、ブロック 0 から inode の表の終わりまでである。**試験の像は、表がブロック 4 から、256 個の
+    /// 256 バイトの inode で 16 ブロックなので、20 ブロックになる。**
+    #[test]
+    fn the_management_prefix_ends_where_the_inode_table_ends() {
+        let image = build_test_image();
+        let fs = Ext2::parse(&image).expect("the default-shaped image is accepted");
+        let table = fs.group_descriptor(0).unwrap().inode_table as usize;
+        let table_blocks =
+            (fs.inodes_per_group() as usize * fs.inode_size() as usize).div_ceil(4096);
+        assert_eq!(
+            fs.management_prefix_len(),
+            Ok((table + table_blocks) * 4096)
+        );
+        assert_eq!(fs.management_prefix_len(), Ok(20 * 4096));
+    }
+
+    /// inode の表が像の外へ出るなら、範囲を返さずに断る（黙って短い範囲にしない）。
+    #[test]
+    fn a_management_prefix_past_the_image_is_refused() {
+        let mut image = build_test_image();
+        // `s_inodes_per_group` と `s_inodes_count` を、表が像の外へ出る数にする。
+        let huge = 600_000u32;
+        image[SUPERBLOCK_OFFSET..SUPERBLOCK_OFFSET + 4].copy_from_slice(&huge.to_le_bytes());
+        image[SUPERBLOCK_OFFSET + 40..SUPERBLOCK_OFFSET + 44].copy_from_slice(&huge.to_le_bytes());
+        let fs = Ext2::parse(&image).expect("the superblock itself still parses");
+        assert!(matches!(
+            fs.management_prefix_len(),
+            Err(Ext2Error::InodeTableOutOfRange { .. })
+        ));
+    }
+
+    /// ボリュームの名前の欄は、superblock の 120 バイト目からの 16 バイトである。
+    #[test]
+    fn the_volume_name_is_read_from_its_field() {
+        let mut image = build_test_image();
+        let at = SUPERBLOCK_OFFSET + SUPERBLOCK_VOLUME_NAME;
+        image[at..at + 15].copy_from_slice(b"zeikos-0badf00d");
+        let fs = Ext2::parse(&image).expect("the default-shaped image is accepted");
+        assert_eq!(fs.volume_name(), Some(&b"zeikos-0badf00d\0"[..]));
     }
 
     #[test]
