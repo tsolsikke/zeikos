@@ -870,7 +870,10 @@ xtask::page_permissions::tests::one_changed_permission_is_named_with_its_moment_
 xtask::page_permissions::tests::only_the_rows_are_taken_out_of_the_serial_log
 xtask::page_permissions::tests::page_counts_and_rows_on_one_side_only_are_reported
 xtask::page_permissions::tests::rows_that_share_a_place_but_differ_in_permissions_are_paired_by_their_permissions
+xtask::run_dir::tests::a_fallback_is_counted_from_its_run_note
 xtask::run_dir::tests::retiring_scratch_copies_the_images_only_when_asked
+xtask::run_dir::tests::scratch_goes_to_the_ssd_only_for_a_named_reason
+xtask::run_dir::tests::the_held_amount_adds_up_the_files_below
 xtask::run_dir::tests::the_names_in_a_run_directory_come_from_the_run
 xtask::run_dir::tests::the_newest_runs_are_kept_whole_and_the_oldest_are_removed
 xtask::run_dir::tests::the_scratch_name_differs_per_runs_directory

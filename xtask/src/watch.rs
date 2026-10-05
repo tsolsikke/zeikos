@@ -567,10 +567,18 @@ pub fn command(root: &Path) -> Result<()> {
             Some(now.saturating_sub(start) * 512)
         });
     let (_, host_free, _) = crate::full_check::free_spaces(&main);
+    // **使い捨てのファイルを SSD に置いた回の数**（全検査の木の置き場の `run.txt` から。全検査が始まった後の回だけ）。
+    let fallbacks = began.map(|began| crate::run_dir::fallbacks_since(&worktree, began));
     println!(
-        "watch: disk: written since the start {} GiB; full-check tree {} GiB{}, main target {} GiB{}; \
-         free on the drive holding the WSL disk {} GiB, inside WSL {} GiB{}",
+        "watch: disk: written since the start {} GiB; scratch on the SSD in {} run(s){}; full-check tree {} GiB{}, \
+         main target {} GiB{}; free on the drive holding the WSL disk {} GiB, inside WSL {} GiB{}",
         show(written),
+        fallbacks.map_or("?".to_string(), |count| count.to_string()),
+        if fallbacks.is_some_and(|count| count > 0) {
+            " !SSD-SCRATCH"
+        } else {
+            ""
+        },
         show(worktree_bytes),
         near_mark(worktree_bytes),
         show(main_bytes),

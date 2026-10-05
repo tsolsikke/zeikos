@@ -31386,6 +31386,19 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
             kinds.join(", ")
         );
     }
+    // **使い捨てのファイルを SSD に置いた回の数**（2026-10-06。tmpfs に置けなかった回を、黙って済ませない。止めない）。
+    if let Some(since) = full_check::started_unix_ms() {
+        let fallbacks = run_dir::fallbacks_since(&workspace_root, since);
+        println!(
+            "({}) scratch files went to the SSD in {fallbacks} run(s) of this check{}",
+            if fallbacks == 0 { "info" } else { "warn" },
+            if fallbacks == 0 {
+                ""
+            } else {
+                " (each run's run.txt names the reason)"
+            }
+        );
+    }
     // **期限で終わった待ち**（2026-09-25。QEMU を起動した回だけ。止めない）。
     if launch::runs_started() > 0 {
         println!("{}", deadline_ends_line());

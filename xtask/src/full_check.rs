@@ -898,6 +898,12 @@ pub fn written_since_the_start() -> Option<u64> {
         .map(|(before, after)| after.saturating_sub(before) * 512)
 }
 
+/// 検査を始めた時刻（UNIX のミリ秒。`begin` の前なら `None`）。
+pub fn started_unix_ms() -> Option<u128> {
+    let start = START.lock().ok()?;
+    Some(u128::from(start.as_ref()?.unix) * 1000)
+}
+
 /// 走り始めのツリー（ロックの中身に書く）。**`begin` の前なら `None`。**
 pub fn started_commit_and_tree() -> Option<(String, String)> {
     let start = START.lock().ok()?;

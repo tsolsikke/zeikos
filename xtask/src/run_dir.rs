@@ -51,6 +51,17 @@ const SCRATCH_TMPFS: &str = "/dev/shm";
 /// いる**——メモリを食い合わないように、SSD へ戻す。
 const SCRATCH_FLOOR_BYTES: u64 = 1 << 30;
 
+/// 検査が tmpfs に置いてよい量の上限（バイト）。**置いてある量に 1 回の分を足して、これを越えるなら、その回は
+/// SSD に置く**（2026-10-06）。tmpfs はメモリなので、片付けが追いつかない形になったときに、黙って食い続けない。
+/// 数えるのは、利用者ごとの親（`/dev/shm/zeikos-runs-<利用者>`）の下の全部で、メインの木と全検査の木の両方が入る。
+const SCRATCH_BUDGET_BYTES: u64 = 2 << 30;
+
+/// 1 回の実行が tmpfs に置く量の見積もり（バイト。[`SCRATCH_FLOOR_BYTES`] の doc の内訳を、切り上げた値）。
+const SCRATCH_PER_RUN_BYTES: u64 = 160 << 20;
+
+/// `run.txt` に書く、使い捨ての置き場を SSD に置いた回の印（行の頭）。**数える側（[`fallbacks_since`]）が読む。**
+const FALLBACK_MARK: &str = "scratch-fallback: ";
+
 /// 番号を取り合って負けたときに、次の番号を試す回数の上限（上限の無い繰り返しを書かない）。
 const ALLOCATION_ATTEMPTS: u64 = 1000;
 
@@ -72,7 +83,9 @@ const ALLOCATION_ATTEMPTS: u64 = 1000;
 ///   装置の像を持ち越す流れ（`--keep-disk`・`--manual`）が、今までどおり動く。
 /// - **既定の像として示した置き場**（[`RunDir::publish_as_default_image`]）——ESP も写す（道具が読む）。
 ///
-/// **tmpfs が使えないか、空きが少ないときは、使い捨ての置き場も SSD の置き場と同じ所になる**（今までの形）。
+/// **tmpfs が使えないか、空きが少ないか、検査が置いている量が上限（[`SCRATCH_BUDGET_BYTES`]）を越えそうなときは、
+/// 使い捨ての置き場も SSD の置き場と同じ所になる**（今までの形）。**その回は、理由を `run.txt` と端末に出す。**
+/// 全検査のまとめと見張りが、その回の数を出す（[`fallbacks_since`]）。
 pub struct RunDir {
     number: u64,
     path: PathBuf,
@@ -165,27 +178,104 @@ const DISK_IMAGE: &str = "disk0.img";
 const EXTRACTED_IMAGE: &str = "fs-extract.img";
 const ESP: &str = "esp";
 
-/// この回の使い捨ての置き場を決める（純粋な論理ではない。tmpfs の様子を見る）。**置けなければ `None`。**
+/// この回の使い捨ての置き場を決める（純粋な論理ではない。tmpfs の様子を見る）。**置けなければ、理由を返す。**
 ///
 /// **道は `/dev/shm/zeikos-runs-<利用者>/<置き場の親の道から作った名前>/<番号>` である**——作業ツリーごと
 /// （メインの木と、全検査の木）に分かれ、同じ番号でもぶつからない。
-fn scratch_for(runs: &Path, number: u64) -> Option<PathBuf> {
+fn scratch_for(runs: &Path, number: u64) -> Result<PathBuf, String> {
     let tmpfs = Path::new(SCRATCH_TMPFS);
-    if !tmpfs.is_dir() {
-        return None;
+    let present = tmpfs.is_dir();
+    let free = present
+        .then(|| crate::launch::available_bytes(tmpfs))
+        .flatten();
+    let used = directory_blocks_bytes(&scratch_root());
+    match scratch_refusal(present, free, used) {
+        Some(reason) => Err(reason),
+        None => Ok(scratch_base(runs).join(number.to_string())),
     }
-    if crate::launch::available_bytes(tmpfs).is_none_or(|free| free < SCRATCH_FLOOR_BYTES) {
-        return None;
+}
+
+/// tmpfs に置かない理由（純粋な論理）。**置いてよければ `None`。** `free` は tmpfs の空き、`used` は検査が
+/// いま tmpfs に置いている量である。
+fn scratch_refusal(present: bool, free: Option<u64>, used: u64) -> Option<String> {
+    const MIB: u64 = 1 << 20;
+    if !present {
+        return Some(format!("{SCRATCH_TMPFS} is not there"));
     }
-    Some(scratch_base(runs).join(number.to_string()))
+    let Some(free) = free else {
+        return Some(format!(
+            "the free space of {SCRATCH_TMPFS} could not be read"
+        ));
+    };
+    if free < SCRATCH_FLOOR_BYTES {
+        return Some(format!(
+            "{SCRATCH_TMPFS} has {} MiB free, below the floor of {} MiB",
+            free / MIB,
+            SCRATCH_FLOOR_BYTES / MIB
+        ));
+    }
+    if used.saturating_add(SCRATCH_PER_RUN_BYTES) > SCRATCH_BUDGET_BYTES {
+        return Some(format!(
+            "the checks already hold {} MiB on {SCRATCH_TMPFS}; one more run ({} MiB) would pass the budget of {} MiB",
+            used / MIB,
+            SCRATCH_PER_RUN_BYTES / MIB,
+            SCRATCH_BUDGET_BYTES / MIB
+        ));
+    }
+    None
+}
+
+/// ディレクトリの下のファイルが、実際に占めている量（バイト。ブロックの数から。穴は数えない）。無ければ 0。
+fn directory_blocks_bytes(dir: &Path) -> u64 {
+    use std::os::unix::fs::MetadataExt;
+
+    let Ok(entries) = fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .filter_map(|entry| entry.ok())
+        .map(|entry| match entry.file_type() {
+            Ok(kind) if kind.is_dir() => directory_blocks_bytes(&entry.path()),
+            Ok(kind) if kind.is_file() => entry.metadata().map_or(0, |meta| meta.blocks() * 512),
+            _ => 0,
+        })
+        .sum()
+}
+
+/// `run.txt` が、指定の時刻より後に始まり、使い捨ての置き場を SSD に置いた回のものか（純粋な論理）。
+fn is_fallback_since(run_txt: &str, since_unix_ms: u128) -> bool {
+    let started = run_txt.lines().find_map(|line| {
+        line.strip_prefix("started (unix ms): ")?
+            .trim()
+            .parse::<u128>()
+            .ok()
+    });
+    started.is_some_and(|started| started >= since_unix_ms)
+        && run_txt.lines().any(|line| line.starts_with(FALLBACK_MARK))
+}
+
+/// 指定の時刻より後に始まった回のうち、使い捨ての置き場を SSD に置いた回の数（作業ツリーの置き場を数える）。
+///
+/// **`run.txt` から数える**——検査の項目が別のプロセスで走っても、後から呼ぶ見張りからでも、同じ数になる。
+pub fn fallbacks_since(workspace_root: &Path, since_unix_ms: u128) -> usize {
+    numbered_entries(&runs_dir(workspace_root))
+        .into_iter()
+        .filter(|(_, path)| {
+            fs::read_to_string(path.join("run.txt"))
+                .is_ok_and(|text| is_fallback_since(&text, since_unix_ms))
+        })
+        .count()
+}
+
+/// 検査が tmpfs に置くものの、利用者ごとの親。
+fn scratch_root() -> PathBuf {
+    let user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
+    Path::new(SCRATCH_TMPFS).join(format!("zeikos-runs-{user}"))
 }
 
 /// 置き場の親（`…/target/runs`）に対応する、tmpfs の側の親。
 fn scratch_base(runs: &Path) -> PathBuf {
-    let user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
-    Path::new(SCRATCH_TMPFS)
-        .join(format!("zeikos-runs-{user}"))
-        .join(scratch_name(runs))
+    scratch_root().join(scratch_name(runs))
 }
 
 /// 置き場の親の道から、tmpfs の側のディレクトリの名前を作る（純粋な論理）。英数字のほかは `_` にする。
@@ -230,12 +320,23 @@ impl RunDir {
                     writeln!(note, "pid: {}", std::process::id())?;
                     writeln!(note, "started (unix ms): {started}")?;
                     // **使い捨ての置き場を取る**（tmpfs。取れなければ、SSD の置き場と同じ所にする）。
-                    let scratch = scratch_for(&runs, number)
-                        .filter(|scratch| {
-                            let _ = fs::remove_dir_all(scratch);
-                            fs::create_dir_all(scratch).is_ok()
-                        })
-                        .unwrap_or_else(|| path.clone());
+                    // **SSD に置く回は、黙って置かない**（2026-10-06）——理由を `run.txt` と端末に出す。
+                    let placed = scratch_for(&runs, number).and_then(|scratch| {
+                        let _ = fs::remove_dir_all(&scratch);
+                        fs::create_dir_all(&scratch)
+                            .map(|()| scratch)
+                            .map_err(|error| format!("the directory could not be made ({error})"))
+                    });
+                    let scratch = match placed {
+                        Ok(scratch) => scratch,
+                        Err(reason) => {
+                            writeln!(note, "{FALLBACK_MARK}{reason}")?;
+                            println!(
+                                "(warn) run {number}: scratch files go to the SSD this time: {reason}"
+                            );
+                            path.clone()
+                        }
+                    };
                     writeln!(note, "scratch: {}", scratch.display())?;
                     println!(
                         "(info) run {number}: {} ({what}{})",
@@ -537,6 +638,62 @@ mod tests {
         let full = scratch_name(Path::new("/home/u/zeikos-full-check/target/runs"));
         assert_ne!(main, full);
         assert!(main.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+    }
+
+    /// tmpfs に置かない理由。**無い・空きが読めない・空きが下限を割る・置いてある量が上限を越えそう、の 4 つで
+    /// 断り、それ以外は置く。** 上限は、1 回の分を足して、ちょうどまでは置く。
+    #[test]
+    fn scratch_goes_to_the_ssd_only_for_a_named_reason() {
+        let roomy = Some(8 * SCRATCH_FLOOR_BYTES);
+        assert_eq!(scratch_refusal(true, roomy, 0), None);
+        assert!(scratch_refusal(false, roomy, 0)
+            .unwrap()
+            .contains("not there"));
+        assert!(scratch_refusal(true, None, 0)
+            .unwrap()
+            .contains("could not be read"));
+        assert!(scratch_refusal(true, Some(SCRATCH_FLOOR_BYTES - 1), 0)
+            .unwrap()
+            .contains("below the floor"));
+        assert_eq!(scratch_refusal(true, Some(SCRATCH_FLOOR_BYTES), 0), None);
+        let edge = SCRATCH_BUDGET_BYTES - SCRATCH_PER_RUN_BYTES;
+        assert_eq!(scratch_refusal(true, roomy, edge), None);
+        assert!(scratch_refusal(true, roomy, edge + 1)
+            .unwrap()
+            .contains("would pass the budget"));
+        assert!(scratch_refusal(true, roomy, u64::MAX).is_some());
+    }
+
+    /// SSD に置いた回を数える側。**印の行が在り、指定の時刻より後に始まった回だけを数える。**
+    #[test]
+    fn a_fallback_is_counted_from_its_run_note() {
+        let fallback = format!(
+            "what: x\npid: 1\nstarted (unix ms): 2000\n{FALLBACK_MARK}no room\nscratch: /w/target/runs/3\n"
+        );
+        let on_tmpfs = "what: x\npid: 1\nstarted (unix ms): 2000\nscratch: /dev/shm/z/3\n";
+        assert!(is_fallback_since(&fallback, 2000));
+        assert!(is_fallback_since(&fallback, 1999));
+        assert!(!is_fallback_since(&fallback, 2001));
+        assert!(!is_fallback_since(on_tmpfs, 0));
+        assert!(!is_fallback_since("what: x\n", 0));
+    }
+
+    /// 占めている量は、下のディレクトリのファイルまで足す。無いディレクトリは 0 である。
+    #[test]
+    fn the_held_amount_adds_up_the_files_below() {
+        let root = std::env::temp_dir().join(format!("zeikos-held-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        assert_eq!(directory_blocks_bytes(&root), 0);
+        fs::create_dir_all(root.join("a").join("7")).unwrap();
+        fs::write(
+            root.join("a").join("7").join("disk0.img"),
+            vec![1u8; 64 * 1024],
+        )
+        .unwrap();
+        fs::write(root.join("top"), vec![1u8; 4096]).unwrap();
+        let held = directory_blocks_bytes(&root);
+        assert!(held >= 64 * 1024 + 4096, "{held}");
+        let _ = fs::remove_dir_all(&root);
     }
 
     /// 使い捨ての置き場を片付けるとき、**残すと決めた回だけ、装置の像と取り出した像を SSD の置き場へ写す。**
