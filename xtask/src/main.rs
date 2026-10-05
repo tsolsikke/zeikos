@@ -34036,16 +34036,65 @@ fn stage_esp(run: &RunDir, bootloader_efi: &Path, kernel: &KernelBuild) -> Resul
 /// **virtio-blk を付けてディレクトリから起動する回（検査の大半）は呼ばない**——ブートローダは「像が無い。
 /// カーネルは装置を使う」と 1 行出して進む。
 fn stage_ram_image(esp_dir: &Path, kernel: &KernelBuild) -> Result<()> {
+    let staged = esp_dir.join("zeikos").join(FS_IMAGE_NAME);
     launch::as_harness(
-        (|| {
-            let staged = esp_dir.join("zeikos").join(FS_IMAGE_NAME);
-            fs::copy(kernel.out_dir.join(FS_IMAGE_NAME), &staged).with_context(|| {
-                format!("failed to copy the fs image into {}", staged.display())
-            })?;
-            Ok(())
-        })(),
+        copy_image_sparse(&kernel.out_dir.join(FS_IMAGE_NAME), &staged),
         "staging the RAM disk image on the ESP",
     )
+}
+
+/// ディスクの像の、0 だけのブロックを見分ける単位（バイト）。ext2 のブロックと同じ大きさにしてある。
+const SPARSE_COPY_BLOCK: usize = 4096;
+
+/// ディスクの像を、**0 だけのブロックを書かずに**写す（2026-10-05。`ADR-0077` の決定 6）。
+///
+/// # なぜ要るか
+///
+/// **像の大半は、使っていない 0 のブロックである**（32 MiB の像で、使っているのは約 3 MiB）。`fs::copy` は
+/// 0 も書くので、写しの 1 つ 1 つが、像の大きさだけディスクを取る。回ごとの置き場に装置の像が 1 つずつ残るので、
+/// 像を大きくすると、そのままホストのディスクに効いた（実測。全検査の木が 8.2 GiB 増えた）。
+///
+/// # 守ること
+///
+/// **ファイルの長さは変えない。** QEMU も検査も、像を長さで見ている（装置の容量、書き戻したバイト数、
+/// 取り出した像との比べ）。**写した後の長さが元と同じであることを、ここで確かめる**——違えば、写しを使わせずに
+/// 落ちる。中身は、どのバイトも元と同じである（書かなかった所は、ファイルシステムが 0 として読ませる）。
+fn copy_image_sparse(from: &Path, to: &Path) -> Result<()> {
+    let bytes = fs::read(from).with_context(|| format!("failed to read {}", from.display()))?;
+    write_image_sparse(to, &bytes)
+        .with_context(|| format!("failed to copy {} to {}", from.display(), to.display()))?;
+    let written = fs::metadata(to)
+        .with_context(|| format!("failed to stat {}", to.display()))?
+        .len();
+    if written != bytes.len() as u64 {
+        bail!(
+            "the sparse copy {} is {written} byte(s) long, but {} is {}; the length must not change",
+            to.display(),
+            from.display(),
+            bytes.len()
+        );
+    }
+    Ok(())
+}
+
+/// `bytes` を、0 だけのブロックを書かずに `to` へ書く（[`copy_image_sparse`] の中身）。
+///
+/// **作り直してから書く**（前の中身を残さない）。**先に長さを決め、0 でないブロックだけを、その位置へ書く。**
+/// 最後のブロックが半端でも、長さは `bytes.len()` ちょうどになる。
+fn write_image_sparse(to: &Path, bytes: &[u8]) -> Result<()> {
+    use std::io::{Seek, SeekFrom, Write};
+
+    let mut file = fs::File::create(to)?;
+    file.set_len(bytes.len() as u64)?;
+    for (index, block) in bytes.chunks(SPARSE_COPY_BLOCK).enumerate() {
+        if block.iter().all(|byte| *byte == 0) {
+            continue;
+        }
+        file.seek(SeekFrom::Start((index * SPARSE_COPY_BLOCK) as u64))?;
+        file.write_all(block)?;
+    }
+    file.flush()?;
+    Ok(())
 }
 
 /// **失敗は検査装置の故障として包む**（`launch::classify`。2026-09-24）。
@@ -34130,13 +34179,7 @@ fn stage_esp_with_disk_unwrapped(
     // **無ければ作り直す**——1 度目の起動はここを通る。
     match (disk, previous) {
         (DiskImage::Keep, Some(previous)) if previous.is_file() => {
-            fs::copy(previous, &disk_image).with_context(|| {
-                format!(
-                    "failed to copy {} to {}",
-                    previous.display(),
-                    disk_image.display()
-                )
-            })?;
+            copy_image_sparse(previous, &disk_image)?;
             println!(
                 "persist: kept {} as {} (not rebuilt from {})",
                 previous.display(),
@@ -34145,13 +34188,7 @@ fn stage_esp_with_disk_unwrapped(
             );
         }
         _ => {
-            fs::copy(&built, &disk_image).with_context(|| {
-                format!(
-                    "failed to copy {} to {}",
-                    built.display(),
-                    disk_image.display()
-                )
-            })?;
+            copy_image_sparse(&built, &disk_image)?;
         }
     }
 
@@ -34454,6 +34491,45 @@ fn qemu_launch_args(opts: &QemuLaunchOptions) -> Vec<OsString> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 像を穴の在るファイルとして写しても、**長さと中身は元と同じである**（2026-10-05）。0 だけのブロックが
+    /// 先頭・途中・末尾に在る像と、長さがブロックの倍数でない像と、全部が 0 の像で確かめる。
+    #[test]
+    fn a_sparse_image_copy_keeps_the_length_and_every_byte() {
+        let dir = std::env::temp_dir().join(format!("zeikos-sparse-copy-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let mut mixed = vec![0u8; 10 * SPARSE_COPY_BLOCK + 123];
+        mixed[SPARSE_COPY_BLOCK + 7] = 1;
+        mixed[5 * SPARSE_COPY_BLOCK..6 * SPARSE_COPY_BLOCK].fill(0xAB);
+        let last = mixed.len() - 1;
+        mixed[last] = 0xFF;
+        let cases: [(&str, Vec<u8>); 4] = [
+            ("mixed", mixed),
+            ("all-zero", vec![0u8; 3 * SPARSE_COPY_BLOCK]),
+            ("zero-tail", {
+                let mut bytes = vec![0u8; 4 * SPARSE_COPY_BLOCK + 1];
+                bytes[0] = 9;
+                bytes
+            }),
+            ("empty", Vec::new()),
+        ];
+        for (name, bytes) in cases {
+            let from = dir.join(format!("{name}.img"));
+            let to = dir.join(format!("{name}.copy"));
+            fs::write(&from, &bytes).unwrap();
+            // 写し先に、長い前の中身を置いておく。**作り直すので、残らない。**
+            fs::write(&to, vec![0x55u8; bytes.len() + 5000]).unwrap();
+            copy_image_sparse(&from, &to).unwrap();
+            assert_eq!(
+                fs::metadata(&to).unwrap().len(),
+                bytes.len() as u64,
+                "{name}"
+            );
+            assert_eq!(fs::read(&to).unwrap(), bytes, "{name}");
+        }
+        let _ = fs::remove_dir_all(&dir);
+    }
 
     /// **QEMU を直に起動する所は、起動の入口（`launch`）の外に 1 つも無い**（2026-09-24。ホストの保護）。
     /// **入口を通らない起動方法は、書く側の上限も組ごとの停止も持たない。** 足すなら `launch::spawn` を使う。

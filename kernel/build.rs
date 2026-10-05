@@ -941,7 +941,9 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
         "mke2fs left a volume name in the image; the build expects an empty one"
     );
     image_bytes[VOLUME_NAME_AT..VOLUME_NAME_AT + label.len()].copy_from_slice(label.as_bytes());
-    std::fs::write(&image, &image_bytes).expect("failed to write the volume label into the image");
+    // **像は、0 だけのブロックを書かずに書き直す**（2026-10-05。`ADR-0077` の決定 6）。**長さは変えない。**
+    // ビルドの出力は構成ごとに 1 つずつ残るので、0 を書くと、像の大きさだけディスクを取る。
+    write_image_sparse(&image, &image_bytes);
 
     // **管理用の部分の検査値**（印を書いた後の像から）。**範囲は `common::ext2` の `management_prefix_len` と同じ
     // 決め方である**——ブロック 0 から、グループ 0 の inode の表の終わりまで。**ここでは superblock と記述子を
@@ -1131,6 +1133,35 @@ fn used_blocks(image: &str) -> usize {
         }
     }
     panic!("dumpe2fs did not report a free block range for the image")
+}
+
+/// `bytes` を、0 だけの 4 KiB のブロックを書かずに `path` へ書く。**ファイルの長さは `bytes.len()` ちょうどである。**
+///
+/// **`xtask` の `write_image_sparse` と同じ形である**（`build.rs` は `xtask` に依らないので、ここにも持つ）。
+fn write_image_sparse(path: &str, bytes: &[u8]) {
+    use std::io::{Seek, SeekFrom, Write};
+
+    const BLOCK: usize = 4096;
+    let mut file = std::fs::File::create(path).expect("failed to recreate the image file");
+    file.set_len(bytes.len() as u64)
+        .expect("failed to size the image file");
+    for (index, block) in bytes.chunks(BLOCK).enumerate() {
+        if block.iter().all(|byte| *byte == 0) {
+            continue;
+        }
+        file.seek(SeekFrom::Start((index * BLOCK) as u64))
+            .expect("failed to seek in the image file");
+        file.write_all(block)
+            .expect("failed to write a block of the image file");
+    }
+    let written = std::fs::metadata(path)
+        .expect("failed to stat the image file")
+        .len();
+    assert_eq!(
+        written,
+        bytes.len() as u64,
+        "the image file must keep its length when it is written with holes"
+    );
 }
 
 /// `mke2fs -V` の 1 行目。**版を記録に残すためだけに読む。**
