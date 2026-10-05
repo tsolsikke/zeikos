@@ -143,6 +143,8 @@ pub const PATH_RULES: &[PathRule] = &[
             "common/src/time.rs",
             // **どの Ring 3 のプログラムも ELF として読む。**
             "common/src/elf.rs",
+            // **どの Ring 3 のプログラムも、像を「範囲を読む口」で受けて載せる**（2026-10-05）。
+            "common/src/image_source.rs",
             // **境界の段階で作る CPU 固有・機械固有・外部 ABI の置き場は、はじめは全部へ倒す**（運用者の回答 2。
             // グループへ振り分けるのは、境界が落ち着いてから）。
             "common/src/arch/**",

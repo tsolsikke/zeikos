@@ -18,6 +18,7 @@ pub mod critical;
 pub mod elf;
 pub mod env;
 pub mod ext2;
+pub mod image_source;
 pub mod log;
 pub mod machine;
 pub mod percpu;

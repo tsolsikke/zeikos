@@ -354,6 +354,73 @@ impl core::fmt::Debug for Ext2<'_> {
     }
 }
 
+/// ext2 の上のファイルを、範囲を読む口として見せる（2026-10-05。`crate::image_source`）。
+///
+/// **ブロックごとに引いて、要る分だけを写す**（[`Ext2::file_block`]）。ファイルの全体を、どこかへ写して持つことは
+/// しない。**ブロックが像の中で続いていなくてもよい。**
+///
+/// # 読めない大きさのファイル
+///
+/// **2 段目・3 段目の間接ブロックを使うファイルは、どの範囲も読めない**（[`Ext2::file_block`] が
+/// [`Ext2Error::IndirectBlockUnsupported`] で断る。4 KiB のブロックでは、約 4.05 MiB を越えるファイルである）。
+/// **途中まで読めて、途中から読めない形にはならない。** 載せる側は、最初の範囲を読んだ時点で、名前のある失敗を受け取る。
+#[derive(Debug, Clone, Copy)]
+pub struct FileImage<'f, 'a> {
+    fs: &'f Ext2<'a>,
+    /// **借りる**（写しを持たない）。載せる側は、遠征スタックの上でこの値を持ち続けるので、小さくしておく。
+    inode: &'f Inode,
+}
+
+impl<'f, 'a> FileImage<'f, 'a> {
+    /// `inode` のファイルを、範囲を読む口にする。
+    pub fn new(fs: &'f Ext2<'a>, inode: &'f Inode) -> Self {
+        Self { fs, inode }
+    }
+}
+
+impl crate::image_source::ImageSource for FileImage<'_, '_> {
+    fn len(&self) -> u64 {
+        self.inode.size
+    }
+
+    fn read_at(
+        &self,
+        offset: u64,
+        buf: &mut [u8],
+    ) -> Result<(), crate::image_source::ImageReadError> {
+        use crate::image_source::ImageReadError;
+
+        crate::image_source::check_range(offset, buf.len(), self.inode.size)?;
+        let block_size = u64::from(self.fs.block_size());
+        let mut done = 0usize;
+        while done < buf.len() {
+            let position = offset + done as u64;
+            // 範囲はファイルの中なので、ブロックの番号は u32 に収まる（収まらなければ、ファイルの外として断る）。
+            let Ok(index) = u32::try_from(position / block_size) else {
+                return Err(ImageReadError::OutOfRange {
+                    offset,
+                    len: buf.len() as u64,
+                    file_len: self.inode.size,
+                });
+            };
+            let within = (position % block_size) as usize;
+            let block = self
+                .fs
+                .file_block(self.inode, index)
+                .map_err(ImageReadError::Ext2)?;
+            // **進む量が必ず正である。** ブロックが要る位置まで届いていなければ、ファイルの長さと食い違っている。
+            let available = block.len().saturating_sub(within);
+            let take = available.min(buf.len() - done);
+            if take == 0 {
+                return Err(ImageReadError::ShortBlock { index });
+            }
+            buf[done..done + take].copy_from_slice(&block[within..within + take]);
+            done += take;
+        }
+        Ok(())
+    }
+}
+
 /// group descriptor 1 つ分（読むのは 3 つのブロック番号だけ）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BlockGroupDescriptor {
@@ -3346,6 +3413,73 @@ mod tests {
     }
 
     /// 直接ブロックを辿り、最後のブロックが `i_size` で切られること。
+    /// ファイルを、範囲を読む口で読む。**ブロックの境界をまたぐ範囲も、ブロックごとに読んだものと同じである。**
+    #[test]
+    fn a_file_image_reads_ranges_across_block_boundaries() {
+        use crate::image_source::{ImageReadError, ImageSource};
+
+        let image = build_test_image();
+        let fs = Ext2::parse(&image).expect("the default-shaped image is accepted");
+        let inode = fs
+            .lookup(b"/data/indirect-first")
+            .expect("the file resolves");
+        let file = FileImage::new(&fs, &inode);
+        assert_eq!(file.len(), inode.size);
+        // ブロックごとに読んだものを並べて、比べる相手にする。
+        let mut whole = std::vec::Vec::new();
+        let mut index = 0u32;
+        while (whole.len() as u64) < inode.size {
+            whole.extend_from_slice(fs.file_block(&inode, index).unwrap());
+            index += 1;
+        }
+        assert_eq!(whole.len() as u64, inode.size);
+        // 先頭、ブロックの境界をまたぐ所、直接ブロックから間接ブロックへ移る所、末尾。
+        let size = inode.size as usize;
+        for (offset, len) in [
+            (0usize, 64usize),
+            (4090, 20),
+            (12 * 4096 - 3, 4),
+            (size - 5, 5),
+            (0, size),
+            (size, 0),
+        ] {
+            let mut buf = std::vec![0xAAu8; len];
+            file.read_at(offset as u64, &mut buf).unwrap();
+            assert_eq!(
+                buf,
+                whole[offset..offset + len],
+                "offset {offset} len {len}"
+            );
+        }
+        // ファイルの外は、写さずに断る。
+        let mut buf = [0xAAu8; 8];
+        assert!(matches!(
+            file.read_at(inode.size - 4, &mut buf),
+            Err(ImageReadError::OutOfRange { .. })
+        ));
+        assert_eq!(buf, [0xAA; 8]);
+    }
+
+    /// 2 段目の間接ブロックを使うファイルは、**最初の範囲から、名前のある失敗で断られる**（黙って切らない）。
+    #[test]
+    fn a_file_image_names_the_failure_for_a_file_too_large_to_read() {
+        use crate::image_source::{ImageReadError, ImageSource};
+
+        let image = build_test_image();
+        let fs = Ext2::parse(&image).expect("the default-shaped image is accepted");
+        let mut inode = fs
+            .lookup(b"/data/indirect-first")
+            .expect("the file resolves");
+        // 2 段目の間接ブロックの欄に、番号を入れる（中身は読まれない。使っているかどうかだけが見られる）。
+        inode.blocks[SINGLE_INDIRECT_SLOT + 1] = inode.blocks[0];
+        let file = FileImage::new(&fs, &inode);
+        let mut buf = [0u8; 16];
+        assert_eq!(
+            file.read_at(0, &mut buf),
+            Err(ImageReadError::Ext2(Ext2Error::IndirectBlockUnsupported(0)))
+        );
+    }
+
     #[test]
     fn reads_a_file_through_its_direct_blocks() {
         let image = build_test_image();

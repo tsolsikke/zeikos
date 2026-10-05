@@ -506,6 +506,13 @@ pub unsafe fn report_kernel(
     print(logger, moment, &survey, regions, refused);
 }
 
+/// ユーザーの空間の一覧を、いま出すか（2026-10-05）。**起動時のプログラムの間は出す。その後は、全部の行を出す構成
+/// （`page-permissions-dump`）でだけ出す。** 呼ぶ側が、一覧のための下ごしらえ（像の先頭の読み直し）を省くのに使う。
+pub fn user_report_wanted() -> bool {
+    !BOOT_PROGRAMS_DONE.load(core::sync::atomic::Ordering::SeqCst)
+        || cfg!(feature = "page-permissions-dump")
+}
+
 /// 稼働していないユーザーの空間の表を歩き、渡された領域で一覧を作って出す。**歩くのは `top` の添字だけである**
 /// （ユーザーの側だけ。カーネルと共有している側は歩かない）。
 ///
@@ -523,9 +530,7 @@ pub unsafe fn report_user(
     top: Range<usize>,
     regions: &[Region],
 ) {
-    if BOOT_PROGRAMS_DONE.load(core::sync::atomic::Ordering::SeqCst)
-        && !cfg!(feature = "page-permissions-dump")
-    {
+    if !user_report_wanted() {
         return;
     }
     let mut survey = Survey::<USER_ROWS>::new();

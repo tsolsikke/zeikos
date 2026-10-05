@@ -248,24 +248,16 @@ fn clip_rect_area(rect: &DrmClipRect) -> Option<(u32, u32, u32, u32)> {
     }
     Some((x1, y1, x2 - x1, y2 - y1))
 }
-
-/// [`SYS_SPAWN`] が受け入れるイメージの最大の大きさ（S11-5）。
+/// 実行ファイルの大きさの上限（2026-10-05 に 32 KiB から 16 MiB へ上げた）。
 ///
-/// # 32 KiB の根拠は実測である
+/// **以前は、載せる前に、実行ファイルの全体を静的な配列へ写していた。** 上限の 32 KiB は、その配列の大きさだった。
+/// **いまは写さない**——載せる側は、像を「範囲を読む口」で受け、先頭の部分と、区画ごとのページの分だけを読む
+/// （`crate::userland` の `load_user_program_from`）。上限は、器の大きさではなく、受け付ける大きさの決まりである。
 ///
-/// **いまイメージとして置いてあるのは `hello` が 8496 バイト、`syscall-test` が
-/// 8648 バイトである**（`kernel/build.rs` が `rustc` でビルドしたもの）。
-/// **32 KiB はその 3.7 倍で、ユーザープログラムが 3 倍を超えて育つまで届かない。**
-///
-/// # スタックへ置かない
-///
-/// **`deferred-decisions.md` の「大きなスタック配列とガード幅」の解禁条件に
-/// 当たる**——4 KiB を超える単一のローカル配列である。**S11-3 で 1 度目が発火し、
-/// 実測でガードページを踏んだ。** ここが 2 度目で、**踏む前に避ける。**
-///
-/// **置き場所は `crate::userland` の `static` である**
-/// （`ADR-0030` で採った「スタックへ載せない」と同じ解き方である）。
-pub const MAX_EXECUTABLE_SIZE: usize = 32 * 1024;
+/// **16 MiB は、Linux 向けの静的リンクの実行ファイル（数 MiB）が入る大きさである。** ただし、いまの ext2 の読み手が
+/// 読めるのは約 4.05 MiB までで（2 段目の間接ブロックを読めない）、それを越えるファイルは、読む所で名前のある失敗に
+/// なる（`common::ext2::FileImage`）。
+pub const MAX_EXECUTABLE_SIZE: usize = 16 * 1024 * 1024;
 
 /// [`SYS_SPAWN`] が受け取る `argv` の総バイト数の上限（NUL を含む。S11-7）。
 ///
@@ -3575,7 +3567,7 @@ fn errno_for_alloc(error: common::ext2::AllocError) -> i64 {
 ///
 /// # 上限で断る
 ///
-/// **[`crate::userland::HEAP_LIMIT`] を越えたら `-ENOMEM`。**
+/// **ヒープの上端（配置ごとに違う。`crate::userland::ProcessLayout` の `heap_limit`）を越えたら `-ENOMEM`。**
 /// **ガードページは置かない**——**スタックの下端そのものが境界なので、
 /// 越えなければ衝突しない**（ADR-0044 の決定 4）。
 ///
@@ -3599,8 +3591,13 @@ unsafe fn sys_brk(requested: u64, direct_map: DirectMap) -> u64 {
     use crate::arch::x86_64::ActivePageTable;
     use crate::paging::permissions::PagePermissions;
 
-    let (mapped, current, start) = crate::userland::with_current_heap(|heap| {
-        (heap.is_mapped(), heap.break_at(), heap.start())
+    let (mapped, current, start, limit) = crate::userland::with_current_heap(|heap| {
+        (
+            heap.is_mapped(),
+            heap.break_at(),
+            heap.start(),
+            heap.limit(),
+        )
     });
     if !mapped {
         // **イメージを読む前には答えられない。** ここへ来るのは異常である。
@@ -3612,7 +3609,7 @@ unsafe fn sys_brk(requested: u64, direct_map: DirectMap) -> u64 {
         return current;
     }
     // **イメージの末尾より下げられない。** **下はイメージとスタックの外である。**
-    if requested < start || requested > crate::userland::HEAP_LIMIT {
+    if requested < start || requested > limit {
         return (-ENOMEM) as u64;
     }
 
@@ -5222,10 +5219,13 @@ fn errno_for_ext2(error: common::ext2::Ext2Error) -> i64 {
 ///
 /// # 大半は「カーネル側の不具合」である
 ///
-/// **`Parse`・`SegmentData`・`Layout` が、渡されたイメージに対する答えである。**
-/// **どれも `-ENOEXEC` を返す**（2026-10-01。Linux の `execve` と同じ）——像がバイト列として壊れている
-/// （`Parse`・`SegmentData`）ときも、区画の並びを受け付けられない（`Layout`）ときも、「実行できる形でない」である。
-/// **`Parse` と `SegmentData` は、`ENOEXEC` を持つ前は `-EINVAL` を返していた。**
+/// **`Parse`・`Layout` が、渡されたイメージに対する答えである。**
+/// **どちらも `-ENOEXEC` を返す**（2026-10-01。Linux の `execve` と同じ）——像がバイト列として壊れている
+/// （`Parse`）ときも、区画の並びを受け付けられない（`Layout`）ときも、「実行できる形でない」である。
+/// **`Parse` は、`ENOEXEC` を持つ前は `-EINVAL` を返していた。**
+///
+/// **`Read` は `-EIO` を返す**（2026-10-05）——像の中身ではなく、読むことそのものが失敗した。大きすぎて読めない
+/// ファイル（ext2 の 2 段目の間接ブロック）も、ここへ来る。
 fn errno_for_user_load(error: crate::userland::UserLoadError) -> i64 {
     use crate::userland::UserLoadError as E;
     match error {
@@ -5233,7 +5233,8 @@ fn errno_for_user_load(error: crate::userland::UserLoadError) -> i64 {
         E::AllocatorUnavailable => EAGAIN,
         E::OutOfFrames => ENOMEM,
         // 渡されたものに対する答え。
-        E::Parse(_) | E::SegmentData(_) | E::Layout(_) => ENOEXEC,
+        E::Parse(_) | E::Layout(_) | E::Placement(_) => ENOEXEC,
+        E::Read(_) => EIO,
         E::ArgumentsTooLong => ENAMETOOLONG,
         // ここから下はカーネル側の事情である。
         E::AddressSpace(_)
@@ -5256,7 +5257,11 @@ fn errno_for_spawn(error: crate::userland::SpawnError) -> i64 {
     use crate::userland::SpawnError as E;
     match error {
         E::TooDeep => EAGAIN,
-        E::Lookup(e) | E::Read(e) => errno_for_ext2(e),
+        E::Lookup(e) => errno_for_ext2(e),
+        // **像を読めなかった**（2026-10-05）。ファイルシステムが理由を持っていれば、その値にする。範囲の食い違いは
+        // 入出力の誤りとして返す。
+        E::Read(common::image_source::ImageReadError::Ext2(e)) => errno_for_ext2(e),
+        E::Read(_) => EIO,
         E::IsDirectory => EISDIR,
         E::NotRegularFile => EACCES,
         E::TooLarge(_) => ENOMEM,
@@ -5610,10 +5615,19 @@ mod tests {
         for broken in [
             UserLoadError::Parse(ElfError::BadMagic),
             UserLoadError::Parse(ElfError::SegmentAddressOverflow),
-            UserLoadError::SegmentData(ElfError::SegmentFileRangeOutOfBounds),
+            UserLoadError::Parse(ElfError::SegmentFileRangeOutOfBounds),
         ] {
             assert_eq!(errno_for_user_load(broken), ENOEXEC, "{broken:?}");
         }
+        // 読むことそのものの失敗は、像の形の答えではない。
+        assert_eq!(
+            errno_for_user_load(UserLoadError::Read(
+                common::image_source::ImageReadError::Ext2(
+                    common::ext2::Ext2Error::IndirectBlockUnsupported(0)
+                )
+            )),
+            EIO
+        );
     }
 
     /// `struct drm_clip_rect` は半開区間である。**空の矩形は断る。**

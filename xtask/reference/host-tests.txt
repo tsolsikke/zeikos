@@ -101,6 +101,8 @@ common::ext2::tests::a_created_inode_names_the_extra_area_the_way_the_image_asks
 common::ext2::tests::a_directory_that_has_no_room_is_refused
 common::ext2::tests::a_directory_whose_entries_do_not_parse_is_refused_before_anything_is_written
 common::ext2::tests::a_file_block_index_that_would_overflow_in_u32_is_out_of_range
+common::ext2::tests::a_file_image_names_the_failure_for_a_file_too_large_to_read
+common::ext2::tests::a_file_image_reads_ranges_across_block_boundaries
 common::ext2::tests::a_hole_in_the_direct_blocks_reads_as_zeros
 common::ext2::tests::a_hole_reached_through_the_indirect_table_reads_as_zeros
 common::ext2::tests::a_management_prefix_past_the_image_is_refused
@@ -172,6 +174,8 @@ common::ext2::tests::the_walk_can_resume_from_the_offset_it_reported
 common::ext2::tests::unlinking_a_directory_is_refused
 common::ext2::tests::unlinking_a_name_that_is_not_there_is_refused
 common::ext2::tests::walks_the_root_directory
+common::image_source::tests::a_range_past_the_end_is_refused_without_copying
+common::image_source::tests::a_slice_image_reads_any_range_inside_it
 common::log::tests::a_dropped_log_line_does_not_write_at_all
 common::log::tests::emitted_lines_are_counted
 common::log::tests::formats_with_level_label_prefix
@@ -748,9 +752,12 @@ kernel::task::tests::uninitialized_slots_are_never_chosen
 kernel::task::tests::workers_come_before_the_ring3_task
 kernel::task::tests::workers_rotate
 kernel::userland::tests::a_new_process_maps_from_the_base
+kernel::userland::tests::mmap_stops_at_the_end_of_the_layout
 kernel::userland::tests::the_default_environment_carries_home
+kernel::userland::tests::the_executable_layout_keeps_the_old_addresses
 kernel::userland::tests::the_idle_heap_hands_out_no_mmap_address
 kernel::userland::tests::the_mmap_address_does_not_outlive_the_process
+kernel::userland::tests::the_position_independent_layout_keeps_its_regions_apart
 kernel::userland::tests::two_processes_do_not_move_each_others_mmap_address
 kernel::vfs::tests::a_new_table_holds_the_three_terminals_and_no_files
 kernel::vfs::tests::descriptors_are_handed_out_lowest_first
