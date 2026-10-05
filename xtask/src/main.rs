@@ -21425,6 +21425,8 @@ const CHECKS: &[(&str, &[&str])] = &[
         "clippy bootloader (uefi)",
         &[
             "clippy",
+            INCREMENTAL_OFF[0],
+            INCREMENTAL_OFF[1],
             "-p",
             BOOTLOADER_PACKAGE,
             "--target",
@@ -21438,6 +21440,8 @@ const CHECKS: &[(&str, &[&str])] = &[
         "clippy kernel (none)",
         &[
             "clippy",
+            INCREMENTAL_OFF[0],
+            INCREMENTAL_OFF[1],
             "-p",
             KERNEL_PACKAGE,
             "--target",
@@ -22580,6 +22584,8 @@ const RUSTDOC_TARGETS: &[(&str, &[&str])] = &[
         "kernel",
         &[
             "doc",
+            INCREMENTAL_OFF[0],
+            INCREMENTAL_OFF[1],
             "-p",
             KERNEL_PACKAGE,
             "--target",
@@ -22612,6 +22618,8 @@ const RUSTDOC_TARGETS: &[(&str, &[&str])] = &[
         "bootloader",
         &[
             "doc",
+            INCREMENTAL_OFF[0],
+            INCREMENTAL_OFF[1],
             "-p",
             BOOTLOADER_PACKAGE,
             "--target",
@@ -33590,6 +33598,9 @@ fn kernel_cargo_args(features: &[&str]) -> Vec<String> {
 ///
 /// **カーネルとブートローダをビルドする所の全部に付ける**——この道具の中の 5 か所と、`tools/frame-sizes.py`。
 /// **1 か所でも抜けると、cargo が設定の違いを見て作り直し、別のバイナリが置き場に残る。**
+///
+/// **基本の検査の clippy と rustdoc（カーネルとブートローダ）にも付ける**（2026-10-06）。付けていなかった間は、
+/// この項目だけが増分の置き場を作り続けていた（木 1 つにつき約 150 MiB）。
 ///
 /// **環境変数（`CARGO_INCREMENTAL`）では渡さない。** この道具が起こす cargo の全部に届き、この道具自身（ホストの
 /// ビルド）まで作り直させる——検査の途中で、走っている実行ファイルが入れ替わった（実測）。
