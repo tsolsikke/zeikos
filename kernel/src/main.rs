@@ -7891,6 +7891,102 @@ struct FsPatch {
     width: usize,
 }
 
+/// 壊し方 1 つが持てる書き換えの数の上限（[`AppliedFsPatches`] の器の大きさ）。
+const MAX_FS_PATCHES: usize = 4;
+
+/// 作業領域へ当てた書き換えの、元の値の控え（2026-10-05）。
+///
+/// # 写し直さずに、戻す
+///
+/// **以前は、壊し方ごとに、像の使っている量の全体を写し直していた**（22 回）。写す量は像の中身に比例し、
+/// 32 MiB の像では約 0.28 秒かかった（実測）。**いまは、最初に 1 回だけ写し、壊し方ごとに、書き換えた数バイトを
+/// 元へ戻す。**
+///
+/// **「前の壊し方が残らない」は、2 つで保つ。** 当てる前の値をここに控えて、検査の後で戻す。**戻した後、健全な対照が
+/// もう 1 度通ることを、壊し方ごとに確かめる**（[`verify_corrupt_fs_control`]）。戻し忘れや、控えの取り違えは、
+/// 次の壊し方へ進む前に止まる。
+struct AppliedFsPatches {
+    saved: [(usize, [u8; 8], usize); MAX_FS_PATCHES],
+    count: usize,
+}
+
+impl AppliedFsPatches {
+    /// 書き換えを当てる。**当てる前の値を控える。** 数が器を越えるなら `None`（1 つも当てない）。
+    fn apply(buf: &mut [u8], patches: &[FsPatch]) -> Option<Self> {
+        if patches.len() > MAX_FS_PATCHES || patches.iter().any(|patch| patch.width > 8) {
+            return None;
+        }
+        let mut applied = Self {
+            saved: [(0, [0; 8], 0); MAX_FS_PATCHES],
+            count: 0,
+        };
+        for patch in patches {
+            let mut original = [0u8; 8];
+            original[..patch.width].copy_from_slice(&buf[patch.offset..patch.offset + patch.width]);
+            applied.saved[applied.count] = (patch.offset, original, patch.width);
+            applied.count += 1;
+            for i in 0..patch.width {
+                buf[patch.offset + i] = ((patch.value >> (i * 8)) & 0xFF) as u8;
+            }
+        }
+        Some(applied)
+    }
+
+    /// 控えた値を戻す。**当てた順の逆に戻す**（同じ位置を 2 度書き換える壊し方でも、最初の値に戻る）。
+    fn undo(self, buf: &mut [u8]) {
+        // 破壊テスト (2026-10-05, corrupt-fs-skips-restore): 戻さない。**前の壊し方が作業領域に残る。**
+        // **次の壊し方へ進む前に、健全な対照が落ちて止まる。**
+        if cfg!(feature = "corrupt-fs-skips-restore") {
+            return;
+        }
+        for index in (0..self.count).rev() {
+            let (offset, original, width) = self.saved[index];
+            buf[offset..offset + width].copy_from_slice(&original[..width]);
+        }
+    }
+}
+
+/// 健全な対照——作業領域の像が、解析できて、5 つの読み出しが通ること（S10-a。2026-10-05 に関数へ分けた）。
+///
+/// **最初に 1 度と、壊し方を 1 つ戻すたびに呼ぶ。** `after` は、直前に戻した壊し方の名前である
+/// （最初の 1 度は `None`）。落ちたときの行に出る。
+fn verify_corrupt_fs_control(
+    buf: &[u8],
+    after: Option<&'static str>,
+) -> Result<(), CorruptFsCheckError> {
+    use common::ext2::Ext2;
+
+    let fs = match Ext2::parse(buf) {
+        Ok(fs) => fs,
+        Err(error) => {
+            return Err(match after {
+                None => CorruptFsCheckError::PrefixDidNotParse { error },
+                Some(what) => CorruptFsCheckError::ControlBrokenAfterCase {
+                    what,
+                    name: "parse",
+                    error,
+                },
+            });
+        }
+    };
+    let probes: [(&str, FsProbe); 5] = [
+        ("root inode", fs_probe_root_inode),
+        ("root walk", fs_probe_root_walk),
+        ("lookup /etc/motd", fs_probe_lookup_motd),
+        ("read /etc/motd", fs_probe_read_motd),
+        ("read /data/indirect-first", fs_probe_read_indirect_first),
+    ];
+    for (name, probe) in probes {
+        if let Err(error) = probe(&fs) {
+            return Err(match after {
+                None => CorruptFsCheckError::PrefixProbeFailed { name, error },
+                Some(what) => CorruptFsCheckError::ControlBrokenAfterCase { what, name, error },
+            });
+        }
+    }
+    Ok(())
+}
+
 /// 壊し方 1 つ分の記述（S10-a）。
 ///
 /// **原則として 1 か所だけを壊す**（S9-b-2 と同じ。2 か所壊すと、どちらで拒まれた
@@ -8009,6 +8105,18 @@ fn verify_corrupt_fs_image_is_rejected(logger: &mut Logger<Serial>) {
             "ext2-corrupt: the untouched prefix (the blocks the image uses) did not parse \
              ({e:?}); halting"
         )),
+        CorruptFsCheckError::ControlBrokenAfterCase {
+            what,
+            name,
+            error: e,
+        } => logger.error(format_args!(
+            "ext2-corrupt: after undoing \"{what}\", the untouched control failed the \"{name}\" \
+             probe with {e:?}; the previous corruption was left in the working buffer; halting"
+        )),
+        CorruptFsCheckError::TooManyPatches { what } => logger.error(format_args!(
+            "ext2-corrupt: \"{what}\" has more patches (or wider ones) than the record of original \
+             bytes can hold ({MAX_FS_PATCHES} patches of up to 8 bytes); halting"
+        )),
         CorruptFsCheckError::WorkspaceAllocatorMissing => logger.error(format_args!(
             "ext2-corrupt: the frame allocator could not be borrowed for the working buffer; \
              halting"
@@ -8102,6 +8210,14 @@ enum CorruptFsCheckError {
     },
     /// 壊したのに、種のファイルと同じものが読めた。
     MismatchStillSeed { what: &'static str },
+    /// 壊し方を戻した後、健全な対照が通らない。**前の壊し方が、作業領域に残っている。**
+    ControlBrokenAfterCase {
+        what: &'static str,
+        name: &'static str,
+        error: common::ext2::Ext2Error,
+    },
+    /// 壊し方の書き換えの数か幅が、控えの器に入らない。
+    TooManyPatches { what: &'static str },
     /// 作業領域のために、フレームのアロケータを借りられなかった。
     WorkspaceAllocatorMissing,
     /// 作業領域にする連続フレームを取れなかった。
@@ -8528,49 +8644,31 @@ fn run_corrupt_fs_cases(
 
     // **健全な対照を先に走らせる。** 切り出した先頭が、それ自体で読み切れるイメージで
     // あることを確かめる。**ここが落ちたら、壊す側ではなく切り出す長さが足りない。**
+    //
+    // **写すのは、ここの 1 回だけである**（2026-10-05。[`AppliedFsPatches`] の doc）。
     build_truncated_fs_image(buf, map.blocks);
-    let control = &buf[..];
-    match Ext2::parse(control) {
-        Ok(fs) => {
-            let probes: [(&str, FsProbe); 5] = [
-                ("root inode", fs_probe_root_inode),
-                ("root walk", fs_probe_root_walk),
-                ("lookup /etc/motd", fs_probe_lookup_motd),
-                ("read /etc/motd", fs_probe_read_motd),
-                ("read /data/indirect-first", fs_probe_read_indirect_first),
-            ];
-            for (name, probe) in probes {
-                if let Err(error) = probe(&fs) {
-                    return Err(CorruptFsCheckError::PrefixProbeFailed { name, error });
-                }
-            }
-        }
-        Err(error) => {
-            return Err(CorruptFsCheckError::PrefixDidNotParse { error });
-        }
-    }
+    verify_corrupt_fs_control(buf, None)?;
 
     let mut rejected = 0usize;
     for case in cases {
-        // 毎回、健全なイメージから作り直す。**前の壊し方が残らないようにする。**
-        let image = {
-            build_truncated_fs_image(buf, map.blocks);
-            for patch in case.patches {
-                for i in 0..patch.width {
-                    buf[patch.offset + i] = ((patch.value >> (i * 8)) & 0xFF) as u8;
-                }
-            }
-            if case.truncate_to != 0 {
+        // **書き換えを当て、検査の後で戻す。** 戻した後、健全な対照がもう 1 度通ることを確かめる
+        // ——**前の壊し方が残らないことを、壊し方ごとに確かめる。**
+        let Some(applied) = AppliedFsPatches::apply(buf, case.patches) else {
+            return Err(CorruptFsCheckError::TooManyPatches { what: case.what });
+        };
+        let outcome = {
+            let image = if case.truncate_to != 0 {
                 &buf[..case.truncate_to]
             } else {
                 &buf[..]
+            };
+            match Ext2::parse(image) {
+                Ok(fs) => (case.probe)(&fs),
+                Err(e) => Err(e),
             }
         };
-
-        let outcome = match Ext2::parse(image) {
-            Ok(fs) => (case.probe)(&fs),
-            Err(e) => Err(e),
-        };
+        applied.undo(buf);
+        verify_corrupt_fs_control(buf, Some(case.what))?;
         match outcome {
             Ok(()) => {
                 return Err(CorruptFsCheckError::CaseAccepted {
@@ -8596,9 +8694,9 @@ fn run_corrupt_fs_cases(
 
     logger.info(format_args!(
         "ext2-corrupt: all {rejected} corrupted image(s) were refused with the expected reason, \
-         and the kernel continued (the embedded image is untouched; each case patches a fresh \
-         copy of the {} block(s) the image uses, in as many frames borrowed from the frame \
-         allocator)",
+         and the kernel continued (the embedded image is untouched; one copy of the {} block(s) \
+         the image uses, in as many frames borrowed from the frame allocator, is patched for each \
+         case and restored, and the untouched control passed again after every case)",
         map.blocks
     ));
 
@@ -8650,32 +8748,32 @@ fn verify_fs_content_mismatch_is_noticed(
     ];
 
     for (what, patch) in cases {
-        let image = {
-            build_truncated_fs_image(buf, map.blocks);
-            for i in 0..patch.width {
-                buf[patch.offset + i] = ((patch.value >> (i * 8)) & 0xFF) as u8;
+        // **上の表と同じ形である**——当てて、見て、戻して、健全な対照を確かめる。
+        let Some(applied) = AppliedFsPatches::apply(buf, core::slice::from_ref(&patch)) else {
+            return Err(CorruptFsCheckError::TooManyPatches { what });
+        };
+        let read_length = {
+            let Ok(fs) = Ext2::parse(buf) else {
+                return Err(CorruptFsCheckError::MismatchUnparseable { what });
+            };
+            let contents = match fs
+                .lookup(b"/etc/motd")
+                .and_then(|inode| fs.file_block(&inode, 0))
+            {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    return Err(CorruptFsCheckError::MismatchUnreadable { what, error });
+                }
+            };
+            if contents == MOTD_SEED {
+                return Err(CorruptFsCheckError::MismatchStillSeed { what });
             }
-            &buf[..]
-        };
-
-        let Ok(fs) = Ext2::parse(image) else {
-            return Err(CorruptFsCheckError::MismatchUnparseable { what });
-        };
-        let contents = match fs
-            .lookup(b"/etc/motd")
-            .and_then(|inode| fs.file_block(&inode, 0))
-        {
-            Ok(bytes) => bytes,
-            Err(error) => {
-                return Err(CorruptFsCheckError::MismatchUnreadable { what, error });
-            }
-        };
-        if contents == MOTD_SEED {
-            return Err(CorruptFsCheckError::MismatchStillSeed { what });
-        }
-        logger.info(format_args!(
-            "ext2-corrupt: {what} -> read {} byte(s) that differ from the seed",
             contents.len()
+        };
+        applied.undo(buf);
+        verify_corrupt_fs_control(buf, Some(what))?;
+        logger.info(format_args!(
+            "ext2-corrupt: {what} -> read {read_length} byte(s) that differ from the seed"
         ));
         *rejected += 1;
     }
@@ -12813,6 +12911,11 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "arch-prctl-get-fs-returns-zero",
         cfg!(feature = "arch-prctl-get-fs-returns-zero"),
         "arch_prctl が、基底を訊かれて 0 を返す",
+    ),
+    (
+        "corrupt-fs-skips-restore",
+        cfg!(feature = "corrupt-fs-skips-restore"),
+        "壊した ext2 のイメージの検査が、壊し方を戻さずに次へ進む",
     ),
     (
         "corrupt-fs-workspace-not-returned",

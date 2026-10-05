@@ -562,6 +562,8 @@ arch-prctl-skips-address-check = []
 arch-prctl-get-fs-returns-zero = []
 # 壊した ext2 のイメージの検査が、借りた作業領域のフレームを返さない。空きフレームの枚数の見張りが止める。
 corrupt-fs-workspace-not-returned = []
+# 壊した ext2 のイメージの検査が、壊し方を戻さずに次へ進む。健全な対照が、次の壊し方の前に落ちて止まる。
+corrupt-fs-skips-restore = []
 # `#MF`（ベクタ16）を畳めなくする（`ADR-0058`）。Ring 3 の浮動小数点の
 # 例外で、カーネルが止まる形へ戻る。
 fp-mf-not-foldable-test = []

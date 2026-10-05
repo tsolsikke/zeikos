@@ -583,6 +583,19 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
     },
     // **壊した ext2 のイメージの検査が、借りた作業領域のフレームを返さない。** 借りる前と返した後の、空きフレームの
     // 枚数の見張りが止める。**止まらなければ、後ろの「all … refused」の行まで進む。**
+    // **壊した ext2 のイメージの検査が、壊し方を戻さずに次へ進む**（2026-10-05）。**写すのを 1 回にしたので、
+    // 戻し忘れは、前の壊し方を次へ持ち越す。** 壊し方ごとの健全な対照が、名指しして止める。
+    CriticalTest {
+        name: "corrupt-fs-skips-restore",
+        feature: "corrupt-fs-skips-restore",
+        expected_markers: &[
+            "ext2-corrupt: after undoing \"",
+            "the previous corruption was left in the working buffer",
+        ],
+        forbidden_markers: &["ext2-corrupt: all "],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
     CriticalTest {
         name: "corrupt-fs-workspace-not-returned",
         feature: "corrupt-fs-workspace-not-returned",
@@ -31738,7 +31751,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 62,
-    full: 480,
+    full: 481,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。
