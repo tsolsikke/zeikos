@@ -1915,7 +1915,12 @@ extern "sysv64" fn kernel_main() -> ! {
     // **環境はプロセスを起動するときに積むので、それより前に決まっていれば
     // 足りる。**
     kernel::userland::load_environment(&mut logger);
+    let corrupt_check_started = common::arch::x86_64::read_timestamp_counter();
     verify_corrupt_fs_image_is_rejected(&mut logger);
+    logger.info(format_args!(
+        "fs-timing: (info) cycles: corrupt-check={} (it varies with the host; it is not judged)",
+        common::arch::x86_64::read_timestamp_counter().wrapping_sub(corrupt_check_started)
+    ));
     verify_embedded_user_elf(&mut logger);
     verify_corrupt_user_elf_is_rejected(&mut logger);
     verify_corrupt_user_program_is_not_loaded(&mut logger);
@@ -6099,6 +6104,8 @@ fn try_copy_fs_image_to_frames(
     }
 
     let destination = direct_map.phys_to_virt(base).as_u64() as *mut u8;
+    // **区間ごとの所要を測る**（2026-10-05。下の `fs-timing` の行）。**像の大きさで延びる区間を、直しの前後で同じ行で比べる。**
+    let timing_start = common::arch::x86_64::read_timestamp_counter();
 
     // === S13-c: 複製元は装置である（ADR-0034） ===
     //
@@ -6223,7 +6230,9 @@ fn try_copy_fs_image_to_frames(
     // **virtio の読みの検査値と同じ式で、式を 2 つに増やさない。**
     //
     // **費用は前と同じ位である**——**前も 2MiB のスライス比較で 2MiB を歩いていた。**
+    let timing_loaded = common::arch::x86_64::read_timestamp_counter();
     let checksum = image_checksum(copied);
+    let timing_summed = common::arch::x86_64::read_timestamp_counter();
 
     // **RAM のイメージからコピーした回は、検査値でも照合する**（`ADR-0068` の HW-d。レビューの 1 点）。
     //
@@ -6259,7 +6268,9 @@ fn try_copy_fs_image_to_frames(
     // **`exercise` の後に置くと、書き換えた後の像を見ることになり、
     // 判定行の空き数がビルドしたときの数と食い違う**——**実測で踏んだ**
     // （2026-08-28。`--full` で keep 系の 5 項目が落ちた）。
+    let timing_before_verify = common::arch::x86_64::read_timestamp_counter();
     verify_root_fs_image(logger);
+    let timing_verified = common::arch::x86_64::read_timestamp_counter();
 
     // **どこを読んでいるかを出す。** **向けたことを主張できるようにする**——
     // **複製は元のイメージとバイト単位で一致しているので、向けても向けなくても
@@ -6294,8 +6305,10 @@ fn try_copy_fs_image_to_frames(
     // **穴を全 0 として読めることを毎起動で見る（ADR-0038 の到達条件 2）。**
     // **`exercise_*` より前である**——あちらはイメージを書き換えるので、
     // **ビルドしたままの状態で見る。**
+    let timing_before_exercise = common::arch::x86_64::read_timestamp_counter();
     verify_sparse_hole_reads_as_zeros(logger);
     exercise_block_bitmap(logger, writable);
+    let timing_exercised = common::arch::x86_64::read_timestamp_counter();
 
     // === S13-e: 最終形のイメージを装置へ書き戻す（ADR-0034 の Addendum。イメージ全体のフラッシュ）===
     //
@@ -6318,6 +6331,20 @@ fn try_copy_fs_image_to_frames(
              (the RAM copy is the only one; nothing persists across a reboot)"
         )),
     }
+
+    // **区間ごとの所要**（サイクル数。2026-10-05）。**揺れる値なので、判定には載せない**——起動ログを比べる道具は、
+    // この行を外す。像を大きくしたときに、どの区間が延びるかを見るための行である（実測は
+    // `docs/verification-coverage.md` の「ディスクの像の読み書きの所要」）。
+    let timing_flushed = common::arch::x86_64::read_timestamp_counter();
+    logger.info(format_args!(
+        "fs-timing: (info) cycles: load={} checksum={} verify={} exercise={} flush={} \
+         (they vary with the host; they are not judged)",
+        timing_loaded.wrapping_sub(timing_start),
+        timing_summed.wrapping_sub(timing_loaded),
+        timing_verified.wrapping_sub(timing_before_verify),
+        timing_exercised.wrapping_sub(timing_before_exercise),
+        timing_flushed.wrapping_sub(timing_exercised)
+    ));
 
     // **イメージがこの起動での最終形になったことを告げる（S12-d）。**
     //

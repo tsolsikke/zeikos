@@ -55,7 +55,13 @@ pub fn run(mut logger: Logger<Serial>) -> ! {
             .expect("failed to read \\zeikos\\kernel.elf from the ESP");
         // **RAM ディスクのイメージを読む（`ADR-0068` の HW-d）。** **ここでしか読めない**
         // ——**ExitBootServices の後はファイルシステムが無い。** **無ければ空のまま進む。**
+        // **像を読んで置くのにかかったサイクル数**（2026-10-05）。カーネルの `fs-timing` の行と同じ目的である。
+        let read_started = common::arch::x86_64::read_timestamp_counter();
         fs_image = read_fs_image(&mut logger, &mut fs);
+        logger.info(format_args!(
+            "fs-timing: (info) cycles: bootloader-read={} (it varies with the host; it is not judged)",
+            common::arch::x86_64::read_timestamp_counter().wrapping_sub(read_started)
+        ));
 
         let elf = Elf::parse(&elf_bytes).expect("failed to parse kernel.elf as ELF64");
         logger.info(format_args!(

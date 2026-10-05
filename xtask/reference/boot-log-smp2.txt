@@ -16,7 +16,7 @@ Hello, ZeikOS!
 [INFO] cpu-state: EFER.NXE=1 (expected 1) on the BSP [read back]; it was already set when the kernel was entered, so the kernel did not write EFER: EFER 0xd00 -> 0xd00
 [INFO] fp: SSE is enabled on the bootstrap processor: CR0=0x80010033 (MP=true, EM=false),              CR4=0x668 (OSFXSR=true, OSXMMEXCPT=true), as intended = true [read back from the registers]
 [INFO] boot stack: 1152 of 16384 bytes used (high-water; 15232 bytes poison intact)
-[INFO] higher-half: arrived at high VA. RIP=0xffffffff80207018 in [0xffffffff80100000, 0xffffffff803c19b0)=true, RSP=0xffffffff803ab030 high=true, CR3=0x28f000 == bootstrap PML4 0x28f000 = true, identity alive (phys 0x100000 read via low==high) = true
+[INFO] higher-half: arrived at high VA. RIP=0xffffffff802073f8 in [0xffffffff80100000, 0xffffffff803c19b0)=true, RSP=0xffffffff803aafe0 high=true, CR3=0x28f000 == bootstrap PML4 0x28f000 = true, identity alive (phys 0x100000 read via low==high) = true
 [INFO] percpu: cpu_id() now derives the slot from GDTR: base=0xffffffff8031f168 first slot=0xffffffff8031f168 stride=64 offset=0 index=0 (reader installed: false -> true, cpu_id() 0 -> 0)
 [INFO] interrupts: RFLAGS.IF before cli = false (raw RFLAGS=0x2)
 [INFO] interrupts: RFLAGS.IF after cli = false (raw RFLAGS=0x2)
@@ -33,13 +33,13 @@ Hello, ZeikOS!
 [INFO] gdt: all descriptors match (kernel + user DPL=3 in STAR-compatible order, TSS at new index)
 [INFO] tss: base=0xffffffff802f7df8 IST1=0xffffffff803ba000 RSP0=0xffffffff803b5000
 [INFO] tss: RSP0 は特権レベル遷移（ユーザー -> カーネル）用で、M5 まで実際には使われない
-[INFO] stack: old RSP=0xffffffff80296f30 (UEFI-derived), new RSP=0xffffffff803aad00
+[INFO] stack: old RSP=0xffffffff80296f30 (UEFI-derived), new RSP=0xffffffff803aacb0
 [INFO] stack: kernel stack 0xffffffff80395000..0xffffffff803b5000 (128 KiB)
 [INFO] stack: double fault (IST1) stack 0xffffffff803b6000..0xffffffff803ba000 (16 KiB)
 [INFO] stack: RSP is inside the kernel stack: true
-[INFO] stack: locals live at 0xffffffff803ab10c, inside the kernel stack: true
+[INFO] stack: locals live at 0xffffffff803ab0bc, inside the kernel stack: true
 [INFO] stack: no longer using the UEFI-derived stack: true
-[INFO] stack: write/read-back at 0xffffffff803aac00: OK
+[INFO] stack: write/read-back at 0xffffffff803aabb0: OK
 [INFO] stack: IST guards intact (double-fault=true, page-fault=true)
 [INFO] stack: switched to the kernel's own stack (GDT/TSS loaded)
 [INFO] idt: base=0xffffffff803bf919 limit=4095 (expected base=0xffffffff803bf919 limit=4095)
@@ -49,7 +49,7 @@ Hello, ZeikOS!
 [INFO] idt: NMI (vector 2) uses IST 3 (expected 3), where 0 means the gate has no IST, and the TSS holds the top 0xffffffff8038a000 (expected 0xffffffff8038a000) of the stack starting at 0xffffffff80386000: on its own stack = true
 [INFO] idt: #MC (vector 18) uses IST 4 (expected 4), where 0 means the gate has no IST, and the TSS holds the top 0xffffffff8038f000 (expected 0xffffffff8038f000) of the stack starting at 0xffffffff8038b000: on its own stack = true
 [INFO] idt: the five IST stacks (#DF, #PF, NMI, #MC, #DB) are all different = true; the guards below the NMI, #MC and #DB stacks are intact = true
-[INFO] idt: stub table 0xffffffff801f7920..0xffffffff801f8920 size=4096 (expected 4096), stride=OK, entries=OK
+[INFO] idt: stub table 0xffffffff801f7d00..0xffffffff801f8d00 size=4096 (expected 4096), stride=OK, entries=OK
 [INFO] idt: dedicated stubs outside the exception table: 7 checked, every gate points at its own stub=true
 [INFO] idt: loaded (exceptions now reach our handlers; interrupts stay disabled until M4-d)
 [INFO] critical: IF before any guard = false
@@ -82,8 +82,8 @@ Hello, ZeikOS!
 [INFO] paging: required range [kernel image] 0x100000..0x3c19b0: OK
 [INFO] paging: required range [framebuffer] 0x80000000..0x803e8000: OK
 [INFO] paging: required range [new page tables (PML4)] 0x3000..0x4000: OK
-[INFO] paging: required range [current RSP] 0x3ab290..0x3ab291: OK
-[INFO] paging: required range [current RIP] 0x207018..0x207019: OK
+[INFO] paging: required range [current RSP] 0x3ab240..0x3ab241: OK
+[INFO] paging: required range [current RIP] 0x2073f8..0x2073f9: OK
 [INFO] paging: all required ranges mapped. proceeding to CR3 switch (d-2).
 [INFO] paging: current CR3 = 0x28f000
 [INFO] paging: CR3 switch instruction executed
@@ -119,8 +119,8 @@ Hello, ZeikOS!
 [INFO] console: 114 log line(s) were emitted before the console existed (serial only)
 [INFO] heap: arena 0x1780000..0x1880000 (256 frames, 1 MiB), mapped=true
 [INFO] heap: initialized (1048576 bytes free, 1 block(s))
-[INFO] granularity: executing code (RIP) 0xffffffff80207018 -> phys 0x207018, mapped by a 4KiB page at 0xffffffff80207000 (entry=0x207021)
-[INFO] granularity: kernel stack (RSP) 0xffffffff803aad10 -> phys 0x3aad10, mapped by a 4KiB page at 0xffffffff803aa000 (entry=0x80000000003aa063)
+[INFO] granularity: executing code (RIP) 0xffffffff802073f8 -> phys 0x2073f8, mapped by a 4KiB page at 0xffffffff80207000 (entry=0x207021)
+[INFO] granularity: kernel stack (RSP) 0xffffffff803aacc0 -> phys 0x3aacc0, mapped by a 4KiB page at 0xffffffff803aa000 (entry=0x80000000003aa063)
 [INFO] granularity: heap arena 0x1780000 -> phys 0x1780000, mapped by a 2MiB page at 0x1600000 (entry=0x8000000001600083)
 [INFO] granularity: framebuffer 0x80000000 -> phys 0x80000000, mapped by a 2MiB page at 0x80000000 (entry=0x80000000800000b3)
 [INFO] test hooks: none enabled (this is a normal build)
@@ -275,8 +275,8 @@ Hello, ZeikOS!
 [INFO] percpu: 2 usable CPU(s) enumerated, 2 per-CPU slot(s) available, every CPU has a slot=true (a CPU without a slot is not started, so no slot is indexed out of range)
 [INFO] identity-removal: begin. live PML4=0xf000, saved PML4[0]=0x10023
 [INFO] identity-removal: PML4[0] subtree table frames = 7 (28 KiB) become unreachable; intentional leak. subtree frames [256]=10 [511]=4. disjoint(0,256)=true disjoint(0,511)=true disjoint(256,511)=true
-[INFO] identity-removal: required [RIP] 0xffffffff80207018 -> phys 0x207018 (huge=false): OK
-[INFO] identity-removal: required [RSP] 0xffffffff803aab60 -> phys 0x3aab60 (huge=false): OK
+[INFO] identity-removal: required [RIP] 0xffffffff802073f8 -> phys 0x2073f8 (huge=false): OK
+[INFO] identity-removal: required [RSP] 0xffffffff803aab10 -> phys 0x3aab10 (huge=false): OK
 [INFO] identity-removal: required [direct map window] 0xffff80000000f000 -> phys 0xf000 (huge=false): OK
 [INFO] identity-removal: required [kernel image] 0xffffffff80100000 -> phys 0x100000 (huge=false): OK
 [INFO] identity-removal: required [heap high VA] 0xffff800001780000 -> phys 0x1780000 (huge=true): OK
@@ -406,7 +406,7 @@ task: cooperative switch verified
 [INFO] user-load-corrupt: p_flags of the first segment set to read, write and execute -> Layout(WritableAndExecutable { index: 0 }) (the space was destroyed: quarantined=1 leaked=0)
 [INFO] user-load-corrupt: all 7 corrupted images were refused by the loader and the kernel continued; 11 frame(s) left the allocator and 11 reached quarantine (match=true)
 [INFO] frame-allocator: lent out 12 time(s), given back 12 time(s), balanced=true, present=true
-[INFO] syscall-entry: cpu 0: EFER=0xd01 with SCE=1 (expected 1) and NXE=1 (expected 1); STAR=0x1b000800000000 (expected 0x1b000800000000) LSTAR=0xffffffff8015b600 (expected 0xffffffff8015b600) CSTAR=0xffffffff8015b630 (expected 0xffffffff8015b630) SFMASK=0x47700 (expected 0x47700) SYSENTER_CS=0x0 (expected 0x0) [read back from the MSRs after the kernel wrote them]: as intended = true
+[INFO] syscall-entry: cpu 0: EFER=0xd01 with SCE=1 (expected 1) and NXE=1 (expected 1); STAR=0x1b000800000000 (expected 0x1b000800000000) LSTAR=0xffffffff8015b9e0 (expected 0xffffffff8015b9e0) CSTAR=0xffffffff8015ba10 (expected 0xffffffff8015ba10) SFMASK=0x47700 (expected 0x47700) SYSENTER_CS=0x0 (expected 0x0) [read back from the MSRs after the kernel wrote them]: as intended = true
 [INFO] cpu-state: the CPU vendor is AuthenticAMD (CPUID leaf 0), so CR0, CR4 and EFER are judged by the AMD table (APM Vol.2, 24593 Rev. 3.45)
 [INFO] cpu-state: CR0=0x80010033 CR4=0x668 EFER=0xd01; the inventory of user-changeable CPU state (ADR-0018 Addendum 9) rests on CR0.AM, CR4.SMAP, CR4.FSGSBASE, CR4.PKE, CR4.OSXSAVE and CR4.PVI being 0
 [INFO] cpu-state: the 24 bit(s) the kernel needs hold (CR0.PE, MP, NE, WP, PG set; EM, TS, NW, CD clear; CR4.PAE, MCE, OSFXSR, OSXMMEXCPT set; LA57, PCIDE, CET clear; EFER.SCE, LME, LMA, NXE set; LMSLE, FFXSR, TCE, UAIE clear)
@@ -415,7 +415,7 @@ task: cooperative switch verified
 [INFO] user-load: hello PT_LOAD segments: declared=2 mapped=2 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7ff000..0x800000 (w=true)
 [INFO] user-load: hello initial stack at 0x7fff80 (argc=1, envc=3, 16-byte aligned=true,          initial data 128 of 4096 byte(s))
-[INFO] stack-water: before entering hello in Ring 3, the kernel stack used 67184 of 131072 byte(s); 63888 left
+[INFO] stack-water: before entering hello in Ring 3, the kernel stack used 67376 of 131072 byte(s); 63696 left
 hello from ring 3
 [INFO] user-stack: hello used 128 of 4096 byte(s) (3%), over half=false          (the initial argv/envp table is counted in; ADR-0041 says to decide about growing          the stack when this goes over half)
 [INFO] ring3: hello used 2882 of 65536 byte(s) of the depth-0 excursion stack (4%), the canary at its bottom is intact=true
@@ -428,7 +428,7 @@ hello from ring 3
 [INFO] user-load: nx-stack PT_LOAD segments: declared=1 mapped=1 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7ff000..0x800000 (w=true)
 [INFO] user-load: nx-stack initial stack at 0x7fff80 (argc=1, envc=3, 16-byte aligned=true,          initial data 128 of 4096 byte(s))
-[INFO] stack-water: before entering nx-stack in Ring 3, the kernel stack used 67184 of 131072 byte(s); 63888 left
+[INFO] stack-water: before entering nx-stack in Ring 3, the kernel stack used 67376 of 131072 byte(s); 63696 left
 [INFO] user-stack: nx-stack used 4096 of 4096 byte(s) (100%), over half=true          (the initial argv/envp table is counted in; ADR-0041 says to decide about growing          the stack when this goes over half)
 [INFO] ring3: nx-stack used 0 of 65536 byte(s) of the depth-0 excursion stack (0%), the canary at its bottom is intact=true
 [INFO] vfs: nx-stack opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
@@ -441,7 +441,7 @@ hello from ring 3
 [INFO] user-load: nx-data PT_LOAD segments: declared=2 mapped=2 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7ff000..0x800000 (w=true)
 [INFO] user-load: nx-data initial stack at 0x7fff80 (argc=1, envc=3, 16-byte aligned=true,          initial data 128 of 4096 byte(s))
-[INFO] stack-water: before entering nx-data in Ring 3, the kernel stack used 67184 of 131072 byte(s); 63888 left
+[INFO] stack-water: before entering nx-data in Ring 3, the kernel stack used 67376 of 131072 byte(s); 63696 left
 [INFO] user-stack: nx-data used 128 of 4096 byte(s) (3%), over half=false          (the initial argv/envp table is counted in; ADR-0041 says to decide about growing          the stack when this goes over half)
 [INFO] ring3: nx-data used 0 of 65536 byte(s) of the depth-0 excursion stack (0%), the canary at its bottom is intact=true
 [INFO] vfs: nx-data opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
@@ -454,7 +454,7 @@ hello from ring 3
 [INFO] user-load: nx-rodata PT_LOAD segments: declared=2 mapped=2 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7ff000..0x800000 (w=true)
 [INFO] user-load: nx-rodata initial stack at 0x7fff80 (argc=1, envc=3, 16-byte aligned=true,          initial data 128 of 4096 byte(s))
-[INFO] stack-water: before entering nx-rodata in Ring 3, the kernel stack used 67184 of 131072 byte(s); 63888 left
+[INFO] stack-water: before entering nx-rodata in Ring 3, the kernel stack used 67376 of 131072 byte(s); 63696 left
 [INFO] user-stack: nx-rodata used 128 of 4096 byte(s) (3%), over half=false          (the initial argv/envp table is counted in; ADR-0041 says to decide about growing          the stack when this goes over half)
 [INFO] ring3: nx-rodata used 0 of 65536 byte(s) of the depth-0 excursion stack (0%), the canary at its bottom is intact=true
 [INFO] vfs: nx-rodata opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
@@ -466,7 +466,7 @@ hello from ring 3
 [INFO] user-load: nx-brk PT_LOAD segments: declared=1 mapped=1 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7ff000..0x800000 (w=true)
 [INFO] user-load: nx-brk initial stack at 0x7fff80 (argc=1, envc=3, 16-byte aligned=true,          initial data 128 of 4096 byte(s))
-[INFO] stack-water: before entering nx-brk in Ring 3, the kernel stack used 67184 of 131072 byte(s); 63888 left
+[INFO] stack-water: before entering nx-brk in Ring 3, the kernel stack used 67376 of 131072 byte(s); 63696 left
 [INFO] user-stack: nx-brk used 128 of 4096 byte(s) (3%), over half=false          (the initial argv/envp table is counted in; ADR-0041 says to decide about growing          the stack when this goes over half)
 [INFO] ring3: nx-brk used 2608 of 65536 byte(s) of the depth-0 excursion stack (3%), the canary at its bottom is intact=true
 [INFO] vfs: nx-brk opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
@@ -478,7 +478,7 @@ hello from ring 3
 [INFO] user-load: debug-trap PT_LOAD segments: declared=1 mapped=1 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7ff000..0x800000 (w=true)
 [INFO] user-load: debug-trap initial stack at 0x7fff80 (argc=1, envc=3, 16-byte aligned=true,          initial data 128 of 4096 byte(s))
-[INFO] stack-water: before entering debug-trap in Ring 3, the kernel stack used 67184 of 131072 byte(s); 63888 left
+[INFO] stack-water: before entering debug-trap in Ring 3, the kernel stack used 67376 of 131072 byte(s); 63696 left
 [INFO] user-stack: debug-trap used 136 of 4096 byte(s) (3%), over half=false          (the initial argv/envp table is counted in; ADR-0041 says to decide about growing          the stack when this goes over half)
 [INFO] ring3: debug-trap used 0 of 65536 byte(s) of the depth-0 excursion stack (0%), the canary at its bottom is intact=true
 [INFO] vfs: debug-trap opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
@@ -490,7 +490,7 @@ hello from ring 3
 [INFO] user-load: fault-test PT_LOAD segments: declared=1 mapped=1 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7ff000..0x800000 (w=true)
 [INFO] user-load: fault-test initial stack at 0x7fff80 (argc=1, envc=3, 16-byte aligned=true,          initial data 128 of 4096 byte(s))
-[INFO] stack-water: before entering fault-test in Ring 3, the kernel stack used 67184 of 131072 byte(s); 63888 left
+[INFO] stack-water: before entering fault-test in Ring 3, the kernel stack used 67376 of 131072 byte(s); 63696 left
 [INFO] user-stack: fault-test used 128 of 4096 byte(s) (3%), over half=false          (the initial argv/envp table is counted in; ADR-0041 says to decide about growing          the stack when this goes over half)
 [INFO] ring3: fault-test used 0 of 65536 byte(s) of the depth-0 excursion stack (0%), the canary at its bottom is intact=true
 [INFO] vfs: fault-test opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
@@ -504,7 +504,7 @@ hello from ring 3
 [INFO] user-load: syscall-test PT_LOAD segments: declared=2 mapped=2 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7ff000..0x800000 (w=true)
 [INFO] user-load: syscall-test initial stack at 0x7fff70 (argc=2, envc=3, 16-byte aligned=true,          initial data 144 of 4096 byte(s))
-[INFO] stack-water: before entering syscall-test in Ring 3, the kernel stack used 67184 of 131072 byte(s); 63888 left
+[INFO] stack-water: before entering syscall-test in Ring 3, the kernel stack used 67376 of 131072 byte(s); 63696 left
 syscall-test wrote this
 [INFO] spawn: /bin/hello is 8576 byte(s) at inode 25; entering at depth 2 (the parent's excursion stack 0xffffffff80344800..0xffffffff80354800 has 10017 byte(s) used and 55519 left)
 [INFO] user-load: /bin/hello mapped PT_LOAD 0x400000..0x400042 (filesz=0x42 memsz=0x42 w=false) pages 0x400000..0x400000
@@ -600,7 +600,7 @@ syscall-test wrote this
 [INFO] user-load: syscall-insn PT_LOAD segments: declared=2 mapped=2 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7ff000..0x800000 (w=true)
 [INFO] user-load: syscall-insn initial stack at 0x7fff80 (argc=1, envc=3, 16-byte aligned=true,          initial data 128 of 4096 byte(s))
-[INFO] stack-water: before entering syscall-insn in Ring 3, the kernel stack used 67184 of 131072 byte(s); 63888 left
+[INFO] stack-water: before entering syscall-insn in Ring 3, the kernel stack used 67376 of 131072 byte(s); 63696 left
 syscall-insn wrote this
 syscall-insn wrote this
 [INFO] user-stack: syscall-insn used 144 of 4096 byte(s) (3%), over half=false          (the initial argv/envp table is counted in; ADR-0041 says to decide about growing          the stack when this goes over half)
@@ -616,7 +616,7 @@ syscall-insn wrote this
 [INFO] user-load: debug-trap-syscall PT_LOAD segments: declared=1 mapped=1 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7ff000..0x800000 (w=true)
 [INFO] user-load: debug-trap-syscall initial stack at 0x7fff70 (argc=1, envc=3, 16-byte aligned=true,          initial data 144 of 4096 byte(s))
-[INFO] stack-water: before entering debug-trap-syscall in Ring 3, the kernel stack used 67184 of 131072 byte(s); 63888 left
+[INFO] stack-water: before entering debug-trap-syscall in Ring 3, the kernel stack used 67376 of 131072 byte(s); 63696 left
 [INFO] user-stack: debug-trap-syscall used 152 of 4096 byte(s) (3%), over half=false          (the initial argv/envp table is counted in; ADR-0041 says to decide about growing          the stack when this goes over half)
 [INFO] ring3: debug-trap-syscall used 1330 of 65536 byte(s) of the depth-0 excursion stack (2%), the canary at its bottom is intact=true
 [INFO] vfs: debug-trap-syscall opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
@@ -628,7 +628,7 @@ syscall-insn wrote this
 [INFO] user-load: compat-syscall PT_LOAD segments: declared=1 mapped=1 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7ff000..0x800000 (w=true)
 [INFO] user-load: compat-syscall initial stack at 0x7fff80 (argc=1, envc=3, 16-byte aligned=true,          initial data 128 of 4096 byte(s))
-[INFO] stack-water: before entering compat-syscall in Ring 3, the kernel stack used 67184 of 131072 byte(s); 63888 left
+[INFO] stack-water: before entering compat-syscall in Ring 3, the kernel stack used 67376 of 131072 byte(s); 63696 left
 [INFO] user-stack: compat-syscall used 144 of 4096 byte(s) (3%), over half=false          (the initial argv/envp table is counted in; ADR-0041 says to decide about growing          the stack when this goes over half)
 [INFO] ring3: compat-syscall used 802 of 65536 byte(s) of the depth-0 excursion stack (1%), the canary at its bottom is intact=true
 [INFO] vfs: compat-syscall opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
@@ -652,7 +652,7 @@ syscall-insn wrote this
 [INFO] ioapic: virtio IRQ 11 routed: vector=0x44 (expected 0x44), level=true active-low=false masked=false; matches the platform's declaration = true [read back from hardware]
 [INFO] sti-check 1: GDT base=0xffffffff8031f168 (expected 0xffffffff8031f168), CS=0x0008 (expected 0x0008), DS=0x0010 SS=0x0010 (expected 0x0010)
 [INFO] sti-check 2: TR=0x0030 (expected 0x0030), IST1 top=0xffffffff803ba000, #DF gate IST index=Some(1)
-[INFO] sti-check 3: IDT base=0xffffffff803bf919 limit=4095, first 32 gates ok=true, exception stub table ok=true, irq stub table ok=true (0xffffffff801f8950..0xffffffff801f8b60, size=528 expected=528)
+[INFO] sti-check 3: IDT base=0xffffffff803bf919 limit=4095, first 32 gates ok=true, exception stub table ok=true, irq stub table ok=true (0xffffffff801f8d30..0xffffffff801f8f40, size=528 expected=528)
 [INFO] sti-check 3b: all 256 IDT gate(s) lead to one of the 3 common entries = true (exception 216, irq 39, syscall 1)
 [INFO] sti-check 5: PIC IMR master=0xfe slave=0xff (expected 0xfe/0xff) [read back from hardware]
 [INFO] sti-check 4: cannot be verified at this point; the timer still goes through the 8259 here (calibration needs PIT ticks, so the move to the local APIC timer happens after sti), and the 8259 ICW2 is write-only. Proceeding is safe only because check 5 holds: with every IRQ masked, a wrong offset delivers nothing. Proof arrives when the first timer IRQ shows up as vector 0x20. The other two paths are read back where they are set up: the I/O APIC redirection entry (IRQ1) and the LVT timer
@@ -675,7 +675,7 @@ syscall-insn wrote this
 [INFO] lapic-timer: the timer now arrives as vector 0xfe, which the 8259 cannot produce
 task: starting preemptive demo with 2 busy-loop workers for 200 ticks
 [INFO] smp: the installed AP trampoline matches the template outside the patched fields: 4048 byte(s) compared, 48 excluded (gdtr base at 0xf22, far jump target at 0x3b, data block 0xf40..0xf68), mismatches=0
-[INFO] smp: AP trampoline installed at 0x1000 (4096 of 4096 bytes used, fits in one page=true), gdt at 0x1f00, 64-bit entry at 0x1100, cr3 0x28f000, rust entry 0xffffffff801b3770
+[INFO] smp: AP trampoline installed at 0x1000 (4096 of 4096 bytes used, fits in one page=true), gdt at 0x1f00, 64-bit entry at 0x1100, cr3 0x28f000, rust entry 0xffffffff801b3b50
 [INFO] smp: starting application processor apic id 1 as slot 1 (trampoline at 0x1000, vector 0x01, stack top 0x3000 identity-mapped, cr3 0x28f000 = the static boot page table)
 [INFO] smp: application processor 1 started (long mode reached, running on the static boot page table; no per-CPU GDT/TSS/IDT yet, so cpu_id() is not used here)
 [INFO] smp: ap 1 has EFER.NXE=1 (expected 1) before it loads the production page table (EFER=0xd00)
@@ -692,7 +692,7 @@ task: starting preemptive demo with 2 busy-loop workers for 200 ticks
 [INFO] cpu-state: ap 1: its TSS holds the top 0xffff81000006f000 for IST4 (#MC), the stack it was handed [read back by the AP, which halts on a mismatch]
 [INFO] cpu-state: ap 1: its TSS holds the top 0xffff810000074000 for IST5 (#DB), the stack it was handed [read back by the AP, which halts on a mismatch]
 [INFO] cpu-state: ap 1: the five IST stacks (#DF, #PF, NMI, #MC, #DB) are all different = true
-[INFO] cpu-state: ap 1 syscall-entry: EFER=0xd01 with SCE=1 (expected 1) and NXE=1 (expected 1); STAR=0x1b000800000000 (expected 0x1b000800000000) LSTAR=0xffffffff8015b660 (expected 0xffffffff8015b660) CSTAR=0xffffffff8015b690 (expected 0xffffffff8015b690) SFMASK=0x47700 (expected 0x47700) SYSENTER_CS=0x0 (expected 0x0) [read back from the MSRs after the kernel wrote them]: as intended = true [read by the AP]
+[INFO] cpu-state: ap 1 syscall-entry: EFER=0xd01 with SCE=1 (expected 1) and NXE=1 (expected 1); STAR=0x1b000800000000 (expected 0x1b000800000000) LSTAR=0xffffffff8015ba40 (expected 0xffffffff8015ba40) CSTAR=0xffffffff8015ba70 (expected 0xffffffff8015ba70) SFMASK=0x47700 (expected 0x47700) SYSENTER_CS=0x0 (expected 0x0) [read back from the MSRs after the kernel wrote them]: as intended = true [read by the AP]
 [INFO] cpu-state: ap 1 left the trampoline with EFER=0xd00, EFER.NXE=1 (expected 1) [read by the AP before it copied the BSP]
 [INFO] cpu-state: ap 1 CR0=0x80010033 CR4=0x668 EFER=0xd01 matches the BSP
 [INFO] cpu-state: 1 started AP(s) match the BSP's CR0, CR4 and EFER
@@ -701,7 +701,7 @@ task: starting preemptive demo with 2 busy-loop workers for 200 ticks
 [INFO] virtio-blk: blocking read: released the BKL before waiting; the completion was seen
 [INFO] timer: first tick arrived as vector 0x20 - this is the proof that ICW2 was written correctly (it cannot be read back)
 [INFO] timer: this is the end of the steady-loop observation, timer_accounting_balanced=true; the shell takes the foreground from here
-[INFO] stack-water: before init, the kernel stack used 67184 of 131072 byte(s); 63888 left
+[INFO] stack-water: before init, the kernel stack used 67376 of 131072 byte(s); 63696 left
 [INFO] spawn: /bin/bss-test is 12800 byte(s) at inode 13; entering at depth 1 (the parent runs on its task's kernel stack, which has a guard page)
 [INFO] user-load: /bin/bss-test mapped PT_LOAD 0x400000..0x4000f5 (filesz=0xf5 memsz=0xf5 w=false) pages 0x400000..0x400000
 [INFO] user-load: /bin/bss-test mapped PT_LOAD 0x401000..0x4010bc (filesz=0xbc memsz=0xbc w=false) pages 0x401000..0x401000
@@ -710,7 +710,7 @@ task: starting preemptive demo with 2 busy-loop workers for 200 ticks
 [INFO] user-load: /bin/bss-test PT_LOAD segments: declared=4 mapped=4 (they must match; a gap means a segment was skipped), pages shared with the previous segment=1
 [INFO] user-load: mapped the user stack 0x7ff000..0x800000 (w=true)
 [INFO] user-load: /bin/bss-test initial stack at 0x7fff80 (argc=1, envc=3, 16-byte aligned=true,          initial data 128 of 4096 byte(s))
-[INFO] stack-water: before entering /bin/bss-test in Ring 3, the kernel stack used 69256 of 131072 byte(s); 61816 left
+[INFO] stack-water: before entering /bin/bss-test in Ring 3, the kernel stack used 69336 of 131072 byte(s); 61736 left
 bss-test: the .bss reads as zero, keeps writes, and shares a page with .data
 [INFO] user-stack: /bin/bss-test used 160 of 4096 byte(s) (3%), over half=false          (the initial argv/envp table is counted in; ADR-0041 says to decide about growing          the stack when this goes over half)
 [INFO] ring3: /bin/bss-test used 2882 of 65536 byte(s) of the depth-0 excursion stack (4%), the canary at its bottom is intact=true
@@ -731,6 +731,6 @@ bss-test: the .bss reads as zero, keeps writes, and shares a page with .data
 [INFO] user-load: /bin/zash PT_LOAD segments: declared=4 mapped=4 (they must match; a gap means a segment was skipped), pages shared with the previous segment=1
 [INFO] user-load: mapped the user stack 0x7ff000..0x800000 (w=true)
 [INFO] user-load: /bin/zash initial stack at 0x7fff80 (argc=1, envc=3, 16-byte aligned=true,          initial data 128 of 4096 byte(s))
-[INFO] stack-water: before entering /bin/zash in Ring 3, the kernel stack used 71944 of 131072 byte(s); 59128 left
+[INFO] stack-water: before entering /bin/zash in Ring 3, the kernel stack used 72024 of 131072 byte(s); 59048 left
 zash: ready
 [38;2;0;200;0mzeikos[0m$ 
