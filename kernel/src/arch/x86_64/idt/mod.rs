@@ -2495,6 +2495,21 @@ unsafe extern "sysv64" fn exception_entry(context: *const ExceptionContext, rsp_
             guard.bottom.as_u64(),
             guard.top.as_u64()
         );
+        // **どのスタックの見張りに当たったかを、名前で出す**（2026-10-06）。上の行は、起動のカーネルスタックの
+        // 見張りだけを見る。こちらは、張ってある見張りの全部（ワーカー・アイドル・足した 1 本・遠征スタック・
+        // AP のスタックの下の穴）を、控えの表から引く。**表を読むだけで、ロックは取らない。**
+        match crate::arch::x86_64::stack::guarded_stack_at(context.cr2) {
+            Some((page, stack)) => {
+                let _ = writeln!(
+                    serial,
+                    "[ERROR]   cr2 is in a stack guard page = true (the page {page:#x} below \
+                     {stack}; that stack has overflowed)"
+                );
+            }
+            None => {
+                let _ = writeln!(serial, "[ERROR]   cr2 is in a stack guard page = false");
+            }
+        }
         // 権限の違反の破壊テスト（`wx-violation-test`）: 試しが「これから触る」と告げた番地と、CR2 を突き合わせる。
         // **落ちた番地が狙った番地であること**を、止まる側が 1 行で示す（番地はビルドごとに動くので、外からは
         // 決まった文字列で比べられない）。

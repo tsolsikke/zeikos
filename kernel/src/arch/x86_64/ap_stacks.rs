@@ -175,6 +175,23 @@ pub unsafe fn map_ap_stacks<const CAP: usize>(
             cursor,
             cursor + crate::arch::x86_64::stack::GUARD_SIZE as u64,
         );
+        // **穴を、上に在るスタックの名前で控える**（2026-10-06。ページフォルトのハンドラが、落ちた番地から引く）。
+        // 並びは、下から、カーネルスタック、IST1 から IST5 である。**表が一杯でも止めない**——スタックは使える。
+        // 名指しが出ないことを、1 行で言う。
+        let guarded = if index == 0 {
+            crate::arch::x86_64::stack::GuardedStack::ApKernel { slot: slot as u8 }
+        } else {
+            crate::arch::x86_64::stack::GuardedStack::ApInterrupt {
+                slot: slot as u8,
+                ist: index as u8,
+            }
+        };
+        if !crate::arch::x86_64::stack::record_guard_page(cursor, guarded) {
+            logger.warn(format_args!(
+                "smp: the table of guard pages is full; the hole below {guarded} ({cursor:#x}) is \
+                 not recorded, so a fault there would not be named"
+            ));
+        }
         cursor += crate::arch::x86_64::stack::GUARD_SIZE as u64;
         let bottom = cursor;
         let mut offset = 0;

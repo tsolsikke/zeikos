@@ -385,7 +385,10 @@ kernel::arch::x86_64::paging::survey::tests::the_permissions_of_the_tables_on_th
 kernel::arch::x86_64::paging::survey::tests::the_upper_half_is_reported_in_its_canonical_form_and_only_the_asked_top_entries_are_walked
 kernel::arch::x86_64::paging::verify::tests::a_level_allows_a_write_only_when_it_is_writable_as_well
 kernel::arch::x86_64::paging::verify::tests::a_resolved_leaf_answers_writable_and_user_from_its_own_bits
+kernel::arch::x86_64::stack::tests::a_guarded_stack_is_named_in_words
+kernel::arch::x86_64::stack::tests::a_guarded_stack_survives_the_round_trip_through_its_word
 kernel::arch::x86_64::stack::tests::a_range_contains_its_own_bounds
+kernel::arch::x86_64::stack::tests::a_recorded_guard_page_is_found_only_inside_its_page
 kernel::arch::x86_64::stack::tests::each_stack_sits_directly_above_its_guard
 kernel::arch::x86_64::stack::tests::the_block_is_exactly_the_sum_of_its_parts
 kernel::arch::x86_64::stack::tests::the_canary_differs_from_the_heap_poison

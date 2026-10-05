@@ -12721,7 +12721,7 @@ fn cmd_concurrent_test(features: &[&str], expect_pass: bool) -> Result<()> {
     let canaries_intact = ["/bin/tickera", "/bin/tickerb"].iter().all(|name| {
         lines.iter().any(|line| {
             line.starts_with(&format!("[INFO] ring3: {name} used "))
-                && line.ends_with("the canary at its bottom is intact=true")
+                && line.ends_with("which has a guard page below it")
         })
     });
     let stacks_kept_apart = a_on_slot_one

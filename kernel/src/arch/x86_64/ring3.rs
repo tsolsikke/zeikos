@@ -84,18 +84,28 @@ const EXCURSION_STACK_SIZE: usize = 64 * 1024;
 /// 同じ考え方で、**偶然そうなる確率が低い値を選ぶ。**
 const EXCURSION_STACK_FILL: u8 = 0xE5;
 
-/// 溢れの検出に使う、スタック最下部の見張り区間のバイト数（S11-5）。
-///
-/// **ここが 1 バイトでも変われば、残りを使い切ったということである。**
-/// **ガードページを設けられないので**（`.bss` の配列であって、ページ境界に
-/// 揃っていない）、**埋めた値で代替する。**
-const EXCURSION_STACK_CANARY: usize = 256;
+/// 遠征スタックの下に置く、見張りのページの大きさ（ほかのスタックと同じ 1 ページ）。
+const EXCURSION_GUARD_SIZE: usize = crate::arch::x86_64::stack::GUARD_SIZE;
 
-// フィールドは値としては読まず、静的領域のアドレスだけを取る（RSP0 用の
-// スタック領域）。dead_code はそのための許容。
-#[repr(align(16))]
+/// 遠征スタック 1 本（見張りのページと、スタックの本体）。
+///
+/// **`align(4096)` で先頭をページの境界に載せ、下の 1 ページを起動時に外す**（[`install_excursion_guard_pages`]。
+/// 2026-10-06）。カーネルスタック・ワーカー・足した 1 本と同じ作りである。**あふれた瞬間にページフォルトになり、
+/// ハンドラが、どのスタックかを名指しして止まる。**
+///
+/// **以前は 16 バイト境界の配列で、見張りのページを置けなかった。** 代わりに、最下部の 256 バイトを埋めた値で見て
+/// いた（戻ってから気づく形で、あふれた先の静的な領域は、もう書かれていた）。その区間と判定は消した。**埋めた値で
+/// 使用量を測る仕組みは残してある**（[`excursion_stack_high_water`]）。
+///
+/// フィールドは値としては読まず、静的領域のアドレスだけを取る（RSP0 用のスタック領域）。dead_code はそのための許容。
+#[repr(C, align(4096))]
 #[allow(dead_code)]
-struct ExcursionStack([u8; EXCURSION_STACK_SIZE]);
+struct ExcursionStack {
+    /// 見張りのページ。**起動時に外す。** 外すまでは 0 のままで、誰も触らない。
+    guard: [u8; EXCURSION_GUARD_SIZE],
+    /// スタックの本体。
+    stack: [u8; EXCURSION_STACK_SIZE],
+}
 
 /// 遠征の入れ子の深さの上限（S11-2）。
 ///
@@ -138,7 +148,7 @@ struct ExcursionStack([u8; EXCURSION_STACK_SIZE]);
 /// - 共通の側は、遠征に入る前に今の深さと比べ、越えるなら入らない（`spawn` は断る）。
 pub const MAX_EXCURSION_DEPTH: usize = 2;
 
-/// 遠征専用のカーネルスタック（`.bss`）。IST スタックと同じ静的確保。
+/// 遠征専用のカーネルスタック（`.bss`）。**1 本ごとに、下に見張りのページを持つ**（[`ExcursionStack`]）。
 ///
 /// **深さごとに 1 本持つ（S11-2）。** 入れ子のとき、**子がカーネルへ入るときに
 /// 親のスタックへ切り替わってはならない**——親はそのスタックの上で
@@ -148,9 +158,15 @@ pub const MAX_EXCURSION_DEPTH: usize = 2;
 /// **W1-c-1 で [`USER_TASK_SLOTS`] を 2 にしたので、本数が倍になった。**
 /// **2 つ目のスロットを使うのは、足した 1 本のタスクだけである**（W1-c-4。**`concurrent-test` の
 /// 構成でだけ走る**。既定の起動では [`current_excursion_slot`] が必ず 0 を返す）。
-static mut EXCURSION_STACKS: [[ExcursionStack; MAX_EXCURSION_DEPTH]; USER_TASK_SLOTS] =
-    [const { [const { ExcursionStack([0; EXCURSION_STACK_SIZE]) }; MAX_EXCURSION_DEPTH] };
-        USER_TASK_SLOTS];
+static mut EXCURSION_STACKS: [[ExcursionStack; MAX_EXCURSION_DEPTH]; USER_TASK_SLOTS] = [const {
+    [const {
+        ExcursionStack {
+            guard: [0; EXCURSION_GUARD_SIZE],
+            stack: [0; EXCURSION_STACK_SIZE],
+        }
+    }; MAX_EXCURSION_DEPTH]
+};
+    USER_TASK_SLOTS];
 
 /// setjmp/longjmp 相当の回復点。**フィールドのオフセットは `global_asm!` の
 /// `[rax + N]` と一対一で対応している。** 並べ替えると asm が別の場所を読む。
@@ -546,10 +562,71 @@ pub fn excursion_stack_range_of(slot: usize, depth: usize) -> (u64, u64) {
     if slot >= USER_TASK_SLOTS || depth >= MAX_EXCURSION_DEPTH {
         report_excursion_index_out_of_range(slot, depth);
     }
-    let index = depth;
-    // SAFETY: 静的配列の要素のアドレスを取るだけで、中身は読まない。
-    let bottom = unsafe { addr_of!(EXCURSION_STACKS[slot][index]) } as u64;
+    let bottom = excursion_guard_page_of(slot, depth) + EXCURSION_GUARD_SIZE as u64;
     (bottom, bottom + EXCURSION_STACK_SIZE as u64)
+}
+
+/// スロット `slot` の、深さ `depth` の遠征スタックの、見張りのページの先頭（スタックの本体は、この 1 ページ上から）。
+///
+/// **呼ぶ側が、添字を範囲の中にしてあること**（[`excursion_stack_range_of`] が確かめてから呼ぶ。張る側は、範囲を
+/// 回る）。
+fn excursion_guard_page_of(slot: usize, depth: usize) -> u64 {
+    // SAFETY: 静的配列の要素のアドレスを取るだけで、中身は読まない。
+    (unsafe { addr_of!(EXCURSION_STACKS[slot][depth]) }) as u64
+}
+
+/// 張る見張りのページの、ログに出す名前（スロットと深さごと）。
+const EXCURSION_GUARD_NAMES: [[&str; MAX_EXCURSION_DEPTH]; USER_TASK_SLOTS] = [
+    [
+        "the guard page of the depth-0 excursion stack of slot 0",
+        "the guard page of the depth-1 excursion stack of slot 0",
+    ],
+    [
+        "the guard page of the depth-0 excursion stack of slot 1",
+        "the guard page of the depth-1 excursion stack of slot 1",
+    ],
+];
+
+/// 遠征スタックの全部（スロット × 深さ）の下の 1 ページを外し、見張りのページにする（2026-10-06）。
+///
+/// **手順は [`crate::arch::x86_64::stack::install_guard_page`] が持つ**——粒度を確かめ、2 MiB なら分け、外した後に
+/// 訳せないことを確かめ、名前を表に控える。ここは、4 本を順に渡すだけである。
+///
+/// # 契約（境界の関数。2026-10-06）
+///
+/// - 今の根のページテーブルで、遠征スタックの下の 1 ページずつを外す。外したページは、ページの権限の一覧と、
+///   見張りのページの表に入る。
+/// - 呼ぶのは、起動の経路で、最初の遠征より前である（`kernel_main`）。
+///
+/// # Safety
+///
+/// 自前のページテーブルへ切り替え済みで、まだどの遠征スタックも使っていないこと。起動時の単一の文脈から、1 度だけ
+/// 呼ぶこと。以後、外したページへ正規のアクセスは無い（スタックの本体は、その 1 ページ上から始まる）。
+pub unsafe fn install_excursion_guard_pages(
+    allocator: &mut crate::frame_allocator::FrameAllocator,
+    log: &mut dyn FnMut(core::fmt::Arguments),
+) {
+    for (slot, names) in EXCURSION_GUARD_NAMES.iter().enumerate() {
+        for (depth, name) in names.iter().enumerate() {
+            let page = excursion_guard_page_of(slot, depth);
+            let guard = common::addr::VirtAddr::new(page).expect("a .bss address is canonical");
+            // SAFETY: 呼び出し元の契約のとおり、自前のページテーブルの上で、このスタックはまだ使われていない。
+            // `page` は、`align(4096)` の要素の先頭の 1 ページ（`guard` の欄）で、スタックの本体と重ならない。
+            unsafe {
+                crate::arch::x86_64::stack::install_guard_page(
+                    guard,
+                    crate::arch::x86_64::stack::GuardedStack::Excursion {
+                        slot: slot as u8,
+                        depth: depth as u8,
+                    },
+                    allocator,
+                    "ring3",
+                    name,
+                    log,
+                );
+            }
+        }
+    }
 }
 
 /// 深さ `depth` の遠征スタックを既知のバイトで埋める（S11-5）。
@@ -566,10 +643,16 @@ unsafe fn fill_excursion_stack(depth: usize) {
     if depth >= MAX_EXCURSION_DEPTH {
         report_excursion_index_out_of_range(current_excursion_slot(), depth);
     }
-    // SAFETY: 呼び出し元契約により、この配列要素は今誰も使っていない。
+    // **埋めるのは、スタックの本体だけである**（下の見張りのページは写っていない。触ると落ちる）。
+    let (bottom, _) = excursion_stack_range_at(depth);
+    // SAFETY: 呼び出し元契約により、このスタックは今誰も使っていない。`bottom` から `EXCURSION_STACK_SIZE`
+    // バイトは、静的な配列の要素の、本体の欄である。
     unsafe {
-        let stack = addr_of_mut!(EXCURSION_STACKS[current_excursion_slot()][depth]) as *mut u8;
-        core::ptr::write_bytes(stack, EXCURSION_STACK_FILL, EXCURSION_STACK_SIZE);
+        core::ptr::write_bytes(
+            bottom as *mut u8,
+            EXCURSION_STACK_FILL,
+            EXCURSION_STACK_SIZE,
+        );
     }
 }
 
@@ -590,28 +673,15 @@ pub fn excursion_stack_high_water(depth: usize) -> usize {
     if depth >= MAX_EXCURSION_DEPTH {
         report_excursion_index_out_of_range(current_excursion_slot(), depth);
     }
-    // SAFETY: 読み取りのみ。添字は上で範囲内にしてある。
-    let stack = unsafe { addr_of!(EXCURSION_STACKS[current_excursion_slot()][depth]) } as *const u8;
+    // **読むのは、スタックの本体だけである**（下の見張りのページは写っていない）。
+    let stack = excursion_stack_range_at(depth).0 as *const u8;
     for offset in 0..EXCURSION_STACK_SIZE {
-        // SAFETY: offset は配列の中である。
+        // SAFETY: 読み取りのみ。添字は上で範囲内にしてあり、`offset` は本体の欄の中である。
         if unsafe { stack.add(offset).read_volatile() } != EXCURSION_STACK_FILL {
             return EXCURSION_STACK_SIZE - offset;
         }
     }
     0
-}
-
-/// 深さ `depth` の遠征スタックの見張り区間が無傷か（S11-5）。
-///
-/// **偽なら、そのスタックを使い切って下の静的領域まで書いた疑いがある。**
-/// **溢れは静かに起きる**——このスタックにはガードページが無い
-/// （`EXCURSION_STACK_CANARY`）。
-///
-/// # 契約（境界の関数。2026-09-30）
-///
-/// - 読むだけの判定で、何も変えない。呼ぶのは、遠征から戻った後の判定の行（`crate::userland`）である。
-pub fn excursion_stack_canary_intact(depth: usize) -> bool {
-    excursion_stack_high_water(depth) <= EXCURSION_STACK_SIZE - EXCURSION_STACK_CANARY
 }
 
 /// 遠征スタック 1 本の容量（判定行に出す。S11-5）。
@@ -625,10 +695,9 @@ pub fn excursion_stack_capacity() -> usize {
 
 /// 深さ `depth` の遠征スタックの使用量が、容量の半分を越えていないか（S11-6）。
 ///
-/// # なぜ半分で見るのか。**見張り区間では遅い**
+/// # なぜ半分で見るのか。**あふれてからでは遅い**
 ///
-/// [`excursion_stack_canary_intact`] が偽になるのは、**残り
-/// `EXCURSION_STACK_CANARY` バイトまで使い切ったとき**である。
+/// **スタックの下の見張りのページが教えるのは、使い切った瞬間である。**
 /// **そこまで来ていたら、判断する余地はもう無い。**
 ///
 /// **半分は、`deferred-decisions.md` の「遠征スタックにガードページが無い」の

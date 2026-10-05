@@ -73,6 +73,7 @@
 use common::addr::VirtAddr;
 
 use core::ptr::addr_of;
+use core::sync::atomic::{AtomicU64, Ordering};
 
 /// 通常実行用のカーネルスタックの大きさ。
 ///
@@ -546,6 +547,128 @@ fn report_misaligned_entry(entry: &str, stack: u64) -> ! {
     common::arch::x86_64::cpu::halt_forever()
 }
 
+/// 見張りのページ（写していない 1 ページ）の下に、どのスタックが在るか（2026-10-06）。
+///
+/// **ページフォルトのハンドラが、落ちた番地から名前を引いて出すために持つ**（[`guarded_stack_at`]）。以前は、起動の
+/// カーネルスタックの見張りだけを名指ししていて、ほかのスタックのあふれは「カーネルスタックの見張りの中ではない」と
+/// しか出なかった。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum GuardedStack {
+    /// 起動のカーネルスタック（BSP）。
+    Kernel,
+    /// ワーカーのスタック（番号つき）。
+    Worker(u8),
+    /// 足した 1 本（Ring 3 のタスクのカーネルスタック）。
+    Ring3Task,
+    /// BSP 用のアイドルタスクのスタック。
+    BspIdle,
+    /// 遠征スタック（スロットと、深さの添字）。
+    Excursion { slot: u8, depth: u8 },
+    /// AP のカーネルスタック（CPU のスロット）。
+    ApKernel { slot: u8 },
+    /// AP の IST のスタック（CPU のスロットと、IST の番号。1 から）。
+    ApInterrupt { slot: u8, ist: u8 },
+}
+
+impl GuardedStack {
+    /// 表に入れる 1 語（純粋な論理）。**0 は「空き」なので、種類の番号は 1 から振る。**
+    const fn encode(self) -> u64 {
+        let (kind, a, b) = match self {
+            GuardedStack::Kernel => (1, 0, 0),
+            GuardedStack::Worker(index) => (2, index, 0),
+            GuardedStack::Ring3Task => (3, 0, 0),
+            GuardedStack::BspIdle => (4, 0, 0),
+            GuardedStack::Excursion { slot, depth } => (5, slot, depth),
+            GuardedStack::ApKernel { slot } => (6, slot, 0),
+            GuardedStack::ApInterrupt { slot, ist } => (7, slot, ist),
+        };
+        kind | ((a as u64) << 8) | ((b as u64) << 16)
+    }
+
+    /// [`Self::encode`] の逆（純粋な論理）。知らない種類は `None`。
+    const fn decode(word: u64) -> Option<Self> {
+        let a = (word >> 8) as u8;
+        let b = (word >> 16) as u8;
+        match word & 0xff {
+            1 => Some(GuardedStack::Kernel),
+            2 => Some(GuardedStack::Worker(a)),
+            3 => Some(GuardedStack::Ring3Task),
+            4 => Some(GuardedStack::BspIdle),
+            5 => Some(GuardedStack::Excursion { slot: a, depth: b }),
+            6 => Some(GuardedStack::ApKernel { slot: a }),
+            7 => Some(GuardedStack::ApInterrupt { slot: a, ist: b }),
+            _ => None,
+        }
+    }
+}
+
+impl core::fmt::Display for GuardedStack {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            GuardedStack::Kernel => write!(f, "the kernel stack"),
+            GuardedStack::Worker(index) => write!(f, "the stack of worker {index}"),
+            GuardedStack::Ring3Task => write!(f, "the kernel stack of the ring3 task"),
+            GuardedStack::BspIdle => write!(f, "the stack of the bsp idle task"),
+            GuardedStack::Excursion { slot, depth } => {
+                write!(f, "the depth-{depth} excursion stack of slot {slot}")
+            }
+            GuardedStack::ApKernel { slot } => write!(f, "the kernel stack of cpu slot {slot}"),
+            GuardedStack::ApInterrupt { slot, ist } => {
+                write!(f, "the IST{ist} stack of cpu slot {slot}")
+            }
+        }
+    }
+}
+
+/// 控えられる見張りのページの数。
+///
+/// **いま張るのは、BSP の側で 9 枚**（カーネルスタック 1、ワーカー 2、足した 1 本、アイドル、遠征スタック 4）**と、
+/// AP の 1 つにつき 6 枚**（カーネルスタックと IST の 5 本）である。4 コアの起動で 27 枚になる。
+const GUARD_PAGE_SLOTS: usize = 64;
+
+/// 見張りのページの表（番地と、その上のスタック）。**番地が 0 の欄は空きである。**
+///
+/// **書くのは起動時の単一の文脈だけ**（[`record_guard_page`]）で、読むのはページフォルトのハンドラである
+/// （[`guarded_stack_at`]）。ロックを取らずに読めるように、欄は原子的な 2 語にしてある。**名前を先に書き、番地を
+/// 後に書く**——番地が見えた欄は、名前も入っている。
+static GUARD_PAGES: [(AtomicU64, AtomicU64); GUARD_PAGE_SLOTS] =
+    [const { (AtomicU64::new(0), AtomicU64::new(0)) }; GUARD_PAGE_SLOTS];
+
+/// 見張りのページを 1 枚、表に控える。**控えられたら `true`**（表が一杯なら `false`）。
+///
+/// **同じ番地を 2 度控えても、欄は 1 つである**（後の名前で上書きする）。
+///
+/// # 契約（境界の関数。2026-10-06）
+///
+/// - 起動時の単一の文脈から呼ぶ（張る所は、どれも起動の経路に在る）。ページテーブルには触らない。
+/// - `guard_bottom` は、写していない 1 ページの先頭の番地である。
+pub fn record_guard_page(guard_bottom: u64, stack: GuardedStack) -> bool {
+    for (address, name) in GUARD_PAGES.iter() {
+        let held = address.load(Ordering::SeqCst);
+        if held == 0 || held == guard_bottom {
+            name.store(stack.encode(), Ordering::SeqCst);
+            address.store(guard_bottom, Ordering::SeqCst);
+            return true;
+        }
+    }
+    false
+}
+
+/// `address` が、控えてある見張りのページの中なら、そのページの先頭と、上に在るスタックを返す。
+///
+/// # 契約（境界の関数。2026-10-06）
+///
+/// - 読むだけで、何も変えない。ロックを取らないので、例外のハンドラから呼べる。
+pub fn guarded_stack_at(address: u64) -> Option<(u64, GuardedStack)> {
+    GUARD_PAGES.iter().find_map(|(held, name)| {
+        let bottom = held.load(Ordering::SeqCst);
+        if bottom == 0 || address < bottom || address - bottom >= GUARD_SIZE as u64 {
+            return None;
+        }
+        GuardedStack::decode(name.load(Ordering::SeqCst)).map(|stack| (bottom, stack))
+    })
+}
+
 /// ガードページを 1 枚設ける（S12 前の手当て、C の途中で寄せた）。
 ///
 /// **粒度を確かめ、2MiB なら分割し、分割後にもう一度読み直してから unmap する。**
@@ -578,6 +701,8 @@ fn report_misaligned_entry(entry: &str, stack: u64) -> ! {
 ///
 /// - 今の根のページテーブルで `guard_virt` の 1 ページを外し、外した後に訳せないことを確かめる。変換の控え
 ///   （TLB）から消すのはこの CPU の分だけである。
+/// - **外したページを、`stack` の名前で表に控える**（[`record_guard_page`]。2026-10-06）。ページフォルトのハンドラが、
+///   落ちた番地からこの名前を引く。表が一杯なら止まる。
 /// - 呼ぶのは、カーネルスタック（`main.rs`）とタスクのスタック（`crate::task`）を用意する所である。
 ///
 /// # Safety
@@ -586,6 +711,7 @@ fn report_misaligned_entry(entry: &str, stack: u64) -> ! {
 /// 1 ページであること。以後このページへ正規のアクセスが無いこと。
 pub unsafe fn install_guard_page(
     guard_virt: VirtAddr,
+    stack: GuardedStack,
     allocator: &mut crate::frame_allocator::FrameAllocator,
     tag: &str,
     what: &str,
@@ -710,6 +836,15 @@ pub unsafe fn install_guard_page(
                 guard_virt.as_u64(),
                 guard_virt.as_u64() + GUARD_SIZE as u64,
             );
+            // **外したページを、上に在るスタックの名前で控える**（ページフォルトのハンドラが引く）。
+            if !record_guard_page(guard_virt.as_u64(), stack) {
+                log(format_args!(
+                    "{tag}: the table of guard pages is full ({GUARD_PAGE_SLOTS} slot(s)); {what} \
+                     {:#x} could not be recorded, so a fault there would not be named; halting",
+                    guard_virt.as_u64()
+                ));
+                common::arch::x86_64::cpu::halt_forever();
+            }
         }
         Err(e) => {
             log(format_args!(
@@ -833,6 +968,68 @@ mod tests {
         assert_eq!(offset_of!(EntryIstBlock, debug_guard), stride * 2);
         assert_eq!(offset_of!(EntryIstBlock, debug), stride * 2 + GUARD_SIZE);
         assert_eq!(core::mem::size_of::<EntryIstBlock>(), stride * 3);
+    }
+
+    /// 見張りのページの名前は、表の 1 語へ入れて戻しても変わらない。**0（空き）になる名前は無い。**
+    #[test]
+    fn a_guarded_stack_survives_the_round_trip_through_its_word() {
+        let all = [
+            GuardedStack::Kernel,
+            GuardedStack::Worker(0),
+            GuardedStack::Worker(1),
+            GuardedStack::Ring3Task,
+            GuardedStack::BspIdle,
+            GuardedStack::Excursion { slot: 0, depth: 0 },
+            GuardedStack::Excursion { slot: 1, depth: 1 },
+            GuardedStack::ApKernel { slot: 3 },
+            GuardedStack::ApInterrupt { slot: 255, ist: 5 },
+        ];
+        for stack in all {
+            assert_ne!(stack.encode(), 0, "{stack:?}");
+            assert_eq!(GuardedStack::decode(stack.encode()), Some(stack));
+        }
+        assert_eq!(GuardedStack::decode(0), None);
+        assert_eq!(GuardedStack::decode(0xff), None);
+    }
+
+    /// 名前の出し方。**ハンドラの行と、検査の期待が、この文字列を使う。**
+    #[test]
+    fn a_guarded_stack_is_named_in_words() {
+        extern crate std;
+        use std::string::ToString;
+
+        assert_eq!(GuardedStack::Kernel.to_string(), "the kernel stack");
+        assert_eq!(
+            GuardedStack::Excursion { slot: 1, depth: 0 }.to_string(),
+            "the depth-0 excursion stack of slot 1"
+        );
+        assert_eq!(
+            GuardedStack::ApInterrupt { slot: 2, ist: 3 }.to_string(),
+            "the IST3 stack of cpu slot 2"
+        );
+    }
+
+    /// 表に控えた見張りのページは、その 1 ページの中の番地からだけ引ける。同じ番地を控え直すと、名前が替わる。
+    ///
+    /// **表は静的で、ほかの試験と共有する**ので、この試験だけが使う番地（ほかに現れない値）で確かめる。
+    #[test]
+    fn a_recorded_guard_page_is_found_only_inside_its_page() {
+        let page = 0xffff_9123_4567_8000u64;
+        assert_eq!(guarded_stack_at(page), None);
+        assert!(record_guard_page(page, GuardedStack::Worker(1)));
+        assert_eq!(
+            guarded_stack_at(page),
+            Some((page, GuardedStack::Worker(1)))
+        );
+        assert_eq!(
+            guarded_stack_at(page + GUARD_SIZE as u64 - 1),
+            Some((page, GuardedStack::Worker(1)))
+        );
+        assert_eq!(guarded_stack_at(page + GUARD_SIZE as u64), None);
+        assert_eq!(guarded_stack_at(page - 1), None);
+        let excursion = GuardedStack::Excursion { slot: 0, depth: 1 };
+        assert!(record_guard_page(page, excursion));
+        assert_eq!(guarded_stack_at(page + 8), Some((page, excursion)));
     }
 
     #[test]

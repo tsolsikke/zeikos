@@ -2377,25 +2377,16 @@ unsafe fn run_loaded_program(
 
     // **この遠征で遠征スタックをどれだけ使ったかを出す（S11-5）。**
     //
-    // **このスタックにはガードページが無い**（`.bss` の配列である）ので、
-    // **溢れは静かに起きて、下の静的領域を書く。** 実測で `EXCURSION_DEPTH` を
-    // 壊した（`docs/troubleshooting.md`）。**推測せずに毎起動測る。**
+    // **あふれは、下の見張りのページが、その瞬間に止める**（2026-10-06。以前は見張りのページが無く、最下部の
+    // 256 バイトを、戻ってから見ていた）。**ここで出すのは、あふれる前の、余りの推移である。**
     let used = crate::arch::x86_64::excursion_stack_high_water(entered_at_depth);
     let capacity = crate::arch::x86_64::excursion_stack_capacity();
-    let intact = crate::arch::x86_64::excursion_stack_canary_intact(entered_at_depth);
     logger.info(format_args!(
         "ring3: {} used {used} of {capacity} byte(s) of the depth-{entered_at_depth} \
-         excursion stack ({}%), the canary at its bottom is intact={intact}",
+         excursion stack ({}%), which has a guard page below it",
         process.name,
         used * 100 / capacity
     ));
-    if !intact {
-        logger.error(format_args!(
-            "ring3: the depth-{entered_at_depth} excursion stack ran into its bottom canary; \
-             it has no guard page, so anything below it may already be overwritten. halting"
-        ));
-        common::arch::x86_64::halt_forever();
-    }
     // **解禁条件を機械にする（S11-6）。**
     //
     // `deferred-decisions.md` の「遠征スタックにガードページが無い」は、解禁条件を

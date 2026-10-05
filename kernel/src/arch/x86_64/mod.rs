@@ -48,15 +48,16 @@ pub use paging::verify::{
 pub(crate) use ring3::current_excursion_slot;
 pub use ring3::{
     current_excursion_recovery, excursion_depth, excursion_fault_number, excursion_interrupted,
-    excursion_recovery_belongs_to_slot, excursion_stack_canary_intact, excursion_stack_capacity,
-    excursion_stack_high_water, excursion_stack_range, excursion_stack_range_at,
-    excursion_stack_range_of, excursion_stack_within_budget, leave_user_mode,
+    excursion_recovery_belongs_to_slot, excursion_stack_capacity, excursion_stack_high_water,
+    excursion_stack_range, excursion_stack_range_at, excursion_stack_range_of,
+    excursion_stack_within_budget, install_excursion_guard_pages, leave_user_mode,
     note_kernel_entry_from_user, note_return_to_user, restore_fold_record, run_excursion,
     save_fold_record, set_current_excursion_recovery, MAX_EXCURSION_DEPTH, USER_TASK_SLOTS,
 };
 pub use stack::{
-    check_entry_stack_alignment, install_guard_page, kernel_stack_capacity,
-    kernel_stack_high_water, kernel_stack_range, KERNEL_STACK_FILL,
+    check_entry_stack_alignment, guarded_stack_at, install_guard_page, kernel_stack_capacity,
+    kernel_stack_high_water, kernel_stack_range, record_guard_page, GuardedStack,
+    KERNEL_STACK_FILL,
 };
 pub use system_call_entry::refuse_system_call_return;
 pub use task_frame::{build_initial_context, raise_yield_interrupt};

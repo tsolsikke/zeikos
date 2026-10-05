@@ -1941,12 +1941,14 @@ fn require_bootstrap_processor(what: &str) {
 /// 直下のページであること。
 unsafe fn install_worker_guard_page(
     guard_virt: VirtAddr,
+    worker: usize,
     allocator: &mut crate::frame_allocator::FrameAllocator,
 ) {
     // SAFETY: 呼び出し元の契約をそのまま渡す。
     unsafe {
         crate::arch::x86_64::install_guard_page(
             guard_virt,
+            crate::arch::x86_64::GuardedStack::Worker(worker as u8),
             allocator,
             "task",
             "the worker guard page",
@@ -2080,7 +2082,7 @@ unsafe fn setup_tasks(allocator: &mut crate::frame_allocator::FrameAllocator) {
         // SAFETY: 起動時、自前のページテーブル上。ワーカースタックの直下 1
         // ページをガードページにする。
         unsafe {
-            install_worker_guard_page(guard, allocator);
+            install_worker_guard_page(guard, w, allocator);
         }
         // SAFETY: top は今ガードページを設けたワーカースタックの頂点で、
         // まだ誰も使っていない。16 バイト境界（4KiB 境界）に載っている。
@@ -2122,6 +2124,7 @@ unsafe fn setup_tasks(allocator: &mut crate::frame_allocator::FrameAllocator) {
         unsafe {
             crate::arch::x86_64::install_guard_page(
                 guard,
+                crate::arch::x86_64::GuardedStack::Ring3Task,
                 allocator,
                 "task",
                 "the ring3 task guard page",
@@ -2142,6 +2145,7 @@ unsafe fn setup_tasks(allocator: &mut crate::frame_allocator::FrameAllocator) {
         unsafe {
             crate::arch::x86_64::install_guard_page(
                 guard,
+                crate::arch::x86_64::GuardedStack::BspIdle,
                 allocator,
                 "task",
                 "the bsp idle task guard page",

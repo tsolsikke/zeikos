@@ -1383,6 +1383,15 @@ extern "sysv64" fn kernel_main() -> ! {
     // 回帰チェックの判定行より前に止まる。通常運転（タイマループ以降）はこの後に
     // 始まるので、steady state は保護される。
     install_kernel_stack_guard_page(&mut logger, &mut allocator);
+    // **遠征スタックの下にも、見張りのページを張る**（2026-10-06）。最初の遠征（すぐ下の Ring 3 の試し）より前に張る。
+    //
+    // SAFETY: 自前のページテーブルへ切り替え済みで、起動時の単一の文脈である。遠征には、まだ 1 度も入っていない
+    // （どの遠征スタックも使っていない）。
+    unsafe {
+        kernel::arch::x86_64::install_excursion_guard_pages(&mut allocator, &mut |args| {
+            logger.info(args)
+        });
+    }
 
     // ユーザーページのマッピング能力の検証（M5-e-2）。専用サブツリー
     // PML4[USER_PML4_INDEX] へ U=1 ページをマップし、両側 U/S 監査で権限分離を実状態で
@@ -14485,6 +14494,7 @@ fn install_kernel_stack_guard_page(
     unsafe {
         kernel::arch::x86_64::stack::install_guard_page(
             guard_virt,
+            kernel::arch::x86_64::stack::GuardedStack::Kernel,
             allocator,
             "stack-guard",
             "the kernel stack guard page",
@@ -14590,15 +14600,15 @@ fn map_kernel_image<const CAP: usize>(
 /// （`kernel::arch::x86_64::paging::verify`）。見るのは、区画のページの全部について、4KiB の葉であること、
 /// 書けるか、実行できるか、である。
 ///
-/// **マップされていないページは、カーネルスタックの見張りのページだけを認める**（`.bss` の中に在り、わざと
-/// 外してある。`install_kernel_stack_guard_page`）。それ以外に抜けが在れば、止まる。
+/// **マップされていないページは、スタックの見張りのページだけを認める**（`.bss` の中に在り、わざと外してある。
+/// ここまでに張ってあるのは、カーネルスタックの 1 枚と、遠征スタックの 4 枚である）。**見張りのページかどうかは、
+/// 張った側の控えの表から引く**（`kernel::arch::x86_64::guarded_stack_at`）。それ以外に抜けが在れば、止まる。
 fn report_kernel_image_permissions(logger: &mut Logger<Serial>) {
     use kernel::arch::x86_64::paging::verify;
 
     let direct_map = common::addr::direct_map();
     let root = paging::switch::active_page_table_root();
     let mut all_as_intended = true;
-    let guard = stack::kernel_guard_page();
     for section in kernel_image_sections(logger) {
         let (mut small, mut large, mut missing, mut guard_pages) = (0u64, 0u64, 0u64, 0u64);
         let (mut writable, mut executable) = (0u64, 0u64);
@@ -14618,7 +14628,9 @@ fn report_kernel_image_permissions(logger: &mut Logger<Serial>) {
                     writable += u64::from(resolved.leaf_writable());
                     executable += u64::from(resolved.leaf_executable());
                 }
-                Err(_) if guard.contains(virt) => guard_pages += 1,
+                Err(_) if kernel::arch::x86_64::guarded_stack_at(virt.as_u64()).is_some() => {
+                    guard_pages += 1
+                }
                 Err(_) => missing += 1,
             }
             address += frame_allocator::FRAME_SIZE;
@@ -14658,7 +14670,7 @@ fn report_kernel_image_permissions(logger: &mut Logger<Serial>) {
         all_as_intended &= as_intended;
         logger.info(format_args!(
             "kernel-image: {} {:#x}..{:#x}: {} page(s), {small} mapped by a 4KiB leaf, {large} by a \
-             2MiB leaf, {guard_pages} left out as the stack guard page, {missing} missing; \
+             2MiB leaf, {guard_pages} left out as stack guard pages, {missing} missing; \
              {writable} writable, {executable} executable; as intended (write={} execute={}) = \
              {as_intended} [read back from the live table]",
             section.name,
