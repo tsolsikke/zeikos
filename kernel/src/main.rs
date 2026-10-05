@@ -7558,19 +7558,18 @@ const FS_SUPERBLOCK: usize = 1024;
 /// group descriptor テーブルの先頭（`s_first_data_block` が 0 なのでブロック 1）。
 const FS_GROUP_DESCRIPTORS: usize = FS_BLOCK_SIZE;
 
-/// inode テーブルの先頭（group 0 の `bg_inode_table` は 4。判定行に出ている）。
-const FS_INODE_TABLE: usize = 4 * FS_BLOCK_SIZE;
-
 /// inode 1 つのバイト数（`s_inode_size`。判定行に出ている）。
 const FS_INODE_SIZE: usize = 256;
 
-/// inode `ino` のイメージ内オフセット。
-const fn fs_inode_at(ino: usize) -> usize {
-    FS_INODE_TABLE + (ino - 1) * FS_INODE_SIZE
+/// inode `ino` のイメージ内オフセット。**`inode_table_at` は、group 0 の inode テーブルの先頭である**
+/// （[`CorruptFsMap`] が、像の group descriptor から読む）。
+///
+/// **以前は、テーブルの先頭を「ブロック 4」の定数で持っていた。** 像を 32 MiB にすると、`mke2fs` が group descriptor の
+/// 後ろに予約のブロックを置き、テーブルがブロック 5 へ動いた（実測。2026-10-05）。**位置は像から求める**
+/// （[`map_corrupt_fs`] の doc と同じ考え方）。
+const fn fs_inode_at(inode_table_at: usize, ino: usize) -> usize {
+    inode_table_at + (ino - 1) * FS_INODE_SIZE
 }
-
-/// ルート inode のイメージ内オフセット。
-const FS_ROOT_INODE_AT: usize = fs_inode_at(2);
 
 /// 種のファイルと同じツリーにある `/etc/motd` の中身（S10-a）。
 ///
@@ -8257,6 +8256,8 @@ enum CorruptFsCheckError {
 struct CorruptFsMap {
     /// コピーするブロック数（使用の上端 + 1）。
     blocks: usize,
+    /// group 0 の inode テーブルのイメージ内オフセット（group descriptor の `bg_inode_table`）。
+    inode_table_at: usize,
     /// ルートのディレクトリブロックの中の、`etc` の項の位置。
     root_etc_entry: usize,
     /// `/etc/motd` の inode のイメージ内オフセット。
@@ -8311,9 +8312,13 @@ fn map_corrupt_fs(image: &[u8]) -> Option<CorruptFsMap> {
     //
     // **`FIRST_FREE_BLOCK`（`build.rs` が `dumpe2fs` へ訊いた値）の代わりである。**
     // **群記述子の先頭 4 バイトがビットマップのブロック番号である。**
-    let descriptor = image.get(FS_GROUP_DESCRIPTORS..FS_GROUP_DESCRIPTORS + 4)?;
+    let descriptor = image.get(FS_GROUP_DESCRIPTORS..FS_GROUP_DESCRIPTORS + 12)?;
     let bitmap_block =
         u32::from_le_bytes([descriptor[0], descriptor[1], descriptor[2], descriptor[3]]) as usize;
+    // **inode テーブルの先頭も、同じ記述子から読む**（`bg_inode_table` は 8 バイト目から）。
+    let inode_table_at =
+        u32::from_le_bytes([descriptor[8], descriptor[9], descriptor[10], descriptor[11]]) as usize
+            * FS_BLOCK_SIZE;
     let bitmap = image.get(bitmap_block * FS_BLOCK_SIZE..(bitmap_block + 1) * FS_BLOCK_SIZE)?;
     // **ビットマップの余りは 1 で埋まっている**（ext2 の作法。**イメージのブロック数を
     // 超える位置は「使用中」として置かれる**）。**実測で踏んだ**——**数えると
@@ -8340,7 +8345,8 @@ fn map_corrupt_fs(image: &[u8]) -> Option<CorruptFsMap> {
     Some(CorruptFsMap {
         blocks: used_top,
         root_etc_entry: root_etc_entry?,
-        motd_inode_at: fs_inode_at(motd.number as usize),
+        inode_table_at,
+        motd_inode_at: fs_inode_at(inode_table_at, motd.number as usize),
         motd_data_at: motd_data_block * FS_BLOCK_SIZE,
         indirect_table_at: indirect_table_block * FS_BLOCK_SIZE,
     })
@@ -8386,9 +8392,11 @@ fn run_corrupt_fs_cases(
     const HUGE_INODE_COUNT: u64 = 600_000;
     /// `etc` を `xtc` にする 1 バイト。**名前が変われば、パスは解決しない。**
     const MOTD_PATH_BREAKING_BYTE: u64 = b'x' as u64;
-    /// そのときに inode テーブルの端が要求するバイト位置。
-    const HUGE_INODE_END: u64 =
-        FS_INODE_TABLE as u64 + (HUGE_INODE_COUNT - 1) * FS_INODE_SIZE as u64 + 128;
+    // そのときに inode テーブルの端が要求するバイト位置。
+    let huge_inode_end =
+        map.inode_table_at as u64 + (HUGE_INODE_COUNT - 1) * FS_INODE_SIZE as u64 + 128;
+    // ルート inode のイメージ内オフセット。
+    let root_inode_at = fs_inode_at(map.inode_table_at, 2);
 
     // **`ImageTooSmall` の `actual` に出る、作業領域の長さ。**
     let workspace_bytes = buf.len() as u64;
@@ -8531,13 +8539,13 @@ fn run_corrupt_fs_cases(
             probe: fs_probe_highest_inode,
             expected: Ext2Error::InodeTableOutOfRange {
                 inode: HUGE_INODE_COUNT as u32,
-                needed: HUGE_INODE_END,
+                needed: huge_inode_end,
             },
         },
         CorruptFsCase {
             what: "the root inode's i_block[0] pointing past the filesystem",
             patches: &[FsPatch {
-                offset: FS_ROOT_INODE_AT + 40,
+                offset: root_inode_at + 40,
                 value: 65_535,
                 width: 4,
             }],
@@ -8548,7 +8556,7 @@ fn run_corrupt_fs_cases(
         CorruptFsCase {
             what: "the root inode's i_mode changed to a regular file",
             patches: &[FsPatch {
-                offset: FS_ROOT_INODE_AT,
+                offset: root_inode_at,
                 value: 0o100_644,
                 width: 2,
             }],
@@ -8567,7 +8575,7 @@ fn run_corrupt_fs_cases(
         CorruptFsCase {
             what: "the root inode's i_size grown past its blocks",
             patches: &[FsPatch {
-                offset: FS_ROOT_INODE_AT + 4,
+                offset: root_inode_at + 4,
                 value: 100_000,
                 width: 4,
             }],

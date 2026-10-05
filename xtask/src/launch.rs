@@ -88,17 +88,17 @@ const WATCH_INTERVAL: Duration = Duration::from_secs(2);
 /// **QEMU が書く、`-D` の記録以外のファイルの最大**（実測。2026-09-24。レビューの判断 (a)）。
 /// **上限はこれらより大きく保つ**——**fsize の上限はディスクのイメージへの書き込みにも掛かる。**
 /// **monitor の socket は大きさを持たない。** **メモリ全体を pmemsave で書き出す検査は無い**
-/// （実測。pmemsave は ext2 のイメージの RAM のコピー 2 MiB と、カーネルスタック 128 KiB だけ）。
+/// （実測。pmemsave は ext2 のイメージの RAM のコピー 32 MiB と、カーネルスタック 128 KiB だけ）。
 /// **ホストのテストだけが読む**（上限と比べる表）。
 #[cfg(test)]
 pub const OTHER_WRITES: &[(&str, u64)] = &[
     ("the boot media image (target/media/*.img)", 69_206_016),
     ("the AAVMF_VARS.fd copy (pflash, aarch64)", 67_108_864),
     ("a screendump PPM", 3_072_016),
-    ("disk0.img (virtio-blk)", 2_097_152),
+    ("disk0.img (virtio-blk)", 33_554_432),
     (
         "pmemsave of the fs image copy (cmd_fs_image_extract)",
-        2_097_152,
+        33_554_432,
     ),
     ("the OVMF_VARS_4M.fd copy (pflash)", 540_672),
     ("the largest serial log (zi redraw-whole-screen)", 217_101),

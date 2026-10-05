@@ -10895,7 +10895,12 @@ fn check_the_write_cap_stops_qemu() -> Result<()> {
     let run = RunDir::create(&workspace_root, "write-cap")?;
     let ovmf_vars = prepare_ovmf_vars(&run)?;
     let bootloader_efi = build_bootloader(&workspace_root, false)?;
-    let kernel = build_kernel_with_features(&workspace_root, &[])?;
+    // **カーネルは、像を装置へ書き戻さない構成でビルドする**（2026-10-05。`fs-flush-skip-test`）。**この項目が見るのは
+    // 書く側の上限で、書き戻しではない。** 上限（8 MiB）は QEMU が書くどのファイルにも掛かるので、既定のカーネルでは、
+    // 起動時の像の書き戻し（32 MiB）が先に上限へ当たって失敗し、カーネルが止まって、`-D` の記録が上限まで伸びない
+    // （像を 32 MiB にしたときに実際に起きた）。**上限を像より大きくする手は採らなかった**——`-D` の記録が 90 秒で
+    // 12 MiB しか伸びず、40 MiB の上限には届かなかった（実測）。
+    let kernel = build_kernel_with_features(&workspace_root, &["fs-flush-skip-test"])?;
     let esp_dir = stage_esp(&run, &bootloader_efi, &kernel)?;
     let serial_log = run.serial_log();
     let debug_log = run.debug_log();
