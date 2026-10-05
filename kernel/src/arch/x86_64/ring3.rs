@@ -596,6 +596,7 @@ const EXCURSION_GUARD_NAMES: [[&str; MAX_EXCURSION_DEPTH]; USER_TASK_SLOTS] = [
 ///
 /// - 今の根のページテーブルで、遠征スタックの下の 1 ページずつを外す。外したページは、ページの権限の一覧と、
 ///   見張りのページの表に入る。
+/// - 外した後、4 本とも、写っておらず、自分の名前で控えられていることを読んで確かめる。欠けていれば止まる。
 /// - 呼ぶのは、起動の経路で、最初の遠征より前である（`kernel_main`）。
 ///
 /// # Safety
@@ -606,7 +607,15 @@ pub unsafe fn install_excursion_guard_pages(
     allocator: &mut crate::frame_allocator::FrameAllocator,
     log: &mut dyn FnMut(core::fmt::Arguments),
 ) {
-    for (slot, names) in EXCURSION_GUARD_NAMES.iter().enumerate() {
+    // 破壊テスト (2026-10-06, excursion-guard-skip-test): 見張りのページを張らない（以前の形）。**下の確かめが、
+    // 写ったままのページを名指しして止まる。**
+    let names_to_install: &[[&str; MAX_EXCURSION_DEPTH]] =
+        if cfg!(feature = "excursion-guard-skip-test") {
+            &[]
+        } else {
+            &EXCURSION_GUARD_NAMES
+        };
+    for (slot, names) in names_to_install.iter().enumerate() {
         for (depth, name) in names.iter().enumerate() {
             let page = excursion_guard_page_of(slot, depth);
             let guard = common::addr::VirtAddr::new(page).expect("a .bss address is canonical");
@@ -627,6 +636,9 @@ pub unsafe fn install_excursion_guard_pages(
             }
         }
     }
+    // **張った後に、実際の状態を読んで確かめる**（張った側の主張を根拠にしない）。
+    // SAFETY: 呼び出し元の契約のとおり、自前のページテーブルの上である。読むだけである。
+    unsafe { verify_excursion_guard_pages(log) };
 }
 
 /// 深さ `depth` の遠征スタックを既知のバイトで埋める（S11-5）。
@@ -693,30 +705,153 @@ pub fn excursion_stack_capacity() -> usize {
     EXCURSION_STACK_SIZE
 }
 
-/// 深さ `depth` の遠征スタックの使用量が、容量の半分を越えていないか（S11-6）。
+/// 遠征スタックの使用量が、これを越えたら止まる線（バイト。容量の 4 分の 3。2026-10-06）。
 ///
-/// # なぜ半分で見るのか。**あふれてからでは遅い**
+/// # 線の意味は、見張りのページが入って変わった
 ///
-/// **スタックの下の見張りのページが教えるのは、使い切った瞬間である。**
-/// **そこまで来ていたら、判断する余地はもう無い。**
+/// **以前は容量の半分だった。** そのころ、このスタックには見張りのページが無く、あふれは静かに下の静的な領域を
+/// 書いた。半分の線は、「見張りのページを張るか、容量を上げるかを、ここで決める」ための合図だった（S11-6。実際に
+/// 余りが 264 バイトまで来て、張ることに決めた。経緯は `ADR-0079`）。
 ///
-/// **半分は、`deferred-decisions.md` の「遠征スタックにガードページが無い」の
-/// 解禁条件そのものである。** あの行は「使用量が容量の半分を超えたとき、または
-/// 見張り区間が一度でも壊れたとき」と書いてある。**書いただけでは発火しないので、
-/// 機械にする**（`install_kernel_stack_guard_page` が 2MiB を見つけたら止めるのと
-/// 同じ形である。**あちらは M5-b で条件を書き、S11-5 で発火した**）。
+/// **今は、あふれた瞬間に見張りのページが止める。** この線は、その手前で「余りが減った」と知らせる役である。
+/// 4 分の 3 にしたのは、実測の最大（約 32.5 KiB。容量の半分）から 16 KiB ほどの伸びしろを残し、線を越えても
+/// まだ 16 KiB 残るからである。
+const EXCURSION_STACK_BUDGET: usize = EXCURSION_STACK_SIZE / 4 * 3;
+
+/// 止まる線（`EXCURSION_STACK_BUDGET`。判定の行に出す）。
+///
+/// # 契約（境界の関数。2026-10-06）
+///
+/// - 決まった大きさを返すだけで、何も変えない。
+pub fn excursion_stack_budget() -> usize {
+    EXCURSION_STACK_BUDGET
+}
+
+/// 深さ `depth` の遠征スタックの使用量が、止まる線（`EXCURSION_STACK_BUDGET`）を越えていないか（S11-6）。
 ///
 /// # 越えたら止める
 ///
 /// **まだ壊れていない。** それでも止めるのは、**越えた状態で先へ進むと、
 /// 次に何かを足した人が「前から越えていた」ものとして扱うからである。**
-/// **解禁条件は、発火した時点で判断を求めるためにある。**
+/// **線は、越えた時点で判断を求めるためにある**（載せる側の枠を減らすか、容量を測って上げるか）。
 ///
 /// # 契約（境界の関数。2026-09-30）
 ///
 /// - 読むだけの判定で、何も変えない。偽なら、呼んだ側（`crate::userland`）が止まる。
 pub fn excursion_stack_within_budget(depth: usize) -> bool {
-    excursion_stack_high_water(depth) * 2 <= EXCURSION_STACK_SIZE
+    excursion_stack_high_water(depth) <= EXCURSION_STACK_BUDGET
+}
+
+/// 遠征スタックの下の見張りのページが、4 本とも、写っておらず、自分の名前で控えられていることを確かめる。
+///
+/// **張った側の主張ではなく、今のページテーブルと控えの表を読んで確かめる。** 1 本でも欠けていれば、名指しして
+/// 止まる——欠けたまま進むと、あふれが黙って下を書くか、止まっても、どのスタックかが出ない。
+///
+/// # Safety
+///
+/// 自前のページテーブルへ切り替え済みであること（今の根の配下を、直接の写像から読む。読むだけである）。
+unsafe fn verify_excursion_guard_pages(log: &mut dyn FnMut(core::fmt::Arguments)) {
+    use crate::arch::x86_64::paging::active::ActivePageTable;
+    use crate::arch::x86_64::stack::{guarded_stack_at, GuardedStack};
+
+    // SAFETY: 呼び出し元の契約のとおり、CR3 は自前のテーブルを指し、配下は直接の写像から読める。
+    let table = unsafe { ActivePageTable::current(common::addr::direct_map()) };
+    let (mut unmapped, mut recorded) = (0usize, 0usize);
+    let mut first_bad = None;
+    for slot in 0..USER_TASK_SLOTS {
+        for depth in 0..MAX_EXCURSION_DEPTH {
+            let page = excursion_guard_page_of(slot, depth);
+            let own = GuardedStack::Excursion {
+                slot: slot as u8,
+                depth: depth as u8,
+            };
+            let is_unmapped = common::addr::VirtAddr::new(page)
+                .is_some_and(|virt| matches!(table.translate(virt), Ok(None)));
+            let is_recorded = guarded_stack_at(page) == Some((page, own));
+            unmapped += usize::from(is_unmapped);
+            recorded += usize::from(is_recorded);
+            if !(is_unmapped && is_recorded) && first_bad.is_none() {
+                first_bad = Some((page, own, is_unmapped, is_recorded));
+            }
+        }
+    }
+    let all = USER_TASK_SLOTS * MAX_EXCURSION_DEPTH;
+    log(format_args!(
+        "ring3: of the {all} excursion stacks, {unmapped} have an unmapped guard page below them \
+         and {recorded} have it recorded under their own name [read back from the live table]"
+    ));
+    if let Some((page, own, is_unmapped, is_recorded)) = first_bad {
+        panic!(
+            "ring3: the guard page {page:#x} below {own}: unmapped={is_unmapped}, recorded under \
+             its own name={is_recorded}; an overflow of that stack would not be caught, or would \
+             not be named"
+        );
+    }
+}
+
+/// 遠征スタックの破壊テストが、システムコールの入口で働く所（2026-10-06）。**遠征スタックの上で呼ばれる。**
+///
+/// `is_write` は、今の呼び出しが `write` かどうかである（読み込んだプログラムが必ず 1 度は呼ぶので、目印にする）。
+///
+/// - `excursion-overflow-depth0-test` / `excursion-overflow-depth1-test`: その深さの遠征スタックの上で、戻らない再帰で
+///   スタックをあふれさせる。**見張りのページに当たり、ページフォルトのハンドラが、遠征スタックの名前を出して止まる。**
+/// - `excursion-budget-test`: 深さ 0 の遠征スタックを、止まる線を越える深さまで使ってから戻る。**あふれはしない。**
+///   プログラムが終わった後の、使用量の判定が止める。
+#[cfg(any(
+    feature = "excursion-overflow-depth0-test",
+    feature = "excursion-overflow-depth1-test",
+    feature = "excursion-budget-test"
+))]
+pub fn excursion_stack_sabotage_at_system_call(is_write: bool) {
+    let depth = state().depth.load(Ordering::SeqCst);
+    if !is_write || depth == 0 {
+        return;
+    }
+    let index = depth - 1;
+    let (bottom, top) = excursion_stack_range_at(index);
+    let overflow_at = if cfg!(feature = "excursion-overflow-depth0-test") {
+        Some(0)
+    } else if cfg!(feature = "excursion-overflow-depth1-test") {
+        Some(1)
+    } else {
+        None
+    };
+    if overflow_at == Some(index) {
+        // **予告の行は出さない**（ここからロガーへ届く道が無い）。止まったときの名指しの行が、どのスタックかを言う。
+        let sink = use_excursion_stack_down_to(0, 0);
+        panic!(
+            "excursion-overflow-test: the recursion on the depth-{index} excursion stack \
+             ({bottom:#x}..{top:#x}) returned ({sink:#x}); the guard page did not fire"
+        );
+    }
+    if cfg!(feature = "excursion-budget-test") && index == 0 {
+        // 止まる線より 2 KiB 深い所まで使う（線は上端から数える）。
+        let floor = top - EXCURSION_STACK_BUDGET as u64 - 2048;
+        let _ = use_excursion_stack_down_to(0, floor);
+    }
+}
+
+/// スタックを、`floor` の番地より下に届くまで、再帰で使う。**`floor` が 0 なら戻らない**（あふれるまで下がる）。
+///
+/// 各段が 256 バイトのローカルを積み、volatile で読み書きして、最適化に消されないようにする。
+#[cfg(any(
+    feature = "excursion-overflow-depth0-test",
+    feature = "excursion-overflow-depth1-test",
+    feature = "excursion-budget-test"
+))]
+#[inline(never)]
+fn use_excursion_stack_down_to(step: u64, floor: u64) -> u64 {
+    let mut frame = [step; 32];
+    // SAFETY: `frame` はこの関数の局所の配列で、その要素を volatile で読み書きするだけである（末尾呼び出しの
+    // 最適化と、使わないコードの除去を防いで、実際に枠を積むため）。
+    unsafe { core::ptr::write_volatile(&mut frame[0], step) };
+    if (frame.as_ptr() as u64) <= floor {
+        // SAFETY: 同上。
+        return unsafe { core::ptr::read_volatile(&frame[0]) };
+    }
+    let deeper = use_excursion_stack_down_to(step.wrapping_add(1), floor);
+    // SAFETY: 同上。戻り値とローカルの両方を使い、再帰を末尾の呼び出しにさせない。
+    deeper.wrapping_add(unsafe { core::ptr::read_volatile(&frame[31]) })
 }
 
 /// 今の遠征の深さ（S11-2）。**0 なら遠征に入っていない。**

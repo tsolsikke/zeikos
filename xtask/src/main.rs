@@ -1133,6 +1133,71 @@ const STACK_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
+    // **遠征スタックをあふれさせる**（2026-10-06）。見張りのページに当たった #PF が IST2 の上で報告され、
+    // ハンドラが、どのスタックかを名前で出すこと。深さ 0 と深さ 1 の 2 本。
+    CriticalTest {
+        name: "excursion-depth0",
+        feature: "excursion-overflow-depth0-test",
+        expected_markers: &[
+            "exception: vector=14 (#PF",
+            "cr2 is in a stack guard page = true",
+            "below the depth-0 excursion stack of slot 0; that stack has overflowed",
+            "on IST2=true",
+        ],
+        forbidden_markers: &["exception: vector=8", "the guard page did not fire"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    CriticalTest {
+        name: "excursion-depth1",
+        feature: "excursion-overflow-depth1-test",
+        expected_markers: &[
+            "exception: vector=14 (#PF",
+            "cr2 is in a stack guard page = true",
+            "below the depth-1 excursion stack of slot 0; that stack has overflowed",
+            "on IST2=true",
+        ],
+        forbidden_markers: &["exception: vector=8", "the guard page did not fire"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // **遠征スタックの見張りのページを張らない**（以前の形）。張った直後の確かめが、写ったままのページを名指しして
+    // 止まること。
+    CriticalTest {
+        name: "excursion-unguarded",
+        feature: "excursion-guard-skip-test",
+        expected_markers: &[
+            "of the 4 excursion stacks, 0 have an unmapped guard page below them",
+            "below the depth-0 excursion stack of slot 0: unmapped=false",
+        ],
+        forbidden_markers: &["ring3: entering Ring 3"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // **見張りのページを、名指しの表に控えない。** 同じ確かめが、控えられていないページを名指しして止まること。
+    CriticalTest {
+        name: "excursion-unrecorded",
+        feature: "excursion-guard-unrecorded-test",
+        expected_markers: &[
+            "of the 4 excursion stacks, 4 have an unmapped guard page below them and 0 have it recorded",
+            "unmapped=true, recorded under its own name=false",
+        ],
+        forbidden_markers: &["ring3: entering Ring 3"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // **止まる線（容量の 4 分の 3）を越える深さまで使う。** あふれはせず、プログラムが終わった後の判定が止めること。
+    CriticalTest {
+        name: "excursion-budget",
+        feature: "excursion-budget-test",
+        expected_markers: &[
+            "the depth-0 excursion stack is more than three quarters used",
+            "the line is 49152",
+        ],
+        forbidden_markers: &["exception: vector=14", "exception: vector=8"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
     // **設ける前のガードページを踏む（ADR-0046 の Addendum）。**
     //
     // **ガードページは設けた後しか効かない。** **設ける前に溢れても黙って通る**
@@ -31864,7 +31929,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 62,
-    full: 481,
+    full: 486,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

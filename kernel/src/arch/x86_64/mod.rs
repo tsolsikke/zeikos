@@ -46,13 +46,20 @@ pub use paging::verify::{
     read_top_level_entry, walk_page_table, walk_page_table_user_accessible, UserAccess,
 };
 pub(crate) use ring3::current_excursion_slot;
+#[cfg(any(
+    feature = "excursion-overflow-depth0-test",
+    feature = "excursion-overflow-depth1-test",
+    feature = "excursion-budget-test"
+))]
+pub use ring3::excursion_stack_sabotage_at_system_call;
 pub use ring3::{
     current_excursion_recovery, excursion_depth, excursion_fault_number, excursion_interrupted,
-    excursion_recovery_belongs_to_slot, excursion_stack_capacity, excursion_stack_high_water,
-    excursion_stack_range, excursion_stack_range_at, excursion_stack_range_of,
-    excursion_stack_within_budget, install_excursion_guard_pages, leave_user_mode,
-    note_kernel_entry_from_user, note_return_to_user, restore_fold_record, run_excursion,
-    save_fold_record, set_current_excursion_recovery, MAX_EXCURSION_DEPTH, USER_TASK_SLOTS,
+    excursion_recovery_belongs_to_slot, excursion_stack_budget, excursion_stack_capacity,
+    excursion_stack_high_water, excursion_stack_range, excursion_stack_range_at,
+    excursion_stack_range_of, excursion_stack_within_budget, install_excursion_guard_pages,
+    leave_user_mode, note_kernel_entry_from_user, note_return_to_user, restore_fold_record,
+    run_excursion, save_fold_record, set_current_excursion_recovery, MAX_EXCURSION_DEPTH,
+    USER_TASK_SLOTS,
 };
 pub use stack::{
     check_entry_stack_alignment, guarded_stack_at, install_guard_page, kernel_stack_capacity,

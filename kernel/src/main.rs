@@ -12870,6 +12870,31 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "カーネルスタックを溢れさせてガードページを踏む",
     ),
     (
+        "excursion-overflow-depth0-test",
+        cfg!(feature = "excursion-overflow-depth0-test"),
+        "深さ 0 の遠征スタックをあふれさせて見張りのページを踏む",
+    ),
+    (
+        "excursion-overflow-depth1-test",
+        cfg!(feature = "excursion-overflow-depth1-test"),
+        "深さ 1 の遠征スタックをあふれさせて見張りのページを踏む",
+    ),
+    (
+        "excursion-guard-skip-test",
+        cfg!(feature = "excursion-guard-skip-test"),
+        "遠征スタックの下の見張りのページを張らない",
+    ),
+    (
+        "excursion-guard-unrecorded-test",
+        cfg!(feature = "excursion-guard-unrecorded-test"),
+        "遠征スタックの見張りのページを名指しの表に控えない",
+    ),
+    (
+        "excursion-budget-test",
+        cfg!(feature = "excursion-budget-test"),
+        "遠征スタックを止まる線を越える深さまで使う",
+    ),
+    (
         "stack-overflow-df-test",
         cfg!(feature = "stack-overflow-df-test"),
         "溢れさせ、#PF に IST を与えず #DF へ昇格させる",

@@ -761,6 +761,14 @@ unsafe fn dispatch(
     direct_map: DirectMap,
     bkl: &mut Option<crate::bkl::BklGuard>,
 ) -> u64 {
+    // 破壊テスト (2026-10-06, excursion-overflow-depth0-test / -depth1-test / excursion-budget-test): 遠征スタックを
+    // あふれさせるか、止まる線を越える深さまで使う。中身は `ring3` の側に在る。
+    #[cfg(any(
+        feature = "excursion-overflow-depth0-test",
+        feature = "excursion-overflow-depth1-test",
+        feature = "excursion-budget-test"
+    ))]
+    crate::arch::x86_64::excursion_stack_sabotage_at_system_call(number == SYS_WRITE);
     match number {
         PROBE_NUMBER => {
             // **この回の引数を残す（S9-b-3-2a）。** `SyscallState::last_args` は後続の呼び出しで

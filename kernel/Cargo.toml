@@ -525,6 +525,20 @@ stack-guard-test = []
 # （下記 idt::init 参照）、溢れ → 壊れたスタック上での #PF → #DF の連鎖を出す。
 # M4-b-2 の代用（#PF ゲートの Present 落とし）とは別経路。`--stack-test df`。
 stack-overflow-df-test = ["stack-guard-test"]
+# 遠征スタックをあふれさせる（2026-10-06）。その深さの遠征スタックの上で、最初の write の入口から、戻らない再帰で
+# スタックを使い切る。見張りのページに当たり、#PF（IST2）のハンドラが、遠征スタックの名前を出して止まる。
+# `cargo xtask run --stack-test excursion-depth0`（深さ 1 は `excursion-depth1`）。
+excursion-overflow-depth0-test = []
+excursion-overflow-depth1-test = []
+# 遠征スタックの下の見張りのページを張らない（2026-10-06。以前の形）。張った直後の確かめが、写ったままのページを
+# 名指しして止まる。`--stack-test excursion-unguarded`。
+excursion-guard-skip-test = []
+# 遠征スタックの見張りのページを、名指しの表に控えない（2026-10-06）。張った直後の確かめが、控えられていない
+# ページを名指しして止まる。`--stack-test excursion-unrecorded`。
+excursion-guard-unrecorded-test = []
+# 深さ 0 の遠征スタックを、止まる線（容量の 4 分の 3）を越える深さまで使う（2026-10-06）。あふれはしない。
+# プログラムが終わった後の使用量の判定が止める。`--stack-test excursion-budget`。
+excursion-budget-test = []
 # デバッグ例外・NMI・機械チェックのゲートに IST を与えない（2026-10-04）。起動時の IDT の確かめが、
 # 3 つが IST に載っていないことを名指しして止まる。機械の変種の破壊テストが走らせる。
 entry-stacks-not-assigned-test = []

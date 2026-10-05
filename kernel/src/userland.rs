@@ -2387,24 +2387,18 @@ unsafe fn run_loaded_program(
         process.name,
         used * 100 / capacity
     ));
-    // **解禁条件を機械にする（S11-6）。**
+    // **使用量が、止まる線（容量の 4 分の 3）を越えたら止まる**（S11-6。線は 2026-10-06 に半分から移した）。
     //
-    // `deferred-decisions.md` の「遠征スタックにガードページが無い」は、解禁条件を
-    // **「使用量が容量の半分を超えたとき、または見張り区間が一度でも壊れたとき」**と
-    // 書いている。**後者は上で止まるが、前者は書いてあるだけだった。**
-    //
-    // **書いただけの条件は発火しない。** `install_kernel_stack_guard_page` が
-    // 2MiB ページを見つけたら止める形と同じにする——**あちらは M5-b で条件を書き、
-    // S11-5 で実際に発火して、そこで判断させた。**
-    //
-    // **見張り区間で止まるのでは遅い。** あれが偽になるのは残り 256 バイトまで
-    // 使い切ったときで、**そこまで来たら判断する余地が無い。**
+    // **あふれは、下の見張りのページが止める。ここで止まるのは、その手前である**——余りが減ったことを、次に何かを
+    // 足す人が「前からそうだった」として扱う前に、判断を求める。線の意味と、移した経緯は、
+    // `ring3` の `EXCURSION_STACK_BUDGET` の doc に在る。
     if !crate::arch::x86_64::excursion_stack_within_budget(entered_at_depth) {
+        let budget = crate::arch::x86_64::excursion_stack_budget();
         logger.error(format_args!(
-            "ring3: the depth-{entered_at_depth} excursion stack is more than half used \
-             ({used} of {capacity}); the deferred decision about these stacks having no guard \
-             page says to decide here - either map them the way StackBlock is mapped (page \
-             aligned, one page below unmapped) or raise the capacity with a measurement. halting"
+            "ring3: the depth-{entered_at_depth} excursion stack is more than three quarters used \
+             ({used} of {capacity}; the line is {budget}). it has a guard page below it, so an \
+             overflow would be caught, but little room is left - decide here: take the process \
+             record off this stack, or raise the capacity with a measurement. halting"
         ));
         common::arch::x86_64::halt_forever();
     }

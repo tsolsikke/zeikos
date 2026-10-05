@@ -981,7 +981,8 @@ extern "sysv64" fn ring3_task_main() -> ! {
          of its kernel stack ({}%); the page below it is a guard page",
         used * 100 / RING3_TASK_STACK_SIZE
     ));
-    // **半分を越えたら止める**——**遠征スタックと同じ規則である**（`ring3::excursion_stack_within_budget`）。
+    // **半分を越えたら止める**——**遠征スタックの線（`ring3::excursion_stack_within_budget`）と同じ考え方である**
+    // （あちらの線は、2026-10-06 に 4 分の 3 へ移した。こちらは実測が 39% なので、半分のままにしてある）。
     // **大きさは測って決めた**（W1-c-4。**26,088 バイトで 39%。32 KiB だと 80% になる**）。
     if used * 2 > RING3_TASK_STACK_SIZE {
         serial_line(format_args!(

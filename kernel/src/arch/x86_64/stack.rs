@@ -643,6 +643,13 @@ static GUARD_PAGES: [(AtomicU64, AtomicU64); GUARD_PAGE_SLOTS] =
 /// - 起動時の単一の文脈から呼ぶ（張る所は、どれも起動の経路に在る）。ページテーブルには触らない。
 /// - `guard_bottom` は、写していない 1 ページの先頭の番地である。
 pub fn record_guard_page(guard_bottom: u64, stack: GuardedStack) -> bool {
+    // 破壊テスト (2026-10-06, excursion-guard-unrecorded-test): 遠征スタックの見張りのページを、控えたことにして
+    // 控えない。**張った直後の確かめ（`ring3` の、4 本とも自分の名前で控えられていること）が、名指しして止まる。**
+    if cfg!(feature = "excursion-guard-unrecorded-test")
+        && matches!(stack, GuardedStack::Excursion { .. })
+    {
+        return true;
+    }
     for (address, name) in GUARD_PAGES.iter() {
         let held = address.load(Ordering::SeqCst);
         if held == 0 || held == guard_bottom {
