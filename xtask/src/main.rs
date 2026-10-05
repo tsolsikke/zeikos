@@ -5940,9 +5940,13 @@ fn cmd_page_permissions(
     let deadline = Instant::now() + limit;
     let mut stop = StopWatch::default();
     let mut key_sent = false;
+    // **場面の終わりまで届いたか、途中で止まったか**（2026-10-05）。**参照を書くのは、終わりまで届いた回だけである。**
+    let mut reached_the_end = false;
+    let mut stopped_at: Option<String> = None;
     while Instant::now() < deadline && !child.was_cut() {
         let text = read_lossy(&serial_log);
-        if stop.settled(stop_sign_in(&text, "")).is_some() {
+        if let Some(sign) = stop.settled(stop_sign_in(&text, "")) {
+            stopped_at = Some(sign);
             break;
         }
         let ended = match scene.until {
@@ -5970,6 +5974,7 @@ fn cmd_page_permissions(
             }
         };
         if ended {
+            reached_the_end = true;
             break;
         }
         metrics::sleep_poll(PANIC_TEST_POLL_INTERVAL);
@@ -5981,6 +5986,23 @@ fn cmd_page_permissions(
     }
 
     let serial = read_lossy(&serial_log);
+    // **待つ輪が見なかった合図も、取り終えたシリアルでもう 1 度見る**（輪は、合図を 2 周続けて見てから止まる）。
+    let stopped_at = stopped_at.or_else(|| stop_sign_in(&serial, ""));
+    // **参照を取り直すのは、場面の終わりまで届いた回だけである**（2026-10-05）。
+    //
+    // **以前は、途中で止まった回の一覧でも、参照として書いていた。** カーネルが起動の途中で止まった回に取り直して、
+    // 118 行の参照が 29 行で上書きされた（実測。その後の比べは、短い参照と比べて通ってしまう）。**届いていなければ、
+    // 書かずに、どこで止まったかを名指しして落ちる。** 残す側の一覧（`target/page-permissions/`）も書かない。
+    if update_reference {
+        if let Some(problem) = reference_capture_problem(reached_the_end, stopped_at.as_deref()) {
+            bail!(
+                "{context}: the reference was NOT written: {problem}. A reference must come from a \
+                 boot that reached the end of the scene \"{}\" (serial log: {})",
+                scene.name,
+                serial_log.display()
+            );
+        }
+    }
     let rows = page_permissions::rows_in_serial(&serial);
     if rows.iter().all(|row| row.is_empty()) {
         bail!(
@@ -6197,6 +6219,20 @@ impl StopWatch {
         } else {
             None
         }
+    }
+}
+
+/// 参照を取り直す回が、参照にしてよい形で終わったか（純粋な論理。2026-10-05）。**よくなければ、その理由を返す。**
+///
+/// **参照にしてよいのは、場面の終わりまで届き、カーネルが止まった合図が出ていない回だけである。**
+fn reference_capture_problem(reached_the_end: bool, stopped_at: Option<&str>) -> Option<String> {
+    match (reached_the_end, stopped_at) {
+        (_, Some(sign)) => Some(format!("the kernel stopped on the way ({sign})")),
+        (false, None) => Some(
+            "the boot did not reach the end of the scene before the time limit (or the run was cut)"
+                .to_string(),
+        ),
+        (true, None) => None,
     }
 }
 
@@ -34499,6 +34535,21 @@ mod tests {
     use super::*;
 
     /// 像を穴の在るファイルとして写しても、**長さと中身は元と同じである**（2026-10-05）。0 だけのブロックが
+    /// 参照を取り直してよいのは、場面の終わりまで届き、カーネルが止まっていない回だけである（2026-10-05）。
+    #[test]
+    fn a_reference_is_written_only_from_a_boot_that_reached_the_end() {
+        assert_eq!(reference_capture_problem(true, None), None);
+        assert!(reference_capture_problem(false, None)
+            .unwrap()
+            .contains("did not reach the end"));
+        let stopped =
+            reference_capture_problem(false, Some("[ERROR] halting (cli + hlt loop)")).unwrap();
+        assert!(stopped.contains("the kernel stopped on the way"));
+        assert!(stopped.contains("halting (cli + hlt loop)"));
+        // 終わりの行と止まった合図の両方が在る回も、参照にしない。
+        assert!(reference_capture_problem(true, Some("x; halting")).is_some());
+    }
+
     /// 先頭・途中・末尾に在る像と、長さがブロックの倍数でない像と、全部が 0 の像で確かめる。
     #[test]
     fn a_sparse_image_copy_keeps_the_length_and_every_byte() {
