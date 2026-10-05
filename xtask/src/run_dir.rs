@@ -384,11 +384,15 @@ impl Drop for RunDir {
         if self.scratch == self.path {
             return;
         }
-        // **既定の像として示した回の ESP は、ここで写す**（項目の終わりを待たない）——同じ項目の中で、すぐ後に走る
-        // 道具（`tools/stack-deepest.py`）が、SSD の置き場の ELF を読む。項目の終わりまで待つと、道具が読む時点で
-        // まだ無い（全検査で実際に落ちた）。
+        // **既定の像として示した回の ESP と装置の像は、ここで写す**（項目の終わりを待たない）——同じ項目の中で、
+        // すぐ後に走る道具（`tools/stack-deepest.py`）が、SSD の置き場の ELF と `disk0.img` を読む。項目の終わりまで
+        // 待つと、道具が読む時点でまだ無い（全検査で 2 度落ちた。1 度目は ELF、2 度目は装置の像）。
         if self.published.get() {
             copy_tree(&self.scratch.join(ESP), &self.path.join(ESP));
+            let image = self.scratch.join(DISK_IMAGE);
+            if image.is_file() {
+                let _ = copy_sparse(&image, &self.path.join(DISK_IMAGE));
+            }
         }
         let deferred = ITEM_SCRATCH.with(|slot| match slot.borrow_mut().as_mut() {
             Some(pending) => {
@@ -448,9 +452,35 @@ fn prune_plan(mut numbers: Vec<u64>, keep: Option<u64>) -> (Vec<u64>, Vec<u64>) 
     (logs_only, remove)
 }
 
+/// 使い捨ての置き場（tmpfs）のうち、これより長く触られていないものは、置き去りと見なして消す。
+///
+/// **検査を途中で止めると、使い捨ての置き場が tmpfs に残る**（落とす処理が走らない）。tmpfs はメモリなので、
+/// 残したままにしない。**全検査は 1 時間ほどで、上限は 195 分である。** 6 時間触られていない置き場を使っている者は
+/// 居ない。
+const SCRATCH_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
+
+/// 置き去りの使い捨ての置き場を消す（[`SCRATCH_MAX_AGE`]）。失敗は無視する。
+fn prune_scratch(runs: &Path) {
+    let Ok(entries) = fs::read_dir(scratch_base(runs)) else {
+        return;
+    };
+    for entry in entries.filter_map(|entry| entry.ok()) {
+        let old = entry
+            .metadata()
+            .and_then(|meta| meta.modified())
+            .ok()
+            .and_then(|modified| modified.elapsed().ok())
+            .is_some_and(|age| age > SCRATCH_MAX_AGE);
+        if old {
+            let _ = fs::remove_dir_all(entry.path());
+        }
+    }
+}
+
 /// 古い置き場を片付ける。**ロックの取れない置き場（走っている実行のもの）は触らない。** 失敗は無視する
 /// （片付けは検査の結果に効かない）。
 fn prune(runs: &Path) {
+    prune_scratch(runs);
     let keep = fs::read_link(runs.join(DEFAULT_IMAGE))
         .ok()
         .and_then(|target| target.to_str()?.parse::<u64>().ok());
