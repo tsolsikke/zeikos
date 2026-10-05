@@ -581,6 +581,19 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
+    // **壊した ext2 のイメージの検査が、借りた作業領域のフレームを返さない。** 借りる前と返した後の、空きフレームの
+    // 枚数の見張りが止める。**止まらなければ、後ろの「all … refused」の行まで進む。**
+    CriticalTest {
+        name: "corrupt-fs-workspace-not-returned",
+        feature: "corrupt-fs-workspace-not-returned",
+        expected_markers: &[
+            "ext2-corrupt: the working buffer (",
+            "was not returned to the frame allocator: free frames before borrowing = ",
+        ],
+        forbidden_markers: &["was returned to the frame allocator"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
     // **全ゲートの飛び先の監視（2026-09-24。`ADR-0018` の Addendum 9）。** **測定用 IPI のスタブが
     // 共通の入口を飛ばす。** **ゲートはスタブを指したままなので、ゲートの検査は通り、sti-check 3b
     // だけが落ちて sti を断る。**
@@ -19410,7 +19423,7 @@ fn capture_one_boot(
 ///
 /// # 持ち越したイメージでも、壊れたイメージの検査は通る（実測）
 ///
-/// **`CORRUPT_FS_IMAGE` の前提**（作り直した像でしか走らない。`ADR-0034` の
+/// **壊したイメージの検査の前提**（作り直した像でしか走らない。`ADR-0034` の
 /// Addendum）**は、保守的に書いてある。** **2 度目の起動は持ち越したイメージの上で
 /// あの検査を走らせているが、通った**（実測。2026-08-28）。
 /// **理由は、あの検査が見ているのが解析の失敗**（`magic` を潰す、`rev` を落とす）
@@ -31668,7 +31681,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 62,
-    full: 478,
+    full: 479,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

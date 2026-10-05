@@ -557,6 +557,8 @@ fs-base-spawn-no-restore = []
 arch-prctl-skips-address-check = []
 # arch_prctl の ARCH_GET_FS が、レジスタを読まずに 0 を返す。
 arch-prctl-get-fs-returns-zero = []
+# 壊した ext2 のイメージの検査が、借りた作業領域のフレームを返さない。空きフレームの枚数の見張りが止める。
+corrupt-fs-workspace-not-returned = []
 # `#MF`（ベクタ16）を畳めなくする（`ADR-0058`）。Ring 3 の浮動小数点の
 # 例外で、カーネルが止まる形へ戻る。
 fp-mf-not-foldable-test = []

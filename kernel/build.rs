@@ -897,8 +897,9 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
         .indirect_block
         .expect("debugfs did not report the single indirect block");
     let first_free = first_free_block(&image);
-    // **使用上端 + 1（`ADR-0066` の Y-c）。** **カーネルが壊したイメージの器の大きさをここから導く**
-    // （`kernel_main` の `CORRUPT_FS_BLOCKS`）。**`first_free` とは別に測る**——**あちらは「最初の
+    // **使用上端 + 1（`ADR-0066` の Y-c）。** **以前は、カーネルが壊したイメージの器の大きさをここから導いていた。**
+    // **2026-10-05 に、器を起動時のフレームの借用へ移したので、カーネルはこの値に依らない**（人が読む材料として
+    // 出し続ける）。**`first_free` とは別に測る**——**あちらは「最初の
     // 空きの範囲の始まり」で、途中に穴があれば上端より手前になる。**
     let used_blocks = used_blocks(&image);
     // **イメージの検査値（`ADR-0068` の HW-d）。** **カーネルが、渡された RAM ディスクのイメージがこのイメージで

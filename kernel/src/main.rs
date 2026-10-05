@@ -5717,8 +5717,8 @@ use kernel::userland::{load_user_program, UserLoadError};
 /// **生成をやめない。** **`xtask` が判定行へ出しており、人が「像がどう動いたか」
 /// を読む材料である**（`fs image e2fsck` の行）。**機械が寄りかからないだけである。**
 ///
-/// **例外が 1 つある**——**`USED_BLOCKS` は壊したイメージの器の大きさに使う**（[`CORRUPT_FS_BLOCKS`]。
-/// `ADR-0066` の Y-c）。**位置ではなく大きさなので、構成による揺れは余裕で吸える。**
+/// **以前は例外が 1 つ在った**——`USED_BLOCKS` を、壊したイメージの器の大きさに使っていた（`ADR-0066` の Y-c）。
+/// **2026-10-05 に、器をフレームの借用へ移して無くなった**（[`CorruptFsWorkspace`]）。
 #[allow(dead_code)]
 mod fsimage_info {
     include!(concat!(env!("OUT_DIR"), "/fsimage_info.rs"));
@@ -7344,86 +7344,120 @@ fn try_verify_root_fs_image(logger: &mut Logger<Serial>) -> Result<(), FsReadChe
     Ok(())
 }
 
-/// 壊した ext2 のイメージを組み立てる作業領域（S10-a）。
+/// 壊した ext2 のイメージを組み立てる作業領域（S10-a。2026-10-05 に、静的な領域からフレームの借用へ移した）。
 ///
-/// # イメージ全体（2 MiB）を抱えない
+/// # カーネルの像の中に置かない
 ///
-/// **`.bss` が 2 MiB 増えると、bootloader が `0x100000` へ確保する量がそのぶん
-/// 増える。** 起動する上限は 6 MiB と 7 MiB のあいだにあると実測してあり
-/// （`kernel/build.rs` の `IMAGE_BYTES`）、**イメージを 2 MiB に決めたときの余裕を
-/// ここで食い潰しては、決めた意味が無くなる。**
+/// **以前は `.bss` の静的な配列だった**（`CORRUPT_FS_IMAGE`）。大きさは、ビルドしたときの像の使用上端に
+/// 余裕を足したものだった。**像の中身を増やすと、カーネルの像が同じだけ大きくなり、bootloader が
+/// `0x100000` へ確保する量が増える。** 像へ数 MiB のファイルを置くと、その確保が失敗して起動しなかった
+/// （実測。2026-10-05。`AllocatePages(Address(0x100000), count=5799)` が `NOT_FOUND`）。
 ///
-/// # 先頭 80 ブロックだけで、読み切れるイメージになる
+/// **いまは、起動時にフレームのアロケータから借りて、検査が終わったら返す。** 大きさは、起動時に読んだ像を
+/// 歩いて求めた使用上端（[`CorruptFsMap`] の `blocks`）ちょうどである。**像の中身の量で、カーネルの像の
+/// 大きさは変わらない。** 「器に入らない」という失敗も、ビルドしたときの像と起動時に読んだ像の差を吸う余裕も、
+/// 無くなった。
 ///
-/// **`s_blocks_count` を 80 に直せば、切り出した先頭がそれ自体で完結する。**
-/// 実際に参照されている最大のブロックは 74 だからである（実測。`/etc/motd` の
-/// データブロック）。**80 に余裕を取ってあるので、種が少し増えても収まる。**
-/// **収まらなくなったら健全な対照（下）が最初に落ちる。**
+/// # 使用上端までで、読み切れるイメージになる
 ///
-/// **S11-9 で 64 から 80 へ上げた。** イメージへ `/bin/ls` と `/bin/cat` を足したので、
-/// **後ろのブロック番号がすべてずれた**（58 → 69）。**「収まらなくなったら対照が
-/// 落ちる」が実際に働く前に、測って直した。**
-///
-/// **ADR-0038 で 80 から 96 へ上げた。** イメージへ `/data/sparse-hole` を足したので
-/// 使用ブロックが 80 から 82 へ増えた。**96 は余裕**——像へ 1 本足すたびに
-/// 直さずに済む幅である。
-static mut CORRUPT_FS_IMAGE: [u8; CORRUPT_FS_LEN] = [0; CORRUPT_FS_LEN];
+/// **`s_blocks_count` を使用上端に直せば、切り出した先頭がそれ自体で完結する**（[`build_truncated_fs_image`]）。
+/// 健全な対照が、それを毎回確かめる。
+struct CorruptFsWorkspace {
+    /// 借りた連続フレームの先頭。
+    base: common::addr::PhysAddr,
+    /// 借りたフレームの数（= 像の使用ブロック数）。
+    frames: u64,
+    /// 借りる直前の、アロケータの空きフレームの枚数。**返した後の枚数と突き合わせる**（[`Self::give_back`]）。
+    free_before: u64,
+}
 
-/// 切り出したイメージのバイト数。
-/// 壊したイメージの作業領域の容量（2026-09-03 に「長さ」から「容量」へ変えた）。
-///
-/// **コピーする長さはイメージから求める**（[`map_corrupt_fs`] の doc）。**ここは器の大きさで、
-/// イメージの使用上端がこれを超えたら演習は落ちる**——**黙って足りないコピーを作らない。**
-///
-/// **根拠は実測である**——**いまの使用上端は 247 で、`build.rs` がイメージへ
-/// ファイルを足すたびに増える**（**VIM-1 で `/data/vimops` を、PR-1 で
-/// `/etc/profile` と `/root/.profile` を足し、HI-1 で `zash` が 1 ブロック
-/// 太って、134 から 4 つ上がった**）。**ファイルを足さなくても、
-/// ユーザープログラムが太れば上がる。**
-///
-/// **B-d で 160 から 288 へ上げた。** **`/lib/font.ttf`（343,140 バイト）が
-/// 85 ブロックを占め、使用上端が 141 から 247 へ跳ねた**（実測）。
-/// **ここまで、この定数は「1 か 2 ずつ増える」前提で余裕を取っていた**
-/// ——**1 本で 85 ブロック増える形は初めてである。**
-///
-/// **落ちたときの読み方は、その場の診断が示す**（**B-d では「raise CORRUPT_FS_BLOCKS」と
-/// 出力していた。** Y-c から「disk を作り直すか、余裕を上げよ」になった）。**実際、B-d で最初に
-/// 落ちたのはこれだった。**
-///
-/// # 定数をやめて、イメージから導く（`ADR-0066` の Y-c。運用者の指摘）
-///
-/// **Y-c で器を越えた**——**イメージへ `/bin/gfxd` と `/bin/gfxc` を足し、使用上端が 284 から 293 へ上がって
-/// 288 を越え、起動がこの診断で止まった**（実測）。**1 組（2 本）で +9 ブロックである。**
-/// **これは「像が太ると動く器」で、手で余裕を取る限り、プログラムを足すたびにまた越える。**
-///
-/// **そこで `build.rs` が測った使用上端（`fsimage_info::USED_BLOCKS`）に余裕を足して導く。**
-/// **イメージが太れば器も同じだけ伸びる**——**`.bss` の増分はイメージの増分そのものになる。** **余裕が覆うもの
-/// は [`CORRUPT_FS_SLACK_BLOCKS`] の doc にある。**
-///
-/// **`fsimage_info` の位置の定数は使わない規則がある**（[`fsimage_info`] の doc）。**使わないのは
-/// 「壊す位置」で、ここは「器の大きさ」である**——**位置は構成ごとにずれると当たらなくなるが、
-/// 大きさは余裕で揺れを吸える。** **吸えなければこの診断で止まる**（黙って足りないコピーを作らない）。
-const CORRUPT_FS_BLOCKS: usize = fsimage_info::USED_BLOCKS + CORRUPT_FS_SLACK_BLOCKS;
+// **ext2 のブロックと、フレームは同じ大きさである**（どちらも 4 KiB）。作業領域は、ブロックの数だけフレームを借りる。
+const _: () = assert!(FS_BLOCK_SIZE as u64 == kernel::frame_allocator::FRAME_SIZE);
 
-/// 壊したイメージの器の余裕（ブロック。`ADR-0066` の Y-c）。
-///
-/// **起動時に読むイメージの使用上端が、ビルドしたイメージの使用上端より大きくなる場合を吸う。** **2 つある**——
-///
-/// - **構成による揺れ**——**同じツリーからビルドされた 175 構成で、使用上端は 284 か 285 だった**（実測。
-///   2026-09-21。**破壊テストが `userlib` を太らせる構成がある**）。**検査は毎回その構成のイメージから
-///   `disk0.img` を作り直すので、揺れが効くのは他の構成のイメージを持ち越す回だけである。**
-/// - **持ち越しの回が書いたぶん**——**persist の 2 項目と `--manual` は、前の起動が書いた
-///   `disk0.img` を持ち越す。**
-///
-/// **使っている量と器の大きさは、毎起動のまとめの行に出る**（`ext2-corrupt: all ... refused`）。
-///
-/// **16 は実測から決めた**（2026-09-21）——**persist の 3 項目の 6 回の起動で、起動時に読んだイメージの
-/// 使用上端は 293〜297、ビルドしたイメージとの差は最大 +4 だった**（persist-zi の 2 回目。297 を 309 の器で
-/// 読んだ）。**構成による揺れは +1。** **16 は実測の最大の 4 倍である。**
-const CORRUPT_FS_SLACK_BLOCKS: usize = 16;
+impl CorruptFsWorkspace {
+    /// `blocks` ブロックぶんの連続フレームを借りる。**返すのは [`Self::give_back`] である。**
+    fn borrow(blocks: usize) -> Result<Self, CorruptFsCheckError> {
+        let frames = blocks as u64;
+        // **預けた後なので借りる**（`ADR-0030`）。フレームを取ったら、アロケータはすぐ返す。
+        let Some(allocator) = kernel::frame_allocator::take() else {
+            return Err(CorruptFsCheckError::WorkspaceAllocatorMissing);
+        };
+        let free_before = allocator.free_frame_count();
+        let base = allocator.allocate_contiguous(frames);
+        kernel::frame_allocator::give_back(allocator);
+        let Some(base) = base else {
+            return Err(CorruptFsCheckError::WorkspaceAllocationFailed { frames });
+        };
 
-/// 作業領域のバイト数。
-const CORRUPT_FS_LEN: usize = CORRUPT_FS_BLOCKS * FS_BLOCK_SIZE;
+        // **覆いを先に見る。** `phys_to_virt` は覆いを検査せずに加算するだけである
+        // （[`try_copy_fs_image_to_frames`] と同じ作法）。
+        let direct_map = common::addr::direct_map();
+        let last = common::addr::PhysAddr::new(
+            base.as_u64() + frames * kernel::frame_allocator::FRAME_SIZE - 1,
+        );
+        match last {
+            Some(last) if direct_map.covers(base) && direct_map.covers(last) => {}
+            _ => {
+                return Err(CorruptFsCheckError::WorkspaceNotCovered {
+                    base: base.as_u64(),
+                    frames,
+                })
+            }
+        }
+        Ok(Self {
+            base,
+            frames,
+            free_before,
+        })
+    }
+
+    /// 作業領域のバイト列。
+    fn bytes(&mut self) -> &mut [u8] {
+        let start = common::addr::direct_map().phys_to_virt(self.base).as_u64() as *mut u8;
+        let length = self.frames as usize * FS_BLOCK_SIZE;
+        // SAFETY: `borrow` が、この範囲の連続フレームをアロケータから取り、先頭と末尾が直接マッピングの覆いの
+        // 中に在ることを確かめた。フレームは `give_back` まで、この値だけが持つ（アロケータは同じフレームを
+        // 二度配らない）。`&mut self` から作るので、同時に 2 本のスライスは出ない。`u8` はどのビット列も妥当で、
+        // 境界の要求も無い。
+        unsafe { core::slice::from_raw_parts_mut(start, length) }
+    }
+
+    /// 借りたフレームを返す。**値を消費するので、返した後のスライスは作れない。**
+    ///
+    /// # 返し忘れの見張り
+    ///
+    /// **借りる直前と、返した直後で、アロケータの空きフレームの枚数が同じであることを確かめる。** 違えば
+    /// [`CorruptFsCheckError::WorkspaceNotReturned`] を返し、呼んだ側が止まる。枚数は、起動ログの行にも出す。
+    /// 借りてから返すまでの間、ほかにフレームを取る者は居ない（起動の直線の上で、検査は像を解析するだけである）。
+    ///
+    /// 返すのは、借りる前と返した後の枚数である。
+    fn give_back(self) -> Result<(u64, u64), CorruptFsCheckError> {
+        let Some(allocator) = kernel::frame_allocator::take() else {
+            return Err(CorruptFsCheckError::WorkspaceAllocatorMissing);
+        };
+        // 破壊テスト (2026-10-05, corrupt-fs-workspace-not-returned): 借りたフレームを返さない。**空きフレームの
+        // 枚数が、借りた分だけ減ったままになる。**
+        #[cfg(not(feature = "corrupt-fs-workspace-not-returned"))]
+        let returned = allocator.insert_free_range(self.base.frame_number(), self.frames);
+        #[cfg(feature = "corrupt-fs-workspace-not-returned")]
+        let returned: Result<(), kernel::frame_allocator::FrameAllocatorError> = Ok(());
+        let free_after = allocator.free_frame_count();
+        kernel::frame_allocator::give_back(allocator);
+        if returned.is_err() {
+            return Err(CorruptFsCheckError::WorkspaceReturnFailed {
+                frames: self.frames,
+            });
+        }
+        if free_after != self.free_before {
+            return Err(CorruptFsCheckError::WorkspaceNotReturned {
+                frames: self.frames,
+                free_before: self.free_before,
+                free_after,
+            });
+        }
+        Ok((self.free_before, free_after))
+    }
+}
 
 /// イメージのブロックサイズ（`mke2fs` の既定。判定行で毎起動確かめている）。
 const FS_BLOCK_SIZE: usize = 4096;
@@ -7877,17 +7911,38 @@ fn verify_corrupt_fs_image_is_rejected(logger: &mut Logger<Serial>) {
     };
     match reason {
         CorruptFsCheckError::PrefixProbeFailed { name, error: e } => logger.error(format_args!(
-            "ext2-corrupt: the untouched {CORRUPT_FS_BLOCKS}-block prefix failed \
-             the \"{name}\" probe with {e:?}. The prefix is too short to hold \
-             everything the image references; the image read at boot is larger than the \
-             one this kernel was built with ({} block(s)) plus the slack of \
-             {CORRUPT_FS_SLACK_BLOCKS}: rebuild the disk, or raise \
-             CORRUPT_FS_SLACK_BLOCKS. halting",
-            fsimage_info::USED_BLOCKS
+            "ext2-corrupt: the untouched prefix (the blocks the image uses) failed \
+             the \"{name}\" probe with {e:?}. The prefix does not hold everything the image \
+             references; halting"
         )),
         CorruptFsCheckError::PrefixDidNotParse { error: e } => logger.error(format_args!(
-            "ext2-corrupt: the untouched {CORRUPT_FS_BLOCKS}-block prefix did not parse \
+            "ext2-corrupt: the untouched prefix (the blocks the image uses) did not parse \
              ({e:?}); halting"
+        )),
+        CorruptFsCheckError::WorkspaceAllocatorMissing => logger.error(format_args!(
+            "ext2-corrupt: the frame allocator could not be borrowed for the working buffer; \
+             halting"
+        )),
+        CorruptFsCheckError::WorkspaceAllocationFailed { frames } => logger.error(format_args!(
+            "ext2-corrupt: could not take {frames} contiguous frame(s) for the working buffer \
+             (one per block the image uses); halting"
+        )),
+        CorruptFsCheckError::WorkspaceNotCovered { base, frames } => logger.error(format_args!(
+            "ext2-corrupt: the working buffer ({frames} frame(s) at {base:#x}) is outside the \
+             direct map; halting"
+        )),
+        CorruptFsCheckError::WorkspaceNotReturned {
+            frames,
+            free_before,
+            free_after,
+        } => logger.error(format_args!(
+            "ext2-corrupt: the working buffer ({frames} frame(s)) was not returned to the frame \
+             allocator: free frames before borrowing = {free_before}, after returning = \
+             {free_after} (expected {free_before}); halting"
+        )),
+        CorruptFsCheckError::WorkspaceReturnFailed { frames } => logger.error(format_args!(
+            "ext2-corrupt: could not return the working buffer ({frames} frame(s)) to the frame \
+             allocator; halting"
         )),
         CorruptFsCheckError::CaseAccepted { what, expected } => logger.error(format_args!(
             "ext2-corrupt: {} was accepted; expected {:?}; halting",
@@ -7957,6 +8012,20 @@ enum CorruptFsCheckError {
     },
     /// 壊したのに、種のファイルと同じものが読めた。
     MismatchStillSeed { what: &'static str },
+    /// 作業領域のために、フレームのアロケータを借りられなかった。
+    WorkspaceAllocatorMissing,
+    /// 作業領域にする連続フレームを取れなかった。
+    WorkspaceAllocationFailed { frames: u64 },
+    /// 取ったフレームが、直接マッピングの覆いの外に在る。
+    WorkspaceNotCovered { base: u64, frames: u64 },
+    /// 作業領域のフレームを、アロケータへ返せなかった。
+    WorkspaceReturnFailed { frames: u64 },
+    /// 返した後の空きフレームの枚数が、借りる前と違う。**返し忘れである。**
+    WorkspaceNotReturned {
+        frames: u64,
+        free_before: u64,
+        free_after: u64,
+    },
 }
 
 /// 壊したイメージが拒まれることを見る検査部（T3-1）。**止めない。`Err` を返す。**
@@ -8074,6 +8143,37 @@ fn map_corrupt_fs(image: &[u8]) -> Option<CorruptFsMap> {
 fn try_verify_corrupt_fs_image_is_rejected(
     logger: &mut Logger<Serial>,
 ) -> Result<(), CorruptFsCheckError> {
+    use common::ext2::Ext2Error;
+
+    // **壊す位置はイメージから求める（2026-09-03）。** **`build.rs` の定数は使わない**
+    // ——[`map_corrupt_fs`] の doc。
+    // **見るのは装置から読んだ複製である**（`build_truncated_fs_image` と同じ出所）。
+    let Some(map) = map_corrupt_fs(kernel::vfs::root_image()) else {
+        return Err(CorruptFsCheckError::PrefixDidNotParse {
+            error: Ext2Error::NotFound,
+        });
+    };
+    // **作業領域は、像が使っているブロックの数だけ借りる**（[`CorruptFsWorkspace`]）。**検査が落ちたときは
+    // 返さない**——呼んだ側が、そのまま止まる。
+    let mut workspace = CorruptFsWorkspace::borrow(map.blocks)?;
+    run_corrupt_fs_cases(logger, &map, workspace.bytes())?;
+    let (free_before, free_after) = workspace.give_back()?;
+    logger.info(format_args!(
+        "ext2-corrupt: the working buffer ({} frame(s)) was returned to the frame allocator: \
+         free frames before borrowing = {free_before}, after returning = {free_after} \
+         (expected {free_before})",
+        map.blocks
+    ));
+    Ok(())
+}
+
+/// 壊し方を 1 つずつ作業領域へ組み立てて、拒まれることを見る（[`try_verify_corrupt_fs_image_is_rejected`] の
+/// 中身）。**`buf` は、像が使っているブロックの数ちょうどの長さである。**
+fn run_corrupt_fs_cases(
+    logger: &mut Logger<Serial>,
+    map: &CorruptFsMap,
+    buf: &mut [u8],
+) -> Result<(), CorruptFsCheckError> {
     use common::ext2::{Ext2, Ext2Error};
 
     /// `s_inodes_count` と `s_inodes_per_group` を揃えて動かす値。
@@ -8084,22 +8184,8 @@ fn try_verify_corrupt_fs_image_is_rejected(
     const HUGE_INODE_END: u64 =
         FS_INODE_TABLE as u64 + (HUGE_INODE_COUNT - 1) * FS_INODE_SIZE as u64 + 128;
 
-    // **壊す位置はイメージから求める（2026-09-03）。** **`build.rs` の定数は使わない**
-    // ——[`map_corrupt_fs`] の doc。
-    // **見るのは装置から読んだ複製である**（`build_truncated_fs_image` と同じ出所）。
-    let Some(map) = map_corrupt_fs(kernel::vfs::root_image()) else {
-        return Err(CorruptFsCheckError::PrefixDidNotParse {
-            error: Ext2Error::NotFound,
-        });
-    };
-    // **器に入らなければ落ちる。** **足りないコピーで演習を続けると、
-    // 当たらない位置を壊して「拒まれなかった」と出力することになる。**
-    if map.blocks > CORRUPT_FS_BLOCKS {
-        return Err(CorruptFsCheckError::PrefixProbeFailed {
-            name: "the working buffer is smaller than the image in use",
-            error: Ext2Error::TooShort,
-        });
-    };
+    // **`ImageTooSmall` の `actual` に出る、作業領域の長さ。**
+    let workspace_bytes = buf.len() as u64;
     let root_etc_entry = map.root_etc_entry;
     let indirect_table_at = map.indirect_table_at;
 
@@ -8196,7 +8282,7 @@ fn try_verify_corrupt_fs_image_is_rejected(
             probe: fs_probe_nothing,
             expected: Ext2Error::ImageTooSmall {
                 needed: 65_536 * FS_BLOCK_SIZE as u64,
-                actual: CORRUPT_FS_LEN as u64,
+                actual: workspace_bytes,
             },
         },
         CorruptFsCase {
@@ -8352,12 +8438,8 @@ fn try_verify_corrupt_fs_image_is_rejected(
 
     // **健全な対照を先に走らせる。** 切り出した先頭が、それ自体で読み切れるイメージで
     // あることを確かめる。**ここが落ちたら、壊す側ではなく切り出す長さが足りない。**
-    // SAFETY: 起動時の単一実行文脈で、この静的領域を触るのはこの関数だけである。
-    let control = unsafe {
-        let buf = &mut *core::ptr::addr_of_mut!(CORRUPT_FS_IMAGE);
-        build_truncated_fs_image(buf, map.blocks);
-        &buf[..]
-    };
+    build_truncated_fs_image(buf, map.blocks);
+    let control = &buf[..];
     match Ext2::parse(control) {
         Ok(fs) => {
             let probes: [(&str, FsProbe); 5] = [
@@ -8381,9 +8463,7 @@ fn try_verify_corrupt_fs_image_is_rejected(
     let mut rejected = 0usize;
     for case in cases {
         // 毎回、健全なイメージから作り直す。**前の壊し方が残らないようにする。**
-        // SAFETY: 起動時の単一実行文脈で、この静的領域を触るのはこの関数だけである。
-        let image = unsafe {
-            let buf = &mut *core::ptr::addr_of_mut!(CORRUPT_FS_IMAGE);
+        let image = {
             build_truncated_fs_image(buf, map.blocks);
             for patch in case.patches {
                 for i in 0..patch.width {
@@ -8422,12 +8502,13 @@ fn try_verify_corrupt_fs_image_is_rejected(
         }
     }
 
-    verify_fs_content_mismatch_is_noticed(logger, &mut rejected, &map)?;
+    verify_fs_content_mismatch_is_noticed(logger, &mut rejected, map, buf)?;
 
     logger.info(format_args!(
         "ext2-corrupt: all {rejected} corrupted image(s) were refused with the expected reason, \
          and the kernel continued (the embedded image is untouched; each case patches a fresh \
-         copy of the {} block(s) the image uses, in a {CORRUPT_FS_BLOCKS}-block buffer)",
+         copy of the {} block(s) the image uses, in as many frames borrowed from the frame \
+         allocator)",
         map.blocks
     ));
 
@@ -8453,6 +8534,7 @@ fn verify_fs_content_mismatch_is_noticed(
     logger: &mut Logger<Serial>,
     rejected: &mut usize,
     map: &CorruptFsMap,
+    buf: &mut [u8],
 ) -> Result<(), CorruptFsCheckError> {
     use common::ext2::Ext2;
 
@@ -8478,9 +8560,7 @@ fn verify_fs_content_mismatch_is_noticed(
     ];
 
     for (what, patch) in cases {
-        // SAFETY: 起動時の単一実行文脈で、この静的領域を触るのはこの pass だけである。
-        let image = unsafe {
-            let buf = &mut *core::ptr::addr_of_mut!(CORRUPT_FS_IMAGE);
+        let image = {
             build_truncated_fs_image(buf, map.blocks);
             for i in 0..patch.width {
                 buf[patch.offset + i] = ((patch.value >> (i * 8)) & 0xFF) as u8;
@@ -8512,21 +8592,18 @@ fn verify_fs_content_mismatch_is_noticed(
     Ok(())
 }
 
-/// 抱えているイメージの先頭 [`CORRUPT_FS_BLOCKS`] ブロックをコピーし、それ自体で読み切れる
+/// 抱えているイメージの先頭 `blocks` ブロックを作業領域へコピーし、それ自体で読み切れる
 /// イメージに直す（S10-a）。
 ///
 /// **`s_blocks_count` を切り出した長さへ合わせる。** 直さないと `parse` が
 /// [`common::ext2::Ext2Error::ImageTooSmall`] で拒み、**壊し方に関係なく
 /// すべての case が同じ理由で落ちる。**
-fn build_truncated_fs_image(buf: &mut [u8; CORRUPT_FS_LEN], blocks: usize) {
+fn build_truncated_fs_image(buf: &mut [u8], blocks: usize) {
     // **複製元は装置から読んだ複製である（P-e。`ADR-0034` の Addendum）。**
     //
-    // **前提を書く。** **この破壊テストは、作り直した像でしか走らない。**
-    // **持ち越す構成では、装置の中身の使用上端が起動ごとに動きうるので、
-    // `CORRUPT_FS_LEN`（`build.rs` の定数）が実態と合わなくなる。**
-    // **以前は偶然そうなっているだけで、前提として書かれていなかった。**
-    // **長さはイメージから求める（2026-09-03）。** **`build.rs` の定数は容量にしか
-    // 使わない**——[`map_corrupt_fs`] の doc。**持ち越したイメージでも当たる。**
+    // **長さはイメージから求める（2026-09-03）。** **`build.rs` の定数は使わない**
+    // ——[`map_corrupt_fs`] の doc。**持ち越したイメージでも当たる。** 作業領域も同じ長さで借りてある
+    // （2026-10-05。[`CorruptFsWorkspace`]）。
     let length = blocks * FS_BLOCK_SIZE;
     buf[..length].copy_from_slice(&kernel::vfs::root_image()[..length]);
     // **余りは 0 で埋める。** **前の回の中身が残ると、切り詰めの主張が濁る。**
@@ -12641,6 +12718,11 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "arch-prctl-get-fs-returns-zero",
         cfg!(feature = "arch-prctl-get-fs-returns-zero"),
         "arch_prctl が、基底を訊かれて 0 を返す",
+    ),
+    (
+        "corrupt-fs-workspace-not-returned",
+        cfg!(feature = "corrupt-fs-workspace-not-returned"),
+        "壊した ext2 のイメージの検査が、借りた作業領域のフレームを返さない",
     ),
     (
         "ap-entry-stack-shifted-test",
