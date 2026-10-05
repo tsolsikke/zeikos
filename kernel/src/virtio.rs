@@ -54,6 +54,95 @@ const REG_DEVICE_STATUS: u16 = 0x12;
 /// この module は MSI-X に触れないのでずれない。**
 const REG_DEVICE_CONFIG: u16 = 0x14;
 
+/// 装置固有領域の中の `size_max`（u32。1 つの区画の最大のバイト数）。**`VIRTIO_BLK_F_SIZE_MAX` を申告した
+/// 装置でだけ意味を持つ。**
+const CONFIG_SIZE_MAX: u16 = 8;
+/// 装置固有領域の中の `seg_max`（u32。1 つの要求が持てるデータの区画の数）。**`VIRTIO_BLK_F_SEG_MAX` を申告した
+/// 装置でだけ意味を持つ。**
+const CONFIG_SEG_MAX: u16 = 12;
+/// feature: 1 つの区画の最大のバイト数を `size_max` で申告する。
+const BLK_F_SIZE_MAX: u32 = 1 << 1;
+/// feature: 1 つの要求が持てるデータの区画の数を `seg_max` で申告する。
+const BLK_F_SEG_MAX: u32 = 1 << 2;
+
+/// 起動時の読み書きで、1 回の要求に載せるバイト数の、こちらで決めた上限（2026-10-05）。
+///
+/// **以前は 4 KiB ずつだった。** 費用は、バイト数ではなく要求の回数に付く——32 MiB の像を 4 KiB ずつ扱うと
+/// 8,192 回の要求になり、読み込みに約 0.59 秒、書き戻しに約 2.8 秒かかった。1 MiB ずつなら 32 回で、どちらも
+/// 約 0.03 秒である（実測。QEMU の TCG。`docs/verification-coverage.md` の「ディスクの像の読み書きの所要」）。
+///
+/// **1 MiB で止める理由**——起動時の要求は、割り込みを禁じたままポーリングで待つ。1 回の待ちを、1 ミリ秒前後に
+/// 収めておく（実測は同じ文書に在る）。
+pub const BOOT_REQUEST_BYTES: u32 = 1024 * 1024;
+
+/// 1 回の要求に載せてよいバイト数（2026-10-05）。**装置の申告と、こちらの上限から決める。**
+///
+/// # 決まり
+///
+/// - この実装は、データを 1 つの区画（物理的に連続した範囲）で渡す。だから、要求の大きさの上限は、
+///   区画 1 つの上限である。
+/// - 装置が `VIRTIO_BLK_F_SIZE_MAX` を申告していれば、`size_max` を越えない。**受けると答えていない feature でも、
+///   申告された上限には従う**（越えて困るのは装置の側で、従って困ることは無い）。
+/// - **申告していなければ、装置の側の上限は無いものとして扱う**（virtio の仕様では、この feature の無い装置は
+///   区画の大きさを制限しない）。こちらで決めた上限（`ours`）だけが効く。
+/// - `seg_max` は、申告されていれば 1 以上であること。0 なら、データを 1 区画も渡せない。
+/// - 512 の倍数へ切り下げる。結果が 0 になる申告（`size_max` が 512 未満）は断る。
+///
+/// 純粋な論理である（ホストの試験で確かめる）。
+pub const fn request_limit(
+    host_features: u32,
+    size_max: u32,
+    seg_max: u32,
+    ours: u32,
+) -> Result<RequestLimit, RequestLimitError> {
+    let declared_size_max = if host_features & BLK_F_SIZE_MAX != 0 {
+        Some(size_max)
+    } else {
+        None
+    };
+    let declared_seg_max = if host_features & BLK_F_SEG_MAX != 0 {
+        Some(seg_max)
+    } else {
+        None
+    };
+    if let Some(0) = declared_seg_max {
+        return Err(RequestLimitError::NoDataSegment);
+    }
+    let bytes = match declared_size_max {
+        Some(limit) if limit < ours => limit,
+        _ => ours,
+    };
+    let bytes = bytes - bytes % SECTOR_BYTES as u32;
+    if bytes == 0 {
+        return Err(RequestLimitError::SegmentTooSmall { size_max });
+    }
+    Ok(RequestLimit {
+        bytes,
+        declared_size_max,
+        declared_seg_max,
+    })
+}
+
+/// [`request_limit`] の答え。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RequestLimit {
+    /// 1 回の要求に載せてよいバイト数（512 の倍数）。
+    pub bytes: u32,
+    /// 装置が申告した `size_max`（申告が無ければ `None`）。
+    pub declared_size_max: Option<u32>,
+    /// 装置が申告した `seg_max`（申告が無ければ `None`）。
+    pub declared_seg_max: Option<u32>,
+}
+
+/// [`request_limit`] が断る形。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RequestLimitError {
+    /// 装置が、データの区画を 1 つも持てないと申告している（`seg_max` が 0）。
+    NoDataSegment,
+    /// 装置が申告した区画の上限が、1 セクタに満たない。
+    SegmentTooSmall { size_max: u32 },
+}
+
 /// 状態ビット: 装置に気づいた。
 const STATUS_ACKNOWLEDGE: u8 = 1;
 /// 状態ビット: ドライバが居る。
@@ -98,6 +187,10 @@ pub enum VirtioBlkError {
     BadRequestStatus { status: u8 },
     /// used エントリの id が出した記述子の先頭と違う。
     WrongUsedId { id: u32 },
+    /// 装置が申告した要求の上限では、要求を出せない（[`request_limit`]）。
+    RequestLimit(RequestLimitError),
+    /// 要求が、装置の申告した上限を越える（[`VirtioBlk::max_request_bytes`] を越えるバイト数を渡した）。
+    RequestTooLarge { bytes: u32, limit: u32 },
 }
 
 /// 設定の済んだ virtio-blk（S13-c で保持する形にした）。
@@ -125,6 +218,8 @@ pub struct VirtioBlk {
     max_spins: u64,
     /// 構成空間の Interrupt Line（S13-d。配線と武装が使う）。
     irq_line: u8,
+    /// 1 回の要求に載せてよいバイト数と、装置の申告（[`request_limit`]）。
+    limit: RequestLimit,
 }
 
 /// 握手から queue の設定までを行い、設定の済んだ装置を返す（S13-b）。
@@ -172,6 +267,28 @@ pub unsafe fn setup(
     ));
     logger.info(format_args!(
         "virtio-blk: handshake: ACKNOWLEDGE -> DRIVER; capacity={capacity} sector(s)"
+    ));
+
+    // **1 回の要求の上限を、装置の申告から決める**（2026-10-05。[`request_limit`]）。**申告の欄は、feature を
+    // 申告した装置でだけ読む**——申告の無い装置では、その欄の中身に意味が無い。
+    let size_max = if host_features & BLK_F_SIZE_MAX != 0 {
+        registers.read32(REG_DEVICE_CONFIG + CONFIG_SIZE_MAX)
+    } else {
+        0
+    };
+    let seg_max = if host_features & BLK_F_SEG_MAX != 0 {
+        registers.read32(REG_DEVICE_CONFIG + CONFIG_SEG_MAX)
+    } else {
+        0
+    };
+    let limit = match request_limit(host_features, size_max, seg_max, BOOT_REQUEST_BYTES) {
+        Ok(limit) => limit,
+        Err(error) => return Err(VirtioBlkError::RequestLimit(error)),
+    };
+    logger.info(format_args!(
+        "virtio-blk: request limit: {} byte(s) in one data segment (the device declares size_max={:?} \
+         seg_max={:?}; None means the device does not declare a limit; ours is {BOOT_REQUEST_BYTES})",
+        limit.bytes, limit.declared_size_max, limit.declared_seg_max
     ));
 
     // === queue 0 のリングを作る ===
@@ -249,6 +366,7 @@ pub unsafe fn setup(
         completed: 0,
         max_spins: 0,
         irq_line: virtio.irq_line,
+        limit,
     })
 }
 
@@ -256,6 +374,20 @@ impl VirtioBlk {
     /// この装置の割り込み（PCI の INTx。構成空間の Interrupt Line から作る。S13-d。型にしたのは 2026-09-29 の 9e）。
     pub fn interrupt(&self) -> crate::machine::pc::PciIntx {
         crate::machine::pc::PciIntx::from_interrupt_line(self.irq_line)
+    }
+
+    /// 起動時の読み書きで、1 回の要求に載せてよいバイト数（[`request_limit`]。512 の倍数）。
+    pub fn max_request_bytes(&self) -> u32 {
+        self.limit.bytes
+    }
+
+    /// `bytes` を 1 回の要求で出してよいか。**装置が区画の上限を申告していれば、それを越えない。**
+    /// 申告が無ければ、装置の側の上限は無い（[`request_limit`] の決まり）。
+    pub fn fits_one_request(&self, bytes: u32) -> bool {
+        match self.limit.declared_size_max {
+            Some(limit) => bytes <= limit,
+            None => true,
+        }
     }
 
     /// 要求の器（末尾ページ）の仮想アドレス。
@@ -320,6 +452,13 @@ impl VirtioBlk {
         data_phys: u64,
         to_device: bool,
     ) -> Result<(), VirtioBlkError> {
+        // **装置が申告した上限を越える要求は、出さない**（2026-10-05）。
+        if !self.fits_one_request(bytes) {
+            return Err(VirtioBlkError::RequestTooLarge {
+                bytes,
+                limit: self.limit.declared_size_max.unwrap_or(u32::MAX),
+            });
+        }
         // SAFETY: 呼び出し元契約をそのまま渡す。
         let expected = unsafe { self.issue_at(first_sector, bytes, data_phys, to_device) };
         // SAFETY: 直前に発行した要求である。
@@ -618,6 +757,12 @@ impl DeviceClaim {
         // SAFETY: フラグを持っているので、他のコアはここへ入れない。
         // 据えたガードが生きているので、指す先も生きている（[`DEVICE`] の doc）。
         let device = unsafe { &mut *device };
+        // **装置が区画の上限を申告していて、像の全体がそれを越えるなら、出さない**（2026-10-05）。呼んだ側は
+        // 保存の失敗として返す。**いまの装置（QEMU）は上限を申告しないので、この道は通らない。** 申告する装置で
+        // 保存するには、要求を分けて出す形が要る（`docs/deferred-decisions.md`）。
+        if !device.fits_one_request(bytes as u32) {
+            return None;
+        }
         let before = IRQ_DELIVERED.load(core::sync::atomic::Ordering::Acquire);
         // SAFETY: イメージは連続する物理範囲で、装置が読む向きである。
         let expected = unsafe { device.issue_at(0, bytes as u32, phys, true) };
@@ -974,4 +1119,69 @@ pub unsafe fn exercise_read(
          checksum={checksum:#010x} first bytes={first:02x?}"
     ));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 申告の無い装置では、こちらで決めた上限がそのまま効く。
+    #[test]
+    fn a_device_without_declared_limits_gets_our_limit() {
+        let limit = request_limit(0, 0, 0, BOOT_REQUEST_BYTES).unwrap();
+        assert_eq!(limit.bytes, BOOT_REQUEST_BYTES);
+        assert_eq!(limit.declared_size_max, None);
+        assert_eq!(limit.declared_seg_max, None);
+        // 申告していない欄の中身は見ない（0 でも、大きな値でも同じ）。
+        assert_eq!(
+            request_limit(0, 4096, 0, BOOT_REQUEST_BYTES).unwrap().bytes,
+            BOOT_REQUEST_BYTES
+        );
+    }
+
+    /// QEMU の実測の形（`seg_max` だけを申告する）。
+    #[test]
+    fn a_declared_segment_count_alone_does_not_shrink_the_request() {
+        let limit = request_limit(BLK_F_SEG_MAX, 0, 254, BOOT_REQUEST_BYTES).unwrap();
+        assert_eq!(limit.bytes, BOOT_REQUEST_BYTES);
+        assert_eq!(limit.declared_seg_max, Some(254));
+    }
+
+    /// 申告した区画の上限が小さければ、それへ合わせる。512 の倍数へ切り下げる。
+    #[test]
+    fn a_declared_segment_size_caps_the_request() {
+        let limit = request_limit(BLK_F_SIZE_MAX, 65_536, 0, BOOT_REQUEST_BYTES).unwrap();
+        assert_eq!(limit.bytes, 65_536);
+        assert_eq!(limit.declared_size_max, Some(65_536));
+        assert_eq!(
+            request_limit(BLK_F_SIZE_MAX, 5000, 0, BOOT_REQUEST_BYTES)
+                .unwrap()
+                .bytes,
+            4608
+        );
+        // こちらの上限より大きい申告は、こちらの上限で止まる。
+        assert_eq!(
+            request_limit(BLK_F_SIZE_MAX, u32::MAX, 0, BOOT_REQUEST_BYTES)
+                .unwrap()
+                .bytes,
+            BOOT_REQUEST_BYTES
+        );
+    }
+
+    /// 要求を出せない申告は断る。
+    #[test]
+    fn declarations_that_leave_no_room_are_refused() {
+        assert_eq!(
+            request_limit(BLK_F_SEG_MAX, 0, 0, BOOT_REQUEST_BYTES),
+            Err(RequestLimitError::NoDataSegment)
+        );
+        assert_eq!(
+            request_limit(BLK_F_SIZE_MAX, 511, 0, BOOT_REQUEST_BYTES),
+            Err(RequestLimitError::SegmentTooSmall { size_max: 511 })
+        );
+        assert_eq!(
+            request_limit(BLK_F_SIZE_MAX, 0, 0, BOOT_REQUEST_BYTES),
+            Err(RequestLimitError::SegmentTooSmall { size_max: 0 })
+        );
+    }
 }

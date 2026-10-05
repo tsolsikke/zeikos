@@ -56,7 +56,12 @@ const VIRTIO_BLK_MODERN: u16 = 0x1041;
 /// 有効にしない形。この module も `crate::virtio` も有効にしない）と、その後ろの装置固有領域の先頭の capacity
 /// （8 バイト。virtio-blk では常に在る）である。BAR の実際の大きさはこれ以上である（QEMU の既定の構成の実測で、
 /// virtio-blk の BAR0 が `0xc000` で、次の装置の I/O の BAR が `0xc080` から始まる）。
-const VIRTIO_BLK_WINDOW_BYTES: u16 = 20 + 8;
+///
+/// **2026-10-05 に、8 バイト広げた**（28 → 36）。capacity の後ろの `size_max`（4 バイト）と `seg_max`（4 バイト）
+/// まで覆う。**1 回の要求の上限を、装置の申告から読むためである**（`crate::virtio` の `request_limit`）。
+/// legacy の virtio-blk の装置固有領域は、この並び（capacity・`size_max`・`seg_max`・…）で決まっていて、欄そのものは
+/// 常に在る。**中身に意味が在るのは、対応する feature を申告した装置だけである**——読む側は、申告を見てから読む。
+const VIRTIO_BLK_WINDOW_BYTES: u16 = 20 + 8 + 4 + 4;
 
 /// 1 つの bus に載る device の数（PCI の規定。device 番号は 5 ビット）。
 const DEVICES_PER_BUS: u8 = 32;
@@ -372,8 +377,9 @@ pub unsafe fn scan_bus0(logger: &mut Logger<Serial>) -> Option<VirtioBlkLocation
                 if found.is_none() && bars[0] & 0x1 == 1 {
                     // SAFETY: BAR0 のビット 0 が 1 なので、BAR0 は I/O の空間の範囲を指す。transitional の
                     // virtio-blk は legacy の口を BAR0 の I/O の空間に出すのが仕様で、その先頭の
-                    // `VIRTIO_BLK_WINDOW_BYTES` バイトは legacy の共通のレジスタと capacity である。窓はここで
-                    // 1 つだけ作り（最初の 1 つだけを採る）、返す所在が持つ。
+                    // `VIRTIO_BLK_WINDOW_BYTES` バイトは legacy の共通のレジスタと、装置固有領域の先頭の 3 つの欄
+                    // （capacity・`size_max`・`seg_max`）である。窓はここで 1 つだけ作り（最初の 1 つだけを採る）、
+                    // 返す所在が持つ。
                     let registers = unsafe {
                         RegisterWindow::from_io_bar(bars[0] & !0x3, VIRTIO_BLK_WINDOW_BYTES)
                     };
@@ -445,12 +451,15 @@ mod tests {
     use super::*;
 
     /// 窓の読み書きは、位置と幅が窓に収まるときだけ通す（2026-09-30）。virtio-blk の窓では、使うレジスタの端
-    /// （capacity の上位の 4 バイト）と ISR は収まり、その 1 バイト先と窓の外は収まらない。
+    /// （`seg_max` の 4 バイト。2026-10-05 に capacity の後ろの 2 つの欄まで広げた）と ISR は収まり、その 1 バイト先と
+    /// 窓の外は収まらない。
     #[test]
     fn a_register_window_admits_only_positions_inside_it() {
         assert!(fits(VIRTIO_BLK_WINDOW_BYTES, 0x18, 4));
+        assert!(fits(VIRTIO_BLK_WINDOW_BYTES, 0x1c, 4));
+        assert!(fits(VIRTIO_BLK_WINDOW_BYTES, 0x20, 4));
         assert!(fits(VIRTIO_BLK_WINDOW_BYTES, 0x13, 1));
-        assert!(!fits(VIRTIO_BLK_WINDOW_BYTES, 0x19, 4));
+        assert!(!fits(VIRTIO_BLK_WINDOW_BYTES, 0x21, 4));
         assert!(!fits(VIRTIO_BLK_WINDOW_BYTES, VIRTIO_BLK_WINDOW_BYTES, 1));
         assert!(!fits(VIRTIO_BLK_WINDOW_BYTES, u16::MAX, 2));
     }

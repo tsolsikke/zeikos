@@ -760,6 +760,10 @@ kernel::vfs::tests::the_table_is_small_enough_to_live_inside_a_process
 kernel::vfs::tests::the_writable_mark_follows_how_the_file_was_opened
 kernel::vfs::tests::two_descriptors_on_one_inode_keep_separate_offsets
 kernel::vfs::tests::unopened_and_out_of_range_descriptors_are_refused
+kernel::virtio::tests::a_declared_segment_count_alone_does_not_shrink_the_request
+kernel::virtio::tests::a_declared_segment_size_caps_the_request
+kernel::virtio::tests::a_device_without_declared_limits_gets_our_limit
+kernel::virtio::tests::declarations_that_leave_no_room_are_refused
 xtask::batch::tests::a_concurrent_row_holds_its_own_block_only_when_rows_are_spread
 xtask::batch::tests::results_come_back_in_the_order_of_the_table
 xtask::batch::tests::rows_not_yet_started_are_left_when_told_to_stop

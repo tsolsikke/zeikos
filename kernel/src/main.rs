@@ -1526,6 +1526,17 @@ extern "sysv64" fn kernel_main() -> ! {
                              halting"
                             ))
                         }
+                        kernel::virtio::VirtioBlkError::RequestLimit(error) => {
+                            logger.error(format_args!(
+                                "virtio-blk: the limits the device declares leave no room for a \
+                                 request ({error:?}); halting"
+                            ))
+                        }
+                        kernel::virtio::VirtioBlkError::RequestTooLarge { bytes, limit } => logger
+                            .error(format_args!(
+                                "virtio-blk: a request of {bytes} byte(s) is over the segment size \
+                                 the device declares ({limit}); halting"
+                            )),
                     }
                     cpu::halt_forever()
                 }
@@ -6017,21 +6028,21 @@ fn flush_fs_image_to_device(
     base: common::addr::PhysAddr,
     bytes: u64,
 ) -> Result<(), kernel::virtio::VirtioBlkError> {
+    // **1 回の要求の大きさは、読む側と同じ決め方である**（`try_copy_fs_image_to_frames`）。
+    let request_bytes = u64::from(blk.max_request_bytes());
     let mut offset = 0u64;
     while offset < bytes {
-        let chunk = 4096u32.min((bytes - offset) as u32);
+        let chunk = request_bytes.min(bytes - offset) as u32;
 
         // 破壊テスト (S13-e, virtio-flush-short-test): 先頭の 4KiB を書き戻さない。
-        // **末尾を欠く形は罠である**——イメージ 2MiB の 512 チャンクのうち中身が
-        // あるのは先頭 80 だけで、末尾は全 0（S12-a の罠。実測。中身の最後は
-        // チャンク 79）。末尾を欠いても `disk0.img` は変わらず、「状態が
+        // **末尾を欠く形は罠である**——イメージの後ろのほうは全 0 で（S12-a の罠。実測）、末尾を欠いても `disk0.img` は変わらず、「状態が
         // 変わらない」で立たない。**先頭チャンクは superblock（オフセット
         // 1024）を含む**ので、keep 変種では空き数が変わり、欠くと `disk0.img`
         // の superblock が古いまま——バイト一致と wr_bytes の両方が落ちる
         // （wr は 4KiB 少ない）。
         #[cfg(feature = "virtio-flush-short-test")]
         if offset == 0 {
-            offset += u64::from(chunk);
+            offset += FS_SABOTAGE_SKIP_BYTES;
             continue;
         }
 
@@ -6057,12 +6068,15 @@ fn flush_fs_image_to_device(
     Ok(())
 }
 
-/// イメージを装置から読むときの 1 回ぶんの大きさ（S13-c）。
+/// 破壊テストが、像の先頭で読まない・書かないバイト数（S13-c、S13-e）。
 ///
-/// **破壊テスト `virtio-load-skip-first-test` がこの値に依存している**——
-/// **「先頭の 1 かたまりを飛ばす」ので、飛ばす量と読む量が同じでなければ
-/// ならない。** **2 箇所に書かないこと。**
-const FS_LOAD_CHUNK: u32 = 4096;
+/// **`virtio-load-skip-first-test` と `virtio-flush-short-test` が、先頭のこの分だけを欠く。** superblock
+/// （オフセット 1024）を含む。
+///
+/// **以前は、1 回の要求の大きさ（4 KiB）と同じ定数だった。** 要求の大きさは、装置の申告から決まる値になった
+/// （2026-10-05。`kernel::virtio::VirtioBlk::max_request_bytes`。既定は 1 MiB）ので、欠く量は別に持つ。
+/// **要求の大きさを変えても、破壊テストが欠く範囲は変わらない。**
+const FS_SABOTAGE_SKIP_BYTES: u64 = 4096;
 
 fn try_copy_fs_image_to_frames(
     logger: &mut Logger<Serial>,
@@ -6127,18 +6141,19 @@ fn try_copy_fs_image_to_frames(
         // **末尾を欠く形にしない**——イメージの末尾は 0 なので（S12-a の実測）、
         // 欠けても変わらず、破壊テストにならない（種類の 1 つ目）。
         //
-        // **かたまりの大きさは [`FS_LOAD_CHUNK`] から取る。**
-        // **以前は `4096` を 2 箇所に書いていた**——**片方だけを変えると、
-        // 破壊テストが「先頭のかたまり」を飛ばさなくなる**（効き目が別の定数に
-        // 依存する形。2026-08-28 の洗い出しで見つけた）。
+        // **読まない量は [`FS_SABOTAGE_SKIP_BYTES`] から取る。** 1 回の要求の大きさとは別の数である
+        // （その定数の doc）。
         #[cfg(not(feature = "virtio-load-skip-first-test"))]
         let start_chunk = 0u64;
         #[cfg(feature = "virtio-load-skip-first-test")]
         let start_chunk = 1u64;
 
-        let mut offset = start_chunk * u64::from(FS_LOAD_CHUNK);
+        // **1 回の要求の大きさは、装置が決める**（2026-10-05。申告した上限と、こちらの上限の小さいほう）。
+        // 費用は要求の回数に付くので、4 KiB ずつ刻まない。
+        let request_bytes = u64::from(blk.max_request_bytes());
+        let mut offset = start_chunk * FS_SABOTAGE_SKIP_BYTES;
         while offset < bytes {
-            let chunk = FS_LOAD_CHUNK.min((bytes - offset) as u32);
+            let chunk = request_bytes.min(bytes - offset) as u32;
             // SAFETY: 読み先はいま確保した連続フレームの中で、direct map が
             // 覆っていることを上で確かめた。装置のほかに書く者は居ない。
             // 位置の契約（BSP のみ・IF=0）は呼び出し位置が満たす（AP 起床と
@@ -6156,7 +6171,7 @@ fn try_copy_fs_image_to_frames(
         }
         logger.info(format_args!(
             "fs-image-load: read {} byte(s) from the virtio disk into the copy destination",
-            bytes - start_chunk * 4096
+            bytes - start_chunk * FS_SABOTAGE_SKIP_BYTES
         ));
     } else {
         // **RAM のイメージからコピーする**（`ADR-0068` の HW-d）。**装置は無い。**
