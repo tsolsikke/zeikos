@@ -384,16 +384,21 @@ impl Drop for RunDir {
         if self.scratch == self.path {
             return;
         }
-        let published = self.published.get();
+        // **既定の像として示した回の ESP は、ここで写す**（項目の終わりを待たない）——同じ項目の中で、すぐ後に走る
+        // 道具（`tools/stack-deepest.py`）が、SSD の置き場の ELF を読む。項目の終わりまで待つと、道具が読む時点で
+        // まだ無い（全検査で実際に落ちた）。
+        if self.published.get() {
+            copy_tree(&self.scratch.join(ESP), &self.path.join(ESP));
+        }
         let deferred = ITEM_SCRATCH.with(|slot| match slot.borrow_mut().as_mut() {
             Some(pending) => {
-                pending.push((self.scratch.clone(), self.path.clone(), published));
+                pending.push((self.scratch.clone(), self.path.clone(), false));
                 true
             }
             None => false,
         });
         if !deferred {
-            retire_scratch(&self.scratch, &self.path, true, published);
+            retire_scratch(&self.scratch, &self.path, true, false);
         }
     }
 }

@@ -843,7 +843,6 @@ xtask::launch::tests::the_vcpu_count_is_read_from_smp
 xtask::launch::tests::the_watched_drive_is_matched_against_the_registry
 xtask::launch::tests::the_wrapper_ignores_sigxfsz_before_exec
 xtask::launch::tests::vcpus_are_taken_within_the_budget_and_given_back
-xtask::launch::tests::write_bytes_is_read_from_the_io_file
 xtask::launch::tests::wsl_is_told_from_the_kernel_release
 xtask::media::tests::a_broken_gpt_crc_is_caught
 xtask::media::tests::a_chain_without_an_end_is_caught

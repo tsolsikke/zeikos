@@ -222,29 +222,6 @@ std::thread_local! {
 static RUNS_STARTED: AtomicU64 = AtomicU64::new(0);
 /// 実行の時間の合計（ナノ秒。全体。計測のため）。
 static RUNS_NANOS: AtomicU64 = AtomicU64::new(0);
-/// QEMU が装置（SSD）へ書かせたバイト数の合計（2026-10-05。`/proc/<pid>/io` の `write_bytes`）。
-static QEMU_WRITTEN_BYTES: AtomicU64 = AtomicU64::new(0);
-
-/// QEMU が装置へ書かせたバイト数の合計（このプロセスが起こした QEMU の分）。
-///
-/// **`/proc/<pid>/io` の `write_bytes` を、QEMU が終わる前に読んだ最後の値の合計である。** tmpfs への書き込みは
-/// 数に入らない（装置へ行かない）。**少なめに出る**——最後に読んだ後の書き込みは入らない。QEMU は、`sh` と
-/// `prlimit` から exec で入れ替わるので、起こした子の番号が QEMU の番号である。
-pub fn qemu_written_bytes() -> u64 {
-    QEMU_WRITTEN_BYTES.load(Ordering::SeqCst)
-}
-
-/// `/proc/<pid>/io` の中身から `write_bytes` を読む（純粋な論理）。
-pub fn write_bytes_in(io: &str) -> Option<u64> {
-    io.lines()
-        .find_map(|line| line.strip_prefix("write_bytes:"))
-        .and_then(|value| value.trim().parse().ok())
-}
-
-/// プロセスが装置へ書かせたバイト数（読めなければ `None`。終わって片付いたプロセスは読めない）。
-pub fn process_written_bytes(pid: u32) -> Option<u64> {
-    write_bytes_in(&std::fs::read_to_string(format!("/proc/{pid}/io")).ok()?)
-}
 
 /// 同時に走る QEMU の vCPU の数の上限（2026-09-29。運用者の決定）。**全検査で並べた行（項目の塊を持つ糸）
 /// から起こす QEMU だけが数える**——順に回すときは 1 本ずつなので数えない。**`-smp 2`・`4` の回は、その数だけ取る**
@@ -712,8 +689,6 @@ pub struct QemuRun {
     what: String,
     status: Option<ExitStatus>,
     recorded: bool,
-    /// QEMU が装置へ書かせたバイト数の、最後に読めた値（[`qemu_written_bytes`]）。
-    written: u64,
     /// QEMU の標準出力と標準エラーを項目の塊へ積む糸（**塊を持つ糸から起こしたときだけ**。`crate::item_log`）。
     readers: Vec<JoinHandle<()>>,
     /// 取った vCPU の数（**塊を持つ糸から起こしたときだけ**。[`VCPU_BUDGET`]。終わったら返す）。
@@ -890,7 +865,6 @@ pub fn spawn(spec: &Spec<'_>) -> Result<QemuRun> {
         what: spec.what.to_string(),
         status: None,
         recorded: false,
-        written: 0,
         readers,
         vcpus,
     })
@@ -964,7 +938,6 @@ fn watch_outputs(
 impl QemuRun {
     /// `Child::try_wait` と同じ。
     pub fn try_wait(&mut self) -> std::io::Result<Option<ExitStatus>> {
-        self.note_written();
         let status = self.child.try_wait()?;
         if status.is_some() {
             self.status = status;
@@ -974,7 +947,6 @@ impl QemuRun {
 
     /// **組ごと SIGKILL で止める**（`Child::kill` の代わり）。
     pub fn kill(&mut self) -> std::io::Result<()> {
-        self.note_written();
         self.target.kill();
         let _ = self.child.kill();
         Ok(())
@@ -982,7 +954,6 @@ impl QemuRun {
 
     /// `Child::wait` と同じ。**監視を止め、実行を記録する。**
     pub fn wait(&mut self) -> std::io::Result<ExitStatus> {
-        self.note_written();
         let status = self.child.wait()?;
         self.status = Some(status);
         self.finish();
@@ -1003,20 +974,12 @@ impl QemuRun {
         self.target.alive()
     }
 
-    /// QEMU が装置へ書かせたバイト数を、読めれば控える（終わる前に読んだ最後の値が残る）。
-    fn note_written(&mut self) {
-        if let Some(bytes) = process_written_bytes(self.child.id()) {
-            self.written = self.written.max(bytes);
-        }
-    }
-
     /// 監視を止め、実行を記録する（1 度だけ）。
     fn finish(&mut self) {
         if self.recorded {
             return;
         }
         self.recorded = true;
-        QEMU_WRITTEN_BYTES.fetch_add(self.written, Ordering::SeqCst);
         self.watch.stop.store(true, Ordering::SeqCst);
         if let Some(watcher) = self.watcher.take() {
             let _ = watcher.join();
@@ -1092,15 +1055,6 @@ impl Drop for QemuRun {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// `/proc/<pid>/io` の `write_bytes` の行を読む（`cancelled_write_bytes` と取り違えない）。
-    #[test]
-    fn write_bytes_is_read_from_the_io_file() {
-        let io = "rchar: 10\nwchar: 20\nsyscr: 1\nsyscw: 2\nread_bytes: 4096\nwrite_bytes: 8192\n\
-                  cancelled_write_bytes: 12\n";
-        assert_eq!(write_bytes_in(io), Some(8192));
-        assert_eq!(write_bytes_in("rchar: 1\n"), None);
-    }
 
     /// **vCPU の数は `-smp` の値から読む**（`N` と `cpus=N,…`）。**無ければ 1。**
     #[test]

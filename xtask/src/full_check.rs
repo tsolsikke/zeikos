@@ -1850,11 +1850,6 @@ fn run(target: &str) -> Result<()> {
             disk_start.map_or(String::new(), |sectors| sectors.to_string()),
         )
         .env(START_STATE_ENV, state.label())
-        // **全検査のビルドは、増分の置き場を使わない**（2026-10-05）。カーネルは、破壊テストの構成ごとに 1 度ずつ
-        // ビルドする（約 870 組）。増分の置き場は組ごとにでき、全検査の木で 46〜52 GiB になっていた（実測）。
-        // **次の全検査でカーネルが変わっていれば、どの組もビルドし直すので、置き場はほとんど役に立たない。**
-        // 変わっていなければ、cargo は何もビルドしない（増分の置き場に依らない）。
-        .env("CARGO_INCREMENTAL", "0")
         .process_group(0);
     // **子の git が別の作業ツリーを見ないように、`GIT_*` を外す**（ロックのパスと同じ理由）。
     for (key, _) in std::env::vars_os() {

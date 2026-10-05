@@ -3877,6 +3877,8 @@ fn build_bootloader_now(workspace_root: &Path, features: &[&str]) -> Result<Path
     let joined = features.join(",");
     let mut args = vec![
         "build",
+        INCREMENTAL_OFF[0],
+        INCREMENTAL_OFF[1],
         "--target",
         UEFI_TARGET,
         "-p",
@@ -21394,11 +21396,27 @@ fn cmd_exception_test(kind: &str) -> Result<()> {
 const CHECKS: &[(&str, &[&str])] = &[
     (
         "build bootloader (uefi)",
-        &["build", "-p", BOOTLOADER_PACKAGE, "--target", UEFI_TARGET],
+        &[
+            "build",
+            INCREMENTAL_OFF[0],
+            INCREMENTAL_OFF[1],
+            "-p",
+            BOOTLOADER_PACKAGE,
+            "--target",
+            UEFI_TARGET,
+        ],
     ),
     (
         "build kernel (none)",
-        &["build", "-p", KERNEL_PACKAGE, "--target", KERNEL_TARGET],
+        &[
+            "build",
+            INCREMENTAL_OFF[0],
+            INCREMENTAL_OFF[1],
+            "-p",
+            KERNEL_PACKAGE,
+            "--target",
+            KERNEL_TARGET,
+        ],
     ),
     ("build common (host)", &["build", "-p", "common"]),
     ("build xtask (host)", &["build", "-p", "xtask"]),
@@ -27291,6 +27309,8 @@ fn kernel_build_out_dir(workspace_root: &Path) -> Result<PathBuf> {
         .current_dir(workspace_root)
         .args([
             "build",
+            INCREMENTAL_OFF[0],
+            INCREMENTAL_OFF[1],
             "--target",
             KERNEL_TARGET,
             "-p",
@@ -31336,21 +31356,34 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
         launch::runs_started(),
         launch::runs_total_time().as_secs_f64()
     );
-    // **装置（SSD）へ書いた量の内訳**（2026-10-05。止めない）。**全体は `/proc/diskstats` の差、QEMU とこのプロセスの分は
-    // `/proc/<pid>/io` の `write_bytes` である。** 残りは、cargo と rustc と、外の道具が書いた分になる。
+    // **装置（SSD）へ書いた量と、置き場の区分ごとの大きさ**（2026-10-05。止めない）。**書いた量は `/proc/diskstats` の差で
+    // ある。** プロセスごとの内訳は、この環境では取れない（`/proc/<pid>/io` が無い。WSL のカーネル）。**代わりに、
+    // この木の `target/` の中を区分ごとに測る**——冷えた状態から始めた回なら、残っている大きさが、その区分へ書いた
+    // 量の下限になる（書いてから消したものと、上書きしたものは入らない）。
     if let Some(total) = full_check::written_since_the_start() {
-        let qemu = launch::qemu_written_bytes();
-        let own = launch::process_written_bytes(std::process::id()).unwrap_or(0);
         let gib = |bytes: u64| bytes as f64 / (1u64 << 30) as f64;
+        let target = workspace_root.join("target");
+        let kinds: Vec<String> = [
+            ("the run directories (logs)", "runs"),
+            ("kernel builds", KERNEL_TARGET),
+            ("host builds", "debug"),
+            ("kept kernel copies", "kernel-builds"),
+            ("bootloader builds", "x86_64-unknown-uefi"),
+        ]
+        .iter()
+        .map(|(what, dir)| {
+            format!(
+                "{what} {}",
+                directory_bytes(&target.join(dir))
+                    .map_or("?".to_string(), |bytes| format!("{:.1} GiB", gib(bytes)))
+            )
+        })
+        .collect();
         println!(
-            "(info) written to the device since the start: {:.1} GiB in all; by QEMU {:.1} GiB \
-             ({} run(s); scratch files on tmpfs are not counted), by this xtask process {:.1} GiB, \
-             the rest (cargo, rustc and the tools) {:.1} GiB",
+            "(info) written to the device since the start: {:.1} GiB in all (scratch files on \
+             tmpfs are not counted); what this tree's target/ holds now: {}",
             gib(total),
-            gib(qemu),
-            launch::runs_started(),
-            gib(own),
-            gib(total.saturating_sub(qemu).saturating_sub(own))
+            kinds.join(", ")
         );
     }
     // **期限で終わった待ち**（2026-09-25。QEMU を起動した回だけ。止めない）。
@@ -33512,6 +33545,8 @@ fn run_kernel_build(workspace_root: &Path, features: &[&str]) -> Result<KernelBu
 fn kernel_cargo_args(features: &[&str]) -> Vec<String> {
     let mut args: Vec<String> = [
         "build",
+        INCREMENTAL_OFF[0],
+        INCREMENTAL_OFF[1],
         "--target",
         KERNEL_TARGET,
         "-p",
@@ -33529,6 +33564,23 @@ fn kernel_cargo_args(features: &[&str]) -> Vec<String> {
     }
     args
 }
+
+/// カーネルとブートローダのビルドに付ける、「増分の置き場を使わない」の指定（2026-10-05。`ADR-0078` の決定 2）。
+///
+/// **理由は 2 つ在る。**
+///
+/// 1. **SSD へ書く量。** カーネルは、破壊テストの構成ごとに 1 度ずつビルドする（約 870 組）。増分の置き場は組ごとに
+///    でき、数十 GiB になっていた。
+/// 2. **同じバイナリになること。** 増分の置き場を使うかどうかで、コードの分け方が変わり、カーネルの像の大きさと番地が
+///    変わる（実測。全検査の側だけ使わない形にしたら、起動ログの参照と 1 ページ食い違った）。**起動ログとページの
+///    権限の参照は、どの木で、どの順でビルドしても同じバイナリになることに依っている。**
+///
+/// **カーネルとブートローダをビルドする所の全部に付ける**——この道具の中の 5 か所と、`tools/frame-sizes.py`。
+/// **1 か所でも抜けると、cargo が設定の違いを見て作り直し、別のバイナリが置き場に残る。**
+///
+/// **環境変数（`CARGO_INCREMENTAL`）では渡さない。** この道具が起こす cargo の全部に届き、この道具自身（ホストの
+/// ビルド）まで作り直させる——検査の途中で、走っている実行ファイルが入れ替わった（実測）。
+const INCREMENTAL_OFF: [&str; 2] = ["--config", "profile.dev.incremental=false"];
 
 /// cargo の JSON の出力から、kernel のビルドスクリプトの `OUT_DIR` を取る。
 fn kernel_out_dir_from_cargo_json(stdout: &str) -> Option<PathBuf> {
