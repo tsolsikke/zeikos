@@ -2035,8 +2035,12 @@ fn report_gate(gate: &Gate, main: &Path) -> Result<()> {
 /// push の前の関門をフラグで越えるときの環境変数（理由を入れる）。**Claude Code の hook も同じ名前を読む。**
 const OVERRIDE_ENV: &str = "ZEIKOS_PUSH_UNCHECKED";
 
-/// `cargo xtask full [<コミット>] | --status | --select | --gate [--override <理由>] [--pre-push]`。
+/// `cargo xtask full [<コミット>] | --status | --watch | --select | --gate [--override <理由>] [--pre-push]`。
 pub fn command(args: &[String]) -> Result<()> {
+    // **走っている全検査の進み具合を読む**（2026-10-05。`crate::watch`。読むだけで、錠は取らない）。
+    if args.iter().any(|arg| arg == "--watch") {
+        return crate::watch::command(&crate::workspace_root()?);
+    }
     if args.iter().any(|arg| arg == "--status") {
         return status(&crate::workspace_root()?);
     }

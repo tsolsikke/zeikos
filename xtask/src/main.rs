@@ -67,6 +67,7 @@ mod run_set;
 mod sampling;
 mod tool_checks;
 mod vbox;
+mod watch;
 
 /// `println!` を、出したうえで項目の出力のコピー（[`item_output_copy`]）へも積む形に置き換える（2026-09-26。
 /// 族にまとめる段）。
@@ -8019,7 +8020,7 @@ fn any_error_verdicts_line() -> String {
 /// （うちカーネルの置き場 47GB、その incremental 38GB）。**100GiB は今の 1.7 倍で、急に増えたこと
 /// （掃除されない置き場ができた等）だけを知らせる。** **止めない。** **掃除は運用者に確かめてから行う**
 /// ——**消してよい物の一覧は `docs/verification-coverage.md` の「ビルドの使い回し（5.c）は入れない」にある。**
-const BUILD_DIR_WARN_BYTES: u64 = 100 << 30;
+pub(crate) const BUILD_DIR_WARN_BYTES: u64 = 100 << 30;
 
 /// ビルドの置き場の大きさを出す（`--full` のまとめ。止めない）。
 ///
@@ -8047,7 +8048,7 @@ fn report_build_directory_size(workspace_root: &Path) {
 }
 
 /// 置き場の大きさ（`du -sb`。読めなければ `None`）。
-fn directory_bytes(path: &Path) -> Option<u64> {
+pub(crate) fn directory_bytes(path: &Path) -> Option<u64> {
     external_tool("du")
         .arg("-sb")
         .arg(path)

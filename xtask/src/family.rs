@@ -373,6 +373,8 @@ pub const PATH_RULES: &[PathRule] = &[
             "xtask/src/metrics.rs",
             "xtask/src/sampling.rs",
             "xtask/src/vbox.rs",
+            // **走っている全検査の進み具合を読む道具**（2026-10-05）——**読むだけで、全検査の項目は使わない。**
+            "xtask/src/watch.rs",
             "xtask/reference/host-tests.txt",
             "xtask/reference/kernel-layout.txt",
             "xtask/reference/x86-words.txt",

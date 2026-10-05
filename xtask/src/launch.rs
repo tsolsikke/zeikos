@@ -734,6 +734,29 @@ impl<'a> Spec<'a> {
     }
 }
 
+/// 回の置き場の `run.txt` に、QEMU の起動を 1 行書き足す（2026-10-05）。**上限の秒数と、起こした時刻である。**
+///
+/// **全検査の見張り（`crate::watch`）が読む**——動いている QEMU が、上限のどこまで来ているかを、外から見るためである。
+/// **`run.txt` が無い置き場（回の置き場を使わない起動）では、何もしない。** 書けなくても、起動は止めない。
+fn note_launch(dir: &Path, timeout: Duration) {
+    use std::io::Write;
+
+    let path = dir.join("run.txt");
+    if !path.is_file() {
+        return;
+    }
+    let started = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis());
+    if let Ok(mut file) = std::fs::OpenOptions::new().append(true).open(&path) {
+        let _ = writeln!(
+            file,
+            "qemu: limit {}s started (unix ms): {started}",
+            timeout.as_secs_f64()
+        );
+    }
+}
+
 /// **QEMU を起動する**（唯一の入口）。**起動する前に空きを確かめ、下限を割っていれば故障として断る。**
 ///
 /// **検査のロックを共有で持っていることも確かめる**（`check_lock`。2026-09-25）——**入口で取っていれば
@@ -766,6 +789,7 @@ pub fn spawn(spec: &Spec<'_>) -> Result<QemuRun> {
     }
     // **VHD の載ったホストのドライブの空きも見る**（2026-09-25。運用者の足す1点）。
     check_host_floor(spec.what)?;
+    note_launch(&dir, spec.timeout);
     let watch_host = in_wsl();
     let mut command = Command::new("sh");
     command
