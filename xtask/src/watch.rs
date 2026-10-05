@@ -553,12 +553,29 @@ pub fn command(root: &Path) -> Result<()> {
     let show =
         |bytes: Option<u64>| bytes.map_or("?".to_string(), |bytes| format!("{:.1}", gib(bytes)));
     let low_disk = free.is_some_and(|free| free < 2 * crate::launch::DISK_FLOOR_BYTES);
+    // **全検査が始まってから装置へ書いた量**（`/proc/diskstats` の差。始まりの値は、全検査の入口が控える）と、
+    // **VHD の載ったドライブの空き**（入口の空きの確かめが見るのと同じ値。WSL の中の空きとは別である）。
+    let written = fs::read_to_string(crate::full_check::current_run_path(&main))
+        .ok()
+        .and_then(|text| {
+            let (name, start) = text.trim().split_once('\t')?;
+            if name != log_name {
+                return None;
+            }
+            let start = start.parse::<u64>().ok()?;
+            let now = crate::full_check::sectors_written(&main)?;
+            Some(now.saturating_sub(start) * 512)
+        });
+    let (_, host_free, _) = crate::full_check::free_spaces(&main);
     println!(
-        "watch: disk: full-check tree {} GiB{}, main target {} GiB{}, free {} GiB{}",
+        "watch: disk: written since the start {} GiB; full-check tree {} GiB{}, main target {} GiB{}; \
+         free on the drive holding the WSL disk {} GiB, inside WSL {} GiB{}",
+        show(written),
         show(worktree_bytes),
         near_mark(worktree_bytes),
         show(main_bytes),
         near_mark(main_bytes),
+        show(host_free),
         show(free),
         if low_disk { " !LOW" } else { "" }
     );

@@ -35,16 +35,165 @@ use anyhow::{bail, Context, Result};
 pub const KEEP_WHOLE: usize = 16;
 
 /// ログだけでも残す置き場の数（新しい順）。これより古いものは丸ごと消す。
-pub const KEEP_LOGS: usize = 1000;
+///
+/// **2026-10-05 に、1,000 から 500 へ減らした**（SSD に置く量を減らすため）。全検査 1 回が取る置き場は約 430 個
+/// なので、直近の全検査のログは、どれも後から読める。
+pub const KEEP_LOGS: usize = 500;
+
+/// 使い捨ての置き場（[`RunDir`] の doc の「使い捨ての置き場」）を置く tmpfs。
+const SCRATCH_TMPFS: &str = "/dev/shm";
+
+/// tmpfs の空きが、これより少なければ、その回の使い捨ての置き場は SSD に置く（バイト）。
+///
+/// **1 回の実行が tmpfs に置く量は、多くて約 150 MiB である**（装置の像 32 MiB、取り出した像 32 MiB、起動媒体の像
+/// 66 MiB、ESP 約 10 MiB）。**同時に走る QEMU は 4 つまで**（`launch::VCPU_BUDGET`）で、項目が終わるまで残す分を
+/// 入れても、全検査の間に使うのは 2 GiB に届かない見込みである。**1 GiB を切ったら、ほかの者が tmpfs を使って
+/// いる**——メモリを食い合わないように、SSD へ戻す。
+const SCRATCH_FLOOR_BYTES: u64 = 1 << 30;
 
 /// 番号を取り合って負けたときに、次の番号を試す回数の上限（上限の無い繰り返しを書かない）。
 const ALLOCATION_ATTEMPTS: u64 = 1000;
 
 /// 1 回の QEMU の実行の置き場。**作ってから落とすまで、置き場のロックを持つ。**
+///
+/// # 使い捨ての置き場（2026-10-05）
+///
+/// **装置の像・ESP・起動媒体の像・QEMU から取り出した RAM の像は、tmpfs に置く**（`/dev/shm` の下。[`RunDir::scratch`]）。
+/// どれも、その回の間だけ要るファイルで、QEMU がいちばん多く書く先である（保存のたびに、装置の像の全体を書く）。
+/// SSD に置いていたときは、全検査 1 回で 100 GiB ほどを書いていた（実測。`docs/verification-coverage.md` の
+/// 「全検査が SSD に書く量」）。**ログ（シリアルと `-D` の記録）と `run.txt` は、今までどおり SSD の置き場に置く。**
+///
+/// **使い捨ての置き場は、値を落とすときに消す。** その前に、**後で要るものだけを SSD の置き場へ写す**（0 だけの
+/// ブロックは書かない）。
+///
+/// - **項目の中で作った置き場**（全検査と、検査の項目）——項目が終わるまで残し（同じ項目の次の起動が、前の起動の
+///   装置の像を読む）、**項目が失敗したときだけ**、装置の像と取り出した像を写す（[`finish_item`]）。
+/// - **項目の外で作った置き場**（手で打つ起動）——落とすときに、装置の像と取り出した像を写す。次の起動が前の
+///   装置の像を持ち越す流れ（`--keep-disk`・`--manual`）が、今までどおり動く。
+/// - **既定の像として示した置き場**（[`RunDir::publish_as_default_image`]）——ESP も写す（道具が読む）。
+///
+/// **tmpfs が使えないか、空きが少ないときは、使い捨ての置き場も SSD の置き場と同じ所になる**（今までの形）。
 pub struct RunDir {
     number: u64,
     path: PathBuf,
+    /// 使い捨ての置き場。**tmpfs に置けなかった回は、`path` と同じである。**
+    scratch: PathBuf,
+    /// 既定の像として示したか（落とすときに、ESP も写す）。
+    published: std::cell::Cell<bool>,
     _lock: Option<File>,
+}
+
+thread_local! {
+    /// いまの項目の中で落とした置き場の、使い捨ての置き場と SSD の置き場（[`begin_item`] から [`finish_item`] まで）。
+    /// **項目の外では `None`。**
+    static ITEM_SCRATCH: std::cell::RefCell<Option<Vec<(PathBuf, PathBuf, bool)>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// 項目が始まった。**この糸で、これから落とす置き場の使い捨ての置き場を、項目の終わりまで残す。**
+pub fn begin_item() {
+    // 前の項目の分が残っていれば、通ったものとして片付ける（終わりを告げずに次が始まった場合の守り）。
+    finish_item(false);
+    ITEM_SCRATCH.with(|slot| *slot.borrow_mut() = Some(Vec::new()));
+}
+
+/// 項目が終わった。**失敗していれば、装置の像と取り出した像を SSD の置き場へ写してから、使い捨ての置き場を消す。**
+/// 通っていれば、写さずに消す。
+pub fn finish_item(failed: bool) {
+    let pending = ITEM_SCRATCH.with(|slot| slot.borrow_mut().take());
+    for (scratch, path, published) in pending.unwrap_or_default() {
+        retire_scratch(&scratch, &path, failed, published);
+    }
+}
+
+/// 使い捨ての置き場を片付ける。`keep_images` なら、装置の像と取り出した像を SSD の置き場へ写す。`keep_esp` なら
+/// ESP も写す。**写しは、0 だけのブロックを書かない。** 失敗は無視する（片付けは検査の結果に効かない）。
+fn retire_scratch(scratch: &Path, path: &Path, keep_images: bool, keep_esp: bool) {
+    if scratch == path {
+        return;
+    }
+    if keep_images || keep_esp {
+        for name in [DISK_IMAGE, EXTRACTED_IMAGE] {
+            let from = scratch.join(name);
+            if from.is_file() {
+                let _ = copy_sparse(&from, &path.join(name));
+            }
+        }
+    }
+    if keep_esp {
+        copy_tree(&scratch.join(ESP), &path.join(ESP));
+    }
+    let _ = fs::remove_dir_all(scratch);
+}
+
+/// ディレクトリを丸ごと写す（既定の像として示した置き場の ESP。小さいので、そのまま写す）。
+fn copy_tree(from: &Path, to: &Path) {
+    let Ok(entries) = fs::read_dir(from) else {
+        return;
+    };
+    let _ = fs::create_dir_all(to);
+    for entry in entries.filter_map(|entry| entry.ok()) {
+        let target = to.join(entry.file_name());
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            copy_tree(&entry.path(), &target);
+        } else {
+            let _ = fs::copy(entry.path(), &target);
+        }
+    }
+}
+
+/// ファイルを、0 だけの 4 KiB のブロックを書かずに写す。**長さは変えない。**
+fn copy_sparse(from: &Path, to: &Path) -> std::io::Result<()> {
+    use std::io::{Seek, SeekFrom};
+
+    const BLOCK: usize = 4096;
+    let bytes = fs::read(from)?;
+    let mut file = File::create(to)?;
+    file.set_len(bytes.len() as u64)?;
+    for (index, block) in bytes.chunks(BLOCK).enumerate() {
+        if block.iter().all(|byte| *byte == 0) {
+            continue;
+        }
+        file.seek(SeekFrom::Start((index * BLOCK) as u64))?;
+        file.write_all(block)?;
+    }
+    Ok(())
+}
+
+/// 置き場の中の、決まった名前。
+const DISK_IMAGE: &str = "disk0.img";
+const EXTRACTED_IMAGE: &str = "fs-extract.img";
+const ESP: &str = "esp";
+
+/// この回の使い捨ての置き場を決める（純粋な論理ではない。tmpfs の様子を見る）。**置けなければ `None`。**
+///
+/// **道は `/dev/shm/zeikos-runs-<利用者>/<置き場の親の道から作った名前>/<番号>` である**——作業ツリーごと
+/// （メインの木と、全検査の木）に分かれ、同じ番号でもぶつからない。
+fn scratch_for(runs: &Path, number: u64) -> Option<PathBuf> {
+    let tmpfs = Path::new(SCRATCH_TMPFS);
+    if !tmpfs.is_dir() {
+        return None;
+    }
+    if crate::launch::available_bytes(tmpfs).is_none_or(|free| free < SCRATCH_FLOOR_BYTES) {
+        return None;
+    }
+    Some(scratch_base(runs).join(number.to_string()))
+}
+
+/// 置き場の親（`…/target/runs`）に対応する、tmpfs の側の親。
+fn scratch_base(runs: &Path) -> PathBuf {
+    let user = std::env::var("USER").unwrap_or_else(|_| "user".to_string());
+    Path::new(SCRATCH_TMPFS)
+        .join(format!("zeikos-runs-{user}"))
+        .join(scratch_name(runs))
+}
+
+/// 置き場の親の道から、tmpfs の側のディレクトリの名前を作る（純粋な論理）。英数字のほかは `_` にする。
+fn scratch_name(runs: &Path) -> String {
+    runs.to_string_lossy()
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect()
 }
 
 impl RunDir {
@@ -80,10 +229,28 @@ impl RunDir {
                     writeln!(note, "what: {what}")?;
                     writeln!(note, "pid: {}", std::process::id())?;
                     writeln!(note, "started (unix ms): {started}")?;
-                    println!("(info) run {number}: {} ({what})", path.display());
+                    // **使い捨ての置き場を取る**（tmpfs。取れなければ、SSD の置き場と同じ所にする）。
+                    let scratch = scratch_for(&runs, number)
+                        .filter(|scratch| {
+                            let _ = fs::remove_dir_all(scratch);
+                            fs::create_dir_all(scratch).is_ok()
+                        })
+                        .unwrap_or_else(|| path.clone());
+                    writeln!(note, "scratch: {}", scratch.display())?;
+                    println!(
+                        "(info) run {number}: {} ({what}{})",
+                        path.display(),
+                        if scratch == path {
+                            "; scratch files on the same disk"
+                        } else {
+                            "; scratch files on tmpfs"
+                        }
+                    );
                     return Ok(RunDir {
                         number,
                         path,
+                        scratch,
+                        published: std::cell::Cell::new(false),
                         _lock: Some(lock),
                     });
                 }
@@ -106,6 +273,8 @@ impl RunDir {
         RunDir {
             number,
             path: path.to_path_buf(),
+            scratch: path.to_path_buf(),
+            published: std::cell::Cell::new(false),
             _lock: None,
         }
     }
@@ -115,14 +284,24 @@ impl RunDir {
         &self.path
     }
 
-    /// ESP のディレクトリ（QEMU には `fat:rw:` で渡す）。
+    /// ESP のディレクトリ（QEMU には `fat:rw:` で渡す）。**使い捨ての置き場に在る。**
     pub fn esp(&self) -> PathBuf {
-        self.path.join("esp")
+        self.scratch.join(ESP)
     }
 
-    /// virtio-blk のディスクのイメージ。
+    /// virtio-blk のディスクのイメージ。**使い捨ての置き場に在る。**
     pub fn disk_image(&self) -> PathBuf {
-        self.path.join("disk0.img")
+        self.scratch.join(DISK_IMAGE)
+    }
+
+    /// QEMU から取り出した RAM の像。**使い捨ての置き場に在る。**
+    pub fn extracted_image(&self) -> PathBuf {
+        self.scratch.join(EXTRACTED_IMAGE)
+    }
+
+    /// その回だけの大きなファイル（起動媒体の像など）。**使い捨ての置き場に在り、SSD へは写さない。**
+    pub fn scratch_file(&self, name: &str) -> PathBuf {
+        self.scratch.join(name)
     }
 
     /// OVMF の変数の写し（毎回テンプレートから作り直す）。
@@ -169,6 +348,8 @@ impl RunDir {
         // **置き換えは rename で 1 度に行う**——読む側が、印の無い瞬間を見ない。
         fs::rename(&staged, &link)
             .with_context(|| format!("failed to replace {}", link.display()))?;
+        // **落とすときに、ESP も SSD の置き場へ写す**（道具は、SSD の置き場を読む）。
+        self.published.set(true);
         Ok(())
     }
 
@@ -182,10 +363,38 @@ impl RunDir {
             .filter(|n| *n < self.number)
             .collect();
         numbers.sort_unstable_by(|a, b| b.cmp(a));
+        // **使い捨ての置き場に残っていれば、そちらを先に見る**（同じ項目の中の、前の起動）。無ければ、SSD の置き場
+        // （落とすときに写したもの）を見る。
+        let base = scratch_base(runs);
         numbers
             .into_iter()
-            .map(|n| runs.join(n.to_string()).join("disk0.img"))
+            .flat_map(|n| {
+                [
+                    base.join(n.to_string()).join(DISK_IMAGE),
+                    runs.join(n.to_string()).join(DISK_IMAGE),
+                ]
+            })
             .find(|path| path.is_file())
+    }
+}
+
+impl Drop for RunDir {
+    /// 使い捨ての置き場を片付ける（型の doc）。**項目の中なら、項目の終わりまで残す。**
+    fn drop(&mut self) {
+        if self.scratch == self.path {
+            return;
+        }
+        let published = self.published.get();
+        let deferred = ITEM_SCRATCH.with(|slot| match slot.borrow_mut().as_mut() {
+            Some(pending) => {
+                pending.push((self.scratch.clone(), self.path.clone(), published));
+                true
+            }
+            None => false,
+        });
+        if !deferred {
+            retire_scratch(&self.scratch, &self.path, true, published);
+        }
     }
 }
 
@@ -285,6 +494,60 @@ fn lock_if_idle(dir: &Path) -> Option<File> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// tmpfs の側の名前は、置き場の親の道ごとに違う（メインの木と全検査の木が、同じ番号でぶつからない）。
+    #[test]
+    fn the_scratch_name_differs_per_runs_directory() {
+        let main = scratch_name(Path::new("/home/u/zeikos/target/runs"));
+        let full = scratch_name(Path::new("/home/u/zeikos-full-check/target/runs"));
+        assert_ne!(main, full);
+        assert!(main.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'));
+    }
+
+    /// 使い捨ての置き場を片付けるとき、**残すと決めた回だけ、装置の像と取り出した像を SSD の置き場へ写す。**
+    /// 写しは長さと中身が同じである。どちらの場合も、使い捨ての置き場は消える。
+    #[test]
+    fn retiring_scratch_copies_the_images_only_when_asked() {
+        let root = std::env::temp_dir().join(format!("zeikos-scratch-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        for (keep, name) in [(true, "kept"), (false, "dropped")] {
+            let scratch = root.join(name).join("scratch");
+            let path = root.join(name).join("run");
+            fs::create_dir_all(scratch.join(ESP)).unwrap();
+            fs::create_dir_all(&path).unwrap();
+            let mut image = vec![0u8; 3 * 4096 + 17];
+            image[4096 + 5] = 7;
+            fs::write(scratch.join(DISK_IMAGE), &image).unwrap();
+            fs::write(scratch.join(EXTRACTED_IMAGE), b"x").unwrap();
+            fs::write(scratch.join(ESP).join("kernel.elf"), b"elf").unwrap();
+            retire_scratch(&scratch, &path, keep, false);
+            assert!(!scratch.exists(), "{name}");
+            assert_eq!(path.join(DISK_IMAGE).is_file(), keep, "{name}");
+            assert_eq!(path.join(EXTRACTED_IMAGE).is_file(), keep, "{name}");
+            assert!(
+                !path.join(ESP).exists(),
+                "{name}: the ESP is copied only for a published run"
+            );
+            if keep {
+                assert_eq!(fs::read(path.join(DISK_IMAGE)).unwrap(), image);
+            }
+        }
+        // 既定の像として示した回は、ESP も写す。
+        let scratch = root.join("published").join("scratch");
+        let path = root.join("published").join("run");
+        fs::create_dir_all(scratch.join(ESP).join("zeikos")).unwrap();
+        fs::create_dir_all(&path).unwrap();
+        fs::write(scratch.join(ESP).join("zeikos").join("kernel.elf"), b"elf").unwrap();
+        retire_scratch(&scratch, &path, false, true);
+        assert_eq!(
+            fs::read(path.join(ESP).join("zeikos").join("kernel.elf")).unwrap(),
+            b"elf"
+        );
+        // 使い捨ての置き場が SSD の置き場と同じ所なら、何も消さない。
+        retire_scratch(&path, &path, false, false);
+        assert!(path.exists());
+        let _ = fs::remove_dir_all(&root);
+    }
 
     /// **新しい順に KEEP_WHOLE 個は触らず、KEEP_LOGS 個までは像だけ消し、それより古いものは丸ごと消す。**
     /// **既定の像として示している置き場は、古くても触らない。**

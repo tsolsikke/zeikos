@@ -4088,7 +4088,7 @@ fn cmd_fs_image_extract(features: &[&str]) -> Result<()> {
     let _ = fs::remove_file(&serial_log);
     let debug_log = run.debug_log();
     let _ = fs::remove_file(&debug_log);
-    let dump = run.file("fs-extract.img");
+    let dump = run.extracted_image();
     let _ = fs::remove_file(&dump);
     let monitor_socket = run.monitor_socket("fsextract");
     let _ = fs::remove_file(&monitor_socket);
@@ -11432,7 +11432,7 @@ fn cmd_machine_variant(
             None
         }
         EspSource::Media => {
-            let out = run.file("media.img");
+            let out = run.scratch_file("media.img");
             println!(
                 "machine-variant {}: (info) {}",
                 variant.name,
@@ -31336,6 +31336,23 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
         launch::runs_started(),
         launch::runs_total_time().as_secs_f64()
     );
+    // **装置（SSD）へ書いた量の内訳**（2026-10-05。止めない）。**全体は `/proc/diskstats` の差、QEMU とこのプロセスの分は
+    // `/proc/<pid>/io` の `write_bytes` である。** 残りは、cargo と rustc と、外の道具が書いた分になる。
+    if let Some(total) = full_check::written_since_the_start() {
+        let qemu = launch::qemu_written_bytes();
+        let own = launch::process_written_bytes(std::process::id()).unwrap_or(0);
+        let gib = |bytes: u64| bytes as f64 / (1u64 << 30) as f64;
+        println!(
+            "(info) written to the device since the start: {:.1} GiB in all; by QEMU {:.1} GiB \
+             ({} run(s); scratch files on tmpfs are not counted), by this xtask process {:.1} GiB, \
+             the rest (cargo, rustc and the tools) {:.1} GiB",
+            gib(total),
+            gib(qemu),
+            launch::runs_started(),
+            gib(own),
+            gib(total.saturating_sub(qemu).saturating_sub(own))
+        );
+    }
     // **期限で終わった待ち**（2026-09-25。QEMU を起動した回だけ。止めない）。
     if launch::runs_started() > 0 {
         println!("{}", deadline_ends_line());
@@ -32492,6 +32509,9 @@ impl Failures {
     /// もの**（呼んでいなければ実行の記録から分ける。検査装置の故障は見分けられない）。
     fn push(&mut self, name: String) {
         FAILED_SO_FAR.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        // **この項目は失敗した**（2026-10-05）——項目の終わりに、使い捨ての置き場の像を SSD へ写す（`run_dir` の
+        // `finish_item`）。
+        ITEM_FAILED.with(|slot| slot.set(true));
         let category = ITEM_FAILURE_CATEGORY
             .with(|slot| slot.get())
             .unwrap_or_else(|| launch::classify(false, &launch::item_runs()));
@@ -32824,6 +32844,9 @@ fn begin_item(family: Family, label: &str) {
         stop_if_over_the_time_limit();
     }
     println!("=== xtask check: {label}");
+    // **この項目の使い捨ての置き場は、項目の終わりまで残す**（2026-10-05。同じ項目の次の起動が、前の起動の
+    // 装置の像を読む）。
+    run_dir::begin_item();
     // **項目の始まりの時刻を残す**（2026-09-29。試験の時間を縮める案の 0。全検査の間だけ）。
     sampling::note_item(label);
     item_clock(|clock| *clock = Some((Instant::now(), label.to_string(), family)));
@@ -32872,6 +32895,9 @@ fn over_the_time_limit() -> bool {
 
 /// 走っている項目の所要を出す（VIEW-b の後）。**走っていなければ何もしない。**
 fn finish_item() {
+    // **使い捨ての置き場（tmpfs）を片付ける**（2026-10-05。`run_dir` の型の doc）。**項目が失敗していれば、
+    // 装置の像と取り出した像を SSD の置き場へ写してから消す。**
+    run_dir::finish_item(ITEM_FAILED.with(|slot| slot.replace(false)));
     let taken = item_clock(|clock| clock.take());
     if let Some((started, label, family)) = taken {
         let elapsed = started.elapsed();
@@ -33025,6 +33051,8 @@ fn failure_category(error: &anyhow::Error) -> &'static str {
 std::thread_local! {
     /// いまの項目の中で [`failure_category`] が決めた分け方（2026-09-26）。**`begin_item` が空にする。**
     /// **項目を走らせる糸ごとに持つ**（2026-09-29）——同時に走る項目の分け方を混ぜない。
+    /// いまの項目が失敗したか（[`Failures::push`] が立て、[`finish_item`] が読んで降ろす。2026-10-05）。
+    static ITEM_FAILED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     static ITEM_FAILURE_CATEGORY: std::cell::Cell<Option<launch::Category>> =
         const { std::cell::Cell::new(None) };
 }

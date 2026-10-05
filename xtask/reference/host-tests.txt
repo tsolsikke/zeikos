@@ -808,6 +808,7 @@ xtask::full_check::tests::a_worktree_is_cold_when_the_kernel_sources_changed_sin
 xtask::full_check::tests::a_worktree_is_cold_without_target_when_small_or_built_by_another_rustc
 xtask::full_check::tests::appends_survive_a_torn_tail_and_concurrent_writers
 xtask::full_check::tests::environment_differences_name_the_changed_tools
+xtask::full_check::tests::old_logs_are_removed_with_their_companions
 xtask::full_check::tests::only_a_pass_at_the_needed_level_or_above_covers_a_commit
 xtask::full_check::tests::pre_push_lines_are_read_and_bad_ones_are_refused
 xtask::full_check::tests::records_and_selections_are_written_to_the_git_dir
@@ -842,6 +843,7 @@ xtask::launch::tests::the_vcpu_count_is_read_from_smp
 xtask::launch::tests::the_watched_drive_is_matched_against_the_registry
 xtask::launch::tests::the_wrapper_ignores_sigxfsz_before_exec
 xtask::launch::tests::vcpus_are_taken_within_the_budget_and_given_back
+xtask::launch::tests::write_bytes_is_read_from_the_io_file
 xtask::launch::tests::wsl_is_told_from_the_kernel_release
 xtask::media::tests::a_broken_gpt_crc_is_caught
 xtask::media::tests::a_chain_without_an_end_is_caught
@@ -862,8 +864,10 @@ xtask::page_permissions::tests::one_changed_permission_is_named_with_its_moment_
 xtask::page_permissions::tests::only_the_rows_are_taken_out_of_the_serial_log
 xtask::page_permissions::tests::page_counts_and_rows_on_one_side_only_are_reported
 xtask::page_permissions::tests::rows_that_share_a_place_but_differ_in_permissions_are_paired_by_their_permissions
+xtask::run_dir::tests::retiring_scratch_copies_the_images_only_when_asked
 xtask::run_dir::tests::the_names_in_a_run_directory_come_from_the_run
 xtask::run_dir::tests::the_newest_runs_are_kept_whole_and_the_oldest_are_removed
+xtask::run_dir::tests::the_scratch_name_differs_per_runs_directory
 xtask::run_set::tests::a_list_is_read_one_test_per_line
 xtask::run_set::tests::a_plain_row_is_judged_by_its_exit_code
 xtask::run_set::tests::a_row_marked_to_fail_names_what_its_log_will_say

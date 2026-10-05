@@ -51,6 +51,96 @@ pub const LOG_ENV: &str = "ZEIKOS_CHECK_LOG";
 /// （2026-09-25）。**作業ツリーのチェックアウトの分も、その全検査の書いた量に含めるため。**
 pub const DISK_START_ENV: &str = "ZEIKOS_CHECK_DISK_START";
 
+/// 全検査が書く量の見込みに使う記録の、いちばん古い時刻（unix 秒。2026-10-05 20:44 JST）。
+///
+/// **この時刻に、全検査が SSD に書く先の作りを変えた**——回ごとの使い捨ての置き場（装置の像・ESP・取り出した像・
+/// 起動媒体の像）を tmpfs へ移し、全検査のビルドは増分の置き場を使わない形にした。**それより前の回が書いた量
+/// （冷えた回で 53〜178 GiB）には、tmpfs へ移した分が入っている。** 入口の空きの確かめは、SSD に書く分だけを
+/// 見積もるので、前の作りの記録は見ない。**新しい作りの記録が無い間は、代わりの値（メインの作業ツリーの
+/// `target/` の大きさ）を使う。**
+///
+/// **書く先の作りをまた変えたら、この時刻を進めること。**
+pub const WRITE_LAYOUT_SINCE_UNIX: u64 = 1_791_200_681;
+
+/// 残す全検査のログの数（新しい順。`.log` と、同じ名前の `-samples.tsv`・`-windows.csv`）。**それより古いものは、
+/// 全検査を始めるときに消す**（2026-10-05）。直近の緑の回は、見張りが見込みに使う。10 回分あれば、落ちた回が続いても
+/// 緑の回が残る。
+pub const KEEP_FULL_CHECK_LOGS: usize = 10;
+
+/// 残したカーネルとブートローダの写し（`target/kernel-builds/`）のうち、これより長く触られていないものは、全検査を
+/// 始めるときに消す（2026-10-05）。**写しは組ごとに 1 つで、使うたびに書き直される。** 7 日触られていない組は、
+/// もう使われていない組（消えた破壊テストの構成など）である。
+pub const KEPT_BUILD_MAX_AGE: std::time::Duration =
+    std::time::Duration::from_secs(7 * 24 * 60 * 60);
+
+/// 走っている全検査の、始まりの控え（`target/full-check/current.tsv`）。**見張りが読む**（`crate::watch`）——
+/// ログの名前と、始めたときの「装置へ書いたセクタの数」である。
+pub fn current_run_path(main: &Path) -> PathBuf {
+    main.join("target").join("full-check").join("current.tsv")
+}
+
+/// 消すログの一覧（純粋な論理）。`names` は置き場の中のファイルの名前。**新しい順に `keep` 回分の `.log` と、同じ
+/// 名前で始まる付きのファイルを残す**（名前は時刻で始まるので、名前の順が時刻の順である）。
+pub fn logs_to_remove(names: &[String], keep: usize) -> Vec<String> {
+    let mut stems: Vec<&str> = names
+        .iter()
+        .filter_map(|name| name.strip_suffix(".log"))
+        .collect();
+    stems.sort_unstable();
+    stems.reverse();
+    let kept: Vec<&str> = stems.into_iter().take(keep).collect();
+    names
+        .iter()
+        .filter(|name| {
+            let stem = [".log", "-samples.tsv", "-windows.csv"]
+                .iter()
+                .find_map(|suffix| name.strip_suffix(suffix));
+            match stem {
+                Some(stem) => !kept.contains(&stem),
+                // 知らない形のファイルは触らない。
+                None => false,
+            }
+        })
+        .cloned()
+        .collect()
+}
+
+/// 古いログと、長く触られていないカーネルの写しを消す（全検査を始めるとき）。**失敗は無視する**（片付けは検査の
+/// 結果に効かない）。
+fn prune_before_the_run(main: &Path, worktree: &Path) {
+    let logs = main.join("target").join("full-check").join("logs");
+    let names: Vec<String> = fs::read_dir(&logs)
+        .map(|entries| {
+            entries
+                .flatten()
+                .filter_map(|entry| entry.file_name().into_string().ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    for name in logs_to_remove(&names, KEEP_FULL_CHECK_LOGS) {
+        let _ = fs::remove_file(logs.join(name));
+    }
+    for tree in [main, worktree] {
+        for kind in ["kernel", "bootloader"] {
+            let kept = tree.join("target").join("kernel-builds").join(kind);
+            let Ok(entries) = fs::read_dir(&kept) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                let old = entry
+                    .metadata()
+                    .and_then(|meta| meta.modified())
+                    .ok()
+                    .and_then(|modified| modified.elapsed().ok())
+                    .is_some_and(|age| age > KEPT_BUILD_MAX_AGE);
+                if old && entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                    let _ = fs::remove_dir_all(entry.path());
+                }
+            }
+        }
+    }
+}
+
 /// `cargo xtask full` が子の全検査へ、作業ツリーが冷えていたか（`cold`／`warm`）を渡す環境変数（2026-09-26。
 /// 記録に書くだけ）。
 pub const START_STATE_ENV: &str = "ZEIKOS_CHECK_START_STATE";
@@ -453,13 +543,13 @@ fn diskstats_sectors_written(text: &str, device: (u32, u32)) -> Option<u64> {
 
 /// 作業ツリーの載った装置（WSL の置き場）が書いたセクタ数（`/proc/diskstats`）。**WSL を起動し直すと 0 から
 /// 数え直す。** 実測で装置は 8:48（sdd）だった（2026-09-25）。
-fn sectors_written(root: &Path) -> Option<u64> {
+pub(crate) fn sectors_written(root: &Path) -> Option<u64> {
     let device = check_lock::device_numbers(fs::metadata(root).ok()?.dev());
     diskstats_sectors_written(&fs::read_to_string("/proc/diskstats").ok()?, device)
 }
 
 /// 空き（WSL の中・VHD の載ったドライブ・Windows のドライブ）。**WSL の外では 2 つのドライブは `None`。**
-fn free_spaces(root: &Path) -> (Option<u64>, Option<u64>, Option<u64>) {
+pub(crate) fn free_spaces(root: &Path) -> (Option<u64>, Option<u64>, Option<u64>) {
     let wsl = launch::in_wsl();
     let drive = |path: &str| {
         wsl.then(|| launch::available_bytes(Path::new(path)))
@@ -707,15 +797,19 @@ fn rustc_fingerprint(target: &Path) -> Option<String> {
 /// - **冷えた**——**記録の中の冷えた回の書いた量の最大。** 無ければ代わりの値（メインの作業ツリーの `target/` の大きさ）。
 /// - **温まった**——**直近の温まった回の書いた量。他の実行が無い回を先にとる。** 無ければ、冷えたかが分からない
 ///   古い記録の直近の値。それも無ければ代わりの値。
+///
+/// **`since` より前の記録は見ない**（2026-10-05。[`WRITE_LAYOUT_SINCE_UNIX`]）。書く先の作りを変えると、それより前の
+/// 回が書いた量は、見込みの根拠にならない。
 fn estimate_to_write(
     records: &[Record],
     state: &StartState,
+    since: u64,
     stand_in: impl FnOnce() -> Option<u64>,
 ) -> Option<(u64, String)> {
     let fulls = || {
-        records
-            .iter()
-            .filter(|record| record.level == "full" && record.written.is_some())
+        records.iter().filter(|record| {
+            record.level == "full" && record.written.is_some() && record.unix >= since
+        })
     };
     let chosen = match state {
         StartState::Cold(_) => fulls()
@@ -792,6 +886,16 @@ pub fn begin(root: &Path, level: Level) {
             env: (level == Level::Full).then(|| environment_fingerprint(root)),
         });
     }
+}
+
+/// 検査を始めてから、装置へ書いたバイト数（`/proc/diskstats`。`begin` の前や、読めないときは `None`）。
+pub fn written_since_the_start() -> Option<u64> {
+    let start = START.lock().ok()?;
+    let start = start.as_ref()?;
+    start
+        .disk_start
+        .zip(sectors_written(&start.root))
+        .map(|(before, after)| after.saturating_sub(before) * 512)
 }
 
 /// 走り始めのツリー（ロックの中身に書く）。**`begin` の前なら `None`。**
@@ -1677,8 +1781,9 @@ fn run(target: &str) -> Result<()> {
             .as_ref()
             .map(|(from, count)| (from.as_str(), *count)),
     );
-    let (estimate, source) = estimate_to_write(&records, &state, || main_target)
-        .context("cargo xtask full: could not estimate how much the full check writes")?;
+    let (estimate, source) =
+        estimate_to_write(&records, &state, WRITE_LAYOUT_SINCE_UNIX, || main_target)
+            .context("cargo xtask full: could not estimate how much the full check writes")?;
     println!(
         "full: the worktree is {} ({})",
         state.label(),
@@ -1711,11 +1816,25 @@ fn run(target: &str) -> Result<()> {
         append_full_record(&main, &commit, &tree, "refused", &message);
         return Err(anyhow::Error::new(HarnessFault(message)));
     }
+    // **古いログと、使われていないカーネルの写しを片付ける**（2026-10-05。残す数は [`KEEP_FULL_CHECK_LOGS`] と
+    // [`KEPT_BUILD_MAX_AGE`]）。
+    prune_before_the_run(&main, &worktree);
     let disk_start = sectors_written(&main);
     prepare_worktree(&main, &worktree, &commit)?;
     if let Some(dir) = log.parent() {
         fs::create_dir_all(dir).with_context(|| format!("could not create {}", dir.display()))?;
     }
+    // **見張りのために、始まりを控える**（[`current_run_path`]）。書けなくても、検査は止めない。
+    let _ = fs::write(
+        current_run_path(&main),
+        format!(
+            "{}\t{}\n",
+            log.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            disk_start.map_or(String::new(), |sectors| sectors.to_string())
+        ),
+    );
     let file = File::create(&log).with_context(|| format!("could not create {}", log.display()))?;
     let mut child = Command::new("cargo");
     child
@@ -1731,6 +1850,11 @@ fn run(target: &str) -> Result<()> {
             disk_start.map_or(String::new(), |sectors| sectors.to_string()),
         )
         .env(START_STATE_ENV, state.label())
+        // **全検査のビルドは、増分の置き場を使わない**（2026-10-05）。カーネルは、破壊テストの構成ごとに 1 度ずつ
+        // ビルドする（約 870 組）。増分の置き場は組ごとにでき、全検査の木で 46〜52 GiB になっていた（実測）。
+        // **次の全検査でカーネルが変わっていれば、どの組もビルドし直すので、置き場はほとんど役に立たない。**
+        // 変わっていなければ、cargo は何もビルドしない（増分の置き場に依らない）。
+        .env("CARGO_INCREMENTAL", "0")
         .process_group(0);
     // **子の git が別の作業ツリーを見ないように、`GIT_*` を外す**（ロックのパスと同じ理由）。
     for (key, _) in std::env::vars_os() {
@@ -2115,6 +2239,33 @@ mod tests {
             root: None,
             note: "a\tb\nc".to_string(),
         }
+    }
+
+    /// 残すのは、新しい順に決まった回数分のログと、その付きのファイルである。知らない形のファイルは触らない。
+    #[test]
+    fn old_logs_are_removed_with_their_companions() {
+        let names: Vec<String> = [
+            "20261001-000000-aaaa.log",
+            "20261001-000000-aaaa-samples.tsv",
+            "20261001-000000-aaaa-windows.csv",
+            "20261002-000000-bbbb.log",
+            "20261002-000000-bbbb-samples.tsv",
+            "20261003-000000-cccc.log",
+            "notes.txt",
+        ]
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+        assert_eq!(
+            logs_to_remove(&names, 2),
+            [
+                "20261001-000000-aaaa.log",
+                "20261001-000000-aaaa-samples.tsv",
+                "20261001-000000-aaaa-windows.csv"
+            ]
+        );
+        assert!(logs_to_remove(&names, 3).is_empty());
+        assert_eq!(logs_to_remove(&names, 0).len(), 6);
     }
 
     /// **記録は 1 行で書いて同じものに読める**（区切りと改行は空白へ直す）。**頭の行と崩れた行は読まない。**
@@ -2757,7 +2908,7 @@ mod tests {
             full(20 << 30, Some("warm"), Some(3)),
         ];
         let pick = |records: &[Record], state: &StartState, stand_in: Option<u64>| {
-            estimate_to_write(records, state, || stand_in).map(|pair| pair.0)
+            estimate_to_write(records, state, 0, || stand_in).map(|pair| pair.0)
         };
         assert_eq!(pick(&records, &cold, Some(7)), Some(47 << 30));
         // **温まった回は、他の実行が無い回を先にとる**（直近は他の実行が在った回でも）。
