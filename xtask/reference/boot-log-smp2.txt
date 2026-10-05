@@ -1,6 +1,7 @@
 [INFO] ZeikOS bootloader: serial log established (COM1)
 Hello, ZeikOS!
 [INFO] printed "Hello, ZeikOS!" to UEFI console
+[INFO] fs-image: no \zeikos\fs.img on the ESP (Io(IoError { path: PathBuf(CString16(['\\', 'z', 'e', 'i', 'k', 'o', 's', '\\', 'f', 's', '.', 'i', 'm', 'g', '\0'])), context: OpenError, uefi_error: Error { status: NOT_FOUND, data: () } })); the kernel will need a virtio-blk device
 [INFO] ELF parsed: entry point = 0xffffffff80100000
 [INFO] kernel segments placed and .bss zeroed (0x100000..0x3c3000)
 [INFO] kernel entry: VMA 0xffffffff80100000 -> load address 0x100000 (delta 0xffffffff80000000)

@@ -11248,6 +11248,9 @@ fn cmd_image(contents: MediaContents) -> Result<()> {
     let bootloader_efi = build_bootloader_with_features(&workspace_root, &[])?;
     let kernel = build_kernel_with_features(&workspace_root, &[])?;
     let esp_dir = stage_esp(&run, &bootloader_efi, &kernel)?;
+    if contents == MediaContents::Complete {
+        stage_ram_image(&esp_dir, &kernel)?;
+    }
     let name = match contents {
         MediaContents::Complete => "zeikos",
         MediaContents::WithoutFsImage => "zeikos-no-fs-image",
@@ -11269,6 +11272,7 @@ fn check_boot_media(workspace_root: &Path) -> Result<String> {
     let bootloader_efi = build_bootloader_with_features(workspace_root, &[])?;
     let kernel = build_kernel_with_features(workspace_root, &[])?;
     let esp_dir = stage_esp(&run, &bootloader_efi, &kernel)?;
+    stage_ram_image(&esp_dir, &kernel)?;
     let out = media_image_path(workspace_root, "zeikos");
     write_boot_media(&esp_dir, &out, MediaContents::Complete)
 }
@@ -11341,6 +11345,13 @@ fn cmd_machine_variant(
     let bootloader_efi = build_bootloader_with_features(&workspace_root, bootloader_features)?;
     let kernel_elf = build_kernel_with_features(&workspace_root, kernel_features)?;
     let esp_dir = stage_esp(&run, &bootloader_efi, &kernel_elf)?;
+    // **像を RAM から受け取る変種にだけ、ESP へ像を置く**（2026-10-05。[`stage_ram_image`]）。**virtio-blk を付けて
+    // ディレクトリから起動する変種には置かない。** **起動媒体から像を外す破壊テストの回にも置かない**——
+    // 起動媒体へ入れるファイルの一覧（`MediaContents::paths`）に無いので、置いても載らない。
+    if (!variant.virtio_disk || variant.esp == EspSource::Media) && media == MediaContents::Complete
+    {
+        stage_ram_image(&esp_dir, &kernel_elf)?;
+    }
 
     // **ESP を 1 つのイメージで渡す変種（`ADR-0068` の HW-e）。** **いま積んだ ESP からイメージをビルドする**
     // ——**破壊テストの構成のカーネルが入っていなければ、破壊テストがイメージに載らない。**
@@ -33958,6 +33969,29 @@ fn stage_esp(run: &RunDir, bootloader_efi: &Path, kernel: &KernelBuild) -> Resul
     stage_esp_with_disk(run, bootloader_efi, kernel, DiskImage::Rebuild, None)
 }
 
+/// RAM ディスクのイメージを、積んだ ESP に足す（`ADR-0068` の HW-d。2026-10-05 に [`stage_esp`] から分けた）。
+///
+/// **ブートローダが `\zeikos\fs.img` として読み、BootInfo で渡す。** **VirtualBox と実機には virtio-blk が無く、
+/// 起動媒体のイメージ（HW-e）にこのファイルが入る。** **中身は `disk0.img` と同じ、いま積んだカーネルがビルドした
+/// イメージである。**
+///
+/// **呼ぶのは、像を RAM から受け取る回だけである**——起動媒体のイメージをビルドする回（`cargo xtask image`、
+/// 基本の検査の起動媒体の項目、ESP を 1 つのイメージで渡す変種）と、virtio-blk を付けない変種。
+/// **virtio-blk を付けてディレクトリから起動する回（検査の大半）は呼ばない**——ブートローダは「像が無い。
+/// カーネルは装置を使う」と 1 行出して進む。
+fn stage_ram_image(esp_dir: &Path, kernel: &KernelBuild) -> Result<()> {
+    launch::as_harness(
+        (|| {
+            let staged = esp_dir.join("zeikos").join(FS_IMAGE_NAME);
+            fs::copy(kernel.out_dir.join(FS_IMAGE_NAME), &staged).with_context(|| {
+                format!("failed to copy the fs image into {}", staged.display())
+            })?;
+            Ok(())
+        })(),
+        "staging the RAM disk image on the ESP",
+    )
+}
+
 /// **失敗は検査装置の故障として包む**（`launch::classify`。2026-09-24）。
 fn stage_esp_with_disk(
     run: &RunDir,
@@ -34025,19 +34059,11 @@ fn stage_esp_with_disk_unwrapped(
     // ロードするようになった。イメージは決定的（`build.rs` が時刻を潰す）なので、
     // どの feature 構成でも同じバイト列になる。大きさもイメージと同じにする
     // （16MiB に伸ばす根拠が無くなった）。
-    // **RAM ディスクのイメージを ESP にも置く（`ADR-0068` の HW-d）。**
-    //
-    // **ブートローダが `\zeikos\fs.img` として読み、BootInfo で渡す。** **virtio-blk が在る回は
-    // 使われない**（カーネルは装置を優先する）——**それでも常に置く。** **VirtualBox と実機には
-    // 装置が無く、起動媒体のイメージ（HW-e）にもこのファイルが入るからである。**
-    // **中身は `disk0.img` と同じ、いま積んだカーネルがビルドしたイメージである。**
-    let staged_fs_image = kernel_dir.join(FS_IMAGE_NAME);
-    fs::copy(kernel.out_dir.join(FS_IMAGE_NAME), &staged_fs_image).with_context(|| {
-        format!(
-            "failed to copy the fs image into {}",
-            staged_fs_image.display()
-        )
-    })?;
+    // **RAM ディスクのイメージは、ここでは ESP に置かない**（2026-10-05）。**置くのは [`stage_ram_image`] で、
+    // 要る回だけが呼ぶ**——起動媒体のイメージをビルドする回と、virtio-blk を付けずに起動する回である。
+    // **以前は常に置いていた。** virtio-blk が在る回は、ブートローダが像を読んで渡しても、カーネルは使わない。
+    // 読むのにかかる時間は像の大きさに比例し、32 MiB で約 3.6 秒だった（実測。`docs/verification-coverage.md` の
+    // 「ディスクの像の読み書きの所要」）。
 
     let disk_image = run.disk_image();
     // **載せるイメージは、いま積んだカーネルが埋め込んでいるものと同じである**
