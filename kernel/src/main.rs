@@ -13139,6 +13139,11 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "補助ベクタの AT_PHDR に、ずらす前の番地を渡す",
     ),
     (
+        "seinas-test",
+        cfg!(feature = "seinas-test"),
+        "Seinas の fbdev の裏側を像の /bin/linux に入れる（M2 の確かめ）",
+    ),
+    (
         "linux-c-test",
         cfg!(feature = "linux-c-test"),
         "C の Linux 向けのプログラムを像に入れ、syscall-test が起こす（手元の確かめ）",

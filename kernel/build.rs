@@ -832,6 +832,28 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
             panic!("failed to place the Linux program {name} into the staging: {e}")
         });
     }
+    // **Seinas の fbdev の裏側は、`seinas-test` のビルドだけが入れる**（2026-10-07。M2。`ADR-0083` の Addendum）。
+    // release の成果物を `tools/fetch-seinas.sh` が SHA-256 を固定して取ったもので、既定の像には入れない（バイトが release
+    // に依る）。**第三者のライセンスの表示も、同じ像の、成果物の隣（`/bin/linux/`）に入れる**——成果物と表示を離さないためと、
+    // 根の項目の数（`syscall-test` が 8 と数える）を変えないため。無ければ名指しして止まる。
+    if std::env::var("CARGO_FEATURE_SEINAS_TEST").is_ok() {
+        let fetched = format!("{manifest_dir}/../target/linux-programs");
+        let binary = format!("{fetched}/seinas-fbdev");
+        let notices = format!("{fetched}/seinas-fbdev-v0.1.0-third-party.tar.gz");
+        for source in [&binary, &notices] {
+            println!("cargo:rerun-if-changed={source}");
+        }
+        std::fs::copy(&binary, format!("{staging}/bin/linux/seinas-fbdev")).unwrap_or_else(|e| {
+            panic!("seinas-test needs {binary} (fetch it with tools/fetch-seinas.sh): {e}")
+        });
+        std::fs::copy(
+            &notices,
+            format!("{staging}/bin/linux/seinas-fbdev-v0.1.0-third-party.tar.gz"),
+        )
+        .unwrap_or_else(|e| {
+            panic!("seinas-test needs {notices} (fetch it with tools/fetch-seinas.sh): {e}")
+        });
+    }
     // **C の Linux 向けのプログラムは、`linux-c-test` のビルドだけが入れる**（2026-10-06）。`musl-gcc` で手で作った
     // もの（`tools/build-linux-programs.sh`）で、版が配布物に依るので既定の像には入れない。無ければ名指しして止まる。
     if std::env::var("CARGO_FEATURE_LINUX_C_TEST").is_ok() {

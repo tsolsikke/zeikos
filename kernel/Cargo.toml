@@ -690,6 +690,10 @@ poll-waits-on-one-member = []
 # 起こして（前景でない者が画面と入力を開けないことを見る）、画面を開き、裏バッファを mmap して
 # 四角を描き、present で写す。判定は xtask の screen-test が screendump を読んで行う。
 screen-test = []
+# Seinas の fbdev の裏側（release の seinas-fbdev。musl の静的 PIE）を像の /bin/linux に入れる手元と CI の確かめ
+# （2026-10-07。M2。破壊テストではない）。成果物は tools/fetch-seinas.sh が target/linux-programs/ に取る（SHA-256 を固定）。
+# 既定の像には入れない——バイトが release に依るため。`cargo xtask run --seinas-fbdev-test`。
+seinas-test = []
 # /dev/fb0 を Linux の fbdev の形で開き、四隅に色を置いて、FBIOZPRESENT を打たずに画面へ出るのを待つ（2026-10-07。
 # ADR-0083。M2 の最初の刻み）。init が /bin/fb-test を前景で起こす。判定は xtask の fb-test が screendump を読んで行う。
 fb-test = []

@@ -2393,6 +2393,7 @@ const RUN_FLAGS: &[(&str, RunValue)] = &[
     ("--poll-test", RunValue::None),
     ("--screen-test", RunValue::None),
     ("--fb-test", RunValue::None),
+    ("--seinas-fbdev-test", RunValue::None),
     ("--ending", RunValue::Required),
     ("--compose-test", RunValue::None),
     ("--history-test", RunValue::None),
@@ -3052,6 +3053,9 @@ fn main() -> Result<()> {
                 );
             }
             // **画面へ画素を出す判定（`ADR-0066` の Y-c）。`screendump` で画面を読み戻す。**
+            if rest.iter().any(|a| a == "--seinas-fbdev-test") {
+                return cmd_seinas_fbdev_test();
+            }
             if rest.iter().any(|a| a == "--fb-test") {
                 let sabotage: Vec<&str> = rest
                     .iter()
@@ -10468,6 +10472,263 @@ fn fb_test_corners_matching(image: &Option<(u32, u32, Vec<u8>)>) -> Option<u32> 
             .filter(|(x, y, color)| pixel_near(image, *x, *y, *color))
             .count() as u32,
     )
+}
+
+/// QEMU monitor のキー名に直す（シェルへ打つ 1 行。`common::shell_script` の台本と同じ名前）。英数字・`/`・`-`・` `・`.`
+/// だけを受ける（受け入れの条件の行に要るものだけ）。
+fn monitor_keys_for(line: &str) -> Result<Vec<&'static str>> {
+    const LETTERS: [&str; 26] = [
+        "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r",
+        "s", "t", "u", "v", "w", "x", "y", "z",
+    ];
+    const DIGITS: [&str; 10] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+    let mut keys = Vec::new();
+    for c in line.chars() {
+        keys.push(match c {
+            'a'..='z' => LETTERS[(c as u8 - b'a') as usize],
+            '0'..='9' => DIGITS[(c as u8 - b'0') as usize],
+            '/' => "slash",
+            '-' => "minus",
+            ' ' => "spc",
+            '.' => "dot",
+            other => bail!("no monitor key for {other:?} in {line:?}"),
+        });
+    }
+    keys.push("ret");
+    Ok(keys)
+}
+
+/// Seinas の fbdev の裏側が描く絵（`seinas-fbdev` の `picture.rs`）を、`screendump` の中で確かめる。**幅と高さから位置を
+/// 導く**（枠の太さは短い辺の 1/150、四隅の印の 1 辺は短い辺の 1/10。1280×800 なら 5 と 80）。返すのは、合った点の数
+/// （8 で全部: 四隅の 4 色、上の枠と左の枠の白、中央の白、背景の暗い青）。
+fn seinas_picture_matching(image: &Option<(u32, u32, Vec<u8>)>) -> Option<u32> {
+    let image = image.as_ref()?;
+    let (width, height, _) = image;
+    let short = (*width).min(*height);
+    let t = (short / 150).max(1);
+    let m = (short / 10).max(2);
+    let inner = m / 2;
+    let background = (0x19, 0x1e, 0x28);
+    let points = [
+        (t + inner, t + inner, (0xff, 0x00, 0x00)),
+        (width - t - m + inner, t + inner, (0x00, 0xff, 0x00)),
+        (t + inner, height - t - m + inner, (0x00, 0x00, 0xff)),
+        (
+            width - t - m + inner,
+            height - t - m + inner,
+            (0xff, 0xff, 0x00),
+        ),
+        (width / 2, t / 2, (0xff, 0xff, 0xff)),
+        (t / 2, height / 2, (0xff, 0xff, 0xff)),
+        (width / 2, height / 2, (0xff, 0xff, 0xff)),
+        (width / 2, height / 4, background),
+    ];
+    Some(
+        points
+            .iter()
+            .filter(|(x, y, color)| pixel_near(image, *x, *y, *color))
+            .count() as u32,
+    )
+}
+
+/// Seinas の fbdev の裏側（release の `seinas-fbdev`。musl の静的 PIE）を、ZeikOS の上でそのまま走らせて確かめる
+/// （2026-10-07。M2 の受け入れ。`ADR-0083` の Addendum）。
+///
+/// **成果物が無ければ、名指しして飛ばす**（通ったことにはしない——`skipped` の行が結果に残る。`tools/fetch-seinas.sh` が取る）。
+/// 在れば、`seinas-test` の構成（像の `/bin/linux/seinas-fbdev`）で起動し、**シェルのプロンプトへ
+/// `/bin/linux/seinas-fbdev --hold-ms 3000` を打ち**、絵の在る間に `screendump` を取り、終わった後にもう 1 度取る。
+///
+/// **判定は 5 本**——
+///
+/// 1. Seinas の確かめの絵（四隅の赤・緑・青・黄、白い枠、中央の白、暗い青の背景）が画面に出た
+/// 2. 終わった後に文字の画面が戻った（同じ点が絵の色でない）
+/// 3. 終了の状態が 0（`spawn` の結果の行が `Exited(0)`。`zash` が `exit status` を言わない）
+/// 4. 知らない番号を 1 つも打っていない（`spawn: /bin/linux/seinas-fbdev ended (Exited(0)) … (0 with a number the kernel does not know`）
+/// 5. `[ERROR]` が無い
+fn cmd_seinas_fbdev_test() -> Result<()> {
+    let context = "seinas-fbdev-test";
+    let workspace_root = workspace_root()?;
+    let binary = workspace_root.join("target/linux-programs/seinas-fbdev");
+    if !binary.is_file() {
+        println!(
+            "{context}: skipped (seinas-fbdev is not at {}; fetch it with tools/fetch-seinas.sh)",
+            binary.display()
+        );
+        return Ok(());
+    }
+    let run = RunDir::create(&workspace_root, "seinas-fbdev-test")?;
+    let ovmf_vars = prepare_ovmf_vars(&run)?;
+    let bootloader_efi = build_bootloader(&workspace_root, false)?;
+    let kernel_elf = build_kernel_with_features(&workspace_root, &["seinas-test"])?;
+    let esp_dir = stage_esp(&run, &bootloader_efi, &kernel_elf)?;
+
+    let serial_log = run.serial_log();
+    let shown_ppm = run.file("shown.ppm");
+    let left_ppm = run.file("left.ppm");
+    for stale in [&serial_log, &shown_ppm, &left_ppm] {
+        let _ = fs::remove_file(stale);
+    }
+    let debug_log = run.debug_log();
+    let _ = fs::remove_file(&debug_log);
+    let monitor_socket = run.monitor_socket("seinas");
+    let _ = fs::remove_file(&monitor_socket);
+    ensure_socket_path_fits(&monitor_socket)?;
+
+    let qemu_args = qemu_launch_args(&QemuLaunchOptions {
+        ovmf_code: Path::new(OVMF_CODE_PATH),
+        ovmf_vars: &ovmf_vars,
+        esp_dir: &esp_dir,
+        disk_image: &run.disk_image(),
+        serial: &SerialSink::File(serial_log.clone()),
+        debug_log: &debug_log,
+        display: DisplayMode::None,
+        monitor_socket: Some(&monitor_socket),
+        accelerator: Accelerator::Tcg,
+        debug_events: DebugEvents::IntAndCpuReset,
+    });
+    let outputs = [serial_log.as_path(), debug_log.as_path()];
+    let mut child = launch::spawn(&launch::Spec::new(
+        &qemu_args,
+        &outputs,
+        context,
+        Duration::ZERO,
+        launch::Deadline::Normal,
+    ))?;
+
+    let started = Instant::now();
+    let wait_for = |marker: &str, limit: Duration| -> bool {
+        let deadline = Instant::now() + limit;
+        while Instant::now() < deadline && !child.was_cut() {
+            if read_lossy(&serial_log).contains(marker) {
+                return true;
+            }
+            metrics::sleep_poll(PANIC_TEST_POLL_INTERVAL);
+        }
+        false
+    };
+
+    let command = "/bin/linux/seinas-fbdev --hold-ms 3000";
+    let ready = wait_for(SHELL_READY_MARKER, BOOT_READY_TIMEOUT);
+    let mut shown = None;
+    let mut left = None;
+    let mut typed = false;
+    if ready {
+        metrics::sleep_fixed(SHELL_TEST_LINE_INTERVAL);
+        match connect_monitor_with_retry(&monitor_socket) {
+            Ok(mut stream) => {
+                typed = true;
+                for key in monitor_keys_for(command)? {
+                    if writeln!(stream, "sendkey {key}").is_err() {
+                        typed = false;
+                        break;
+                    }
+                    metrics::sleep_fixed(SHELL_TEST_KEY_INTERVAL);
+                }
+            }
+            Err(e) => println!("{context}: could not reach the QEMU monitor: {e}"),
+        }
+    }
+    // `seinas-fbdev` は開いた直後に 1 行出す（`seinas-fbdev: /dev/fb0: 1280x800, 32 bits per pixel, line length 5120`）。
+    // その後に絵を書くので、間隔の数回ぶん待ってから読む。
+    if typed && wait_for("seinas-fbdev: /dev/fb0:", SCREEN_TEST_TIMEOUT) {
+        metrics::sleep_fixed(Duration::from_millis(1000));
+        match capture_screendump(&monitor_socket, &shown_ppm) {
+            Ok(()) => shown = read_complete_ppm(&shown_ppm, SCREENDUMP_FILE_TIMEOUT),
+            Err(e) => println!("{context}: the first screendump failed: {e}"),
+        }
+        // **終わりは `spawn` の結果の行で待つ**（`zash` は終了の状態が 0 なら何も言わない）。
+        if wait_for("spawn: /bin/linux/seinas-fbdev ended", SCREEN_TEST_TIMEOUT) {
+            metrics::sleep_fixed(Duration::from_millis(500));
+            match capture_screendump(&monitor_socket, &left_ppm) {
+                Ok(()) => left = read_complete_ppm(&left_ppm, SCREENDUMP_FILE_TIMEOUT),
+                Err(e) => println!("{context}: the second screendump failed: {e}"),
+            }
+        }
+    }
+    let waited = started.elapsed();
+
+    let qemu_exit = child
+        .try_wait()
+        .ok()
+        .flatten()
+        .map(|status| format!("{status}"));
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = fs::remove_file(&monitor_socket);
+
+    let serial = read_lossy(&serial_log);
+    let qemu_debug = read_lossy(&debug_log);
+    if let BootOutcome::DidNotStart { firmware_rip } =
+        classify_boot(&serial, &qemu_debug, KERNEL_STARTED_MARKER)
+    {
+        report_did_not_start(context, firmware_rip, qemu_exit.as_deref())?;
+        bail!("{context}: the kernel did not start");
+    }
+
+    let stripped = strip_ansi(&serial);
+    let lines: Vec<&str> = stripped.lines().map(str::trim_end).collect();
+    let picture_shown = seinas_picture_matching(&shown);
+    let picture_left = seinas_picture_matching(&left);
+    let ended_line = lines
+        .iter()
+        .find(|line| line.contains("spawn: /bin/linux/seinas-fbdev ended"));
+    let judgements: [(&str, bool); 4] = [
+        (
+            "the_seinas_picture_reached_the_screen",
+            picture_shown == Some(8),
+        ),
+        (
+            "the_text_console_came_back",
+            picture_left.is_some_and(|matching| matching <= 1),
+        ),
+        (
+            "seinas_fbdev_exited_with_zero",
+            ended_line.is_some_and(|line| line.contains("ended (Exited(0))"))
+                && !stripped.contains("zash: exit status"),
+        ),
+        (
+            "seinas_fbdev_hit_no_unknown_number",
+            ended_line
+                .is_some_and(|line| line.contains("(0 with a number the kernel does not know")),
+        ),
+    ];
+    let error_lines: Vec<&str> = lines
+        .iter()
+        .filter(|line| line.contains("[ERROR]"))
+        .copied()
+        .take(4)
+        .collect();
+    let no_error = error_lines.is_empty();
+    let failed: Vec<&str> = judgements
+        .iter()
+        .filter(|(_, held)| !held)
+        .map(|(name, _)| *name)
+        .collect();
+    for (name, held) in &judgements {
+        println!("{context}: {name} = {held}");
+    }
+    println!("{context}: no [ERROR] line = {no_error} (the first were {error_lines:?})");
+    println!(
+        "{context}: (info) picture points matching (of 8: four corners, two frame edges, the centre, the background) \
+         while shown = {picture_shown:?}, after leaving = {picture_left:?}"
+    );
+    for info in lines.iter().filter(|line| {
+        line.contains("seinas-fbdev")
+            || line.contains("[INFO] fb0:")
+            || line.contains("zash: exit status")
+    }) {
+        println!("{context}: (info) {}", info.trim());
+    }
+    println!(
+        "{context}: (info) waited {:.1} s (ready = {ready}, typed = {typed})",
+        waited.as_secs_f64()
+    );
+    if ready && typed && failed.is_empty() && no_error {
+        println!("{context}: PASS");
+        Ok(())
+    } else {
+        bail!("{context}: FAILED (judgements that fell: {failed:?}, ready = {ready}, typed = {typed}, no [ERROR] = {no_error})")
+    }
 }
 
 /// `/dev/fb0` を Linux の fbdev の形で開き、書けば映ることを検査する（2026-10-07。`ADR-0083`。M2 の最初の刻み）。
@@ -29891,6 +30152,21 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
         }
         batch.run(&mut failed);
 
+        // **Seinas の fbdev の裏側（release の成果物）をそのまま走らせる**（2026-10-07。M2 の受け入れ）。成果物が無ければ
+        // 名指しして飛ばす（`skipped` の行が結果に残る）。
+        total += 1;
+        begin_item(
+            Family::Ipc,
+            "Seinas's fbdev back end runs as shipped and its picture reaches the screen (skipped without the release artifact)",
+        );
+        match cmd_seinas_fbdev_test() {
+            Ok(()) => println!("--- seinas-fbdev test: OK"),
+            Err(error) => {
+                println!("--- seinas-fbdev test: FAILED ({error})");
+                failed.push("seinas-fbdev test".to_string());
+            }
+        }
+
         total += 1;
         begin_item(
             Family::Ipc,
@@ -32666,7 +32942,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 63,
-    full: 503,
+    full: 504,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

@@ -62,7 +62,7 @@ on:
   push:
     branches: ["**"]
 
-# 読むだけで足りる。外部サービスも呼ばない。
+# 読むだけで足りる。呼ぶ外部サービスは GitHub 自身（Seinas の release の成果物を取る）だけ。
 permissions:
   contents: read
 
@@ -123,3 +123,17 @@ jobs:
 
       - name: コミット前の検査
         run: cargo xtask check --commit
+
+      # Seinas の fbdev の裏側（release の成果物。SHA-256 を固定）。取れたものはキャッシュし、配布元が止まっても落ちないようにする
+      # （フォントと同じ形。2026-10-07）。鍵は tools/fetch-seinas.sh の中の版と SHA-256 で決まるので、変えたら鍵も変わる。
+      - name: Seinas の成果物のキャッシュ
+        uses: actions/cache@v4
+        with:
+          path: target/linux-programs
+          key: seinas-${{ hashFiles('tools/fetch-seinas.sh') }}
+
+      - name: Seinas の成果物を取る
+        run: tools/fetch-seinas.sh
+
+      - name: Seinas の fbdev の裏側を走らせる
+        run: cargo xtask run --seinas-fbdev-test

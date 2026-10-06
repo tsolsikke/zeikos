@@ -231,6 +231,7 @@ pushの前の関門は、Git自身のhook（`.githooks/pre-push`）にも設け�
 | [GNU Unifont](third_party/unifont/) | コンソールフォント | SIL OFL 1.1 |
 | [stb_truetype](third_party/stb/) | TrueTypeの読み取りとラスタライズ | MIT（パブリックドメインとの選択制） |
 | [DejaVu Sans Mono](third_party/dejavu/) | `stb_truetype`が読むフォント | Bitstream Vera |
+| [Seinas](external/seinas/)（fbdevの裏側`seinas-fbdev`。releaseの成果物を`tools/fetch-seinas.sh`が取り、`seinas-test`の構成のディスク像だけに入る） | M2の表示の確かめ | MIT。同梱する第三者（musl、pixman、Rustのクレート）の表示は、releaseの`seinas-fbdev-v0.1.0-third-party.tar.gz`を同じディスク像の成果物の隣（`/bin/linux/`）に入れ、原本は`external/seinas/THIRD-PARTY/`に在る |
 
 GNU UnifontのグリフデータはSIL Open Font License 1.1とGNU GPL v2以降（フォント埋め込み例外つき）のデュアルライセンスで、ZeikOSはOFL 1.1の条件で利用している。
 日本語漢字グリフの元になっているjiskan16由来の部分はパブリックドメイン。

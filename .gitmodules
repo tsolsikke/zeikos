@@ -1,0 +1,3 @@
+[submodule "external/seinas"]
+	path = external/seinas
+	url = https://github.com/tsolsikke/seinas
