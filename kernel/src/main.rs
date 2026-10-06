@@ -5258,15 +5258,21 @@ fn demo_two_address_spaces(
     }
 
     // 到達条件 5 の機構: 破棄して隔離へ入れ、退くまで配られないこと。
-    let mut quarantine = kernel::quarantine::Quarantine::new();
+    //
+    // **隔離は静的に置く**（2026-10-07）。**隔離の容量を 4096 にしたとき、ここの局所が 64 KiB になって、起動のカーネル
+    // スタックをあふれさせた**（実測。見張りのページが止めた）。**静的なら、容量をいくつにしてもスタックは 1 バイトも
+    // 増えない**（`crate::quarantine` の `RETIRING_FRAMES` と同じ理由）。
+    static mut DEMO_QUARANTINE: kernel::quarantine::Quarantine =
+        kernel::quarantine::Quarantine::new();
+    // SAFETY: この試しは起動の 1 回だけ、BSP が走らせる。ほかに触る者は居ない。
+    let quarantine: &mut kernel::quarantine::Quarantine =
+        unsafe { &mut *core::ptr::addr_of_mut!(DEMO_QUARANTINE) };
     let generation_before = kernel::bkl::tlb_generation();
     let free_before = allocator.free_frame_count();
     let (held, leaked) = {
         let guard = kernel::bkl::acquire(kernel::bkl::KernelEntry::SteadyLoop);
         // SAFETY: A はいま稼働していない（本番へ戻してある）。BKL を保持している。
-        unsafe {
-            kernel::quarantine::retire_address_space(space_a, direct_map, &mut quarantine, &guard)
-        }
+        unsafe { kernel::quarantine::retire_address_space(space_a, direct_map, quarantine, &guard) }
     };
     let free_after_destroy = allocator.free_frame_count();
     logger.info(format_args!(
@@ -5292,9 +5298,7 @@ fn demo_two_address_spaces(
     let (held_b, leaked_b) = {
         let guard = kernel::bkl::acquire(kernel::bkl::KernelEntry::SteadyLoop);
         // SAFETY: B も稼働していない。BKL を保持している。
-        unsafe {
-            kernel::quarantine::retire_address_space(space_b, direct_map, &mut quarantine, &guard)
-        }
+        unsafe { kernel::quarantine::retire_address_space(space_b, direct_map, quarantine, &guard) }
     };
     drop(kernel::bkl::acquire(kernel::bkl::KernelEntry::SteadyLoop));
     let released_b = quarantine.release_retired(allocator, kernel::bkl::generation_is_retired);

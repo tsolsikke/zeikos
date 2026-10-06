@@ -55,8 +55,14 @@ use common::addr::{DirectMap, PhysAddr};
 /// 「測った値に余裕を足す」形のままにする**——**穴を持つアロケータも、
 /// ヒープを返さずに終わるプログラムも、まだ無い。**
 ///
+/// **4096 へ上げた（2026-10-07）。** Linux 向けの像（Seinas の fbdev の裏側。1.5 MiB の像 + 4 MiB の確保が 2 つ）が
+/// 途中で落ちたとき、480 フレームが破棄に来て 224 が漏れた（実測。`ADR-0083` の Addendum）。像の上限は 16 MiB
+/// （`crate::syscall` の `MAX_EXECUTABLE_SIZE`）、無名の `mmap` の 1 回の上限も 16 MiB なので、4096（16 MiB）で、
+/// 像 1 本か確保 1 つを丸ごと持てる。表は静的（`Option<PhysAddr>` 16 バイト × 4096 = 64 KiB が 2 つ）で、遠征スタックは
+/// 増えない。**それでも溢れうる**——溢れは今までどおり漏れとして示される。
+///
 /// 溢れたときの扱いは [`Quarantine::push`] の doc。
-pub const QUARANTINE_CAPACITY: usize = 256;
+pub const QUARANTINE_CAPACITY: usize = 4096;
 
 /// アドレス空間を壊すときに、外したフレームを一時的に置く場所（B-d で静的にした。2026-10-02 に、
 /// ページテーブルの置き場からここへ移した）。

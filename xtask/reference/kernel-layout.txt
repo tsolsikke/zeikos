@@ -6,4 +6,4 @@
 .data.bootpt rw- 1..1
 .data.bootstack rw- 1..1
 .data rw- 1..1
-.bss rw- 1..1
+.bss rw- 1..2
