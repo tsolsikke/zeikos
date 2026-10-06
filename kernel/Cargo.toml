@@ -921,8 +921,8 @@ mappings-split-swap-test = []
 # `mprotect(PROT_NONE)` で、葉を外してフレームを返す（2026-10-06。中身を捨てる形）。読める形へ戻すと 0 のページが来て、
 # `syscall-test` が 107 番で止まる。`--syscall-test mprotect-none-discards`。
 mprotect-none-discards-test = []
-# `munmap` が外したフレームをアロケータへ返さない（2026-10-06）。プロセスが終わった後の会計が釣り合わず、名指しして
-# 止まる。`--syscall-test munmap-keeps-frames`。
+# `munmap` が外したフレームをアロケータへ返さない（2026-10-06）。`munmap` を打つ最初のプロセスが終わった後の会計が
+# 釣り合わず、名指しして止まる。`--syscall-test munmap-keeps-frames`。
 munmap-keeps-frames-test = []
 # `mprotect` が `PROT_EXEC` を断らない（2026-10-06。W と X を同時に通す形）。`syscall-test` が 109 番で止まる。
 # `--syscall-test mprotect-allows-exec`。

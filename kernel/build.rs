@@ -200,9 +200,6 @@ fn build_user_programs(manifest_dir: &str, out_dir: &str) {
         // **葉に実行禁止のビットを立てないビルド**（`nx-probe-only-leaf-test` と、それを含む構成）。`syscall-test` の
         // W^X の検算（111・112）は、ハードウェアが「実行できない」を表せないので成り立たず、期待を切り替える。
         ("CARGO_FEATURE_NX_PROBE_ONLY_LEAF_TEST", "leaves_without_nx"),
-        // **C の Linux 向けのプログラムを像に入れる手元の確かめ**（`linux-c-test`）。`syscall-test` が `/bin/linux/m1-c`
-        // も `spawn` で起こす（120 番）。
-        ("CARGO_FEATURE_LINUX_C_TEST", "linux_c_test"),
         (
             "CARGO_FEATURE_ZI_CURSOR_IGNORE_UPDOWN_TEST",
             "zi_cursor_ignore_updown",

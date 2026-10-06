@@ -1615,14 +1615,12 @@ const SYSCALL_TESTS: &[CriticalTest] = &[
         min_heartbeats: None,
     },
     // **`munmap` が外したフレームをアロケータへ返さない**（2026-10-06）。プロセスが終わった後の会計で、取った数と検疫に
-    // 届いた数が釣り合わず、名指しして止まる。
+    // 届いた数が釣り合わず、名指しして止まる。**印にプログラムの名前を入れない**——`munmap` を打つ最初のプロセスで
+    // 止まる（起動時の表では `syscall-test`。表の前に `munmap` を打つものが入れば、そちらになる）。
     CriticalTest {
         name: "munmap-keeps-frames",
         feature: "munmap-keeps-frames-test",
-        expected_markers: &[
-            "user-load: syscall-test left the allocator short",
-            "halting",
-        ],
+        expected_markers: &["left the allocator short", "halting"],
         forbidden_markers: &["user-load: syscall-test ran as a process in its own address space"],
         wait_for_full_timeout: false,
         min_heartbeats: None,

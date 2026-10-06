@@ -965,7 +965,7 @@ python3 tools/judgement-map.py /tmp/full.txt
 | `mappings-overlap-skip-test` | 写像の表が、置くときに重なりを見ない（2026-10-06。`register`と`overlaps_any`） | **`MAP_FIXED_NOREPLACE`が写像の上で`-EEXIST`を返すこと**（`syscall-test`が103番で止まる行。`--syscall-test mappings-overlap-skip`）。重なりを見ずに置きに行くと、既に写っているページで葉を足すのが失敗し、`-ENOMEM`が返る |
 | `mappings-split-swap-test` | 範囲の一部の`munmap`で、外す断片と前に残る部分を取り違える（2026-10-06） | **3ページの真ん中を外した後も、両側のページが読めること**（`syscall-test`が先頭のページを読んでページフォルトで畳まれる行。`user-run: syscall-test folded instead of exiting (vector=14`。`--syscall-test mappings-split-swap`） |
 | `mprotect-none-discards-test` | `mprotect(PROT_NONE)`で、葉を外してフレームを返す（2026-10-06。中身を捨てる形） | **`PROT_NONE`にして読める形へ戻すと、同じ中身が戻ること**（`syscall-test`が107番で止まる行。`--syscall-test mprotect-none-discards`）。捨てる形では、戻すときに0のページが写る |
-| `munmap-keeps-frames-test` | `munmap`が外したフレームをアロケータへ返さない（2026-10-06） | **プロセスが終わった後の会計が、取った数と検疫に届いた数で釣り合うこと**（`user-load: syscall-test left the allocator short`。`--syscall-test munmap-keeps-frames`）。返さなかった13枚が、取った数にだけ残る |
+| `munmap-keeps-frames-test` | `munmap`が外したフレームをアロケータへ返さない（2026-10-06） | **プロセスが終わった後の会計が、取った数と検疫に届いた数で釣り合うこと**（`left the allocator short`——`munmap`を打つ最初のプロセスが終わった所で止まる。印に名前を入れない。`--syscall-test munmap-keeps-frames`）。返さなかった13枚が、取った数にだけ残る |
 | `mprotect-allows-exec-test` | `mprotect`が`PROT_EXEC`を断らない（2026-10-06。WとXを同時に通す形） | **`PROT_EXEC`の`mprotect`が`-EPERM`を返すこと**（`syscall-test`が109番で止まる行。`--syscall-test mprotect-allows-exec`） |
 | `mprotect-writable-code-test` | `mprotect`が、実行できるページを書ける形にする求めを断らない（2026-10-06） | **自分のコードのページへの`PROT_READ|PROT_WRITE`が`-EPERM`で、何も変わらないこと**（`--syscall-test mprotect-writable-code`）。断らない形では、`mprotect`がそのページに実行禁止を立てる（実行を外す向きは通す）ので、戻った次の命令の取り出しで畳まれる（`user-run: syscall-test folded instead of exiting (vector=14`） |
 | `stderr-on-screen-test` | 全画面のアプリが動く間も`fd 2`と診断を画面へ書く（ADR-0046。**ADR-0046の前の振る舞いそのものである**） | **エラーがエコーエリアに出て、本文が壊れていないこと。** **狙いの判定は`screen-echo`の側（`the error reached the echo area instead of the text`）である**——**同じ根から`screen-window`（画面の行0が`"zi: cursor (buff"`に化ける）と`screen-echo`（エラーがカーソルの居る行へ出て、最下行が`""`のまま）。** **すべて通る4つの道に照らすと**——機会は在る（`zi-test`は代替画面で走り、診断が121本出る）／状態は変わる（セルが実際に変わる）／判定に届く（`probe`が行0と最下行を読む）／見た時点は合っている（診断は毎打鍵出るので観測の時点で必ず在り、エラーは観測の直前に出る）。**「窓が上へ戻った」判定はこの破壊テストでは落ちない**——**3つとも同じ診断行になるので、1つ目と3つ目は一致する。** **その判定が見ているのはウィンドウであって、行の中身ではない** |
@@ -2630,13 +2630,13 @@ Linux向けにビルドした、muslで静的リンクしたRustのプログラ�
 
 | 何を | どう確かめているか |
 |---|---|
-| `syscall-test`が空の環境で`spawn`した`/bin/linux/m1-rust /etc/motd a b`が、4（引数の数）で終わること | `syscall-test`の検算113 |
+| 起動時のプログラムと`bss-check`の後に、カーネルが空の環境で`spawn`した`/bin/linux/m1-rust /etc/motd a b`が、4（引数の数）で終わること | `linux-check: /bin/linux/m1-rust ended Exited(4)`の行（違えば`[ERROR]`で止まる）。**起動時のプログラムの後に置くのは、`m1-rust`が`syscall`命令・`.bss`・`munmap`を使い、前に置くと後ろのプログラムを狙った破壊テスト（`user-load-filesz-only`・`syscall-return-*`・`syscall-stub-keeps-user-stack`・`munmap-keeps-frames`）を先に捕まえてしまうため**（2026-10-06の全検査で5項目が落ちた） |
 | その出力の全行が、Linux上で控えた参照と順に一致すること（環境変数の数まで） | 基本の検査「the Linux program's lines in the boot log reference match the reference recorded on Linux」（起動ログの参照を読む。QEMUは起動しない） |
 | シェルから打った同じ行が、同じ出力（環境変数の数の行は形だけ）と`zash: exit status 4`で終わること | `--shell-test`と`--shell-script-test`の判定`m1_rust_matched_the_linux_reference` |
 | 起動の列（`arch_prctl`・`set_tid_address`・`poll`・`rt_sigaction`・`sigaltstack`・`mmap`・`mprotect`・`rt_sigprocmask`・`brk`・`open`・`fcntl`・`fstat`・`lseek`・`read`・`close`・`munmap`・`getrandom`・`exit_group`）が通ること | 上の2つが通ることで分かる。回数（42）は`spawn`の結果の行に出て、起動ログの参照に入る |
 
 | 知らない番号（`-ENOSYS`）を1つも打たないこと | `spawn`の結果の行の`0 with a number the kernel does not know`（起動ログの参照に入る） |
-| C版（`linux-programs/m1-c.c`。`musl-gcc -static`）も、同じ出力と終了の状態で終わり、知らない番号を打たないこと | `cargo xtask run --linux-c-test`（`linux-c-test`のビルドが`target/linux-programs/m1-c`を像の`/bin/linux`に入れ、`syscall-test`の検算120が`spawn`する。出力は`linux-programs/reference/m1-c.txt`と突き合わせる）。**`musl-gcc`が無くて作っていなければ、名指しして飛ばす**——`skipped`の行が結果に残り、通ったことにはしない（CIには無い） |
+| C版（`linux-programs/m1-c.c`。`musl-gcc -static`）も、同じ出力と終了の状態で終わり、知らない番号を打たないこと | `cargo xtask run --linux-c-test`（`linux-c-test`のビルドが`target/linux-programs/m1-c`を像の`/bin/linux`に入れ、起動時の`linux-check`が`spawn`する。出力は`linux-programs/reference/m1-c.txt`と突き合わせる）。**`musl-gcc`が無くて作っていなければ、名指しして飛ばす**——`skipped`の行が結果に残り、通ったことにはしない（CIには無い） |
 
 **確かめていないこと。** C版は版が配布物に依るので、既定の像には入れない（上の飛ばす形）。ZeikOSではfd 1が端末なので、muslのstdoutが行ごとの緩衝になり、`writev`の回数がLinuxの`/dev/null`への回より増える（出力の中身は同じ）。
 

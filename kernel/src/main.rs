@@ -2078,6 +2078,7 @@ extern "sysv64" fn kernel_main() -> ! {
     // **`.bss` がマップされていることを見る（ADR-0039 の到達条件 2）。**
     // **`init` へ入る前である**——あちらは戻らない。
     verify_bss_is_mapped(&mut logger);
+    verify_linux_programs(&mut logger);
 
     // **カーネル側の PML4 の項目の指紋を採る**（2026-09-27。`ADR-0071` の決定 5）。**ここから後は、カーネル側の
     // 項目を誰も変えない**——**`AddressSpace::new` が突き合わせる。**
@@ -6525,6 +6526,45 @@ fn verify_bss_is_mapped(logger: &mut Logger<Serial>) {
     ));
 }
 
+/// **Linux 向けの像（musl の静的 PIE。`ADR-0074` の M1）を `spawn` で起こし、終了の状態を判定の行に出す**（2026-10-06）。
+///
+/// **起動時のプログラムの表と `bss-check` の後に置く**——`m1-rust` は `syscall` 命令を使い、`.bss` を持ち、`munmap` を打つので、
+/// 前に置くと、それらを狙った破壊テスト（`user-load-filesz-only`・`syscall-return-*`・`syscall-stub-keeps-user-stack`・
+/// `munmap-keeps-frames`）を先に捕まえてしまい、狙いの行が出ない（全検査で 5 項目が落ちた。2026-10-06）。
+///
+/// **環境変数は空**——Linux 上で控えた参照（`env -i`）と出す行を揃えるため。**出力の中身はここでは見ない**——起動ログの参照に
+/// 入った行を、`linux-programs/reference/` と突き合わせる基本の検査が見る。終了の状態が引数の数（4）でなければ、名指しして止まる。
+/// C 版（`/bin/linux/m1-c`）は、`linux-c-test` のビルドだけが像に持つので、そのときだけ起こす。
+fn verify_linux_programs(logger: &mut Logger<Serial>) {
+    verify_linux_program(logger, b"/bin/linux/m1-rust", b"m1-rust\0/etc/motd\0a\0b\0");
+    #[cfg(feature = "linux-c-test")]
+    verify_linux_program(logger, b"/bin/linux/m1-c", b"m1-c\0/etc/motd\0a\0b\0");
+}
+
+/// [`verify_linux_programs`] の 1 本ぶん。`argv` は NUL 区切りの 4 つ。
+fn verify_linux_program(logger: &mut Logger<Serial>, path: &[u8], argv: &[u8]) {
+    const ARGUMENT_COUNT: u64 = 4;
+    let name = core::str::from_utf8(path).unwrap_or("<not utf-8>");
+    // **環境変数は空**（`Some((b"", 0))`。`None` はカーネルの既定の環境〔3 つ〕を渡す）——Linux 上で控えた参照（`env -i`）と
+    // 出す行（`N environment variable(s)`）を揃えるため。
+    let outcome = kernel::userland::spawn(path, argv, ARGUMENT_COUNT as usize, Some((b"", 0)));
+    if matches!(
+        outcome,
+        Ok(kernel::userland::SpawnOutcome::Exited(ARGUMENT_COUNT))
+    ) {
+        logger.info(format_args!(
+            "linux-check: {name} ended {outcome:?} ({ARGUMENT_COUNT} is the argument count; the lines \
+             it printed are compared with linux-programs/reference by the base check)"
+        ));
+        return;
+    }
+    logger.error(format_args!(
+        "linux-check: {name} ended {outcome:?}, expected Exited({ARGUMENT_COUNT}) (the argument \
+         count); the Linux program did not run the way it runs on Linux. halting"
+    ));
+    cpu::halt_forever();
+}
+
 fn verify_sparse_hole_reads_as_zeros(logger: &mut Logger<Serial>) {
     /// 穴のあるファイル。**`build.rs` が置く。**
     const SPARSE_PATH: &[u8] = b"/data/sparse-hole";
@@ -9314,8 +9354,6 @@ const SYSCALL_TEST_STATUS: &[(u64, &str)] = &[
     // 111 と 112: W^X（2026-10-06）。
     (111, "mprotect of the program's own code page to PROT_READ|PROT_WRITE did not return -EPERM"),
     (112, "spawn(\"/bin/mprotect-nx\") did not report a fold with vector 14 (a code page made PROT_READ must stop executing)"),
-    // 113: Linux 向けの musl の静的な像（M1。2026-10-06）。
-    (113, "spawn(\"/bin/linux/m1-rust\", [\"m1-rust\", \"/etc/motd\", \"a\", \"b\"], []) did not end with status 4 (the argument count)"),
     // 114 から 119: writev・readv・lseek・poll・getpid・gettid・madvise・tkill（2026-10-06）。
     (114, "writev(1, two iovecs, 2) did not return the total length, or with a zero-length iovec and an over-long count did not behave"),
     (115, "readv on /etc/motd with two iovecs did not return the file's length with the first bytes in the first iovec"),
@@ -9323,8 +9361,6 @@ const SYSCALL_TEST_STATUS: &[(u64, &str)] = &[
     (117, "poll with events=0 on fds 0, 1 and 2 did not return 0, or on a closed fd did not return 1 with POLLNVAL"),
     (118, "getpid/gettid did not return 1, madvise did not return 0 (or -EINVAL off a page boundary), or tkill did not refuse another tid, accept signal 0, and ignore SIGCHLD and an ignored SIGUSR1"),
     (119, "spawn(\"/bin/tkill-self\") did not end with status 134 (tkill(gettid(), SIGABRT) ends the process with 128 + 6)"),
-    // 120: C の Linux 向けのプログラム（`linux-c-test` のビルドだけ。2026-10-06）。
-    (120, "spawn(\"/bin/linux/m1-c\", [\"m1-c\", \"/etc/motd\", \"a\", \"b\"], []) did not end with status 4 (only in the linux-c-test build)"),
 ];
 
 /// `fault-test` が起こす #PF のエラーコード（S9-b-3-2a）。

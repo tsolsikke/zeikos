@@ -152,8 +152,6 @@
 //! - `110` `spawn("/bin/mprotect-ro")` が「畳まれた・ベクタ 14」を返さなかった（書けなくしたページへの書きは落ちる）
 //! - `111` 自分のコードのページへの `PROT_READ|PROT_WRITE` の `mprotect` が `-EPERM` を返さなかった（W^X）
 //! - `112` `spawn("/bin/mprotect-nx")` が「畳まれた・ベクタ 14」を返さなかった（`PROT_READ` にしたコードのページは実行できない）
-//! - `113` `spawn("/bin/linux/m1-rust", ["m1-rust", "/etc/motd", "a", "b"], [])` が 4（引数の数）で終わらなかった
-//!   （Linux 向けの musl の静的な像。M1。出力は `linux-programs/reference/m1-rust.txt` と、基本の検査が突き合わせる）
 //! - `114` `writev(1, 2 本, 2)` が合計の長さを返さなかったか、長さ 0 の本を含む形と、本の数が上限を越える形が通らなかった
 //! - `115` `/etc/motd` への `readv`（2 本）が、ファイルの長さを返して先頭の本に先頭のバイトを置かなかった
 //! - `116` `lseek` の `SEEK_END`・`SEEK_CUR` が期待の位置を返さなかったか、負の位置が `-EINVAL` を返さなかった
@@ -161,8 +159,6 @@
 //! - `118` `getpid`・`gettid` が 1 を返さなかったか、`madvise` が 0（境界の外は `-EINVAL`）を返さなかったか、`tkill` が
 //!   ほかの tid を `-ESRCH` で断る・シグナル 0 を受ける・`SIGCHLD` と `SIG_IGN` の `SIGUSR1` を無視する、のどれかが違った
 //! - `119` `spawn("/bin/tkill-self")` が 134（`tkill(gettid(), SIGABRT)` で終わらせた。128 + 6）で終わらなかった
-//! - `120` `spawn("/bin/linux/m1-c", ["m1-c", "/etc/motd", "a", "b"], [])` が 4 で終わらなかった（cfg `linux_c_test` の
-//!   ビルドだけ。C の Linux 向けのプログラム。ほかのビルドでは打たない）
 //! - `69` 方向フラグを立てたまま打った `clock_gettime` が 0 を返さなかった（2026-09-24。
 //!   **判定の本体はカーネルの入口の監視である**——こちらは前提を作り、戻り値だけを見る）
 //! - `70` 読み込み先が読み取り専用のページ（このプログラムの `.rodata`）の `read` が `-EFAULT` を返さなかった
@@ -244,9 +240,6 @@ const PROT_RX: u32 = 5;
 const MINUS_EPERM: i32 = -1;
 /// `-ESRCH`（2026-10-06。自分以外の tid への `tkill` が返す）。
 const MINUS_ESRCH: i32 = -3;
-/// C の Linux 向けのプログラム（`/bin/linux/m1-c`）を起こすか（検算 120）。**像に入るのは `linux-c-test` のビルドだけ**
-/// なので、そのときだけ 1（cfg `linux_c_test`。`kernel/build.rs` が渡す）。
-const LINUX_C_TEST: u32 = if cfg!(linux_c_test) { 1 } else { 0 };
 /// `/etc/motd` の先頭の 4 バイト "welc"（リトルエンディアンの 32 ビット。2026-10-06。`readv` の 1 本目に来る）。
 const WELC: u32 = u32::from_le_bytes(*b"welc");
 
@@ -2181,16 +2174,8 @@ core::arch::global_asm!(
     "  mov edi, 112",
     "  cmp rax, {mprotect_nx_expected}",
     "  jne 7f",
-    // 113: spawn("/bin/linux/m1-rust", ["m1-rust", "/etc/motd", "a", "b"], []) は 4（引数の数）で終わる（M1。2026-10-06）。
-    //      環境変数は空——Linux 側の参照（env -i）と、出す行を揃えるため。
-    "  mov eax, {sys_spawn}",
-    "  lea rdi, [rip + M1_RUST_PATH]",
-    "  lea rsi, [rip + ARGV_M1_RUST]",
-    "  lea rdx, [rip + ENVP_EMPTY]",
-    "  int 0x80",
-    "  mov edi, 113",
-    "  cmp rax, 4",
-    "  jne 7f",
+    // **Linux 向けの像（`/bin/linux/m1-rust`）は、ここでは起こさない**——起動時の表の最後の `linux-run` が起こす
+    // （`linux-run.rs` の doc。ここから起こすと、表の後ろのプログラムを狙った破壊テストを先に捕まえてしまう）。
     // 114: writev(1, [("wv-", 3), (NULL, 0), ("ok\n", 3)], 3) は 6。本の数が 1025 なら -EINVAL。
     //      iovec の並びは rsp+136 から（16 バイト × 3）。
     "  lea rax, [rip + WRITEV_HEAD]",
@@ -2407,20 +2392,6 @@ core::arch::global_asm!(
     "  mov edi, 119",
     "  cmp rax, 134",
     "  jne 7f",
-    // 120: spawn("/bin/linux/m1-c", ["m1-c", "/etc/motd", "a", "b"], []) は 4（cfg linux_c_test のビルドだけ。
-    //      LINUX_C_TEST が 0 なら打たない）。
-    "  mov eax, {linux_c_test}",
-    "  test eax, eax",
-    "  jz 2f",
-    "  mov eax, {sys_spawn}",
-    "  lea rdi, [rip + M1_C_PATH]",
-    "  lea rsi, [rip + ARGV_M1_C]",
-    "  lea rdx, [rip + ENVP_EMPTY]",
-    "  int 0x80",
-    "  mov edi, 120",
-    "  cmp rax, 4",
-    "  jne 7f",
-    "2:",
     // 93: spawn("/bin/futex-wait") は 137 を返す（子は、起こす者の居ない FUTEX_WAIT で終わらせられる）。
     "  mov eax, {sys_spawn}",
     "  lea rdi, [rip + FUTEX_WAIT_PATH]",
@@ -2488,12 +2459,6 @@ core::arch::global_asm!(
     "  .asciz \"/bin/mprotect-nx\"",
     "SPAWN_ARG_MPROTECT_NX:",
     "  .asciz \"mprotect-nx\"",
-    "M1_RUST_PATH:",
-    "  .asciz \"/bin/linux/m1-rust\"",
-    "M1_C_PATH:",
-    "  .asciz \"/bin/linux/m1-c\"",
-    "SPAWN_ARG_M1_C:",
-    "  .asciz \"m1-c\"",
     "TKILL_SELF_PATH:",
     "  .asciz \"/bin/tkill-self\"",
     "SPAWN_ARG_TKILL_SELF:",
@@ -2502,14 +2467,7 @@ core::arch::global_asm!(
     "  .ascii \"wv-\"",
     "WRITEV_TAIL:",
     "  .ascii \"ok\\n\"",
-    "SPAWN_ARG_M1_RUST:",
-    "  .asciz \"m1-rust\"",
-    "SPAWN_ARG_MOTD:",
-    "  .asciz \"/etc/motd\"",
-    "SPAWN_ARG_A:",
-    "  .asciz \"a\"",
-    "SPAWN_ARG_B:",
-    "  .asciz \"b\"",
+
     "SPAWN_ARG_FUTEX_WAIT:",
     "  .asciz \"futex-wait\"",
     "PROC_SELF_EXE:",
@@ -2537,18 +2495,6 @@ core::arch::global_asm!(
     "  .quad 0",
     "ARGV_TKILL_SELF:",
     "  .quad SPAWN_ARG_TKILL_SELF",
-    "  .quad 0",
-    "ARGV_M1_RUST:",
-    "  .quad SPAWN_ARG_M1_RUST",
-    "  .quad SPAWN_ARG_MOTD",
-    "  .quad SPAWN_ARG_A",
-    "  .quad SPAWN_ARG_B",
-    "  .quad 0",
-    "ARGV_M1_C:",
-    "  .quad SPAWN_ARG_M1_C",
-    "  .quad SPAWN_ARG_MOTD",
-    "  .quad SPAWN_ARG_A",
-    "  .quad SPAWN_ARG_B",
     "  .quad 0",
     // **空の `envp`（f-2。`ADR-0053` の Decision 2）。**
     //
@@ -2664,7 +2610,6 @@ core::arch::global_asm!(
     sys_madvise = const 28u32,
     sys_tkill = const 200u32,
     minus_esrch = const MINUS_ESRCH,
-    linux_c_test = const LINUX_C_TEST,
     welc = const WELC,
     minus_eexist = const MINUS_EEXIST,
     sys_open = const SYS_OPEN,

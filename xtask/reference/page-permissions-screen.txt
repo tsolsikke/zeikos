@@ -92,14 +92,6 @@ user program /bin/mprotect-ro | mapped by request | 4K | w=0 u=1 x=0 cache=0 g=0
 user program /bin/mprotect-nx | segment 0 | 4K | w=0 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
 user program /bin/mprotect-nx | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=4
 
-user program /bin/linux/m1-rust | segment 0 | 4K | w=0 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=5
-user program /bin/linux/m1-rust | segment 1 | 4K | w=0 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=86
-user program /bin/linux/m1-rust | segment 2 | 4K | w=0 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=21
-user program /bin/linux/m1-rust | segment 3 | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=6
-user program /bin/linux/m1-rust | heap | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
-user program /bin/linux/m1-rust | mapped by request | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
-user program /bin/linux/m1-rust | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=64
-
 user program /bin/tkill-self | segment 0 | 4K | w=0 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
 user program /bin/tkill-self | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=4
 
@@ -169,6 +161,14 @@ user program /bin/bss-test | segment 1 | 4K | w=0 u=1 x=0 cache=0 g=0 shared=0 t
 user program /bin/bss-test | segment 2 | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
 user program /bin/bss-test | segment 3 | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=2
 user program /bin/bss-test | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=4
+
+user program /bin/linux/m1-rust | segment 0 | 4K | w=0 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=5
+user program /bin/linux/m1-rust | segment 1 | 4K | w=0 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=86
+user program /bin/linux/m1-rust | segment 2 | 4K | w=0 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=21
+user program /bin/linux/m1-rust | segment 3 | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=6
+user program /bin/linux/m1-rust | heap | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
+user program /bin/linux/m1-rust | mapped by request | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
+user program /bin/linux/m1-rust | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=64
 
 user program /bin/gfxc | segment 0 | 4K | w=0 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
 user program /bin/gfxc | segment 1 | 4K | w=0 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
