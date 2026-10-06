@@ -899,6 +899,12 @@ user-run-skip-load = []
 # ページを足す入口が先に断るため）。**この破壊だけが読み戻しまで到達する**
 # （map-force-writable は先に ring3-vectors が落ちる）。`--ring3-test user-writable-text`。
 user-run-writable-text = []
+# 位置独立の像（ET_DYN）の区画を、ずらさずに載せる（2026-10-06）。入口だけが、ずれた番地を指す。`pie-hello` が、
+# 載せる途中か入口で落ち、期待した終わり方にならない。`--ring3-test pie-without-bias`。
+pie-load-without-bias-test = []
+# 補助ベクタの AT_ENTRY に、ずらす前の番地を渡す（2026-10-06）。`pie-hello` が、終了状態 1 で言う。
+# `--ring3-test auxv-entry-not-biased`。
+auxv-entry-not-biased-test = []
 # entry ではなく最初の PT_LOAD の先頭へ飛ぶ。詰め物の ud2 で即座に #UD になり、
 # フォルト RIP が期待と食い違う。`--ring3-test user-wrong-entry`。
 user-run-wrong-entry = []

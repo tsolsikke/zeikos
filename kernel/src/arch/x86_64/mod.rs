@@ -10,6 +10,7 @@ pub mod gdt;
 pub mod idt;
 pub mod interrupt_readiness;
 pub mod paging;
+pub mod random;
 pub mod ring3;
 pub mod stack;
 pub mod system_call_entry;
@@ -45,6 +46,7 @@ pub use paging::switch::{active_page_table_root, set_active_page_table_root};
 pub use paging::verify::{
     read_top_level_entry, walk_page_table, walk_page_table_user_accessible, UserAccess,
 };
+pub use random::{has_rdrand, weak_random_bytes, RandomSource};
 pub(crate) use ring3::current_excursion_slot;
 #[cfg(any(
     feature = "excursion-overflow-depth0-test",

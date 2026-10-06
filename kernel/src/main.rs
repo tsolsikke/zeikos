@@ -1955,6 +1955,18 @@ extern "sysv64" fn kernel_main() -> ! {
 
     // **棚卸しの前提（2026-09-24。`ADR-0018` の Addendum 9）。** **最初のユーザープログラムより前に見る。**
     kernel::arch::x86_64::cpu_state::check_and_report(&mut logger);
+    // **`AT_RANDOM` の 16 バイトの出所を、1 度言う**（2026-10-06）。**どちらの出所でも、暗号には使えない。**
+    logger.info(format_args!(
+        "random: the 16 bytes behind AT_RANDOM come from {} (CPUID.1:ECX bit 30, RDRAND = {}); \
+         they are NOT fit for cryptography - nothing is pooled, mixed in from other sources, or \
+         reseeded",
+        if kernel::arch::x86_64::has_rdrand() {
+            kernel::arch::x86_64::RandomSource::Rdrand
+        } else {
+            kernel::arch::x86_64::RandomSource::TimeStampCounter
+        },
+        kernel::arch::x86_64::has_rdrand()
+    ));
 
     if let Err(error) = load_embedded_user_program(&mut logger) {
         // **この段階ではまだ止める。** 既定の `hello` は成功するので、ここへは来ない。
@@ -5678,6 +5690,34 @@ static SYSCALL_INSN_ELF: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/sysca
 static DEBUG_TRAP_SYSCALL_ELF: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/debug-trap-syscall.elf"));
 static COMPAT_SYSCALL_ELF: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/compat-syscall.elf"));
+/// 埋め込んだユーザープログラム `pie-hello` の ELF（2026-10-06）。**位置独立の像（`ET_DYN`）で、ローダーが
+/// ずらして載せる。** 補助ベクタを自分で確かめて、1 行を書く（`kernel/userland/pie-hello.rs`）。
+static PIE_HELLO_ELF: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/pie-hello.elf"));
+/// `pie-hello` が書く 1 行。
+const PIE_HELLO_MESSAGE: &str = "hello from a position-independent program\n";
+/// `pie-hello` の、終了が効かなかったときの落ち先（entry からの相対。`pie-hello.rs` が位置を固定している）。
+const PIE_HELLO_UD2_OFFSET: u64 = 0x187;
+/// `pie-hello` の終了状態の意味（`pie-hello.rs` の表と対になっている）。
+const PIE_HELLO_STATUS: &[(u64, &str)] = &[
+    (1, "AT_ENTRY is not where _start is running"),
+    (
+        2,
+        "AT_PHDR is missing or does not point at the program header table",
+    ),
+    (3, "AT_PHENT is not 56"),
+    (4, "AT_PHNUM differs from e_phnum in the ELF header"),
+    (5, "AT_PAGESZ is not 4096"),
+    (6, "AT_RANDOM is missing or points at 16 zero bytes"),
+    (
+        7,
+        "AT_EXECFN is missing or does not start with the program's name",
+    ),
+    (
+        9,
+        "_start runs below the load bias; the image was not moved",
+    ),
+    (10, "the auxv terminator (AT_NULL) was not found"),
+];
 
 /// `syscall-insn` が `write` で送るはずのバイト列（2026-10-04）。**両方の入口で 1 回ずつ送る。**
 const SYSCALL_INSN_MESSAGE: &str = "syscall-insn wrote this\n";
@@ -9527,6 +9567,19 @@ const USER_PROGRAMS: &[UserProgram] = &[
         argv: &[b"compat-syscall"],
         enters_with_direction_flag: None,
     },
+    // **位置独立の像（`ET_DYN`）を、ずらして載せる**（2026-10-06）。**入口のスタックから補助ベクタまで歩き、
+    // 積まれた値を自分で確かめる。** 食い違えば、その番号で終わる（[`PIE_HELLO_STATUS`]）。
+    UserProgram {
+        name: "pie-hello",
+        image: PIE_HELLO_ELF,
+        outcome: UserProgramOutcome::Exit { status: 0 },
+        receiver_offset: PIE_HELLO_UD2_OFFSET,
+        expected_write: Some(PIE_HELLO_MESSAGE),
+        probes_abi: false,
+        status_meanings: PIE_HELLO_STATUS,
+        argv: &[b"pie-hello"],
+        enters_with_direction_flag: None,
+    },
 ];
 
 /// **方向フラグの前提が作れたこと**（2026-09-24。[`UserProgram::enters_with_direction_flag`]）。
@@ -12888,6 +12941,16 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "excursion-guard-unrecorded-test",
         cfg!(feature = "excursion-guard-unrecorded-test"),
         "遠征スタックの見張りのページを名指しの表に控えない",
+    ),
+    (
+        "pie-load-without-bias-test",
+        cfg!(feature = "pie-load-without-bias-test"),
+        "位置独立の像の区画を、ずらさずに載せる",
+    ),
+    (
+        "auxv-entry-not-biased-test",
+        cfg!(feature = "auxv-entry-not-biased-test"),
+        "補助ベクタの AT_ENTRY に、ずらす前の番地を渡す",
     ),
     (
         "excursion-budget-test",

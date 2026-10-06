@@ -855,6 +855,7 @@ unsafe fn build_initial_stack(
     page_base: u64,
     argv: &[&[u8]],
     envp: &[&[u8]],
+    aux: &crate::abi::linux::Auxv<'_>,
 ) -> Option<u64> {
     /// スタックページの大きさ。**1 枚だけマップしてある**（呼び出し側）。
     const PAGE_SIZE: usize = 4096;
@@ -866,7 +867,7 @@ unsafe fn build_initial_stack(
     // バイト書ける。新しく確保して、まだどこにも渡していないページなので、切り出した `&mut [u8]` を使う間、
     // このページを指す参照はほかに無い（`argv` と `envp` もこのページを指さない）。
     let page = unsafe { core::slice::from_raw_parts_mut(page, PAGE_SIZE) };
-    crate::abi::linux::build_initial_stack(page, page_base, argv, envp)
+    crate::abi::linux::build_initial_stack(page, page_base, argv, envp, aux)
 }
 
 /// 同時に飛べる `spawn` の本数（S11-5）。
@@ -1784,6 +1785,11 @@ fn load_segments_and_stack(
     for ph in elf.load_segments() {
         // **区画の番地を、ずらした後の値にする。** 下の計算は、どれもこの値を使う。ずらしてもあふれないことは、
         // 計画が確かめている。ファイルの中の位置（`p_offset`）は、ずらさない。
+        //
+        // 破壊テスト (2026-10-06, pie-load-without-bias-test): 区画を、ずらさずに載せる（入口だけが、ずれた番地を
+        // 指す）。位置独立の像は、リンクした番地（0 から）に載ることになり、載せる途中か、入口で落ちる。
+        #[cfg(feature = "pie-load-without-bias-test")]
+        let plan = common::elf::LoadPlan { bias: 0, ..plan };
         let ph = common::elf::ProgramHeader {
             p_vaddr: ph.p_vaddr + plan.bias,
             ..ph
@@ -2025,11 +2031,30 @@ fn load_segments_and_stack(
     };
 
     // **初期スタックを Linux の形で積む（S11-1）。**
+    //
+    // **補助ベクタ（`auxv`）の値は、載せた結果から作る**（2026-10-06）。入口とプログラムヘッダの表の番地は、
+    // ずらした後の値である。`AT_RANDOM` の 16 バイトは、暗号に使える値ではない（CPU の置き場の `random` の doc）。
+    //
+    // 破壊テスト (2026-10-06, auxv-entry-not-biased-test): `AT_ENTRY` に、ずらす前の番地を渡す。位置を決めて
+    // リンクした像では値が変わらないので、気づくのは位置独立の像だけである（`pie-hello` が、終了状態 1 で言う）。
+    let aux_entry = if cfg!(feature = "auxv-entry-not-biased-test") {
+        plan.entry - plan.bias
+    } else {
+        plan.entry
+    };
+    let aux = crate::abi::linux::Auxv {
+        program_headers_at: plan.program_headers_at,
+        program_header_count: plan.program_header_count,
+        entry: aux_entry,
+        random: crate::arch::x86_64::weak_random_bytes().0,
+        exec_name: process.name.as_bytes(),
+    };
     // SAFETY: `dst` はいまマップしたスタックページの direct map 越しの先頭で、
     // 1 ページぶん書ける。単一実行文脈である。フレームは上で確保したばかりで、ほかに指しているのは
-    // まだ稼働していない空間のマップだけである。`argv` と `envp` は、このフレームを確保する前に作った
-    // カーネルの側の控えで、このページを指さない。
-    let Some(initial_sp) = (unsafe { build_initial_stack(dst, stack_page, argv, envp) }) else {
+    // まだ稼働していない空間のマップだけである。`argv` と `envp` と `aux` の文字列は、このフレームを確保する前に
+    // 作ったカーネルの側の控えで、このページを指さない。
+    let Some(initial_sp) = (unsafe { build_initial_stack(dst, stack_page, argv, envp, &aux) })
+    else {
         return Err(UserLoadError::ArgumentsTooLong);
     };
     process.stack_top = initial_sp;

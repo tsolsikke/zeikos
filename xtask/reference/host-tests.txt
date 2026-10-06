@@ -260,6 +260,7 @@ common::window::tests::scrolling_up_stops_at_the_top
 common::window::tests::the_screen_row_is_none_outside_the_window
 common::window::tests::visible_never_passes_the_end
 kernel::abi::linux::initial_stack::tests::an_initial_stack_that_does_not_fit_is_refused
+kernel::abi::linux::initial_stack::tests::at_phdr_is_left_out_when_the_table_is_not_loaded
 kernel::abi::linux::initial_stack::tests::the_initial_stack_follows_the_linux_layout
 kernel::abi::linux::layout::tests::a_control_message_with_one_fd_follows_the_linux_layout
 kernel::abi::linux::layout::tests::a_dirent64_record_follows_the_linux_layout
@@ -385,6 +386,8 @@ kernel::arch::x86_64::paging::survey::tests::the_permissions_of_the_tables_on_th
 kernel::arch::x86_64::paging::survey::tests::the_upper_half_is_reported_in_its_canonical_form_and_only_the_asked_top_entries_are_walked
 kernel::arch::x86_64::paging::verify::tests::a_level_allows_a_write_only_when_it_is_writable_as_well
 kernel::arch::x86_64::paging::verify::tests::a_resolved_leaf_answers_writable_and_user_from_its_own_bits
+kernel::arch::x86_64::random::tests::the_counter_bytes_change_with_either_input
+kernel::arch::x86_64::random::tests::the_rdrand_bit_is_bit_thirty_of_leaf_one_ecx
 kernel::arch::x86_64::stack::tests::a_guarded_stack_is_named_in_words
 kernel::arch::x86_64::stack::tests::a_guarded_stack_survives_the_round_trip_through_its_word
 kernel::arch::x86_64::stack::tests::a_range_contains_its_own_bounds

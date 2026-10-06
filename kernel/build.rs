@@ -399,7 +399,57 @@ fn build_user_programs(manifest_dir: &str, out_dir: &str) {
         assert!(status.success(), "rustc failed for the user program {name}");
     }
 
+    build_position_independent_programs(manifest_dir, out_dir);
     build_c_programs(manifest_dir, out_dir, &script);
+}
+
+/// 位置独立のユーザープログラム（`ET_DYN`）を `rustc` でビルドする（2026-10-06）。
+///
+/// **ほかのプログラムとの違いは 3 つである**——再配置の形（`relocation-model=pie`）、リンカへの `-pie`、
+/// リンカスクリプト（`userland/pie.ld`。番地 0 からリンクし、ヘッダを最初の区画に入れる）。
+/// `--no-dynamic-linker` で、動的リンカの名前（`PT_INTERP`）を付けさせない。ローダーは、それを持つ像を断る。
+///
+/// **破壊テストの cfg は渡さない**（いまの 1 本は、どの cfg も読まない）。
+fn build_position_independent_programs(manifest_dir: &str, out_dir: &str) {
+    const PROGRAMS: &[&str] = &["pie-hello"];
+
+    let script = format!("{manifest_dir}/userland/pie.ld");
+    println!("cargo:rerun-if-changed={script}");
+    for name in PROGRAMS {
+        let source = format!("{manifest_dir}/userland/{name}.rs");
+        let output = format!("{out_dir}/{name}.elf");
+        println!("cargo:rerun-if-changed={source}");
+        let status = std::process::Command::new(std::env::var("RUSTC").unwrap_or("rustc".into()))
+            .args([
+                "--edition",
+                "2021",
+                "--target",
+                "x86_64-unknown-none",
+                // イメージをチェックアウト先から切り離す（上の `build_user_programs` と同じ理由）。
+                "--remap-path-prefix",
+                &format!("{manifest_dir}=kernel"),
+                "-C",
+                "panic=abort",
+                "-C",
+                "relocation-model=pie",
+                "-C",
+                "opt-level=s",
+                "-C",
+                "strip=symbols",
+                "-C",
+                "link-arg=-pie",
+                "-C",
+                "link-arg=--no-dynamic-linker",
+                "-C",
+                &format!("link-arg=-T{script}"),
+                "-o",
+                &output,
+                &source,
+            ])
+            .status()
+            .unwrap_or_else(|e| panic!("failed to run rustc for the user program {name}: {e}"));
+        assert!(status.success(), "rustc failed for the user program {name}");
+    }
 }
 
 /// C で書いたユーザープログラムを `gcc` でビルドする（C-a。`ADR-0057`）。

@@ -14,7 +14,7 @@ pub use errno::{
 
 mod initial_stack;
 
-pub use initial_stack::build_initial_stack;
+pub use initial_stack::{build_initial_stack, Auxv};
 
 mod layout;
 

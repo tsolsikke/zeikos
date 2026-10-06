@@ -1452,6 +1452,31 @@ const RING3_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
+    // **位置独立の像の区画を、ずらさずに載せる**（2026-10-06）。入口だけがずれた番地を指すので、`pie-hello` は
+    // 期待した終わり方（0 で終わる）にならない。
+    CriticalTest {
+        name: "pie-without-bias",
+        feature: "pie-load-without-bias-test",
+        expected_markers: &[
+            "user-run: pie-hello folded instead of exiting (vector=14 rip=0x401010",
+            "halting",
+        ],
+        forbidden_markers: &["user-load: pie-hello ran as a process"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // **補助ベクタの `AT_ENTRY` に、ずらす前の番地を渡す**（2026-10-06）。`pie-hello` が、終了状態 1 で言う。
+    CriticalTest {
+        name: "auxv-entry-not-biased",
+        feature: "auxv-entry-not-biased-test",
+        expected_markers: &[
+            "user-run: pie-hello exited with status 1, expected 0 (AT_ENTRY is not where _start is running)",
+            "halting",
+        ],
+        forbidden_markers: &["user-load: pie-hello ran as a process"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
     CriticalTest {
         name: "user-wrong-entry",
         feature: "user-run-wrong-entry",
@@ -31929,7 +31954,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 62,
-    full: 486,
+    full: 488,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

@@ -428,10 +428,20 @@ core::arch::global_asm!(
     "  mov edi, 61",
     "  jmp 9f",
     "11:",
-    // auxv の終端（AT_NULL = 0）。**envp の終端の次である。**
-    "  cmp qword ptr [rcx + 8], 0",
+    // auxv の終端（AT_NULL = 0）を、歩いて探す。**auxv は、envp の終端の次から、型と値の対で並ぶ**
+    // （2026-10-06 に、カーネルが中身を積むようになった。それまでは終端だけで、envp の終端のすぐ次だった）。
+    // **16 対の中に終端が無ければ、35 番で落ちる**（カーネルが積むのは、終端を入れて 13 対である）。
+    "  lea rcx, [rcx + 8]",
+    "  mov edx, 16",
+    "12:",
+    "  cmp qword ptr [rcx], 0",
+    "  je 13f",
+    "  add rcx, 16",
+    "  dec edx",
+    "  jnz 12b",
     "  mov edi, 35",
-    "  jne 9f",
+    "  jmp 9f",
+    "13:",
 
     // --- 62..67. ヒープ（`brk`。H-a。ADR-0044） ---
     //
