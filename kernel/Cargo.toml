@@ -908,6 +908,24 @@ auxv-entry-not-biased-test = []
 # 補助ベクタの AT_PHDR に、ずらす前の番地を渡す（2026-10-06）。`pie-hello` が、終了状態 2 で言う。
 # `--ring3-test auxv-phdr-not-biased`。
 auxv-phdr-not-biased-test = []
+# 写像の表が、置くときに重なりを見ない（2026-10-06）。`MAP_FIXED_NOREPLACE` が写像の上でも断らず、`syscall-test` が
+# 103 番で止まる。`--syscall-test mappings-overlap-skip`。
+mappings-overlap-skip-test = []
+# 範囲の一部の `munmap` で、外す断片と前に残る部分を取り違える（2026-10-06）。残るはずのページが外れ、`syscall-test`
+# が読んでページフォルトで畳まれる。`--syscall-test mappings-split-swap`。
+mappings-split-swap-test = []
+# `mprotect(PROT_NONE)` で、葉を外してフレームを返す（2026-10-06。中身を捨てる形）。読める形へ戻すと 0 のページが来て、
+# `syscall-test` が 107 番で止まる。`--syscall-test mprotect-none-discards`。
+mprotect-none-discards-test = []
+# `munmap` が外したフレームをアロケータへ返さない（2026-10-06）。プロセスが終わった後の会計が釣り合わず、名指しして
+# 止まる。`--syscall-test munmap-keeps-frames`。
+munmap-keeps-frames-test = []
+# `mprotect` が `PROT_EXEC` を断らない（2026-10-06。W と X を同時に通す形）。`syscall-test` が 109 番で止まる。
+# `--syscall-test mprotect-allows-exec`。
+mprotect-allows-exec-test = []
+# `mprotect` が、実行できるページを書ける形にする求めを断らない（2026-10-06）。自分のコードのページへ打った
+# `syscall-test` が、戻った次の命令で落ちて畳まれる。`--syscall-test mprotect-writable-code`。
+mprotect-writable-code-test = []
 # entry ではなく最初の PT_LOAD の先頭へ飛ぶ。詰め物の ud2 で即座に #UD になり、
 # フォルト RIP が期待と食い違う。`--ring3-test user-wrong-entry`。
 user-run-wrong-entry = []

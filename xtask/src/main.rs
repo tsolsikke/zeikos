@@ -1581,6 +1581,74 @@ const RING3_TESTS: &[CriticalTest] = &[
 /// int 0x80 システムコールの破壊テストでの確認（M5-f-1-2）。いずれも probe の往復が verified に
 /// 到達しないことを確かめる。
 const SYSCALL_TESTS: &[CriticalTest] = &[
+    // **写像の表が、置くときに重なりを見ない**（2026-10-06）。`MAP_FIXED_NOREPLACE` が写像の上でも断らず、
+    // `syscall-test` が 103 番で止まる。
+    CriticalTest {
+        name: "mappings-overlap-skip",
+        feature: "mappings-overlap-skip-test",
+        expected_markers: &["user-run: syscall-test exited with status 103", "halting"],
+        forbidden_markers: &["user-run: syscall-test left Ring 3 (exited=true status=0"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // **範囲の一部の `munmap` で、外す断片と前に残る部分を取り違える**（2026-10-06）。3 ページの真ん中を外したつもりで
+    // 先頭のページが外れ、`syscall-test` が先頭を読んでページフォルト（ベクタ 14）で畳まれる。
+    CriticalTest {
+        name: "mappings-split-swap",
+        feature: "mappings-split-swap-test",
+        expected_markers: &[
+            "user-run: syscall-test folded instead of exiting (vector=14",
+            "halting",
+        ],
+        forbidden_markers: &["user-run: syscall-test left Ring 3 (exited=true status=0"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // **`mprotect(PROT_NONE)` で葉を外してフレームを返す**（2026-10-06。中身を捨てる形）。読める形へ戻すと 0 のページが
+    // 来て、`syscall-test` が 107 番で止まる。
+    CriticalTest {
+        name: "mprotect-none-discards",
+        feature: "mprotect-none-discards-test",
+        expected_markers: &["user-run: syscall-test exited with status 107", "halting"],
+        forbidden_markers: &["user-run: syscall-test left Ring 3 (exited=true status=0"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // **`munmap` が外したフレームをアロケータへ返さない**（2026-10-06）。プロセスが終わった後の会計で、取った数と検疫に
+    // 届いた数が釣り合わず、名指しして止まる。
+    CriticalTest {
+        name: "munmap-keeps-frames",
+        feature: "munmap-keeps-frames-test",
+        expected_markers: &[
+            "user-load: syscall-test left the allocator short",
+            "halting",
+        ],
+        forbidden_markers: &["user-load: syscall-test ran as a process in its own address space"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // **`mprotect` が `PROT_EXEC` を断らない**（2026-10-06。W と X を同時に通す形）。`syscall-test` が 109 番で止まる。
+    CriticalTest {
+        name: "mprotect-allows-exec",
+        feature: "mprotect-allows-exec-test",
+        expected_markers: &["user-run: syscall-test exited with status 109", "halting"],
+        forbidden_markers: &["user-run: syscall-test left Ring 3 (exited=true status=0"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // **`mprotect` が、実行できるページを書ける形にする求めを断らない**（2026-10-06）。自分のコードのページへ
+    // `PROT_READ|PROT_WRITE` を打った `syscall-test` が、戻った次の命令の取り出し（実行禁止）で畳まれる。
+    CriticalTest {
+        name: "mprotect-writable-code",
+        feature: "mprotect-writable-code-test",
+        expected_markers: &[
+            "user-run: syscall-test folded instead of exiting (vector=14",
+            "halting",
+        ],
+        forbidden_markers: &["user-run: syscall-test left Ring 3 (exited=true status=0"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
     // **システムコールの入口のスタブが方向フラグを降ろさない（2026-09-24）。** **`syscall-test` は
     // `std` の後で `int 0x80` を打つ**（69 番）ので、Rust の入口の監視が止める。
     CriticalTest {
@@ -31982,7 +32050,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 62,
-    full: 489,
+    full: 495,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

@@ -13003,6 +13003,36 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "補助ベクタの AT_PHDR に、ずらす前の番地を渡す",
     ),
     (
+        "mappings-overlap-skip-test",
+        cfg!(feature = "mappings-overlap-skip-test"),
+        "写像の表が、置くときに重なりを見ない",
+    ),
+    (
+        "mappings-split-swap-test",
+        cfg!(feature = "mappings-split-swap-test"),
+        "範囲の一部の munmap で、外す断片と残る部分を取り違える",
+    ),
+    (
+        "mprotect-none-discards-test",
+        cfg!(feature = "mprotect-none-discards-test"),
+        "mprotect(PROT_NONE) で葉を外し、中身を捨てる",
+    ),
+    (
+        "munmap-keeps-frames-test",
+        cfg!(feature = "munmap-keeps-frames-test"),
+        "munmap が外したフレームを返さない",
+    ),
+    (
+        "mprotect-allows-exec-test",
+        cfg!(feature = "mprotect-allows-exec-test"),
+        "mprotect が PROT_EXEC を断らない",
+    ),
+    (
+        "mprotect-writable-code-test",
+        cfg!(feature = "mprotect-writable-code-test"),
+        "mprotect が、実行できるページを書ける形にする求めを断らない",
+    ),
+    (
         "excursion-budget-test",
         cfg!(feature = "excursion-budget-test"),
         "遠征スタックを止まる線を越える深さまで使う",

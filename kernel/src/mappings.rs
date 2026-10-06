@@ -240,11 +240,14 @@ impl MemoryMap {
         if start >= end || !start.is_multiple_of(PAGE_SIZE) || !end.is_multiple_of(PAGE_SIZE) {
             return Err(MapError::BadRange);
         }
-        if self
-            .entries
-            .iter()
-            .flatten()
-            .any(|mapping| mapping.overlaps(start, end))
+        // 破壊テスト (2026-10-06, mappings-overlap-skip-test): 置くときに重なりを見ない（`overlaps_any` も）。
+        // `MAP_FIXED_NOREPLACE` が、写像の上でも断らずに置きに行く。
+        if !cfg!(feature = "mappings-overlap-skip-test")
+            && self
+                .entries
+                .iter()
+                .flatten()
+                .any(|mapping| mapping.overlaps(start, end))
         {
             return Err(MapError::Overlap);
         }
@@ -309,16 +312,23 @@ impl MemoryMap {
             }
             let piece_start = mapping.start.max(start);
             let piece_end = mapping.end.min(end);
-            out[released] = Some(Mapping {
+            let piece = Mapping {
                 start: piece_start,
                 end: piece_end,
                 ..mapping
-            });
-            released += 1;
+            };
             let before = (mapping.start < start).then_some(Mapping {
                 end: start,
                 ..mapping
             });
+            // 破壊テスト (2026-10-06, mappings-split-swap-test): 前に残る部分が在れば、外す断片と取り違える——
+            // 求められた範囲を表に残し、前に残るはずだった部分を外す。
+            let (piece, before) = match before {
+                Some(kept) if cfg!(feature = "mappings-split-swap-test") => (kept, Some(piece)),
+                _ => (piece, before),
+            };
+            out[released] = Some(piece);
+            released += 1;
             let after = (end < mapping.end).then_some(Mapping {
                 start: end,
                 ..mapping
@@ -426,12 +436,14 @@ impl MemoryMap {
 
     /// `start` から `bytes` の範囲に、写像が 1 つでも掛かっているか。
     pub fn overlaps_any(&self, start: u64, bytes: u64) -> bool {
-        start.checked_add(bytes).is_some_and(|end| {
-            self.entries
-                .iter()
-                .flatten()
-                .any(|m| m.overlaps(start, end))
-        })
+        // 破壊テスト (2026-10-06, mappings-overlap-skip-test): `register` と同じく、重なりを見ない。
+        !cfg!(feature = "mappings-overlap-skip-test")
+            && start.checked_add(bytes).is_some_and(|end| {
+                self.entries
+                    .iter()
+                    .flatten()
+                    .any(|m| m.overlaps(start, end))
+            })
     }
 
     /// `brk` のヒープの終わりを動かす（純粋な論理）。

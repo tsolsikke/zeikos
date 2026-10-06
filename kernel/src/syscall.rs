@@ -2393,7 +2393,8 @@ unsafe fn mprotect_from_ring3(addr: u64, len: u64, prot: u64, direct_map: Direct
     if len == 0 || !addr.is_multiple_of(PAGE_SIZE) {
         return (-EINVAL) as u64;
     }
-    if prot & PROT_EXEC != 0 {
+    // 破壊テスト (2026-10-06, mprotect-allows-exec-test): `PROT_EXEC` を断らない（W と X を同時に通す形）。
+    if prot & PROT_EXEC != 0 && !cfg!(feature = "mprotect-allows-exec-test") {
         return (-EPERM) as u64;
     }
     let bytes = len.div_ceil(PAGE_SIZE) * PAGE_SIZE;
@@ -2401,7 +2402,13 @@ unsafe fn mprotect_from_ring3(addr: u64, len: u64, prot: u64, direct_map: Direct
     let present = prot & (PROT_READ | PROT_WRITE) != 0;
     // SAFETY: 遠征の中なので CR3 はこのプロセスの表である。
     let mut table = unsafe { ActivePageTable::current(direct_map) };
-    if writable && range_holds_an_executable_page(&table, addr, bytes) {
+    // 破壊テスト (2026-10-06, mprotect-writable-code-test): 実行できるページを書ける形にする求めを断らない。
+    // 自分のコードのページへ `PROT_READ|PROT_WRITE` を打った `syscall-test` は、戻った次の命令の取り出しで落ちる
+    // （`set_leaf_access` が実行禁止を立てるため）。
+    if writable
+        && !cfg!(feature = "mprotect-writable-code-test")
+        && range_holds_an_executable_page(&table, addr, bytes)
+    {
         return (-EPERM) as u64;
     }
     let mut pieces: Released = [None; crate::mappings::MAX_MAPPINGS];
@@ -2423,6 +2430,17 @@ unsafe fn mprotect_from_ring3(addr: u64, len: u64, prot: u64, direct_map: Direct
                 outcome = (-EINVAL) as u64;
                 break 'pieces;
             };
+            // 破壊テスト (2026-10-06, mprotect-none-discards-test): `PROT_NONE` で、葉を外してフレームを返す（中身を
+            // 捨てる形。読める形へ戻すと 0 のページが来る）。
+            #[cfg(feature = "mprotect-none-discards-test")]
+            if !present {
+                // SAFETY: 稼働中の表から、このプロセスのページを外し、フレームを返す（破壊テストだけ）。
+                if let Ok(unmapped) = unsafe { table.unmap_4kib(virt) } {
+                    let _ = allocator.deallocate_frame(unmapped.frame);
+                }
+                page += PAGE_SIZE;
+                continue;
+            }
             // SAFETY: 稼働中の表の、このプロセスの葉を書き換える（写していない葉は `NotMapped` で返る）。
             let changed = unsafe { table.set_leaf_access(virt, writable, present) };
             if changed.is_err() {
@@ -2563,7 +2581,11 @@ unsafe fn release_range_and_unmap(
                 // SAFETY: 稼働中の表から、このプロセスのページ（無名か `brk` の）を外し、フレームを返す（`brk` が縮む
                 // ときと同じ。この CPU の TLB からは `unmap_4kib` が消し、プロセスは 1 つの CPU に留まる）。
                 if let Ok(unmapped) = unsafe { table.unmap_4kib(virt) } {
-                    let _ = allocator.deallocate_frame(unmapped.frame);
+                    // 破壊テスト (2026-10-06, munmap-keeps-frames-test): 外したフレームをアロケータへ返さない。
+                    // プロセスが終わった後の会計（取った数と検疫に届いた数）が釣り合わなくなる。
+                    if !cfg!(feature = "munmap-keeps-frames-test") {
+                        let _ = allocator.deallocate_frame(unmapped.frame);
+                    }
                     returned += 1;
                     // **`brk` が取ったページなら、`brk` の返した数にも足す**（`user-heap:` の行の「取った数と返した数が
                     // 釣り合う」を保つ。取ったのは `brk` で、返す道が `MAP_FIXED` だっただけである）。
