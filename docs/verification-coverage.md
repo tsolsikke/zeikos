@@ -2664,9 +2664,27 @@ Linux向けにビルドした、muslで静的リンクしたRustのプログラ�
 |---|---|
 | Seinasの確かめの絵（四隅の赤・緑・青・黄、白い枠、中央の白、暗い青の背景）が画面に出ること | 8点の画素（四隅の印の中・上と左の枠・中央・背景。位置は幅と高さから導く。`picture.rs`と同じ式）が全部合う（`the_seinas_picture_reached_the_screen`） |
 | 終わった後に文字の画面が戻ること | 同じ8点のうち合うのが1点以下（`the_text_console_came_back`） |
-| 終了の状態が0で、知らない番号を1つも打っていないこと | `zash: exit status 0`と、`spawn: /bin/linux/seinas-fbdev ended (Exited(0)) … (0 with a number the kernel does not know`（`seinas_fbdev_exited_with_zero`・`seinas_fbdev_hit_no_unknown_number`） |
+| 終了の状態が0で、知らない番号を1つも打っていないこと | `spawn: /bin/linux/seinas-fbdev ended (Exited(0)) … (0 with a number the kernel does not know`の行と、`zash: exit status`の行が無いこと（`zash`は0のときは何も言わない。`seinas_fbdev_exited_with_zero`・`seinas_fbdev_hit_no_unknown_number`） |
 | `[ERROR]`が無いこと | 行を数える |
 | 成果物が無いとき | `seinas-fbdev-test: skipped (…)`の行で飛ばす。通ったことにはしない |
+
+#### 運用者が目で確かめる手順（M1・M2の受け入れ。2026-10-07）
+
+M1とM2は、上の機械の判定に加えて、運用者が手元で目で見て受け入れた。次のSprint Reviewでも同じ手順で見せられるように、ここに残す。全検査が走っている間はQEMUを使えない（検査のロックが断る）。
+
+**M1（Linuxのプログラムがそのまま動く）。**
+
+1. `cargo xtask run`で起動し、シリアルに`[INFO] linux-check: /bin/linux/m1-rust ended Ok(Exited(4))`の行が出ることを見る（起動時のプログラムの後、シェルの前。違えば`[ERROR]`で止まる）。
+2. `cargo xtask run --gui --manual`でウィンドウを開き、`zash`のプロンプトで`/bin/linux/m1-rust /etc/motd a b`を打つ。出力が`linux-programs/reference/m1-rust.txt`（Linuxで控えたもの）と同じで、`zash: exit status 4`で終わること。見る観点は、引数が渡ること（`4 argument(s)`と`a`・`b`）、ファイルが読めること（`/etc/motd`の18バイト）、ヒープが取れること（1 MiBの`Vec`と`HashMap`）、終了の状態が返ること。
+3. C版も見るなら`cargo xtask run --linux-c-test`（`musl-gcc`が無ければ名指しで飛ぶ）。
+
+**M2（Seinasのfbdevの裏側が`/dev/fb0`に絵を出す）。**
+
+1. `tools/fetch-seinas.sh`で成果物を取る（1回だけ。`fetched:`か`kept:`。SHA-256が合わなければ`refused:`で置かない）。
+2. `cargo xtask run --seinas-fbdev-test`で機械の判定を見る（`seinas-fbdev-test: PASS`）。写しは回の置き場`target/runs/<番号>/`の`shown.ppm`（絵の在る間）と`left.ppm`（終わった後）に残り、画像ビューアで開ける。
+3. 続けて`cargo xtask run --gui --manual`で起動すると、直前の回の`disk0.img`（`seinas-test`の像）が持ち越される。プロンプトで`/bin/linux/seinas-fbdev --hold-ms 5000`を打つ。見る観点は、打った直後に画面全体が絵に変わること（四隅に赤・緑・青・黄の正方形、白い枠と中央の白い印、暗い青の背景）、5秒ほど保たれること、終わると文字の画面に戻ってプロンプトが打てること。シリアルには`seinas-fbdev: /dev/fb0: 1280x800, 32 bits per pixel, line length 5120`と、`spawn: /bin/linux/seinas-fbdev ended (Exited(0)) after 39 syscall(s) (0 with a number the kernel does not know …)`が出る。
+
+M2の要点は、Seinasの側に手を入れずに映っていることである——`seinas-fbdev`が打つのは`open("/dev/fb0")`・fbdevの`ioctl`2つ・`mmap`・書き込み・`nanosleep`（実体は`clock_nanosleep`）・`munmap`・`close`だけで、ZeikOS独自の`FBIOZPRESENT`は打たない。転送はカーネルが20 Hzで行う（`ADR-0083`）。
 
 **転送のCPU時間（実測。TCG。1280×800）。** 1回の全面の転送は平均5,332,420サイクル（31回で165,305,046サイクル）。20 Hzなら約107Mサイクル/秒で、3.5 GHzのCPUの約3%。KVMでは1回が約5Mサイクルより短い見込み（`flush`の既存の実測は5.05M）。サイクルは機械で揺れるので、判定には載せない（`fb0:`の行の`(info)`の側）。
 
