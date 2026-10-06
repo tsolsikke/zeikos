@@ -2462,6 +2462,7 @@ fn run_init(logger: &mut Logger<Serial>, console: Option<&mut Console>) -> ! {
             feature = "input-test",
             feature = "poll-test",
             feature = "screen-test",
+            feature = "fb-test",
             feature = "compose-test"
         ),
         allow(dead_code)
@@ -2476,6 +2477,7 @@ fn run_init(logger: &mut Logger<Serial>, console: Option<&mut Console>) -> ! {
             feature = "input-test",
             feature = "poll-test",
             feature = "screen-test",
+            feature = "fb-test",
             feature = "compose-test"
         ),
         allow(unused_mut)
@@ -2534,6 +2536,14 @@ fn run_init(logger: &mut Logger<Serial>, console: Option<&mut Console>) -> ! {
         cpu::halt_forever()
     }
 
+    // **`/dev/fb0` を Linux の fbdev の形で開き、書けば映ることを検査する（2026-10-07。`ADR-0083`）。** `fb-test` を前景で
+    // 1 度起動して終える——`screen-test` と同じ形で、シェルは起動しない。
+    #[cfg(feature = "fb-test")]
+    {
+        run_fb_test(logger, console);
+        cpu::halt_forever()
+    }
+
     // **画面・入力・ソケット・共有メモリを 1 つの組で通す（`ADR-0066` の Y-d）。** **`compd` を
     // 前景で 1 度起動して終える**——**シェルは起動しない。**
     #[cfg(feature = "compose-test")]
@@ -2546,6 +2556,7 @@ fn run_init(logger: &mut Logger<Serial>, console: Option<&mut Console>) -> ! {
         feature = "input-test",
         feature = "poll-test",
         feature = "screen-test",
+        feature = "fb-test",
         feature = "compose-test"
     )))]
     let mut restarts = 0usize;
@@ -2553,6 +2564,7 @@ fn run_init(logger: &mut Logger<Serial>, console: Option<&mut Console>) -> ! {
         feature = "input-test",
         feature = "poll-test",
         feature = "screen-test",
+        feature = "fb-test",
         feature = "compose-test"
     )))]
     loop {
@@ -2846,6 +2858,45 @@ fn run_poll_test(logger: &mut Logger<Serial>, console: Option<&mut Console>) {
 /// （`input::caller_is_foreground`）。**`gfxd` が起動する `gfxc`（スロット 1）は開けない。**
 ///
 /// **判定は `xtask` の `screen-test` が、画面の読み戻し（`screendump`）と行を読んで行う。**
+/// `/dev/fb0` の検査（2026-10-07。`ADR-0083`）。`fb-test` を前景で起こし、終わった後に、図形モードの回数と、間隔ごとの転送の
+/// 回数・サイクルを出す。**`xtask` の `fb-test` が、絵の在る間に `screendump` で四隅を読み、抜けた後にもう 1 度読む。**
+#[cfg(feature = "fb-test")]
+fn run_fb_test(logger: &mut Logger<Serial>, console: Option<&mut Console>) {
+    let mut console = console;
+    let outcome = {
+        let _foreground = console
+            .as_deref_mut()
+            .map(kernel::console::install_foreground);
+        // **終わり方を feature で選ぶ**——`close` して終わる（既定）、`close` を打たずに `exit`、わざと畳まれる。後の 2 つは、
+        // プロセスの終わりに表ごと閉じられて、最後の転送と文字の画面が戻ることを見る。
+        let (argv, argc): (&[u8], usize) = if cfg!(feature = "fb-test-no-close") {
+            (b"fb-test\0noclose\0", 2)
+        } else if cfg!(feature = "fb-test-fold") {
+            (b"fb-test\0fold\0", 2)
+        } else {
+            (b"fb-test\0", 1)
+        };
+        kernel::userland::spawn(b"/bin/fb-test", argv, argc, None)
+    };
+    log_both(
+        logger,
+        console,
+        LogLevel::Info,
+        format_args!("fb-test: /bin/fb-test ended ({outcome:?})"),
+    );
+    let (entered, left, presented) = kernel::console::graphics_counts();
+    let (deferred, cycles) = kernel::console::fb0_counts();
+    logger.info(format_args!(
+        "screen: entered {entered}, left {left}, presented {presented}, pages mapped {}",
+        kernel::syscall::screen_pages_mapped()
+    ));
+    logger.info(format_args!(
+        "fb0: {deferred} deferred present(s) of the whole back buffer (none asked for by an ioctl: presented \
+         {presented}), {cycles} cycle(s) in all, {} per present (the cycles vary with the host; they are not judged)",
+        cycles.checked_div(deferred).unwrap_or(0)
+    ));
+}
+
 #[cfg(feature = "screen-test")]
 fn run_screen_test(logger: &mut Logger<Serial>, console: Option<&mut Console>) {
     let mut console = console;
@@ -3098,6 +3149,7 @@ fn run_concurrent_test(logger: &mut Logger<Serial>, console: Option<&mut Console
         feature = "input-test",
         feature = "poll-test",
         feature = "screen-test",
+        feature = "fb-test",
         feature = "compose-test"
     ),
     allow(dead_code)
@@ -3109,6 +3161,7 @@ const SHELL_PATH: &[u8] = b"/bin/zash";
         feature = "input-test",
         feature = "poll-test",
         feature = "screen-test",
+        feature = "fb-test",
         feature = "compose-test"
     ),
     allow(dead_code)
@@ -3120,6 +3173,7 @@ const SHELL_PATH_TEXT: &str = "/bin/zash";
         feature = "input-test",
         feature = "poll-test",
         feature = "screen-test",
+        feature = "fb-test",
         feature = "compose-test"
     ),
     allow(dead_code)
@@ -12211,6 +12265,36 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "screen-present-does-not-copy",
         cfg!(feature = "screen-present-does-not-copy"),
         "present が写さない（ADR-0066 の Y-c）",
+    ),
+    (
+        "fb-test",
+        cfg!(feature = "fb-test"),
+        "init が /bin/fb-test を前景で起こす（/dev/fb0 の検査。ADR-0083）",
+    ),
+    (
+        "fb-test-no-close",
+        cfg!(feature = "fb-test-no-close"),
+        "fb-test が close を打たずに exit する（表ごと閉じられて戻ることを見る）",
+    ),
+    (
+        "fb-test-fold",
+        cfg!(feature = "fb-test-fold"),
+        "fb-test がわざと畳まれる（表ごと閉じられて戻ることを見る）",
+    ),
+    (
+        "fb0-deferred-present-skip-test",
+        cfg!(feature = "fb0-deferred-present-skip-test"),
+        "/dev/fb0 の間隔ごとの転送をしない",
+    ),
+    (
+        "fb0-close-keeps-graphics-test",
+        cfg!(feature = "fb0-close-keeps-graphics-test"),
+        "/dev/fb0 を閉じても図形モードから抜けない",
+    ),
+    (
+        "fb0-deferred-ignores-interval-test",
+        cfg!(feature = "fb0-deferred-ignores-interval-test"),
+        "/dev/fb0 の転送が間隔を見ず、呼ばれるたびに写す",
     ),
     (
         "screen-leave-does-not-repaint",

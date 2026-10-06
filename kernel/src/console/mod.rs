@@ -373,6 +373,16 @@ static GRAPHICS_LEFT: AtomicU64 = AtomicU64::new(0);
 /// `present` でコピーした回数（判定行）。
 static GRAPHICS_PRESENTS: AtomicU64 = AtomicU64::new(0);
 
+/// `/dev/fb0` で開いた図形モードか（2026-10-07。`ADR-0083`）。**書けば映る形**——利用者は `FBIOZPRESENT` を打たず、
+/// カーネルが間隔ごとに裏バッファの全体を画面へ転送する（Linux の `fb_deferred_io` と同じ考え）。**`SYS_OPEN_SCREEN`
+/// （ZeikOS 独自）で開いた図形モードでは立てない**——そちらは利用者が `FBIOZPRESENT` で矩形を写す。
+static FB0_OPEN: AtomicBool = AtomicBool::new(false);
+/// 最後に転送した時刻（タイマの刻み）。[`present_deferred_if_due`] が間隔を数える。
+static FB0_LAST_PRESENT_TICK: AtomicU64 = AtomicU64::new(0);
+/// 間隔ごとの転送の回数と、それに使ったサイクル（計測。判定の行に出す）。
+static FB0_DEFERRED_PRESENTS: AtomicU64 = AtomicU64::new(0);
+static FB0_DEFERRED_CYCLES: AtomicU64 = AtomicU64::new(0);
+
 /// 図形モードに居るか（`ADR-0066` の Y-c）。
 pub fn graphics_active() -> bool {
     GRAPHICS_ACTIVE.load(Ordering::Acquire)
@@ -385,6 +395,95 @@ pub fn graphics_counts() -> (u64, u64, u64) {
         GRAPHICS_LEFT.load(Ordering::Relaxed),
         GRAPHICS_PRESENTS.load(Ordering::Relaxed),
     )
+}
+
+/// `/dev/fb0` で開いた図形モードに居るか。**BKL 無しで読める**（アイドルが、BKL を取る前に見る）。
+pub fn fb0_open() -> bool {
+    FB0_OPEN.load(Ordering::Acquire)
+}
+
+/// `/dev/fb0` の開き方で図形モードへ入る（2026-10-07。`ADR-0083`）。[`enter_graphics`] と同じ関所を通り、加えて
+/// 「間隔ごとに転送する」印を立てる。`now_ticks` は、最初の間隔の起点。
+pub fn enter_graphics_via_fb0(now_ticks: u64) -> Result<GraphicsSurface, GraphicsError> {
+    let surface = enter_graphics()?;
+    FB0_LAST_PRESENT_TICK.store(now_ticks, Ordering::Relaxed);
+    FB0_OPEN.store(true, Ordering::Release);
+    Ok(surface)
+}
+
+/// `/dev/fb0` の裏バッファを、間隔が過ぎていれば画面の全体へ転送する（2026-10-07。`ADR-0083`）。
+///
+/// **呼ぶ所は 2 つ**——システムコールの戻り（`crate::syscall`）と、BSP のアイドルの定常ループ（`crate::task`）。
+/// **どちらも割り込みの外で、BKL を持っている。** 前景のプロセスが眠っている間（`nanosleep`）はアイドルしか走らないので、
+/// アイドルの側が要る。**割り込みの中では転送しない**——全面の転送は数ミリ秒かかり、割り込みの中に置く長さではない。
+///
+/// `/dev/fb0` で開いていなければ、何もせずに偽。転送したら真。
+pub fn present_deferred_if_due(now_ticks: u64, interval_ticks: u64) -> bool {
+    if !fb0_open() || !graphics_active() {
+        return false;
+    }
+    // 破壊テスト (fb0-deferred-ignores-interval-test): 間隔を見ずに、呼ばれるたびに転送する。回数の上限の判定が落ちる。
+    let interval = if cfg!(feature = "fb0-deferred-ignores-interval-test") {
+        0
+    } else {
+        interval_ticks
+    };
+    let last = FB0_LAST_PRESENT_TICK.load(Ordering::Relaxed);
+    if now_ticks.saturating_sub(last) < interval {
+        return false;
+    }
+    FB0_LAST_PRESENT_TICK.store(now_ticks, Ordering::Relaxed);
+    // 破壊テスト (fb0-deferred-present-skip-test): 間隔は数えるが転送しない（`FBIOZPRESENT` が無かった頃の形）。
+    // 四隅の色が画面に届く判定が落ちる。
+    if cfg!(feature = "fb0-deferred-present-skip-test") {
+        return false;
+    }
+    present_fb0_whole();
+    true
+}
+
+/// 裏バッファの全体を画面へ転送し、回数とサイクルを数える（[`present_deferred_if_due`] と [`close_screen_fd`] から）。
+/// **`FBIOZPRESENT` の回数（`GRAPHICS_PRESENTS`）には足さない**——利用者が打った数と、カーネルが写した数を分けて見る。
+fn present_fb0_whole() {
+    let Some(surface) = graphics_surface() else {
+        return;
+    };
+    let console = FOREGROUND.load(Ordering::Acquire);
+    if console.is_null() {
+        return;
+    }
+    let started = common::arch::x86_64::read_timestamp_counter();
+    // SAFETY: 非 null なら [`install_foreground`] のガードが生きており、据えた側は `&mut Console` を預けている
+    // （[`FOREGROUND`] の doc）。呼ぶ側は BKL を持ち、ほかの書き手（Ring 3 の `write`・`FBIOZPRESENT`）とは BKL で
+    // 直列になる。
+    let console = unsafe { &mut *console };
+    console.present(0, 0, surface.width, surface.height);
+    let elapsed = common::arch::x86_64::read_timestamp_counter().wrapping_sub(started);
+    FB0_DEFERRED_PRESENTS.fetch_add(1, Ordering::Relaxed);
+    FB0_DEFERRED_CYCLES.fetch_add(elapsed, Ordering::Relaxed);
+}
+
+/// 間隔ごとの転送の回数と、使ったサイクルの合計（判定の行に出す）。
+pub fn fb0_counts() -> (u64, u64) {
+    (
+        FB0_DEFERRED_PRESENTS.load(Ordering::Relaxed),
+        FB0_DEFERRED_CYCLES.load(Ordering::Relaxed),
+    )
+}
+
+/// 画面の fd（`File::Screen`）が閉じられた（2026-10-07）。**`/dev/fb0` で開いていたなら、最後に 1 回転送してから**
+/// 図形モードを抜ける（間隔の途中で書いたものを捨てない）。`SYS_OPEN_SCREEN` で開いていたなら、今までどおり抜けるだけ。
+pub fn close_screen_fd() {
+    if FB0_OPEN.swap(false, Ordering::AcqRel) {
+        if !cfg!(feature = "fb0-deferred-present-skip-test") {
+            present_fb0_whole();
+        }
+        // 破壊テスト (fb0-close-keeps-graphics-test): 閉じても図形モードから抜けない。文字の画面が戻る判定が落ちる。
+        if cfg!(feature = "fb0-close-keeps-graphics-test") {
+            return;
+        }
+    }
+    leave_graphics();
 }
 
 /// いまの面の形と位置（`ADR-0066` の Y-c）。**前景のコンソールが無ければ `None`。**

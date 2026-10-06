@@ -383,7 +383,8 @@ impl File {
             Self::Shm { shm } => crate::shm::detach(*shm),
             // **画面の fd を手放したら図形モードから抜ける（`ADR-0066` の Y-c）。** **プロセスが
             // 終われば表ごと解放されるので、`close` を忘れて落ちたプログラムでも文字の画面へ戻る。**
-            Self::Screen => crate::console::leave_graphics(),
+            // **`/dev/fb0` で開いていたなら、最後に 1 回転送してから抜ける**（2026-10-07。`ADR-0083`）。
+            Self::Screen => crate::console::close_screen_fd(),
             Self::Socket {
                 state: SocketState::Unbound,
             }

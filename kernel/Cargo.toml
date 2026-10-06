@@ -690,6 +690,20 @@ poll-waits-on-one-member = []
 # 起こして（前景でない者が画面と入力を開けないことを見る）、画面を開き、裏バッファを mmap して
 # 四角を描き、present で写す。判定は xtask の screen-test が screendump を読んで行う。
 screen-test = []
+# /dev/fb0 を Linux の fbdev の形で開き、四隅に色を置いて、FBIOZPRESENT を打たずに画面へ出るのを待つ（2026-10-07。
+# ADR-0083。M2 の最初の刻み）。init が /bin/fb-test を前景で起こす。判定は xtask の fb-test が screendump を読んで行う。
+fb-test = []
+# fb-test が close を打たずに exit する（ADR-0083）。プロセスの終わりに表ごと閉じられ、最後の転送と文字の画面が戻ることを見る。
+# 破壊テストではない（判定は全部成り立つ）。`--fb-test --ending noclose`。
+fb-test-no-close = []
+# fb-test がわざと番地 0 へ書いて畳まれる（ADR-0083）。同じく表ごと閉じられて戻ることを見る。`--fb-test --ending fold`。
+fb-test-fold = []
+# /dev/fb0 の間隔ごとの転送をしない（FBIOZPRESENT が無かった頃の形。ADR-0083）。四隅の色が画面に届く判定が落ちる。
+fb0-deferred-present-skip-test = []
+# /dev/fb0 を閉じても図形モードから抜けない（ADR-0083）。文字の画面が戻る判定が落ちる。
+fb0-close-keeps-graphics-test = []
+# /dev/fb0 の転送が間隔を見ず、呼ばれるたびに写す（ADR-0083）。転送の回数が間隔から導ける上限の内に収まる判定が落ちる。
+fb0-deferred-ignores-interval-test = []
 # present が写さない（ADR-0066 の Y-c）。書いた画素が MMIO に届く判定が落ちる。
 # **Y-d の組でも回すので、screen-test に寄りかからない（xtask が構成を足す）。**
 screen-present-does-not-copy = []

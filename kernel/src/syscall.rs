@@ -939,7 +939,7 @@ unsafe fn dispatch(
         // `#[inline(never)]` の関数である**——**この `match` の枠に局所を乗せない。**
         // **`spawn` の経路には載っていないので、`syscall-test` の高水位は動かない見込みである。**
         SYS_OPEN_INPUT => open_input_from_ring3(),
-        SYS_OPEN_SCREEN => open_screen_from_ring3(),
+        SYS_OPEN_SCREEN => open_screen_from_ring3(ScreenOpenedBy::PrivateNumber),
         // **多重待ち（`ADR-0066` の Y-b）。** **`#[inline(never)]` で、コピーは `dispatch` の
         // 枠に乗らない。**
         // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
@@ -1525,11 +1525,17 @@ unsafe fn read_input_events(
 ///
 /// **図形モードへ入ってから fd を表へ入れる。** **入らなければ（`-EMFILE`）すぐ抜ける**——
 /// **fd の無い図形モードを残すと、誰も抜けさせられない。**
-fn open_screen_from_ring3() -> u64 {
+fn open_screen_from_ring3(by: ScreenOpenedBy) -> u64 {
     if !crate::input::caller_is_foreground() {
         return (-EBADF) as u64;
     }
-    match crate::console::enter_graphics() {
+    let entered = match by {
+        ScreenOpenedBy::PrivateNumber => crate::console::enter_graphics(),
+        ScreenOpenedBy::DevFb0 => {
+            crate::console::enter_graphics_via_fb0(crate::arch::x86_64::monotonic_ticks())
+        }
+    };
+    match entered {
         Ok(_) => {}
         Err(crate::console::GraphicsError::NoConsole) => return (-ENODEV) as u64,
         Err(crate::console::GraphicsError::Busy) => return (-EBUSY) as u64,
@@ -1543,6 +1549,23 @@ fn open_screen_from_ring3() -> u64 {
         }
     }
 }
+
+/// 画面の fd を、どの道で開いたか（2026-10-07。`ADR-0083`）。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ScreenOpenedBy {
+    /// `SYS_OPEN_SCREEN`（ZeikOS 独自の番号）。利用者が `FBIOZPRESENT` で矩形を写す。
+    PrivateNumber,
+    /// `open("/dev/fb0")`（Linux の fbdev の道）。カーネルが間隔ごとに全体を写す。
+    DevFb0,
+}
+
+/// Linux の fbdev の装置の道。
+const DEV_FB0: &[u8] = b"/dev/fb0";
+
+/// `/dev/fb0` の裏バッファを画面へ転送する間隔（タイマの刻み。50 ms = 20 Hz。2026-10-07。`ADR-0083`）。
+/// **全面の転送は KVM で約 5M サイクル（約 1.5 ms）、TCG ではその数倍**なので、20 Hz なら CPU 時間の数パーセントである
+/// （実測は `docs/verification-coverage.md`）。利用者が見る遅れは最大でこの間隔。
+pub const FB0_PRESENT_INTERVAL_TICKS: u64 = crate::machine::pc::timer_frequency_hz() as u64 / 20;
 
 /// fd が画面か（`ADR-0066` の Y-c）。**表の中身で見る**（番号では分けない）。
 fn is_screen_fd(fd: u64) -> bool {
@@ -3620,6 +3643,13 @@ pub(crate) unsafe extern "sysv64" fn syscall_entry(
         unsafe { crate::arch::x86_64::leave_user_mode() }
     }
 
+    // **`/dev/fb0` の裏バッファを、間隔が過ぎていれば画面へ転送する**（2026-10-07。`ADR-0083`）。システムコールの戻りは、
+    // 割り込みの外で BKL を持つ所である。**アイドルの定常ループにも同じ 1 行が在る**（眠っているプロセスのため）。
+    crate::console::present_deferred_if_due(
+        crate::arch::x86_64::monotonic_ticks(),
+        FB0_PRESENT_INTERVAL_TICKS,
+    );
+
     // 戻り値を、Linux のレジスタの形で書き戻す（`abi`）。
     crate::abi::linux::x86_64::write_return(ctx, ret);
 
@@ -4573,19 +4603,26 @@ unsafe fn sys_open(path: u64, flags: u64, page_table_root: PhysAddr, direct_map:
     // `O_WRONLY|O_TRUNC` と `O_WRONLY|O_CREAT|O_TRUNC` の 2 つの形である。**
     // **`O_CREAT` 単独は受けない**——**位置書きの部品が無いので、
     // 作った後にできるのは全置換だけである**（`O_TRUNC` と同じ形になる）。
-    let create = flags & O_CREAT != 0;
-    let write_intent = flags & O_WRITE_INTENT & !O_CREAT;
-    let write_form = flags & O_ACCMODE == O_WRONLY && write_intent == O_TRUNC;
-    if !write_form && (flags & O_ACCMODE != O_RDONLY || flags & O_WRITE_INTENT != 0) {
-        return (-EROFS) as u64;
-    }
-
     let mut buf = [0u8; PATH_MAX];
     // SAFETY: 呼び出し元契約をそのまま渡す。
     let len = match unsafe { copy_user_path(&mut buf, path, page_table_root, direct_map) } {
         Ok(len) => len,
         Err(errno) => return (-errno) as u64,
     };
+
+    // **`/dev/fb0` は名前で分ける**（2026-10-07。`ADR-0083`。Linux の fbdev の道。ext2 に `/dev` は無い——`readlink` の
+    // `/proc/self/exe` と同じ形）。開き方（`O_RDWR` でも `O_RDONLY` でも）は見ない。中身は `SYS_OPEN_SCREEN` と同じ画面の fd
+    // だが、**書けば映る形**で、利用者は `FBIOZPRESENT` を打たない。ほかの `/dev/…` は、今までどおり ext2 に無いので `-ENOENT`。
+    if &buf[..len] == DEV_FB0 {
+        return open_screen_from_ring3(ScreenOpenedBy::DevFb0);
+    }
+
+    let create = flags & O_CREAT != 0;
+    let write_intent = flags & O_WRITE_INTENT & !O_CREAT;
+    let write_form = flags & O_ACCMODE == O_WRONLY && write_intent == O_TRUNC;
+    if !write_form && (flags & O_ACCMODE != O_RDONLY || flags & O_WRITE_INTENT != 0) {
+        return (-EROFS) as u64;
+    }
 
     let fs = match crate::vfs::root_filesystem() {
         Ok(fs) => fs,

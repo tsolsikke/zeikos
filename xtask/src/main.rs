@@ -2392,6 +2392,8 @@ const RUN_FLAGS: &[(&str, RunValue)] = &[
     ("--input-test", RunValue::None),
     ("--poll-test", RunValue::None),
     ("--screen-test", RunValue::None),
+    ("--fb-test", RunValue::None),
+    ("--ending", RunValue::Required),
     ("--compose-test", RunValue::None),
     ("--history-test", RunValue::None),
     ("--profile-test", RunValue::None),
@@ -3050,6 +3052,35 @@ fn main() -> Result<()> {
                 );
             }
             // **画面へ画素を出す判定（`ADR-0066` の Y-c）。`screendump` で画面を読み戻す。**
+            if rest.iter().any(|a| a == "--fb-test") {
+                let sabotage: Vec<&str> = rest
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, a)| *a == "--sabotage" && rest.get(i + 1).is_some())
+                    .filter_map(|(i, _)| rest.get(i + 1).map(|s| s.as_str()))
+                    .collect();
+                let ending = match rest
+                    .iter()
+                    .position(|a| a == "--ending")
+                    .and_then(|i| rest.get(i + 1))
+                    .map(|s| s.as_str())
+                {
+                    None => FbTestEnding::Close,
+                    Some("noclose") => FbTestEnding::NoClose,
+                    Some("fold") => FbTestEnding::Fold,
+                    Some(other) => bail!("--fb-test --ending takes noclose or fold, not {other:?}"),
+                };
+                if sabotage.is_empty() {
+                    return cmd_fb_test(&sabotage, ending, true);
+                }
+                let result = cmd_fb_test(&sabotage, ending, false);
+                return finish_direct_sabotage(
+                    "fb test",
+                    &sabotage,
+                    SabotageForm::Inverted,
+                    result,
+                );
+            }
             if rest.iter().any(|a| a == "--screen-test") {
                 let sabotage: Vec<&str> = rest
                     .iter()
@@ -7682,6 +7713,27 @@ const SABOTAGE_JUDGEMENTS: &[NamedJudgement] = &[
         reached: true,
     },
     NamedJudgement {
+        check: "fb test",
+        key: "fb0-deferred-present-skip-test",
+        signs: &["the_corners_reached_the_framebuffer_without_an_ioctl = false"],
+        note: "",
+        reached: true,
+    },
+    NamedJudgement {
+        check: "fb test",
+        key: "fb0-close-keeps-graphics-test",
+        signs: &["the_text_console_came_back = false"],
+        note: "",
+        reached: true,
+    },
+    NamedJudgement {
+        check: "fb test",
+        key: "fb0-deferred-ignores-interval-test",
+        signs: &["the_presents_stayed_within_the_interval_bound = false"],
+        note: "",
+        reached: true,
+    },
+    NamedJudgement {
         check: "compose test",
         key: "screen-present-does-not-copy",
         signs: &["the_client_pool_reached_the_screen = false"],
@@ -10266,6 +10318,61 @@ const SCREEN_TEST_SABOTAGES: &[&str] = &[
     "foreground-ignores-the-slot",
 ];
 
+/// `--fb-test` の破壊テスト（2026-10-07。`ADR-0083`）。**3 つで、判定を 1 本ずつ落とす**——転送しない形、閉じても抜けない形、
+/// 間隔を見ずに転送する形。
+const FB_TEST_SABOTAGES: &[&str] = &[
+    "fb0-deferred-present-skip-test",
+    "fb0-close-keeps-graphics-test",
+    "fb0-deferred-ignores-interval-test",
+];
+
+/// `fb-test` が四隅に置く四角の 1 辺（画素）。`kernel/userland/fb-test.rs` の `CORNER` と対になっている。
+const FB_TEST_CORNER: u32 = 80;
+/// `fb-test` が眠る長さ（ミリ秒）と、転送の間隔（ミリ秒。`kernel/src/syscall.rs` の `FB0_PRESENT_INTERVAL_TICKS` が 20 Hz）。
+/// 回数の上限は、眠る長さを間隔で割った数に、起きるまでの余白と閉じるときの 1 回を足す。
+const FB_TEST_HOLD_MS: u64 = 1500;
+const FB_TEST_INTERVAL_MS: u64 = 50;
+/// `fb-test` が絵を置いたと言う行。この後に `screendump` を取る（間隔の 1 回ぶん以上待ってから）。
+const FB_TEST_PAINTED_MARKER: &str = "fb-test: painted";
+
+/// `fb-test` の終わり方（2026-10-07。`ADR-0083`）。**`close` を打たずに終わっても、プロセスの終わりに表ごと閉じられて、
+/// 最後の転送と文字の画面が戻る**ことを、同じ判定で見る。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FbTestEnding {
+    /// `munmap` して `close` して 0 で終わる（既定）。
+    Close,
+    /// `close` を打たずに `exit(0)`（feature `fb-test-no-close`）。
+    NoClose,
+    /// わざと番地 0 へ書いて畳まれる（feature `fb-test-fold`。ベクタ 14）。
+    Fold,
+}
+
+impl FbTestEnding {
+    fn feature(self) -> Option<&'static str> {
+        match self {
+            Self::Close => None,
+            Self::NoClose => Some("fb-test-no-close"),
+            Self::Fold => Some("fb-test-fold"),
+        }
+    }
+
+    /// カーネルの `fb-test: /bin/fb-test ended (…)` の行に期待する終わり。
+    fn expected_end(self) -> &'static str {
+        match self {
+            Self::Close | Self::NoClose => "fb-test: /bin/fb-test ended (Ok(Exited(0)))",
+            Self::Fold => "fb-test: /bin/fb-test ended (Ok(Folded(14)))",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Close => "close",
+            Self::NoClose => "noclose",
+            Self::Fold => "fold",
+        }
+    }
+}
+
 /// `--screen-test` の 1 段ごとの上限。
 const SCREEN_TEST_TIMEOUT: Duration = Duration::from_secs(60);
 /// `gfxd` がコピーし終えて打鍵を待っているマーカー（`ADR-0066` の Y-c）。**ここで 1 度目の読み戻しをする。**
@@ -10329,6 +10436,255 @@ fn magenta_in_square(image: &Option<(u32, u32, Vec<u8>)>) -> Option<u32> {
         }
     }
     Some(count)
+}
+
+/// 1 画素の色（`screendump` の PPM から。RGB）が、期待の色と近いか（各 8 ビットの差が 32 以内——QEMU の変換と BGR/RGB の
+/// 並べ替えを許す）。
+fn pixel_near(image: &(u32, u32, Vec<u8>), x: u32, y: u32, expected: (u8, u8, u8)) -> bool {
+    let (width, height, rgb) = image;
+    if x >= *width || y >= *height {
+        return false;
+    }
+    let at = ((y * *width + x) * 3) as usize;
+    let near = |have: u8, want: u8| have.abs_diff(want) <= 32;
+    near(rgb[at], expected.0) && near(rgb[at + 1], expected.1) && near(rgb[at + 2], expected.2)
+}
+
+/// `fb-test` の四隅（左上 赤・右上 緑・左下 青・右下 黄）が、`screendump` の中で期待の色か。四角の真ん中の 1 画素で見る。
+/// 返すのは、合っていた隅の数（4 で全部）。
+fn fb_test_corners_matching(image: &Option<(u32, u32, Vec<u8>)>) -> Option<u32> {
+    let image = image.as_ref()?;
+    let (width, height, _) = image;
+    let half = FB_TEST_CORNER / 2;
+    let corners = [
+        (half, half, (0xff, 0x00, 0x00)),
+        (width - half, half, (0x00, 0xff, 0x00)),
+        (half, height - half, (0x00, 0x00, 0xff)),
+        (width - half, height - half, (0xff, 0xff, 0x00)),
+    ];
+    Some(
+        corners
+            .iter()
+            .filter(|(x, y, color)| pixel_near(image, *x, *y, *color))
+            .count() as u32,
+    )
+}
+
+/// `/dev/fb0` を Linux の fbdev の形で開き、書けば映ることを検査する（2026-10-07。`ADR-0083`。M2 の最初の刻み）。
+///
+/// **`fb-test` を前景で起動する。** `fb-test` は `open("/dev/fb0", O_RDWR)` で画面を開き、fbdev の `ioctl` で形を訊き、面を
+/// `mmap` して四隅に色を置き、**`FBIOZPRESENT` を打たずに** 1.5 秒眠って、閉じる。カーネルが間隔（20 Hz）ごとに裏バッファの
+/// 全体を画面へ転送するので、眠っている間に `screendump` を取れば四隅が見える。
+///
+/// **判定は 4 本**——
+///
+/// 1. 四隅の色が画面に届いた（`ioctl` の `present` は 0 回のまま。`fb0:` の行で見る）
+/// 2. 間隔ごとの転送の回数が、眠った長さから導ける上限の内（間隔を見ずに写す形を捕まえる）
+/// 3. 文字コンソールが戻った（閉じた後の `screendump` で、四隅が置いた色でない）
+/// 4. `[ERROR]` が無い
+fn cmd_fb_test(features: &[&str], ending: FbTestEnding, expect_pass: bool) -> Result<()> {
+    let workspace_root = workspace_root()?;
+    let run = RunDir::create(&workspace_root, "fb-test")?;
+    let ovmf_vars = prepare_ovmf_vars(&run)?;
+    let bootloader_efi = build_bootloader(&workspace_root, false)?;
+    let mut all_features: Vec<&str> = vec!["fb-test"];
+    all_features.extend(ending.feature());
+    all_features.extend_from_slice(features);
+    let kernel_elf = build_kernel_with_features(&workspace_root, &all_features)?;
+    let esp_dir = stage_esp(&run, &bootloader_efi, &kernel_elf)?;
+
+    let serial_log = run.serial_log();
+    let painted_ppm = run.file("painted.ppm");
+    let left_ppm = run.file("left.ppm");
+    for stale in [&serial_log, &painted_ppm, &left_ppm] {
+        let _ = fs::remove_file(stale);
+    }
+    let debug_log = run.debug_log();
+    let _ = fs::remove_file(&debug_log);
+    let monitor_socket = run.monitor_socket("fb");
+    let _ = fs::remove_file(&monitor_socket);
+    ensure_socket_path_fits(&monitor_socket)?;
+
+    let qemu_args = qemu_launch_args(&QemuLaunchOptions {
+        ovmf_code: Path::new(OVMF_CODE_PATH),
+        ovmf_vars: &ovmf_vars,
+        esp_dir: &esp_dir,
+        disk_image: &run.disk_image(),
+        serial: &SerialSink::File(serial_log.clone()),
+        debug_log: &debug_log,
+        display: DisplayMode::None,
+        monitor_socket: Some(&monitor_socket),
+        accelerator: Accelerator::Tcg,
+        debug_events: DebugEvents::IntAndCpuReset,
+    });
+
+    let outputs = [serial_log.as_path(), debug_log.as_path()];
+    let mut child = launch::spawn(&launch::Spec::new(
+        &qemu_args,
+        &outputs,
+        "fb-test",
+        Duration::ZERO,
+        launch::Deadline::Normal,
+    ))?;
+
+    let started = Instant::now();
+    let wait_for = |marker: &str, limit: Duration| -> bool {
+        let deadline = Instant::now() + limit;
+        while Instant::now() < deadline && !child.was_cut() {
+            if read_lossy(&serial_log).contains(marker) {
+                return true;
+            }
+            metrics::sleep_poll(PANIC_TEST_POLL_INTERVAL);
+        }
+        false
+    };
+
+    let painted = wait_for(FB_TEST_PAINTED_MARKER, BOOT_READY_TIMEOUT);
+    let mut while_held = None;
+    let mut left = None;
+    if painted {
+        // **間隔の 1 回ぶんより長く待ってから読む**（転送は 20 Hz。TCG では遅れるので 6 回ぶん）。
+        metrics::sleep_fixed(Duration::from_millis(FB_TEST_INTERVAL_MS * 6));
+        match capture_screendump(&monitor_socket, &painted_ppm) {
+            Ok(()) => while_held = read_complete_ppm(&painted_ppm, SCREENDUMP_FILE_TIMEOUT),
+            Err(e) => println!("fb-test: the first screendump failed: {e}"),
+        }
+        if wait_for(SCREEN_TEST_DONE_MARKER, SCREEN_TEST_TIMEOUT) {
+            metrics::sleep_fixed(Duration::from_millis(500));
+            match capture_screendump(&monitor_socket, &left_ppm) {
+                Ok(()) => left = read_complete_ppm(&left_ppm, SCREENDUMP_FILE_TIMEOUT),
+                Err(e) => println!("fb-test: the second screendump failed: {e}"),
+            }
+        }
+    }
+    let waited = started.elapsed();
+
+    let qemu_exit = child
+        .try_wait()
+        .ok()
+        .flatten()
+        .map(|status| format!("{status}"));
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = fs::remove_file(&monitor_socket);
+
+    let serial = read_lossy(&serial_log);
+    let mut context = "fb-test".to_string();
+    if ending != FbTestEnding::Close {
+        context.push_str(&format!(" --ending {}", ending.label()));
+    }
+    if !features.is_empty() {
+        context.push_str(&format!(" {}", features.join("+")));
+    }
+    let context = context.as_str();
+
+    let qemu_debug = read_lossy(&debug_log);
+    if let BootOutcome::DidNotStart { firmware_rip } =
+        classify_boot(&serial, &qemu_debug, KERNEL_STARTED_MARKER)
+    {
+        report_did_not_start(context, firmware_rip, qemu_exit.as_deref())?;
+        bail!("{context}: the kernel did not start");
+    }
+    if !expect_pass {
+        report_sabotage_reach(
+            context,
+            &serial,
+            &[BOOT_HANDED_OFF_MARKER, FB_TEST_PAINTED_MARKER],
+        );
+    }
+
+    let stripped = strip_ansi(&serial);
+    let lines: Vec<&str> = stripped.lines().map(str::trim_end).collect();
+    let corners_held = fb_test_corners_matching(&while_held);
+    let corners_left = fb_test_corners_matching(&left);
+    // `fb0: N deferred present(s) … (none asked for by an ioctl: presented P), …`
+    let fb0_line = lines.iter().find(|line| line.contains("[INFO] fb0: "));
+    let deferred_presents = fb0_line.and_then(|line| {
+        line.split("fb0: ")
+            .nth(1)?
+            .split(' ')
+            .next()?
+            .parse::<u64>()
+            .ok()
+    });
+    let ioctl_presents = fb0_line.and_then(|line| {
+        line.split("presented ")
+            .nth(1)?
+            .split(')')
+            .next()?
+            .parse::<u64>()
+            .ok()
+    });
+    // 眠った 1.5 秒を間隔で割った数（30）に、起きるまでの余白と閉じるときの 1 回を足した上限。間隔を見ない形は、
+    // タイマの刻みごと（数百回以上）になる。
+    let presents_bound = FB_TEST_HOLD_MS / FB_TEST_INTERVAL_MS + 10;
+
+    let judgements: [(&str, bool); 4] = [
+        (
+            "the_corners_reached_the_framebuffer_without_an_ioctl",
+            corners_held == Some(4) && ioctl_presents == Some(0),
+        ),
+        (
+            "the_presents_stayed_within_the_interval_bound",
+            deferred_presents.is_some_and(|n| (1..=presents_bound).contains(&n)),
+        ),
+        ("the_text_console_came_back", corners_left == Some(0)),
+        (
+            "fb_test_ended_as_expected",
+            stripped.contains(ending.expected_end()),
+        ),
+    ];
+
+    let error_lines: Vec<&str> = lines
+        .iter()
+        .filter(|line| line.contains("[ERROR]"))
+        .copied()
+        .take(4)
+        .collect();
+    let no_error = error_lines.is_empty();
+
+    let failed: Vec<&str> = judgements
+        .iter()
+        .filter(|(_, held)| !held)
+        .map(|(name, _)| *name)
+        .collect();
+    for (name, held) in &judgements {
+        println!("{context}: {name} = {held}");
+    }
+    println!("{context}: no [ERROR] line = {no_error} (the first were {error_lines:?})");
+    println!(
+        "{context}: (info) corners matching while held = {corners_held:?}, after leaving = \
+         {corners_left:?}; deferred presents = {deferred_presents:?} (bound {presents_bound}), \
+         ioctl presents = {ioctl_presents:?}"
+    );
+    for info in lines.iter().filter(|line| {
+        line.contains("[INFO] screen:")
+            || line.contains("[INFO] fb0:")
+            || line.contains("fb-test: ")
+    }) {
+        println!("{context}: (info) {}", info.trim());
+    }
+    println!(
+        "{context}: (info) waited {:.1} s (painted = {painted})",
+        waited.as_secs_f64()
+    );
+    let passed = painted && failed.is_empty() && no_error;
+    if passed {
+        println!("{context}: PASS");
+        if expect_pass {
+            Ok(())
+        } else {
+            bail!("{context}: the sabotage was NOT caught; every judgement still held")
+        }
+    } else {
+        println!("{context}: FAILED (judgements that fell: {failed:?})");
+        if expect_pass {
+            bail!("{context}: FAILED ({failed:?})")
+        } else {
+            println!("{context}: the sabotage was caught (this run is expected to fail)");
+            Ok(())
+        }
+    }
 }
 
 /// 画面へ画素を出す形を検査する（`ADR-0066` の Y-c）。
@@ -29485,6 +29841,56 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
 
         // **画面・入力・ソケット・共有メモリを 1 つの組で通す（`ADR-0066` の Y-d。第1段階の締め）。**
         // **破壊テストは各段階の既存のものを 4 つ、組の中でもう 1 度実行する**（`COMPOSE_TEST_SABOTAGES`）。
+        // **`/dev/fb0` を Linux の fbdev の形で開き、書けば映る**（2026-10-07。`ADR-0083`）。**破壊テストは 3 つ**
+        // （`FB_TEST_SABOTAGES`）。
+        total += 1;
+        begin_item(
+            Family::Ipc,
+            "a program opens /dev/fb0 the Linux way and what it writes reaches the screen without an ioctl",
+        );
+        match cmd_fb_test(&[], FbTestEnding::Close, true) {
+            Ok(()) => println!("--- fb test: OK"),
+            Err(error) => {
+                println!("--- fb test: FAILED ({error})");
+                failed.push("fb test".to_string());
+            }
+        }
+        // **`close` を打たずに終わっても、文字の画面が戻る**（`exit` と、畳まれる形）。
+        for ending in [FbTestEnding::NoClose, FbTestEnding::Fold] {
+            total += 1;
+            let label = format!(
+                "the screen comes back when the /dev/fb0 holder ends by {}",
+                ending.label()
+            );
+            begin_item(Family::Ipc, &label);
+            match cmd_fb_test(&[], ending, true) {
+                Ok(()) => println!("--- fb test --ending {}: OK", ending.label()),
+                Err(error) => {
+                    println!("--- fb test --ending {}: FAILED ({error})", ending.label());
+                    failed.push(format!("fb test --ending {}", ending.label()));
+                }
+            }
+        }
+        let mut batch = Batch::new("FB_TEST_SABOTAGES");
+        for sabotage in FB_TEST_SABOTAGES {
+            total += 1;
+            batch.add(sabotage, move |failed, _retries| {
+                let label = format!("fb-test {sabotage}");
+                begin_item(Family::Ipc, &label);
+                match cmd_fb_test(&[sabotage], FbTestEnding::Close, false) {
+                    Ok(()) => report_inverted_judgement("fb test", sabotage, &label, failed),
+                    Err(error) => {
+                        println!(
+                            "--- {label}: FAILED [{}] ({error})",
+                            failure_category(&error)
+                        );
+                        failed.push(label.to_string());
+                    }
+                }
+            });
+        }
+        batch.run(&mut failed);
+
         total += 1;
         begin_item(
             Family::Ipc,
@@ -31906,6 +32312,7 @@ const ITEM_TABLES: &[(&str, usize)] = &[
     ("INPUT_TEST_SABOTAGES", INPUT_TEST_SABOTAGES.len()),
     ("POLL_TEST_SABOTAGES", POLL_TEST_SABOTAGES.len()),
     ("SCREEN_TEST_SABOTAGES", SCREEN_TEST_SABOTAGES.len()),
+    ("FB_TEST_SABOTAGES", FB_TEST_SABOTAGES.len()),
     ("COMPOSE_TEST_SABOTAGES", COMPOSE_TEST_SABOTAGES.len()),
     ("MACHINE_VARIANT_CHECKS", MACHINE_VARIANT_CHECKS.len()),
     ("MACHINE_VARIANT_CONFIGS", MACHINE_VARIANT_CONFIGS.len()),
@@ -32259,7 +32666,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 63,
-    full: 497,
+    full: 503,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

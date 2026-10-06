@@ -154,6 +154,8 @@ fn build_user_programs(manifest_dir: &str, out_dir: &str) {
         // **画面へ画素を出す組（`ADR-0066` の Y-c）。** **描く側と、開けないことを見る側で 1 組である。**
         "gfxd",
         "gfxc",
+        // **`/dev/fb0` を Linux の fbdev の形で開いて四隅に色を置く 1 本**（2026-10-07。`ADR-0083`）。
+        "fb-test",
         // **画面・入力・ソケット・共有メモリを 1 つの組で通す（`ADR-0066` の Y-d）。**
         "compd",
         "compc",
@@ -792,6 +794,8 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
         // **画面へ画素を出す組（`ADR-0066` の Y-c）。** **描く側と、開けないことを見る側で 1 組である。**
         "gfxd",
         "gfxc",
+        // **`/dev/fb0` を Linux の fbdev の形で開いて四隅に色を置く 1 本**（2026-10-07。`ADR-0083`）。
+        "fb-test",
         // **画面・入力・ソケット・共有メモリを 1 つの組で通す（`ADR-0066` の Y-d）。**
         "compd",
         "compc",

@@ -1609,6 +1609,16 @@ extern "sysv64" fn bsp_idle_main() -> ! {
         // **眠った回数を数える（W2-c-1 の計測）。** **眠る前に数える**——**起きてから
         // 数えると、起こした割り込みの中で読む値が 1 つ足りない。**
         IDLE_HALTS.fetch_add(1, Ordering::Relaxed);
+        // **`/dev/fb0` の裏バッファを、間隔が過ぎていれば画面へ転送する**（2026-10-07。`ADR-0083`）。**割り込みの中では
+        // 行わない**——アイドルは Ring 0 の定常ループで、BKL を取ってから転送し、放してから `hlt` する。前景のプロセスが
+        // 眠っている間（`nanosleep`）は、ここしか走る者が居ない。開いていなければ、BKL を取らずに通る。
+        if crate::console::fb0_open() {
+            let _bkl = crate::bkl::acquire(crate::bkl::KernelEntry::SteadyLoop);
+            crate::console::present_deferred_if_due(
+                crate::arch::x86_64::monotonic_ticks(),
+                crate::syscall::FB0_PRESENT_INTERVAL_TICKS,
+            );
+        }
         // 破壊テスト (W2-c-2, idle-holds-bkl-across-hlt): BKL を取ったまま眠る。
         // **次に自分が入口へ入るときに再帰取得になって止まる**（`bkl` の検出器）。
         //
