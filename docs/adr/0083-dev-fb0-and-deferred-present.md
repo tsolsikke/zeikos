@@ -61,3 +61,8 @@ M2の2つ目の刻みで、`seinas-fbdev`（musl静的PIE）をZeikOSの像に�
 - **第三者のライセンスの表示は、成果物と同じ像の、成果物の隣（`/bin/linux/`）に入れる**（releaseの`seinas-fbdev-v0.1.0-third-party.tar.gz`をそのまま）。成果物と表示を離さないためと、根の項目の数（`syscall-test`が8と数える）を変えないためである。リポジトリの側は`README.md`の第三者の表と、submoduleの`external/seinas/THIRD-PARTY/`で辿れる。
 - **`external/seinas`は、releaseのタグに固定したsubmodule**にする。目的は、成果物とソースの版を揃えることと、手元で作る道（Seinasの`tools/build-musl.sh`）を残すこと。ZeikOSの検査は中を見ない。
 - 却下: 作ったELFをZeikOSのリポジトリに置く（方針に反する）／既定の像に入れる（CIで作れず、バイトが揺れる）／CIのたびにSeinasを作る（pixmanのmusl向けの静的ライブラリに、meson・ninja・bison・curlが要る）。
+
+走らせて分かったことが2つあり、どちらもカーネルの側を直した。
+
+- **musl の`nanosleep`は`clock_nanosleep`（230）を打つ。** 無かったので`-ENOSYS`が返り、`std`が止まった（終了101）。相対の眠りと`CLOCK_MONOTONIC`の絶対の時刻を受ける形で足した（`ADR-0081`の続き）。
+- **隔離（`kernel/src/quarantine.rs`）の容量256では、この像の破棄が溢れた。** 1.5 MiBの像と4 MiBの確保2つを持つプロセスが終わると480フレームが破棄に来て、224が漏れた（実測。「left the allocator short: 480 consumed but 256 quarantined (224 leaked)」）。容量を4096（16 MiB。像の上限と無名の`mmap`の1回の上限に同じ）へ上げた。表は静的なので遠征スタックは増えないが、起動の試し（`demo_two_address_spaces`）が局所に持っていた隔離が64 KiBになって起動のカーネルスタックをあふれさせたので、そちらも静的にした。
