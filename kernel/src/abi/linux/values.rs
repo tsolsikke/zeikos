@@ -84,8 +84,10 @@ pub const PROT_EXEC: u64 = 4;
 /// `PROT_READ`（読める葉を求める。2026-10-06）。
 pub const PROT_READ: u64 = 1;
 
-/// `MAP_FIXED`（番地を指定して置き換える）。**まだ受けない**（`-ENOSYS`。次の刻み）。
+/// `MAP_FIXED`（番地を指定して、重なる写像を外してから置く。2026-10-06）。
 pub const MAP_FIXED: u64 = 0x10;
+/// `MAP_FIXED_NOREPLACE`（番地を指定するが、重なる写像が在れば `-EEXIST`。Linux 4.17 から。2026-10-06）。
+pub const MAP_FIXED_NOREPLACE: u64 = 0x10_0000;
 /// `MAP_ANONYMOUS`（fd の無い、ゼロで埋めた写像。2026-10-06）。
 pub const MAP_ANONYMOUS: u64 = 0x20;
 

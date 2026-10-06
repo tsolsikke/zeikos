@@ -999,7 +999,8 @@ const PAGING_TESTS: &[CriticalTest] = &[
         name: "user-leaf-high-bit",
         feature: "user-leaf-high-bit-test",
         expected_markers: &[
-            "user-heap: syscall-test had brk take 2 frame(s) and give back 2",
+            // **4 枚である**（2026-10-06 から。`syscall-test` の `brk` の見張りの検算が 2 枚足した。それまでは 2 枚）。
+            "user-heap: syscall-test had brk take 4 frame(s) and give back 4",
             "init: starting /bin/zash",
         ],
         forbidden_markers: &["left the allocator short", "DestroyAccounting", "halting"],

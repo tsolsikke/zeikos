@@ -1015,6 +1015,8 @@ pub struct UserProcess {
     space: crate::arch::x86_64::AddressSpace,
     /// 最初に飛ぶ先（ELF の entry）。
     entry: u64,
+    /// 像の始まり（最初の区画が載るページの先頭。ずらした後。2026-10-06。写像の表に登録する）。
+    image_base: u64,
     /// ユーザースタックの上端。
     stack_top: u64,
     /// このプロセスのヒープ（H-a。ADR-0044）。
@@ -1164,6 +1166,7 @@ pub fn load_user_program_from(
     let mut process = UserProcess {
         space,
         entry: 0,
+        image_base: 0,
         stack_top: USER_PROGRAM_STACK_TOP,
         stack_scratch: 0,
         heap: Heap::EMPTY,
@@ -1739,6 +1742,7 @@ fn load_segments_and_stack(
         Err(e) => return Err(UserLoadError::Placement(e)),
     };
     process.kind = elf.kind();
+    process.image_base = plan.base;
     if plan.bias != 0 {
         note_position_independent_placement(logger, process.name, &plan);
     }
@@ -2179,6 +2183,50 @@ fn report_user_stack_high_water(logger: &mut Logger<Serial>, process: &UserProce
     ));
 }
 
+/// 写像の表を据え、載せた像・スタック・見張りのページ・ヒープを登録する（2026-10-06）。**`#[inline(never)]`** で、
+/// 一時値を [`run_loaded_program`] のフレームへ乗せない。登録に失敗したら、名指しして止まる（載せたものどうしが
+/// 重なることは無いはずで、重なれば載せる側の誤りである）。
+#[inline(never)]
+fn register_loaded_mappings(logger: &mut Logger<Serial>, process: &UserProcess) {
+    use crate::mappings::MappingKind;
+
+    let layout = ProcessLayout::for_kind(process.kind);
+    crate::mappings::activate_for_next_process(layout.mmap_base, layout.mmap_limit);
+    let heap_start = process.heap.start();
+    let outcome = crate::mappings::with_loaded(|map| {
+        map.register(
+            process.image_base,
+            heap_start,
+            MappingKind::Image,
+            true,
+            true,
+        )?;
+        map.register(
+            layout.stack_bottom(),
+            layout.stack_top,
+            MappingKind::Stack,
+            true,
+            true,
+        )?;
+        if let Some(guard) = layout.stack_guard_page() {
+            map.register(guard, guard + 4096, MappingKind::Guard, false, false)?;
+        }
+        map.set_heap_end(heap_start, process.heap.break_at())
+    });
+    if let Err(error) = outcome {
+        logger.error(format_args!(
+            "mappings: {} could not register what the loader placed ({error:?}; image \
+             {:#x}..{heap_start:#x}, stack {:#x}..{:#x}); the table would not know where the \
+             program lives. halting",
+            process.name,
+            process.image_base,
+            layout.stack_bottom(),
+            layout.stack_top
+        ));
+        common::arch::x86_64::halt_forever();
+    }
+}
+
 /// `futex` で待つ場面に入ったプロセスを終わらせたことを 1 行出す（2026-10-06）。**`#[inline(never)]`** で、
 /// `format_args!` の一時値を [`run_loaded_program`] のフレームへ乗せない。
 #[inline(never)]
@@ -2270,11 +2318,9 @@ unsafe fn run_loaded_program(
     // **プロセスごとの小さな状態（シグナルの登録など）を初めの形に戻し、名前を控える**（2026-10-06）。スロットと
     // 深さで引くので、据え替えの写しは要らない（`crate::process_state`）。
     crate::process_state::reset_for_next_process(process.name.as_bytes());
-    // **写像の表も、配置の値で据える**（2026-10-06。`crate::mappings`）。
-    {
-        let layout = ProcessLayout::for_kind(process.kind);
-        crate::mappings::activate_for_next_process(layout.mmap_base, layout.mmap_limit);
-    }
+    // **写像の表も、配置の値で据え、載せたものを登録する**（2026-10-06。`crate::mappings`）。像・スタック・見張りの
+    // ページ・ヒープが表に在ることで、`MAP_FIXED` がそこへ置かず、`brk` が無名の写像へ伸びない。
+    register_loaded_mappings(logger, process);
     // **前景を取る（S11-10）。** 取っているあいだ、カーネル側の消費者
     // （`interrupts::drain_keyboard`）はスキャンコードを取り出さない。
     // **入力の消費者は同時に 1 つである**（`crate::input` の不変条件）。

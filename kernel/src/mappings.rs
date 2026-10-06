@@ -12,11 +12,11 @@
 //! （2 KiB）を足すと、子が走っている間ずっと残る枠が太る（`ADR-0079`）。**スロットと、遠征の深さごとの静的な置き場に
 //! 置く**（`crate::process_state` と同じ形）。
 //!
-//! # この刻みで入るもの
+//! # 入っているもの
 //!
-//! 無名の写像を配る（first-fit。空いた所を使い直す）、写像の全体を返す、共有メモリと画面の写像を同じ表で覚える。
-//! **範囲の一部だけの `munmap`、`MAP_FIXED`、`mprotect` は、まだ無い**（次の刻み）。範囲の一部に掛かる `munmap` は、
-//! 名前のある失敗で断る。
+//! 無名の写像を配る（first-fit。空いた所を使い直す）、写像の全体や一部を返す（分ける）、`MAP_FIXED` のために重なる
+//! 写像を外す、共有メモリと画面の写像を同じ表で覚える、像・スタック・見張りのページ・ヒープも表に載せる（2026-10-06。
+//! 2 つの刻みで入れた）。**`mprotect` は、まだ無い**（次の刻み）。
 
 use common::critical::Locked;
 
@@ -37,6 +37,26 @@ pub enum MappingKind {
     SharedMemory { shm: u8 },
     /// 画面の裏バッファ。フレームはカーネルのもの。
     Screen,
+    /// 載せた像（`PT_LOAD` の区画の全部をまとめた範囲）。**外せない。**
+    Image,
+    /// スタック。**外せない。**
+    Stack,
+    /// スタックの下の見張りのページ（写していない）。**外せないし、ここへは置けない。**
+    Guard,
+    /// `brk` のヒープ。終わりは `brk` が動かす。**`munmap` では外せないが、`MAP_FIXED` は上に置ける**（musl の見張り）。
+    Heap,
+}
+
+impl MappingKind {
+    /// `munmap` で外せる種類か。
+    pub const fn can_unmap(self) -> bool {
+        matches!(self, MappingKind::Anonymous)
+    }
+
+    /// `MAP_FIXED` が上に置き換えてよい種類か（外して置く）。
+    pub const fn can_be_replaced(self) -> bool {
+        matches!(self, MappingKind::Anonymous | MappingKind::Heap)
+    }
 }
 
 /// 1 つの写像。`end` は排他である。
@@ -73,9 +93,16 @@ pub enum MapError {
     TableFull,
     /// 長さが 0 か、ページの境界に無い番地。`-EINVAL`。
     BadRange,
-    /// 範囲が、写像の一部にだけ掛かる（この刻みでは断る）。`-EINVAL`。
+    /// 範囲が、写像の一部にだけ掛かる（写像の全体だけを求める口で）。`-EINVAL`。
     PartOfAMapping,
+    /// 範囲に、外せない種類の写像（像・スタック・見張り・共有メモリ・画面。`munmap` ではヒープも）が掛かる。`-EINVAL`。
+    NotRemovable,
+    /// 置きたい範囲に、写像が在る（`MAP_FIXED_NOREPLACE`。`-EEXIST`）、または登録の範囲が重なる。
+    Overlap,
 }
+
+/// [`MemoryMap::release_range`] が返す、外した断片の入れ物。
+pub type Released = [Option<Mapping>; MAX_MAPPINGS];
 
 /// 1 つのプロセスの写像の表。
 pub struct MemoryMap {
@@ -188,6 +215,178 @@ impl MemoryMap {
         Ok(touched.and_then(|index| self.entries[index].take()))
     }
 
+    /// 決まった番地の範囲を、表に登録する（像・スタック・見張り・ヒープ。載せる側が呼ぶ。純粋な論理）。重なれば断る。
+    pub fn register(
+        &mut self,
+        start: u64,
+        end: u64,
+        kind: MappingKind,
+        writable: bool,
+        present: bool,
+    ) -> Result<(), MapError> {
+        if !self.active {
+            return Err(MapError::NotActive);
+        }
+        if start >= end || !start.is_multiple_of(PAGE_SIZE) || !end.is_multiple_of(PAGE_SIZE) {
+            return Err(MapError::BadRange);
+        }
+        if self
+            .entries
+            .iter()
+            .flatten()
+            .any(|mapping| mapping.overlaps(start, end))
+        {
+            return Err(MapError::Overlap);
+        }
+        let Some(slot) = self.entries.iter().position(Option::is_none) else {
+            return Err(MapError::TableFull);
+        };
+        self.entries[slot] = Some(Mapping {
+            start,
+            end,
+            kind,
+            writable,
+            present,
+        });
+        Ok(())
+    }
+
+    /// `start` から `bytes` の範囲に掛かる写像を外し、外した断片を `out` へ置く（純粋な論理。表だけを変える。
+    /// ページを外すのは呼ぶ側である）。**範囲の一部に掛かる写像は、残る部分を分けて表に戻す。**
+    ///
+    /// `may_remove` が偽を返す種類が範囲に掛かっていれば、何も変えずに `NotRemovable`。分けるのに欄が足りなければ、
+    /// 何も変えずに `TableFull`。返すのは外した断片の数（範囲に写像が無ければ 0）。
+    pub fn release_range(
+        &mut self,
+        start: u64,
+        bytes: u64,
+        may_remove: impl Fn(MappingKind) -> bool,
+        out: &mut Released,
+    ) -> Result<usize, MapError> {
+        if !self.active {
+            return Err(MapError::NotActive);
+        }
+        if bytes == 0 || !start.is_multiple_of(PAGE_SIZE) || !bytes.is_multiple_of(PAGE_SIZE) {
+            return Err(MapError::BadRange);
+        }
+        let end = start.checked_add(bytes).ok_or(MapError::BadRange)?;
+        // **1 度目: 変えずに確かめる。** 外せない種類が掛かっていないか、分けた後の欄が足りるか。
+        let mut extra_slots_needed = 0usize;
+        for mapping in self.entries.iter().flatten() {
+            if !mapping.overlaps(start, end) {
+                continue;
+            }
+            if !may_remove(mapping.kind) {
+                return Err(MapError::NotRemovable);
+            }
+            // 前にも後ろにも残るなら、欄が 1 つ増える（元の欄に前を、新しい欄に後ろを置く）。
+            if mapping.start < start && end < mapping.end {
+                extra_slots_needed += 1;
+            }
+        }
+        let free_slots = self.entries.iter().filter(|slot| slot.is_none()).count();
+        if extra_slots_needed > free_slots {
+            return Err(MapError::TableFull);
+        }
+        // **2 度目: 外して、残る部分を戻す。**
+        let mut released = 0usize;
+        for index in 0..MAX_MAPPINGS {
+            let Some(mapping) = self.entries[index] else {
+                continue;
+            };
+            if !mapping.overlaps(start, end) {
+                continue;
+            }
+            let piece_start = mapping.start.max(start);
+            let piece_end = mapping.end.min(end);
+            out[released] = Some(Mapping {
+                start: piece_start,
+                end: piece_end,
+                ..mapping
+            });
+            released += 1;
+            let before = (mapping.start < start).then_some(Mapping {
+                end: start,
+                ..mapping
+            });
+            let after = (end < mapping.end).then_some(Mapping {
+                start: end,
+                ..mapping
+            });
+            self.entries[index] = before.or(after);
+            if before.is_some() && after.is_some() {
+                let slot = self
+                    .entries
+                    .iter()
+                    .position(Option::is_none)
+                    .expect("the free slots were counted above");
+                self.entries[slot] = after;
+            }
+        }
+        Ok(released)
+    }
+
+    /// `start` から `bytes` の範囲に、写像が 1 つでも掛かっているか。
+    pub fn overlaps_any(&self, start: u64, bytes: u64) -> bool {
+        start.checked_add(bytes).is_some_and(|end| {
+            self.entries
+                .iter()
+                .flatten()
+                .any(|m| m.overlaps(start, end))
+        })
+    }
+
+    /// `brk` のヒープの終わりを動かす（純粋な論理）。
+    ///
+    /// ヒープの欄（[`MappingKind::Heap`]）のうち、いちばん高い終わりを `end` へ動かす。伸ばす先にほかの写像が在れば
+    /// `Overlap`（`brk` は `-ENOMEM` にする）。縮めて欄が空になれば消す。欄が無ければ `[start, end)` を作る（`start == end`
+    /// なら作らない）。**ヒープの途中が `MAP_FIXED` で置き換えられていても動く**——残った断片のうち、いちばん高いものを
+    /// 伸び縮みさせる。
+    pub fn set_heap_end(&mut self, start: u64, end: u64) -> Result<(), MapError> {
+        if !self.active {
+            return Err(MapError::NotActive);
+        }
+        if !start.is_multiple_of(PAGE_SIZE) || !end.is_multiple_of(PAGE_SIZE) || end < start {
+            return Err(MapError::BadRange);
+        }
+        let highest = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, m)| {
+                m.filter(|m| m.kind == MappingKind::Heap)
+                    .map(|m| (index, m))
+            })
+            .max_by_key(|(_, m)| m.end);
+        match highest {
+            Some((index, piece)) => {
+                if end > piece.end {
+                    // 伸ばす先に、ほかの写像が無いこと。
+                    if self
+                        .entries
+                        .iter()
+                        .enumerate()
+                        .any(|(i, m)| i != index && m.is_some_and(|m| m.overlaps(piece.end, end)))
+                    {
+                        return Err(MapError::Overlap);
+                    }
+                    self.entries[index] = Some(Mapping { end, ..piece });
+                } else if end <= piece.start {
+                    self.entries[index] = None;
+                    // さらに下の断片が在れば、そちらも縮める。
+                    if end < piece.start {
+                        return self.set_heap_end(start, end);
+                    }
+                } else {
+                    self.entries[index] = Some(Mapping { end, ..piece });
+                }
+                Ok(())
+            }
+            None if end == start => Ok(()),
+            None => self.register(start, end, MappingKind::Heap, true, true),
+        }
+    }
+
     /// `address` を含む写像。
     pub fn find(&self, address: u64) -> Option<Mapping> {
         self.entries
@@ -197,7 +396,16 @@ impl MemoryMap {
             .copied()
     }
 
-    /// 要約——写像の数、いちばん低い始まり、いちばん高い終わり、無名のページの数。**判定の行に出す。**
+    /// `mmap` が配った写像か（無名・共有メモリ・画面。像・スタック・見張り・ヒープは、載せる側と `brk` のもの）。
+    pub const fn is_mmapped(kind: MappingKind) -> bool {
+        matches!(
+            kind,
+            MappingKind::Anonymous | MappingKind::SharedMemory { .. } | MappingKind::Screen
+        )
+    }
+
+    /// 要約——**`mmap` が配った写像**の数、いちばん低い始まり、いちばん高い終わり、無名のページの数。**判定の行に出す**
+    /// （像・スタック・ヒープは数えない。`user-mmap:` の行は `mmap` の番地を言う）。
     pub fn summary(&self) -> MapSummary {
         let mut summary = MapSummary {
             count: 0,
@@ -206,6 +414,9 @@ impl MemoryMap {
             anonymous_pages: 0,
         };
         for mapping in self.entries.iter().flatten() {
+            if !Self::is_mmapped(mapping.kind) {
+                continue;
+            }
             summary.count += 1;
             summary.lowest = Some(
                 summary
@@ -401,6 +612,134 @@ mod tests {
         let whole = map.release_whole(start, 4 * PAGE_SIZE).unwrap().unwrap();
         assert_eq!((whole.start, whole.end), (start, start + 4 * PAGE_SIZE));
         assert_eq!(map.find(start), None);
+    }
+
+    /// 範囲の一部を外すと、残りが分かれて表に戻る。外せない種類が掛かっていれば、何も変えない。
+    #[test]
+    fn releasing_part_of_a_mapping_splits_what_remains() {
+        let mut map = active();
+        let start = map
+            .reserve(4 * PAGE_SIZE, MappingKind::Anonymous, true, true)
+            .unwrap();
+        let mut out: Released = [None; MAX_MAPPINGS];
+        // 真ん中の 2 ページを外す → 前 1 ページと後ろ 1 ページが残る。
+        let n = map
+            .release_range(
+                start + PAGE_SIZE,
+                2 * PAGE_SIZE,
+                MappingKind::can_unmap,
+                &mut out,
+            )
+            .unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(
+            out[0].map(|m| (m.start, m.end)),
+            Some((start + PAGE_SIZE, start + 3 * PAGE_SIZE))
+        );
+        assert_eq!(map.find(start).map(|m| m.end), Some(start + PAGE_SIZE));
+        assert_eq!(map.find(start + PAGE_SIZE), None);
+        assert_eq!(
+            map.find(start + 3 * PAGE_SIZE).map(|m| m.start),
+            Some(start + 3 * PAGE_SIZE)
+        );
+        assert_eq!(map.summary().count, 2);
+        // 2 つにまたがる範囲を外すと、2 つの断片が返る。
+        let n = map
+            .release_range(start, 4 * PAGE_SIZE, MappingKind::can_unmap, &mut out)
+            .unwrap();
+        assert_eq!(n, 2);
+        assert_eq!(map.summary().count, 0);
+        // 外せない種類が掛かっていれば、何も変えない。
+        map.register(BASE, BASE + PAGE_SIZE, MappingKind::Stack, true, true)
+            .unwrap();
+        map.reserve(PAGE_SIZE, MappingKind::Anonymous, true, true)
+            .unwrap();
+        assert_eq!(
+            map.release_range(BASE, 2 * PAGE_SIZE, MappingKind::can_unmap, &mut out),
+            Err(MapError::NotRemovable)
+        );
+        // 要約が数えるのは `mmap` の写像だけ（スタックは入らない）。
+        assert_eq!(map.summary().count, 1);
+        assert_eq!(map.find(BASE).map(|m| m.kind), Some(MappingKind::Stack));
+        // 写像の無い範囲は 0。
+        assert_eq!(
+            map.release_range(
+                BASE + 8 * PAGE_SIZE,
+                PAGE_SIZE,
+                MappingKind::can_unmap,
+                &mut out
+            ),
+            Ok(0)
+        );
+    }
+
+    /// `MAP_FIXED` が置き換えてよいのは、無名とヒープだけ。登録は重なりを断る。
+    #[test]
+    fn registration_refuses_overlaps_and_replacement_is_limited_to_anonymous_and_heap() {
+        let mut map = active();
+        map.register(BASE, BASE + 2 * PAGE_SIZE, MappingKind::Image, false, true)
+            .unwrap();
+        assert_eq!(
+            map.register(
+                BASE + PAGE_SIZE,
+                BASE + 3 * PAGE_SIZE,
+                MappingKind::Stack,
+                true,
+                true
+            ),
+            Err(MapError::Overlap)
+        );
+        assert_eq!(
+            map.register(BASE, BASE, MappingKind::Heap, true, true),
+            Err(MapError::BadRange)
+        );
+        assert!(map.overlaps_any(BASE + PAGE_SIZE, PAGE_SIZE));
+        assert!(!map.overlaps_any(BASE + 2 * PAGE_SIZE, PAGE_SIZE));
+        assert!(MappingKind::Anonymous.can_be_replaced() && MappingKind::Heap.can_be_replaced());
+        assert!(!MappingKind::Image.can_be_replaced() && !MappingKind::Guard.can_be_replaced());
+        assert!(!MappingKind::Heap.can_unmap() && MappingKind::Anonymous.can_unmap());
+    }
+
+    /// `brk` のヒープの終わりは、伸ばす・縮める・消す・作り直す。途中が置き換えられていても、いちばん高い断片が動く。
+    #[test]
+    fn the_heap_end_moves_and_survives_a_hole_in_the_middle() {
+        let mut map = active();
+        let heap = BASE + 0x8000;
+        assert_eq!(map.set_heap_end(heap, heap), Ok(()));
+        assert_eq!(map.summary().count, 0);
+        assert_eq!(map.set_heap_end(heap, heap + 2 * PAGE_SIZE), Ok(()));
+        assert_eq!(map.find(heap).map(|m| m.kind), Some(MappingKind::Heap));
+        // musl の見張り: ヒープの先頭の 1 ページを、無名の写像で置き換える。
+        let mut out: Released = [None; MAX_MAPPINGS];
+        assert_eq!(
+            map.release_range(heap, PAGE_SIZE, MappingKind::can_be_replaced, &mut out),
+            Ok(1)
+        );
+        map.register(heap, heap + PAGE_SIZE, MappingKind::Anonymous, false, false)
+            .unwrap();
+        // ヒープを伸ばすと、残った断片が伸びる。
+        assert_eq!(map.set_heap_end(heap, heap + 4 * PAGE_SIZE), Ok(()));
+        assert_eq!(
+            map.find(heap + 3 * PAGE_SIZE).map(|m| m.kind),
+            Some(MappingKind::Heap)
+        );
+        // 伸ばす先に写像が在れば断る。
+        map.register(
+            heap + 4 * PAGE_SIZE,
+            heap + 5 * PAGE_SIZE,
+            MappingKind::Anonymous,
+            true,
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            map.set_heap_end(heap, heap + 6 * PAGE_SIZE),
+            Err(MapError::Overlap)
+        );
+        // 断片より下へ縮めると、断片は消える。
+        assert_eq!(map.set_heap_end(heap, heap + PAGE_SIZE), Ok(()));
+        assert_eq!(map.find(heap + 2 * PAGE_SIZE), None);
+        assert_eq!(map.find(heap).map(|m| m.kind), Some(MappingKind::Anonymous));
     }
 
     /// 表が一杯なら断る。要約は、数と両端と無名のページ数を言う。

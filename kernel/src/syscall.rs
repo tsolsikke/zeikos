@@ -52,10 +52,10 @@ use crate::abi::linux::{
     Iovec, Msghdr, Stat, Timespec, Winsize, AF_UNIX, CLOCK_MONOTONIC, CMSG_ONE_FD_LEN,
     DIRENT64_ALIGN, DIRENT64_HEADER_LEN, DRM_CLIP_RECT_LEN, DT_DIR, DT_REG, DT_UNKNOWN,
     FBIOGET_FSCREENINFO, FBIOGET_VSCREENINFO, FB_TYPE_PACKED_PIXELS, FB_VISUAL_TRUECOLOR,
-    INPUT_EVENT_LEN, IOVEC_LEN, MAP_ANONYMOUS, MAP_FIXED, MSGHDR_CONTROLLEN, MSGHDR_LEN, O_ACCMODE,
-    O_APPEND, O_CREAT, O_RDONLY, O_TRUNC, O_WRONLY, POLLFD_LEN, POLLIN, PROT_EXEC, PROT_READ,
-    PROT_WRITE, SCM_RIGHTS, SEEK_SET, SOCKADDR_UN_LEN, SOCK_STREAM, SOL_SOCKET, TIMESPEC_LEN,
-    TIOCGWINSZ, WINSIZE_LEN,
+    INPUT_EVENT_LEN, IOVEC_LEN, MAP_ANONYMOUS, MAP_FIXED, MAP_FIXED_NOREPLACE, MSGHDR_CONTROLLEN,
+    MSGHDR_LEN, O_ACCMODE, O_APPEND, O_CREAT, O_RDONLY, O_TRUNC, O_WRONLY, POLLFD_LEN, POLLIN,
+    PROT_EXEC, PROT_READ, PROT_WRITE, SCM_RIGHTS, SEEK_SET, SOCKADDR_UN_LEN, SOCK_STREAM,
+    SOL_SOCKET, TIMESPEC_LEN, TIOCGWINSZ, WINSIZE_LEN,
 };
 use crate::abi::linux::{
     E2BIG, EACCES, EADDRINUSE, EAFNOSUPPORT, EAGAIN, EBADF, EBUSY, ECHILD, ECONNREFUSED, EEXIST,
@@ -2192,7 +2192,8 @@ fn errno_for_map(error: crate::mappings::MapError) -> u64 {
     use crate::mappings::MapError;
     match error {
         MapError::NotActive | MapError::NoRoom | MapError::TableFull => (-ENOMEM) as u64,
-        MapError::BadRange | MapError::PartOfAMapping => (-EINVAL) as u64,
+        MapError::BadRange | MapError::PartOfAMapping | MapError::NotRemovable => (-EINVAL) as u64,
+        MapError::Overlap => (-EEXIST) as u64,
     }
 }
 
@@ -2208,7 +2209,12 @@ fn errno_for_map(error: crate::mappings::MapError) -> u64 {
 ///
 /// 呼び出し元契約により `direct_map` は有効で、遠征の中なので CR3 はこのプロセスのもの。
 #[inline(never)]
-unsafe fn mmap_anonymous_from_ring3(len: u64, prot: u64, direct_map: DirectMap) -> u64 {
+unsafe fn mmap_anonymous_from_ring3(
+    fixed: Option<(u64, FixedPlacement)>,
+    len: u64,
+    prot: u64,
+    direct_map: DirectMap,
+) -> u64 {
     use crate::arch::x86_64::ActivePageTable;
     use crate::mappings::{MappingKind, PAGE_SIZE};
     use crate::paging::permissions::PagePermissions;
@@ -2222,11 +2228,47 @@ unsafe fn mmap_anonymous_from_ring3(len: u64, prot: u64, direct_map: DirectMap) 
     let bytes = len.div_ceil(PAGE_SIZE) * PAGE_SIZE;
     let writable = prot & PROT_WRITE != 0;
     let present = prot & (PROT_READ | PROT_WRITE) != 0;
-    let base = match crate::mappings::with_current(|map| {
-        map.reserve(bytes, MappingKind::Anonymous, writable, present)
-    }) {
-        Ok(base) => base,
-        Err(error) => return errno_for_map(error),
+    let base = match fixed {
+        None => match crate::mappings::with_current(|map| {
+            map.reserve(bytes, MappingKind::Anonymous, writable, present)
+        }) {
+            Ok(base) => base,
+            Err(error) => return errno_for_map(error),
+        },
+        Some((addr, how)) => {
+            // **番地を指定する形**（2026-10-06）。ページの境界で、ユーザーの範囲（配置の `mmap` の終わりより下）に在ること。
+            if !addr.is_multiple_of(PAGE_SIZE) || addr == 0 {
+                return (-EINVAL) as u64;
+            }
+            let placed = match how {
+                // SAFETY: 呼び出し元契約をそのまま渡す。
+                FixedPlacement::Replace => unsafe {
+                    replace_range_for_fixed(addr, bytes, direct_map)
+                },
+                FixedPlacement::OnlyIfFree => {
+                    if crate::mappings::with_current(|map| map.overlaps_any(addr, bytes)) {
+                        Err(crate::mappings::MapError::Overlap)
+                    } else {
+                        Ok(())
+                    }
+                }
+            };
+            if let Err(error) = placed {
+                return errno_for_map(error);
+            }
+            if let Err(error) = crate::mappings::with_current(|map| {
+                map.register(
+                    addr,
+                    addr + bytes,
+                    MappingKind::Anonymous,
+                    writable,
+                    present,
+                )
+            }) {
+                return errno_for_map(error);
+            }
+            addr
+        }
     };
     if !present {
         return base;
@@ -2297,65 +2339,121 @@ unsafe fn mmap_anonymous_from_ring3(len: u64, prot: u64, direct_map: DirectMap) 
 /// 越える要求は `-ENOMEM`。遅延して写す形は `docs/deferred-decisions.md`。
 const ANONYMOUS_MMAP_MAX: u64 = 16 * 1024 * 1024;
 
-/// `munmap(addr, len)`（2026-10-06。`ADR-0082`）。**この刻みでは、写像の全体だけを返す。**
+/// `munmap(addr, len)`（2026-10-06。`ADR-0082`）。
 ///
-/// - 範囲がちょうど 1 つの無名の写像なら、ページを外してフレームを返し、表から消す。
+/// - 範囲に掛かる無名の写像を外す。一部にだけ掛かる写像は、残る部分を分けて表に戻す。ページを外してフレームを返す。
 /// - 範囲にどの写像も掛かっていなければ 0（Linux と同じ）。
-/// - 写像の一部にだけ掛かる、またはまたがる範囲は `-EINVAL`（名前のある失敗。分ける形は次の刻み）。
-/// - 共有メモリと画面の写像は `-EINVAL`（参照数と裏バッファの扱いが要る。`docs/deferred-decisions.md`）。
-///   **表からも消さない**——写像は残っている。
+/// - 像・スタック・見張りのページ・ヒープ・共有メモリ・画面に掛かる範囲は `-EINVAL`（何も変えない）。ヒープは `brk` が
+///   持つので外さない。共有メモリと画面は、参照数と裏バッファの扱いが要る（`docs/deferred-decisions.md`）。
 ///
 /// # Safety
 ///
 /// 呼び出し元契約により `direct_map` は有効で、遠征の中なので CR3 はこのプロセスのもの。
 #[inline(never)]
 unsafe fn munmap_from_ring3(addr: u64, len: u64, direct_map: DirectMap) -> u64 {
-    use crate::arch::x86_64::ActivePageTable;
     use crate::mappings::{MappingKind, PAGE_SIZE};
 
     if len == 0 || !addr.is_multiple_of(PAGE_SIZE) {
         return (-EINVAL) as u64;
     }
     let bytes = len.div_ceil(PAGE_SIZE) * PAGE_SIZE;
-    // **先に、外してよい写像かを見る**（表は変えない）。
-    let found = crate::mappings::with_current(|map| {
-        map.find(addr)
-            .filter(|mapping| mapping.start == addr && mapping.end == addr + bytes)
-    });
-    match found {
-        Some(mapping) if mapping.kind != MappingKind::Anonymous => return (-EINVAL) as u64,
-        _ => {}
+    // SAFETY: 呼び出し元契約をそのまま渡す。
+    match unsafe { release_range_and_unmap(addr, bytes, MappingKind::can_unmap, direct_map) } {
+        Ok(()) => 0,
+        Err(error) => errno_for_map(error),
     }
-    let released = match crate::mappings::with_current(|map| map.release_whole(addr, bytes)) {
-        Ok(released) => released,
-        Err(error) => return errno_for_map(error),
-    };
-    let Some(mapping) = released else {
-        return 0;
-    };
-    if !mapping.present {
-        return 0;
+}
+
+/// `MAP_FIXED` の置き方。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FixedPlacement {
+    /// 重なる写像を外してから置く（`MAP_FIXED`）。
+    Replace,
+    /// 重なる写像が在れば置かない（`MAP_FIXED_NOREPLACE`。`-EEXIST`）。
+    OnlyIfFree,
+}
+
+/// `MAP_FIXED` のために、`addr` から `bytes` の範囲に掛かる写像を外す（2026-10-06）。
+///
+/// 外してよいのは、無名の写像と `brk` のヒープである（`MappingKind::can_be_replaced`。像・スタック・見張りのページ・
+/// 共有メモリ・画面は `-EINVAL`）。**ヒープの上へ置けるのは、musl の `malloc` が `brk` の先頭に見張りを置くためである**
+/// （2026-10-04 の `strace`。`mmap(brk の先頭, 4096, PROT_NONE, MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS)`）。
+///
+/// # Safety
+///
+/// 呼び出し元契約により `direct_map` は有効で、遠征の中なので CR3 はこのプロセスのもの。
+unsafe fn replace_range_for_fixed(
+    addr: u64,
+    bytes: u64,
+    direct_map: DirectMap,
+) -> Result<(), crate::mappings::MapError> {
+    // SAFETY: 呼び出し元契約をそのまま渡す。
+    unsafe {
+        release_range_and_unmap(
+            addr,
+            bytes,
+            crate::mappings::MappingKind::can_be_replaced,
+            direct_map,
+        )
+    }
+}
+
+/// 範囲に掛かる写像を表から外し（残る部分は分けて戻す）、写してあったページを外してフレームを返す（2026-10-06）。
+/// `munmap` と `MAP_FIXED` の共通の本体。
+///
+/// **ヒープのページを外したときは、`brk` の会計（`user-heap:` の行）には入れない**——あれは `brk` だけの会計である。
+/// 返したフレームは、空間の会計（`note_post_load_frames_returned`）から引く。
+///
+/// # Safety
+///
+/// 呼び出し元契約により `direct_map` は有効で、遠征の中なので CR3 はこのプロセスのもの。
+unsafe fn release_range_and_unmap(
+    addr: u64,
+    bytes: u64,
+    may_remove: impl Fn(crate::mappings::MappingKind) -> bool,
+    direct_map: DirectMap,
+) -> Result<(), crate::mappings::MapError> {
+    use crate::arch::x86_64::ActivePageTable;
+    use crate::mappings::{Released, PAGE_SIZE};
+
+    let mut released: Released = [None; crate::mappings::MAX_MAPPINGS];
+    let count = crate::mappings::with_current(|map| {
+        map.release_range(addr, bytes, &may_remove, &mut released)
+    })?;
+    if count == 0 {
+        return Ok(());
     }
     let Some(allocator) = crate::frame_allocator::take() else {
-        return (-ENOMEM) as u64;
+        return Err(crate::mappings::MapError::NoRoom);
     };
     // SAFETY: 遠征の中なので CR3 はこのプロセスの表である。
     let mut table = unsafe { ActivePageTable::current(direct_map) };
     let mut returned = 0usize;
-    let mut page = mapping.start;
-    while page < mapping.end {
-        if let Some(virt) = common::addr::VirtAddr::new(page) {
-            // SAFETY: 稼働中の表から、このプロセスの無名のページを外し、フレームを返す（`brk` が縮むときと同じ）。
-            if let Ok(unmapped) = unsafe { table.unmap_4kib(virt) } {
-                let _ = allocator.deallocate_frame(unmapped.frame);
-                returned += 1;
-            }
+    for piece in released.iter().take(count).flatten() {
+        if !piece.present {
+            continue;
         }
-        page += PAGE_SIZE;
+        let mut page = piece.start;
+        while page < piece.end {
+            if let Some(virt) = common::addr::VirtAddr::new(page) {
+                // SAFETY: 稼働中の表から、このプロセスのページ（無名か `brk` の）を外し、フレームを返す（`brk` が縮む
+                // ときと同じ。この CPU の TLB からは `unmap_4kib` が消し、プロセスは 1 つの CPU に留まる）。
+                if let Ok(unmapped) = unsafe { table.unmap_4kib(virt) } {
+                    let _ = allocator.deallocate_frame(unmapped.frame);
+                    returned += 1;
+                    // **`brk` が取ったページなら、`brk` の返した数にも足す**（`user-heap:` の行の「取った数と返した数が
+                    // 釣り合う」を保つ。取ったのは `brk` で、返す道が `MAP_FIXED` だっただけである）。
+                    if piece.kind == crate::mappings::MappingKind::Heap {
+                        crate::userland::with_current_heap(|heap| heap.note_given());
+                    }
+                }
+            }
+            page += PAGE_SIZE;
+        }
     }
     crate::frame_allocator::give_back(allocator);
     crate::userland::note_post_load_frames_returned(returned);
-    0
+    Ok(())
 }
 
 /// fd から共有メモリの添字を引く。**共有メモリでなければ `Err(-EBADF)`。**
@@ -2426,16 +2524,24 @@ unsafe fn mmap_from_ring3(
     use crate::arch::x86_64::ActivePageTable;
     use crate::paging::permissions::PagePermissions;
 
-    // **番地を指定して置き換える形は、まだ受けない**（2026-10-06。次の刻み。`docs/deferred-decisions.md`）。
+    // **番地を指定する形は、無名の写像だけ受ける**（2026-10-06。fd を指定の番地へ写す形は `docs/deferred-decisions.md`）。
     // 指定の無い `addr`（ただのヒント）は見ない——置き場はカーネルが決める。
-    if flags & MAP_FIXED != 0 {
-        return (-ENOSYS) as u64;
+    let fixed = if flags & MAP_FIXED != 0 {
+        Some(FixedPlacement::Replace)
+    } else if flags & MAP_FIXED_NOREPLACE != 0 {
+        Some(FixedPlacement::OnlyIfFree)
+    } else {
+        None
+    };
+    if fixed.is_some() && flags & MAP_ANONYMOUS == 0 {
+        return (-EINVAL) as u64;
     }
-    let _ = addr;
     // **無名の写像**（2026-10-06）。fd と offset は見ない（Linux は fd に -1 を求めるが、無視する実装も多い）。
     if flags & MAP_ANONYMOUS != 0 {
         // SAFETY: 呼び出し元契約をそのまま渡す。
-        return unsafe { mmap_anonymous_from_ring3(len, prot, direct_map) };
+        return unsafe {
+            mmap_anonymous_from_ring3(fixed.map(|how| (addr, how)), len, prot, direct_map)
+        };
     }
     if offset != 0 {
         return (-EINVAL) as u64;
@@ -3922,6 +4028,12 @@ unsafe fn sys_brk(requested: u64, direct_map: DirectMap) -> u64 {
         return requested;
     }
 
+    // **写像の表のヒープの欄を、先に動かす**（2026-10-06。`crate::mappings`）。伸ばす先に無名の写像が在れば、ここで
+    // `-ENOMEM`（Linux も、`brk` の先が塞がっていれば伸ばせない）。
+    if crate::mappings::with_current(|map| map.set_heap_end(start, want)).is_err() {
+        return (-ENOMEM) as u64;
+    }
+
     let Some(allocator) = crate::frame_allocator::take() else {
         return (-ENOMEM) as u64;
     };
@@ -3988,6 +4100,15 @@ unsafe fn sys_brk(requested: u64, direct_map: DirectMap) -> u64 {
             let mut page = have;
             while page > want {
                 page -= PAGE_SIZE;
+                // **表でヒープのままのページだけを外す**（2026-10-06）。`MAP_FIXED` でヒープの上に置かれた無名の写像の
+                // ページは、ここでは触らない（その写像のものである）。
+                let still_heap = crate::mappings::with_current(|map| {
+                    map.find(page)
+                        .is_none_or(|m| m.kind == crate::mappings::MappingKind::Heap)
+                });
+                if !still_heap {
+                    continue;
+                }
                 if let Some(virt) = common::addr::VirtAddr::new(page) {
                     // SAFETY: 稼働中の表から外し、フレームを返す。
                     if let Ok(page) = unsafe { table.unmap_4kib(virt) } {

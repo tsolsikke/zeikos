@@ -9296,8 +9296,15 @@ const SYSCALL_TEST_STATUS: &[(u64, &str)] = &[
     (95, "mmap(NULL, 2 pages, RW, MAP_PRIVATE|MAP_ANONYMOUS) did not return an address at or above the mmap base"),
     (96, "the anonymous mapping was not zero-filled, or a value written to it did not read back"),
     (97, "munmap of the whole anonymous mapping did not return 0, or a second mmap did not reuse the address"),
-    (98, "munmap of part of a mapping did not return -EINVAL, or mmap(len 0) did not return -EINVAL"),
+    (98, "munmap of an unaligned address did not return -EINVAL, or mmap(len 0) did not return -EINVAL"),
     (99, "munmap of a range with no mapping did not return 0"),
+    // 100 から 105: 写像を分ける munmap と MAP_FIXED（2026-10-06）。
+    (100, "munmap of the middle page of a 3-page mapping did not return 0, or the outer pages were not kept"),
+    (101, "munmap of the two remaining pieces did not return 0"),
+    (102, "MAP_FIXED over the second page of an anonymous mapping did not return that address with a zero page"),
+    (103, "MAP_FIXED_NOREPLACE over a mapping did not return -EEXIST, or on free space did not return the address"),
+    (104, "MAP_FIXED over the stack or its guard page did not return -EINVAL"),
+    (105, "the brk guard flow failed (brk, MAP_FIXED PROT_NONE at the heap start, brk back, munmap)"),
 ];
 
 /// `fault-test` が起こす #PF のエラーコード（S9-b-3-2a）。
