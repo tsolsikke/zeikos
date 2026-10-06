@@ -5702,7 +5702,7 @@ const PIE_HELLO_STATUS: &[(u64, &str)] = &[
     (1, "AT_ENTRY is not where _start is running"),
     (
         2,
-        "AT_PHDR is missing or does not point at the program header table",
+        "AT_PHDR differs from the table's address derived from the ELF header, or does not point at PT_PHDR",
     ),
     (3, "AT_PHENT is not 56"),
     (4, "AT_PHNUM differs from e_phnum in the ELF header"),
@@ -5710,7 +5710,7 @@ const PIE_HELLO_STATUS: &[(u64, &str)] = &[
     (6, "AT_RANDOM is missing or points at 16 zero bytes"),
     (
         7,
-        "AT_EXECFN is missing or does not start with the program's name",
+        "AT_EXECFN is missing or does not end with the program's name",
     ),
     (
         9,
@@ -9172,6 +9172,10 @@ const SYSCALL_TEST_STATUS: &[(u64, &str)] = &[
     (34, "envp[0] was NULL"),
     (35, "the auxv terminator (AT_NULL) was missing"),
     (36, "spawn(\"/bin/hello\") did not return 0"),
+    (
+        79,
+        "spawn(\"/bin/pie-hello\") did not return 0 (a position-independent image through the file system)",
+    ),
     (37, "spawn(\"/nope\") did not return -ENOENT"),
     (38, "spawn(\"/etc\") did not return -EISDIR"),
     (39, "spawn(NULL) did not return -EFAULT"),
@@ -9507,6 +9511,21 @@ const USER_PROGRAMS: &[UserProgram] = &[
         // **`std` の後で #PF を起こす**（`kernel/userland/fault-test.rs`）。
         enters_with_direction_flag: Some(kernel::arch::x86_64::idt::EntryPath::Exception),
     },
+    // **位置独立の像（`ET_DYN`）を、ずらして載せる**（2026-10-06）。**入口のスタックから補助ベクタまで歩き、
+    // 積まれた値を自分で確かめる。** 食い違えば、その番号で終わる（[`PIE_HELLO_STATUS`]）。
+    // **`syscall-test` より前に置く**——あちらは `/bin/pie-hello` を `spawn` で起こすので、補助ベクタの破壊テストでは
+    // 先に `spawn` の失敗（79 番）で止まってしまい、`pie-hello` 自身の番号が出ない。
+    UserProgram {
+        name: "pie-hello",
+        image: PIE_HELLO_ELF,
+        outcome: UserProgramOutcome::Exit { status: 0 },
+        receiver_offset: PIE_HELLO_UD2_OFFSET,
+        expected_write: Some(PIE_HELLO_MESSAGE),
+        probes_abi: false,
+        status_meanings: PIE_HELLO_STATUS,
+        argv: &[b"pie-hello"],
+        enters_with_direction_flag: None,
+    },
     UserProgram {
         name: "syscall-test",
         image: SYSCALL_TEST_ELF,
@@ -9565,19 +9584,6 @@ const USER_PROGRAMS: &[UserProgram] = &[
         probes_abi: false,
         status_meanings: &[],
         argv: &[b"compat-syscall"],
-        enters_with_direction_flag: None,
-    },
-    // **位置独立の像（`ET_DYN`）を、ずらして載せる**（2026-10-06）。**入口のスタックから補助ベクタまで歩き、
-    // 積まれた値を自分で確かめる。** 食い違えば、その番号で終わる（[`PIE_HELLO_STATUS`]）。
-    UserProgram {
-        name: "pie-hello",
-        image: PIE_HELLO_ELF,
-        outcome: UserProgramOutcome::Exit { status: 0 },
-        receiver_offset: PIE_HELLO_UD2_OFFSET,
-        expected_write: Some(PIE_HELLO_MESSAGE),
-        probes_abi: false,
-        status_meanings: PIE_HELLO_STATUS,
-        argv: &[b"pie-hello"],
         enters_with_direction_flag: None,
     },
 ];
@@ -12951,6 +12957,11 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "auxv-entry-not-biased-test",
         cfg!(feature = "auxv-entry-not-biased-test"),
         "補助ベクタの AT_ENTRY に、ずらす前の番地を渡す",
+    ),
+    (
+        "auxv-phdr-not-biased-test",
+        cfg!(feature = "auxv-phdr-not-biased-test"),
+        "補助ベクタの AT_PHDR に、ずらす前の番地を渡す",
     ),
     (
         "excursion-budget-test",

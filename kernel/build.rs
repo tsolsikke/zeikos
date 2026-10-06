@@ -698,6 +698,9 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
     // 深さ 2 で起動するためだけに、イメージの中に居る。**
     for name in [
         "hello",
+        // **位置独立の像（2026-10-06）。** `syscall-test` が `spawn` で起こし、ファイルシステムを通る道で
+        // 位置独立の像が載ることを確かめる。
+        "pie-hello",
         "spawn-test",
         "ls",
         "cat",

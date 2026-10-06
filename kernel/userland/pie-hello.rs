@@ -21,12 +21,12 @@
 //! | 終了状態 | 意味 |
 //! |---|---|
 //! | 1 | `AT_ENTRY` が、実際に走っている `_start` の番地と違う |
-//! | 2 | `AT_PHDR` が無いか、指す先の最初の項が `PT_PHDR` でない |
+//! | 2 | `AT_PHDR` が、自分のELF ヘッダから求めた表の番地と違う（無い・ずれている）か、指す先の最初の項が `PT_PHDR` でない |
 //! | 3 | `AT_PHENT` が 56 でない |
 //! | 4 | `AT_PHNUM` が、ELF ヘッダの `e_phnum` と違う |
 //! | 5 | `AT_PAGESZ` が 4096 でない |
 //! | 6 | `AT_RANDOM` が無いか、指す 16 バイトが全部 0 である |
-//! | 7 | `AT_EXECFN` が無いか、指す文字列が `pie-` で始まらない |
+//! | 7 | `AT_EXECFN` が無いか、指す文字列が `pie-hello` で終わらない（埋め込みなら `pie-hello`、`spawn` なら `/bin/pie-hello`） |
 //! | 9 | `_start` が、ずらす量（`0x400000`）より下で走っている（ずらされていない） |
 //! | 10 | `auxv` の終端（`AT_NULL`）が、32 対の中に無い |
 //!
@@ -104,10 +104,14 @@ core::arch::global_asm!(
     "  mov edi, 1",
     "  cmp r8, rax",
     "  jne 9f",
-    // 2: AT_PHDR が指す先が、プログラムヘッダの表であること（最初の項が PT_PHDR = 6）。
+    // 2: AT_PHDR が、自分の ELF ヘッダ（`__ehdr_start`。リンカが置く記号で、今の番地からの相対で取れる）の
+    //    `e_phoff`（0x20）から求めた表の番地と同じで、指す先の最初の項が PT_PHDR（6）であること。**番地を比べてから
+    //    読む**——ずれた番地を読みに行って落ちると、2 ではなくページフォルトになる。
     "  mov edi, 2",
-    "  test r9, r9",
-    "  jz 9f",
+    "  lea rcx, [rip + __ehdr_start]",
+    "  add rcx, [rcx + 0x20]",
+    "  cmp r9, rcx",
+    "  jne 9f",
     "  cmp dword ptr [r9], 6",
     "  jne 9f",
     // 3: AT_PHENT。
@@ -130,11 +134,26 @@ core::arch::global_asm!(
     "  mov rax, [r13]",
     "  or rax, [r13 + 8]",
     "  jz 9f",
-    // 7: AT_EXECFN が指す文字列が `pie-` で始まること。
+    // 7: AT_EXECFN が指す文字列が `pie-hello` で終わること（終端の NUL を 256 バイトの中で探し、その手前の 8 バイトを
+    //    "ie-hello" と比べる。`spawn` から来たときは `/bin/pie-hello` である）。
     "  mov edi, 7",
     "  test r14, r14",
     "  jz 9f",
-    "  cmp dword ptr [r14], 0x2d656970",
+    "  mov rcx, r14",
+    "  mov edx, 256",
+    "5:",
+    "  cmp byte ptr [rcx], 0",
+    "  je 6f",
+    "  inc rcx",
+    "  dec edx",
+    "  jnz 5b",
+    "  jmp 9f",
+    "6:",
+    "  sub rcx, r14",
+    "  cmp rcx, 9",
+    "  jb 9f",
+    "  mov rax, 0x6f6c6c65682d6569",
+    "  cmp qword ptr [r14 + rcx - 8], rax",
     "  jne 9f",
     // 全部合った。write(fd=1, buf=MESSAGE, len)。
     "  mov eax, 1",

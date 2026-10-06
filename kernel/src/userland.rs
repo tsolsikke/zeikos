@@ -2057,8 +2057,15 @@ fn load_segments_and_stack(
     } else {
         plan.entry
     };
+    // 破壊テスト (2026-10-06, auxv-phdr-not-biased-test): `AT_PHDR` に、ずらす前の番地を渡す（`pie-hello` が、終了状態 2 で
+    // 言う。自分の ELF ヘッダから求めた番地と比べるので、ずれた番地を読みには行かない）。
+    let aux_phdr = if cfg!(feature = "auxv-phdr-not-biased-test") {
+        plan.program_headers_at.map(|at| at - plan.bias)
+    } else {
+        plan.program_headers_at
+    };
     let aux = crate::abi::linux::Auxv {
-        program_headers_at: plan.program_headers_at,
+        program_headers_at: aux_phdr,
         program_header_count: plan.program_header_count,
         entry: aux_entry,
         random: crate::arch::x86_64::weak_random_bytes().0,

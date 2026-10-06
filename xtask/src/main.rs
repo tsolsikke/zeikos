@@ -1477,6 +1477,18 @@ const RING3_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
+    // **補助ベクタの `AT_PHDR` に、ずらす前の番地を渡す**（2026-10-06）。`pie-hello` が、終了状態 2 で言う。
+    CriticalTest {
+        name: "auxv-phdr-not-biased",
+        feature: "auxv-phdr-not-biased-test",
+        expected_markers: &[
+            "user-run: pie-hello exited with status 2, expected 0 (AT_PHDR differs from the table's address",
+            "halting",
+        ],
+        forbidden_markers: &["user-load: pie-hello ran as a process"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
     CriticalTest {
         name: "user-wrong-entry",
         feature: "user-run-wrong-entry",
@@ -31954,7 +31966,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 62,
-    full: 488,
+    full: 489,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

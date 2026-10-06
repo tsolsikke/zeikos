@@ -905,6 +905,9 @@ pie-load-without-bias-test = []
 # 補助ベクタの AT_ENTRY に、ずらす前の番地を渡す（2026-10-06）。`pie-hello` が、終了状態 1 で言う。
 # `--ring3-test auxv-entry-not-biased`。
 auxv-entry-not-biased-test = []
+# 補助ベクタの AT_PHDR に、ずらす前の番地を渡す（2026-10-06）。`pie-hello` が、終了状態 2 で言う。
+# `--ring3-test auxv-phdr-not-biased`。
+auxv-phdr-not-biased-test = []
 # entry ではなく最初の PT_LOAD の先頭へ飛ぶ。詰め物の ud2 で即座に #UD になり、
 # フォルト RIP が期待と食い違う。`--ring3-test user-wrong-entry`。
 user-run-wrong-entry = []

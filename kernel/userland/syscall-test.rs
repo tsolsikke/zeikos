@@ -76,6 +76,7 @@
 //! - `68` `spawn(path, argv, NULL)` が `-EFAULT` を返さなかった（f-2）
 //! - `35` `auxv` の終端（`AT_NULL`）が無かった
 //! - `36` `spawn("/bin/hello")` が 0 を返さなかった
+//! - `79` `spawn("/bin/pie-hello")` が 0 を返さなかった（位置独立の像を、ファイルシステムを通る道で載せる。2026-10-06）
 //! - `37` `spawn("/nope")` が `-ENOENT` を返さなかった
 //! - `38` `spawn("/etc")` が `-EISDIR` を返さなかった
 //! - `39` `spawn(NULL)` が `-EFAULT` を返さなかった
@@ -903,6 +904,17 @@ core::arch::global_asm!(
     "  mov edi, 36",
     "  jne 9f",
 
+    // --- 79. spawn("/bin/pie-hello")。**位置独立の像が、ファイルシステムを通る道で載り、auxv を自分で確かめて
+    //     0 で終わるはず**（2026-10-06）。 ---
+    "  mov eax, {sys_spawn}",
+    "  lea rdi, [rip + PIE_HELLO_PATH]",
+    "  lea rsi, [rip + ARGV_PIE_HELLO]",
+    "  lea rdx, [rip + ENVP_EMPTY]",
+    "  int 0x80",
+    "  test rax, rax",
+    "  mov edi, 79",
+    "  jne 9f",
+
     // --- 37. spawn("/nope")。**-ENOENT が返るはず** ---
     "  mov eax, {sys_spawn}",
     "  lea rdi, [rip + MISSING_PATH]",
@@ -1497,12 +1509,19 @@ core::arch::global_asm!(
     // **`spawn` が読むイメージのパス。** どちらも `kernel/build.rs` がイメージへ置いている。
     "HELLO_PATH:",
     "  .asciz \"/bin/hello\"",
+    "PIE_HELLO_PATH:",
+    "  .asciz \"/bin/pie-hello\"",
+    "SPAWN_ARG_PIE_HELLO:",
+    "  .asciz \"pie-hello\"",
     "SPAWN_TEST_PATH:",
     "  .asciz \"/bin/spawn-test\"",
     // **`spawn` へ渡す `argv`。** 配列は 8 バイト境界へ揃える。
     ".balign 8",
     "ARGV_HELLO:",
     "  .quad SPAWN_ARG_HELLO",
+    "  .quad 0",
+    "ARGV_PIE_HELLO:",
+    "  .quad SPAWN_ARG_PIE_HELLO",
     "  .quad 0",
     // **空の `envp`（f-2。`ADR-0053` の Decision 2）。**
     //
