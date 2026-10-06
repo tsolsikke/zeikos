@@ -176,6 +176,7 @@ pub const PATH_RULES: &[PathRule] = &[
             // 項目も Ring 3 を AP で走らせる。**
             "kernel/src/syscall.rs",
             "kernel/src/process_state.rs",
+            "kernel/src/mappings.rs",
             "kernel/src/userland.rs",
             "kernel/userland/userlib.rs",
             "kernel/userland/user.ld",

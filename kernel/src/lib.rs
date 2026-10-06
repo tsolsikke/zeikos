@@ -46,6 +46,7 @@ pub mod input;
 pub mod interrupts;
 pub mod keyboard;
 pub mod machine;
+pub mod mappings;
 pub mod memory_map;
 pub mod page_survey;
 pub mod paging;

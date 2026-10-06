@@ -39,9 +39,9 @@ use crate::abi::linux::x86_64::{
     stat_bytes, ARCH_GET_FS, ARCH_GET_GS, ARCH_SET_FS, ARCH_SET_GS, STAT_LEN, SYS_ACCEPT,
     SYS_ARCH_PRCTL, SYS_BIND, SYS_BRK, SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT, SYS_EXIT,
     SYS_EXIT_GROUP, SYS_FCNTL, SYS_FSTAT, SYS_FTRUNCATE, SYS_FUTEX, SYS_GETDENTS64, SYS_GETRANDOM,
-    SYS_IOCTL, SYS_LISTEN, SYS_LSEEK, SYS_MEMFD_CREATE, SYS_MKDIR, SYS_MMAP, SYS_NANOSLEEP,
-    SYS_OPEN, SYS_POLL, SYS_PRLIMIT64, SYS_READ, SYS_READLINK, SYS_RECVMSG, SYS_RMDIR,
-    SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SENDMSG, SYS_SENDTO, SYS_SET_TID_ADDRESS,
+    SYS_IOCTL, SYS_LISTEN, SYS_LSEEK, SYS_MEMFD_CREATE, SYS_MKDIR, SYS_MMAP, SYS_MUNMAP,
+    SYS_NANOSLEEP, SYS_OPEN, SYS_POLL, SYS_PRLIMIT64, SYS_READ, SYS_READLINK, SYS_RECVMSG,
+    SYS_RMDIR, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SENDMSG, SYS_SENDTO, SYS_SET_TID_ADDRESS,
     SYS_SIGALTSTACK, SYS_SOCKET, SYS_STAT, SYS_UNAME, SYS_UNLINK, SYS_WRITE,
 };
 use crate::abi::linux::{
@@ -52,9 +52,10 @@ use crate::abi::linux::{
     Iovec, Msghdr, Stat, Timespec, Winsize, AF_UNIX, CLOCK_MONOTONIC, CMSG_ONE_FD_LEN,
     DIRENT64_ALIGN, DIRENT64_HEADER_LEN, DRM_CLIP_RECT_LEN, DT_DIR, DT_REG, DT_UNKNOWN,
     FBIOGET_FSCREENINFO, FBIOGET_VSCREENINFO, FB_TYPE_PACKED_PIXELS, FB_VISUAL_TRUECOLOR,
-    INPUT_EVENT_LEN, IOVEC_LEN, MSGHDR_CONTROLLEN, MSGHDR_LEN, O_ACCMODE, O_APPEND, O_CREAT,
-    O_RDONLY, O_TRUNC, O_WRONLY, POLLFD_LEN, POLLIN, PROT_EXEC, PROT_WRITE, SCM_RIGHTS, SEEK_SET,
-    SOCKADDR_UN_LEN, SOCK_STREAM, SOL_SOCKET, TIMESPEC_LEN, TIOCGWINSZ, WINSIZE_LEN,
+    INPUT_EVENT_LEN, IOVEC_LEN, MAP_ANONYMOUS, MAP_FIXED, MSGHDR_CONTROLLEN, MSGHDR_LEN, O_ACCMODE,
+    O_APPEND, O_CREAT, O_RDONLY, O_TRUNC, O_WRONLY, POLLFD_LEN, POLLIN, PROT_EXEC, PROT_READ,
+    PROT_WRITE, SCM_RIGHTS, SEEK_SET, SOCKADDR_UN_LEN, SOCK_STREAM, SOL_SOCKET, TIMESPEC_LEN,
+    TIOCGWINSZ, WINSIZE_LEN,
 };
 use crate::abi::linux::{
     E2BIG, EACCES, EADDRINUSE, EAFNOSUPPORT, EAGAIN, EBADF, EBUSY, ECHILD, ECONNREFUSED, EEXIST,
@@ -926,7 +927,13 @@ unsafe fn dispatch(
         SYS_MEMFD_CREATE => memfd_create_from_ring3(),
         SYS_FTRUNCATE => ftruncate_from_ring3(args[0], args[1]),
         // SAFETY: 呼び出し元契約により direct_map は有効で、遠征の中なので CR3 はこのプロセスのもの。
-        SYS_MMAP => unsafe { mmap_from_ring3(args[1], args[2], args[4], args[5], direct_map) },
+        SYS_MMAP => unsafe {
+            mmap_from_ring3(
+                args[0], args[1], args[2], args[3], args[4], args[5], direct_map,
+            )
+        },
+        // SAFETY: 同上。
+        SYS_MUNMAP => unsafe { munmap_from_ring3(args[0], args[1], direct_map) },
         // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
         SYS_SENDMSG => unsafe {
             sendmsg_from_ring3(args[0], args[1], page_table_root, direct_map, bkl)
@@ -1633,10 +1640,17 @@ unsafe fn mmap_screen_from_ring3(len: u64, prot: u64, direct_map: DirectMap) -> 
         return (-EINVAL) as u64;
     }
     let pages = len.div_ceil(PAGE);
-    // **プロセスのヒープが据えられていなければ断る**（`Heap::take_mmap_range` の doc。`sys_brk` と同じ値で返す）。
-    let Some(base) = crate::userland::with_current_heap(|heap| heap.take_mmap_range(pages * PAGE))
-    else {
-        return (-ENOMEM) as u64;
+    // **番地は写像の表から取る**（2026-10-06。`crate::mappings`）。
+    let base = match crate::mappings::with_current(|map| {
+        map.reserve(
+            pages * PAGE,
+            crate::mappings::MappingKind::Screen,
+            prot & PROT_WRITE != 0,
+            true,
+        )
+    }) {
+        Ok(base) => base,
+        Err(error) => return errno_for_map(error),
     };
     // **裏バッファは普通の RAM である**（MMIO ではない。`BackBuffer` の doc）ので、キャッシュしてよい。
     // **共有の印が付く**——**`AddressSpace::detach` が集めない**（この関数の doc）。
@@ -2166,11 +2180,183 @@ unsafe fn write_to_socket(
 /// `mmap` がマップする基点（プロセスごと）。**イメージ・ヒープ・スタックは `0x400000..0x800000` に
 /// 収まっているので、その上（PML4\[0\] の空き）へ順にマップする**（`ADR-0065`。ウィンドウの拡張は要らない）。
 ///
-/// **次にマップする番地は、プロセスごとの `Heap` が持つ**（`crate::userland::Heap::take_mmap_range`。2026-10-03）。
-/// **それまではスロットごとの `static` だった**——親と、親が起動した子と、続けて走るプロセスが同じスロットを使うので、
-/// 番地は上へ進むだけで、どのプロセスも `MMAP_BASE` から始まらなかった（実測: 起動時の `syscall-test` が 1 ページ使った後、
-/// シェルの子の最初の `mmap` は `0x10001000`、次の子は `0x10003000` から始まった）。
+/// **配る番地は、プロセスごとの写像の表が決める**（`crate::mappings`。2026-10-06。ここから上へ、空いている所を
+/// first-fit で探す）。**2026-10-03 から 10-06 までは、プロセスごとの `Heap` が次の番地を 1 つ持っていた**（上へ進む
+/// だけで、返した範囲を覚えない）。**それより前はスロットごとの `static` だった**——親と、親が起動した子と、続けて
+/// 走るプロセスが同じスロットを使うので、どのプロセスも `MMAP_BASE` から始まらなかった（実測: 起動時の
+/// `syscall-test` が 1 ページ使った後、シェルの子の最初の `mmap` は `0x10001000`、次の子は `0x10003000` から始まった）。
 pub(crate) const MMAP_BASE: u64 = 0x1000_0000;
+
+/// [`crate::mappings::MapError`] を errno へ写す。
+fn errno_for_map(error: crate::mappings::MapError) -> u64 {
+    use crate::mappings::MapError;
+    match error {
+        MapError::NotActive | MapError::NoRoom | MapError::TableFull => (-ENOMEM) as u64,
+        MapError::BadRange | MapError::PartOfAMapping => (-EINVAL) as u64,
+    }
+}
+
+/// 無名の `mmap`（2026-10-06。`ADR-0082`）。**ゼロで埋めたフレームを、その場で写す**（遅延はしない。musl の起動が取るのは
+/// 4 KiB から 16 KiB が数個で、遅延の価値が無い。大きい要求の上限は [`ANONYMOUS_MMAP_MAX`]）。
+///
+/// - `len` は 0 でなく、ページへ切り上げる。`PROT_EXEC` は `-EPERM`（W^X。無名の写像を実行させない）。
+/// - `PROT_NONE` は、範囲だけ取って何も写さない（触ればページフォルトになる。Linux と同じ）。
+/// - 取ったフレームは、空間ごとの会計（`brk` と同じ `note_taken` / `note_post_load_frames`）に足す。
+///   途中で取れなくなったら、写した分を外して返し、`-ENOMEM`。
+///
+/// # Safety
+///
+/// 呼び出し元契約により `direct_map` は有効で、遠征の中なので CR3 はこのプロセスのもの。
+#[inline(never)]
+unsafe fn mmap_anonymous_from_ring3(len: u64, prot: u64, direct_map: DirectMap) -> u64 {
+    use crate::arch::x86_64::ActivePageTable;
+    use crate::mappings::{MappingKind, PAGE_SIZE};
+    use crate::paging::permissions::PagePermissions;
+
+    if len == 0 || len > ANONYMOUS_MMAP_MAX {
+        return (-if len == 0 { EINVAL } else { ENOMEM }) as u64;
+    }
+    if prot & PROT_EXEC != 0 {
+        return (-EPERM) as u64;
+    }
+    let bytes = len.div_ceil(PAGE_SIZE) * PAGE_SIZE;
+    let writable = prot & PROT_WRITE != 0;
+    let present = prot & (PROT_READ | PROT_WRITE) != 0;
+    let base = match crate::mappings::with_current(|map| {
+        map.reserve(bytes, MappingKind::Anonymous, writable, present)
+    }) {
+        Ok(base) => base,
+        Err(error) => return errno_for_map(error),
+    };
+    if !present {
+        return base;
+    }
+    let Some(allocator) = crate::frame_allocator::take() else {
+        let _ = crate::mappings::with_current(|map| map.release_whole(base, bytes));
+        return (-ENOMEM) as u64;
+    };
+    // SAFETY: 遠征の中なので CR3 はこのプロセスの表である。
+    let mut table = unsafe { ActivePageTable::current(direct_map) };
+    let attributes = PagePermissions::user_program(writable, false);
+    let free_before = allocator.free_frame_count();
+    let mut mapped = 0u64;
+    let mut failed = false;
+    while mapped < bytes {
+        let page = base + mapped;
+        let Some(frame) = allocator.allocate_frame() else {
+            failed = true;
+            break;
+        };
+        let Some(virt) = common::addr::VirtAddr::new(page) else {
+            let _ = allocator.deallocate_frame(frame);
+            failed = true;
+            break;
+        };
+        // **中身を 0 にしてから写す**（前の住人の中身をユーザーへ渡さない。`brk` と同じ）。
+        // SAFETY: いま取ったフレームで、direct map が覆っている。
+        unsafe {
+            core::ptr::write_bytes(
+                direct_map.phys_to_virt(frame).as_u64() as *mut u8,
+                0,
+                PAGE_SIZE as usize,
+            )
+        };
+        // SAFETY: 稼働中の表へ、ユーザーの範囲を、いま取ったフレームで写す。
+        if unsafe { table.map_4kib(virt, frame, attributes, allocator) }.is_err() {
+            let _ = allocator.deallocate_frame(frame);
+            failed = true;
+            break;
+        }
+        mapped += PAGE_SIZE;
+    }
+    if failed {
+        // **写した分を外して返す**（中間表は破棄が集める）。
+        let mut page = base;
+        while page < base + mapped {
+            if let Some(virt) = common::addr::VirtAddr::new(page) {
+                // SAFETY: いま写したページを外し、フレームを返す。
+                if let Ok(unmapped) = unsafe { table.unmap_4kib(virt) } {
+                    let _ = allocator.deallocate_frame(unmapped.frame);
+                }
+            }
+            page += PAGE_SIZE;
+        }
+        let _ = crate::mappings::with_current(|map| map.release_whole(base, bytes));
+    }
+    let taken = free_before.saturating_sub(allocator.free_frame_count());
+    crate::frame_allocator::give_back(allocator);
+    crate::userland::note_post_load_frames(taken as usize);
+    if failed {
+        (-ENOMEM) as u64
+    } else {
+        base
+    }
+}
+
+/// 1 回の無名の `mmap` の上限（16 MiB）。その場で写すので、大きい要求は時間とフレームをまとめて取る。
+/// 越える要求は `-ENOMEM`。遅延して写す形は `docs/deferred-decisions.md`。
+const ANONYMOUS_MMAP_MAX: u64 = 16 * 1024 * 1024;
+
+/// `munmap(addr, len)`（2026-10-06。`ADR-0082`）。**この刻みでは、写像の全体だけを返す。**
+///
+/// - 範囲がちょうど 1 つの無名の写像なら、ページを外してフレームを返し、表から消す。
+/// - 範囲にどの写像も掛かっていなければ 0（Linux と同じ）。
+/// - 写像の一部にだけ掛かる、またはまたがる範囲は `-EINVAL`（名前のある失敗。分ける形は次の刻み）。
+/// - 共有メモリと画面の写像は `-EINVAL`（参照数と裏バッファの扱いが要る。`docs/deferred-decisions.md`）。
+///   **表からも消さない**——写像は残っている。
+///
+/// # Safety
+///
+/// 呼び出し元契約により `direct_map` は有効で、遠征の中なので CR3 はこのプロセスのもの。
+#[inline(never)]
+unsafe fn munmap_from_ring3(addr: u64, len: u64, direct_map: DirectMap) -> u64 {
+    use crate::arch::x86_64::ActivePageTable;
+    use crate::mappings::{MappingKind, PAGE_SIZE};
+
+    if len == 0 || !addr.is_multiple_of(PAGE_SIZE) {
+        return (-EINVAL) as u64;
+    }
+    let bytes = len.div_ceil(PAGE_SIZE) * PAGE_SIZE;
+    // **先に、外してよい写像かを見る**（表は変えない）。
+    let found = crate::mappings::with_current(|map| {
+        map.find(addr)
+            .filter(|mapping| mapping.start == addr && mapping.end == addr + bytes)
+    });
+    match found {
+        Some(mapping) if mapping.kind != MappingKind::Anonymous => return (-EINVAL) as u64,
+        _ => {}
+    }
+    let released = match crate::mappings::with_current(|map| map.release_whole(addr, bytes)) {
+        Ok(released) => released,
+        Err(error) => return errno_for_map(error),
+    };
+    let Some(mapping) = released else {
+        return 0;
+    };
+    if !mapping.present {
+        return 0;
+    }
+    let Some(allocator) = crate::frame_allocator::take() else {
+        return (-ENOMEM) as u64;
+    };
+    // SAFETY: 遠征の中なので CR3 はこのプロセスの表である。
+    let mut table = unsafe { ActivePageTable::current(direct_map) };
+    let mut returned = 0usize;
+    let mut page = mapping.start;
+    while page < mapping.end {
+        if let Some(virt) = common::addr::VirtAddr::new(page) {
+            // SAFETY: 稼働中の表から、このプロセスの無名のページを外し、フレームを返す（`brk` が縮むときと同じ）。
+            if let Ok(unmapped) = unsafe { table.unmap_4kib(virt) } {
+                let _ = allocator.deallocate_frame(unmapped.frame);
+                returned += 1;
+            }
+        }
+        page += PAGE_SIZE;
+    }
+    crate::frame_allocator::give_back(allocator);
+    crate::userland::note_post_load_frames_returned(returned);
+    0
+}
 
 /// fd から共有メモリの添字を引く。**共有メモリでなければ `Err(-EBADF)`。**
 fn shm_of(fd: u64) -> Result<u8, u64> {
@@ -2228,10 +2414,29 @@ fn ftruncate_from_ring3(fd: u64, size: u64) -> u64 {
 ///
 /// 呼び出し元契約により `direct_map` は有効で、遠征の中なので CR3 はこのプロセスのもの。
 #[inline(never)]
-unsafe fn mmap_from_ring3(len: u64, prot: u64, fd: u64, offset: u64, direct_map: DirectMap) -> u64 {
+unsafe fn mmap_from_ring3(
+    addr: u64,
+    len: u64,
+    prot: u64,
+    flags: u64,
+    fd: u64,
+    offset: u64,
+    direct_map: DirectMap,
+) -> u64 {
     use crate::arch::x86_64::ActivePageTable;
     use crate::paging::permissions::PagePermissions;
 
+    // **番地を指定して置き換える形は、まだ受けない**（2026-10-06。次の刻み。`docs/deferred-decisions.md`）。
+    // 指定の無い `addr`（ただのヒント）は見ない——置き場はカーネルが決める。
+    if flags & MAP_FIXED != 0 {
+        return (-ENOSYS) as u64;
+    }
+    let _ = addr;
+    // **無名の写像**（2026-10-06）。fd と offset は見ない（Linux は fd に -1 を求めるが、無視する実装も多い）。
+    if flags & MAP_ANONYMOUS != 0 {
+        // SAFETY: 呼び出し元契約をそのまま渡す。
+        return unsafe { mmap_anonymous_from_ring3(len, prot, direct_map) };
+    }
     if offset != 0 {
         return (-EINVAL) as u64;
     }
@@ -2265,11 +2470,17 @@ unsafe fn mmap_from_ring3(len: u64, prot: u64, fd: u64, offset: u64, direct_map:
     if want_pages > pages {
         return (-EINVAL) as u64;
     }
-    // **プロセスのヒープが据えられていなければ断る**（`Heap::take_mmap_range` の doc。`sys_brk` と同じ値で返す）。
-    let Some(base) = crate::userland::with_current_heap(|heap| {
-        heap.take_mmap_range((want_pages * crate::shm::PAGE_SIZE) as u64)
-    }) else {
-        return (-ENOMEM) as u64;
+    // **番地は写像の表から取る**（2026-10-06。`crate::mappings`。据えられていないプロセスでは断る）。
+    let base = match crate::mappings::with_current(|map| {
+        map.reserve(
+            (want_pages * crate::shm::PAGE_SIZE) as u64,
+            crate::mappings::MappingKind::SharedMemory { shm },
+            prot & PROT_WRITE != 0,
+            true,
+        )
+    }) {
+        Ok(base) => base,
+        Err(error) => return errno_for_map(error),
     };
     // **共有メモリの葉に目印を立てる（`ADR-0065`）。** **`AddressSpace::detach` が集めず、`crate::shm` が
     // 参照数で返す。**

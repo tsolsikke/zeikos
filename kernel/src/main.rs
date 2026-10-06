@@ -9292,6 +9292,12 @@ const SYSCALL_TEST_STATUS: &[(u64, &str)] = &[
     (92, "fcntl(F_GETFD) did not return 0, or F_DUPFD_CLOEXEC did not return a descriptor at or above the floor"),
     (93, "spawn(\"/bin/futex-wait\") did not return 137 (a FUTEX_WAIT with no one to wake must end the process)"),
     (94, "rt_sigaction(SIGUSR1, handler without SA_RESTORER) did not return -EINVAL"),
+    // 95 から 99: 無名の mmap と munmap（2026-10-06）。
+    (95, "mmap(NULL, 2 pages, RW, MAP_PRIVATE|MAP_ANONYMOUS) did not return an address at or above the mmap base"),
+    (96, "the anonymous mapping was not zero-filled, or a value written to it did not read back"),
+    (97, "munmap of the whole anonymous mapping did not return 0, or a second mmap did not reuse the address"),
+    (98, "munmap of part of a mapping did not return -EINVAL, or mmap(len 0) did not return -EINVAL"),
+    (99, "munmap of a range with no mapping did not return 0"),
 ];
 
 /// `fault-test` が起こす #PF のエラーコード（S9-b-3-2a）。

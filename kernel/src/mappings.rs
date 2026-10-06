@@ -1,0 +1,443 @@
+//! プロセスの写像の表（2026-10-06）——`mmap` が配った範囲を、番地と種類で覚える。
+//!
+//! # なぜ表が要るのか
+//!
+//! **以前は、次に配る番地を 1 つ持つだけだった**（`Heap` の `mmap_next`。上へ進むだけで、返した範囲を覚えない）。
+//! 覚えていないと、`munmap` で返すことも、重なりを見ることも、空いた所を使い直すこともできない。Linux のプログラム
+//! （musl の `malloc`）は、起動の最初に無名の `mmap` を数回打ち、要らなくなった範囲を `munmap` で返す。
+//!
+//! # 置き場
+//!
+//! **プロセスの記録（`UserProcess`）や `Heap` には置かない**——あちらは載せる側の遠征スタックの上を通り、64 欄の表
+//! （2 KiB）を足すと、子が走っている間ずっと残る枠が太る（`ADR-0079`）。**スロットと、遠征の深さごとの静的な置き場に
+//! 置く**（`crate::process_state` と同じ形）。
+//!
+//! # この刻みで入るもの
+//!
+//! 無名の写像を配る（first-fit。空いた所を使い直す）、写像の全体を返す、共有メモリと画面の写像を同じ表で覚える。
+//! **範囲の一部だけの `munmap`、`MAP_FIXED`、`mprotect` は、まだ無い**（次の刻み）。範囲の一部に掛かる `munmap` は、
+//! 名前のある失敗で断る。
+
+use common::critical::Locked;
+
+use crate::arch::x86_64::{MAX_EXCURSION_DEPTH, USER_TASK_SLOTS};
+
+/// 1 つのプロセスが同時に持てる写像の数。musl の起動は 10 個ほど、Seinas の輪は数十個と見ている。
+pub const MAX_MAPPINGS: usize = 64;
+
+/// ページの大きさ。
+pub const PAGE_SIZE: u64 = 4096;
+
+/// 写像の種類。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MappingKind {
+    /// 無名（`MAP_ANONYMOUS`）。フレームはこのプロセスのもので、返すときはアロケータへ戻す。
+    Anonymous,
+    /// 共有メモリ（`memfd_create` の fd）。フレームは `crate::shm` が参照数で持つ。
+    SharedMemory { shm: u8 },
+    /// 画面の裏バッファ。フレームはカーネルのもの。
+    Screen,
+}
+
+/// 1 つの写像。`end` は排他である。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Mapping {
+    pub start: u64,
+    pub end: u64,
+    pub kind: MappingKind,
+    /// 書ける写像か（`PROT_WRITE`）。
+    pub writable: bool,
+    /// ページが写してあるか。**`PROT_NONE` の無名の写像は、範囲だけ取って、何も写さない**（触ればページフォルト）。
+    pub present: bool,
+}
+
+impl Mapping {
+    /// ページの数。
+    pub const fn pages(&self) -> u64 {
+        (self.end - self.start) / PAGE_SIZE
+    }
+
+    fn overlaps(&self, start: u64, end: u64) -> bool {
+        start < self.end && self.start < end
+    }
+}
+
+/// 断る理由（呼ぶ側が errno に写す）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MapError {
+    /// このプロセスの表が据えられていない（起動時の試しなど）。`-ENOMEM`。
+    NotActive,
+    /// 配る範囲が、`mmap` の始まりから終わりまでの中に無い。`-ENOMEM`。
+    NoRoom,
+    /// 表が一杯である。`-ENOMEM`。
+    TableFull,
+    /// 長さが 0 か、ページの境界に無い番地。`-EINVAL`。
+    BadRange,
+    /// 範囲が、写像の一部にだけ掛かる（この刻みでは断る）。`-EINVAL`。
+    PartOfAMapping,
+}
+
+/// 1 つのプロセスの写像の表。
+pub struct MemoryMap {
+    active: bool,
+    base: u64,
+    limit: u64,
+    entries: [Option<Mapping>; MAX_MAPPINGS],
+}
+
+impl MemoryMap {
+    /// 据えられていない形（配らない）。
+    pub const INACTIVE: Self = Self {
+        active: false,
+        base: 0,
+        limit: 0,
+        entries: [None; MAX_MAPPINGS],
+    };
+
+    /// プロセスが始まる前に、配置の値で据える。表は空になる。
+    pub fn activate(&mut self, base: u64, limit: u64) {
+        *self = Self {
+            active: true,
+            base,
+            limit,
+            entries: [None; MAX_MAPPINGS],
+        };
+    }
+
+    /// 据えられているか。
+    pub const fn is_active(&self) -> bool {
+        self.active
+    }
+
+    /// `bytes`（ページの倍数）の範囲を、`mmap` の始まりから上へ、最初に収まる所に取る（first-fit。純粋な論理）。
+    /// 返すのは始まりの番地。
+    pub fn reserve(
+        &mut self,
+        bytes: u64,
+        kind: MappingKind,
+        writable: bool,
+        present: bool,
+    ) -> Result<u64, MapError> {
+        if !self.active {
+            return Err(MapError::NotActive);
+        }
+        if bytes == 0 || !bytes.is_multiple_of(PAGE_SIZE) {
+            return Err(MapError::BadRange);
+        }
+        let Some(slot) = self.entries.iter().position(Option::is_none) else {
+            return Err(MapError::TableFull);
+        };
+        // **候補を、重なる写像の終わりへ進める。** 表の数より多くは進まない（候補が動くたびに、重なる写像が
+        // 1 つ減る）。
+        let mut candidate = self.base;
+        for _ in 0..=MAX_MAPPINGS {
+            let end = candidate.checked_add(bytes).ok_or(MapError::NoRoom)?;
+            if end > self.limit {
+                return Err(MapError::NoRoom);
+            }
+            match self
+                .entries
+                .iter()
+                .flatten()
+                .filter(|mapping| mapping.overlaps(candidate, end))
+                .map(|mapping| mapping.end)
+                .max()
+            {
+                Some(next) => candidate = next,
+                None => {
+                    self.entries[slot] = Some(Mapping {
+                        start: candidate,
+                        end,
+                        kind,
+                        writable,
+                        present,
+                    });
+                    return Ok(candidate);
+                }
+            }
+        }
+        Err(MapError::NoRoom)
+    }
+
+    /// `start` から `bytes` の範囲を、写像の全体として返す（純粋な論理）。
+    ///
+    /// - 範囲がちょうど 1 つの写像なら、その写像を外して返す。
+    /// - 範囲にどの写像も掛かっていなければ `Ok(None)`（Linux の `munmap` は、写していない範囲でも 0 を返す）。
+    /// - 範囲が写像の一部にだけ掛かる、または複数の写像にまたがるなら、`PartOfAMapping`（この刻みでは断る）。
+    pub fn release_whole(&mut self, start: u64, bytes: u64) -> Result<Option<Mapping>, MapError> {
+        if !self.active {
+            return Err(MapError::NotActive);
+        }
+        if bytes == 0 || !start.is_multiple_of(PAGE_SIZE) || !bytes.is_multiple_of(PAGE_SIZE) {
+            return Err(MapError::BadRange);
+        }
+        let end = start.checked_add(bytes).ok_or(MapError::BadRange)?;
+        let mut touched = None;
+        for (index, mapping) in self.entries.iter().enumerate() {
+            let Some(mapping) = mapping else {
+                continue;
+            };
+            if !mapping.overlaps(start, end) {
+                continue;
+            }
+            if touched.is_some() || mapping.start != start || mapping.end != end {
+                return Err(MapError::PartOfAMapping);
+            }
+            touched = Some(index);
+        }
+        Ok(touched.and_then(|index| self.entries[index].take()))
+    }
+
+    /// `address` を含む写像。
+    pub fn find(&self, address: u64) -> Option<Mapping> {
+        self.entries
+            .iter()
+            .flatten()
+            .find(|mapping| mapping.start <= address && address < mapping.end)
+            .copied()
+    }
+
+    /// 要約——写像の数、いちばん低い始まり、いちばん高い終わり、無名のページの数。**判定の行に出す。**
+    pub fn summary(&self) -> MapSummary {
+        let mut summary = MapSummary {
+            count: 0,
+            lowest: None,
+            highest: None,
+            anonymous_pages: 0,
+        };
+        for mapping in self.entries.iter().flatten() {
+            summary.count += 1;
+            summary.lowest = Some(
+                summary
+                    .lowest
+                    .map_or(mapping.start, |low| low.min(mapping.start)),
+            );
+            summary.highest = Some(
+                summary
+                    .highest
+                    .map_or(mapping.end, |high| high.max(mapping.end)),
+            );
+            if mapping.kind == MappingKind::Anonymous {
+                summary.anonymous_pages += mapping.pages();
+            }
+        }
+        summary
+    }
+}
+
+/// [`MemoryMap::summary`] の結果。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MapSummary {
+    pub count: usize,
+    pub lowest: Option<u64>,
+    pub highest: Option<u64>,
+    pub anonymous_pages: u64,
+}
+
+/// スロットと、遠征の深さごとの置き場（`crate::process_state` と同じ添字の付け方）。
+static MAPS: [[Locked<MemoryMap>; MAX_EXCURSION_DEPTH]; USER_TASK_SLOTS] =
+    [const { [const { Locked::new(MemoryMap::INACTIVE) }; MAX_EXCURSION_DEPTH] }; USER_TASK_SLOTS];
+
+#[inline(never)]
+#[cold]
+fn report_depth_out_of_range(depth: usize) -> ! {
+    panic!(
+        "mappings: the excursion depth index {depth} is out of range (MAX_EXCURSION_DEPTH = \
+         {MAX_EXCURSION_DEPTH}); the memory map would be read from the wrong slot"
+    );
+}
+
+/// これから走らせるプロセスの表を、配置の値で据える。**載せる側が、Ring 3 へ落ちる前に呼ぶ**（`crate::userland`）。
+///
+/// # 契約（境界の関数。2026-10-06）
+///
+/// - 今のスロットの、今の遠征の深さの欄を書く。ほかは何も変えない。
+pub fn activate_for_next_process(base: u64, limit: u64) {
+    with_loaded(|map| map.activate(base, limit));
+}
+
+/// 載せる側から、これから走らせる（または走り終えた）プロセスの表へ触る（添字は今の遠征の深さ）。
+///
+/// # 契約（境界の関数。2026-10-06）
+///
+/// - 今のスロットの、今の遠征の深さの欄へ触る。
+pub fn with_loaded<R>(body: impl FnOnce(&mut MemoryMap) -> R) -> R {
+    let depth = crate::arch::x86_64::excursion_depth();
+    if depth >= MAX_EXCURSION_DEPTH {
+        report_depth_out_of_range(depth);
+    }
+    body(&mut MAPS[crate::arch::x86_64::current_excursion_slot()][depth].lock())
+}
+
+/// 今走っているプロセス（システムコールを打った側）の表へ触る。**遠征の中から呼ぶ**（`crate::syscall`）。
+///
+/// # 契約（境界の関数。2026-10-06）
+///
+/// - 今のスロットの、今の遠征の深さから 1 を引いた欄へ触る。遠征の外（深さ 0）から呼ぶと止まる。
+pub fn with_current<R>(body: impl FnOnce(&mut MemoryMap) -> R) -> R {
+    let depth = crate::arch::x86_64::excursion_depth();
+    let Some(index) = depth
+        .checked_sub(1)
+        .filter(|index| *index < MAX_EXCURSION_DEPTH)
+    else {
+        report_depth_out_of_range(depth);
+    };
+    body(&mut MAPS[crate::arch::x86_64::current_excursion_slot()][index].lock())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BASE: u64 = 0x1000_0000;
+    const LIMIT: u64 = 0x1001_0000;
+
+    fn active() -> MemoryMap {
+        let mut map = MemoryMap::INACTIVE;
+        map.activate(BASE, LIMIT);
+        map
+    }
+
+    /// 据えていない表は配らない。据えると、始まりから順に配り、終わりで断る。
+    #[test]
+    fn an_inactive_map_hands_out_nothing_and_an_active_one_fills_from_the_base() {
+        let mut map = MemoryMap::INACTIVE;
+        assert_eq!(
+            map.reserve(PAGE_SIZE, MappingKind::Anonymous, true, true),
+            Err(MapError::NotActive)
+        );
+        let mut map = active();
+        assert_eq!(
+            map.reserve(2 * PAGE_SIZE, MappingKind::Anonymous, true, true),
+            Ok(BASE)
+        );
+        assert_eq!(
+            map.reserve(PAGE_SIZE, MappingKind::Screen, true, true),
+            Ok(BASE + 2 * PAGE_SIZE)
+        );
+        // 残りの全部。
+        assert_eq!(
+            map.reserve(
+                LIMIT - BASE - 3 * PAGE_SIZE,
+                MappingKind::Anonymous,
+                false,
+                true
+            ),
+            Ok(BASE + 3 * PAGE_SIZE)
+        );
+        assert_eq!(
+            map.reserve(PAGE_SIZE, MappingKind::Anonymous, true, true),
+            Err(MapError::NoRoom)
+        );
+        assert_eq!(
+            map.reserve(0, MappingKind::Anonymous, true, true),
+            Err(MapError::BadRange)
+        );
+        assert_eq!(
+            map.reserve(100, MappingKind::Anonymous, true, true),
+            Err(MapError::BadRange)
+        );
+    }
+
+    /// 返した所は使い直す（first-fit）。**空きが足りない穴は飛ばす。**
+    #[test]
+    fn a_released_range_is_used_again_when_it_fits() {
+        let mut map = active();
+        let first = map
+            .reserve(PAGE_SIZE, MappingKind::Anonymous, true, true)
+            .unwrap();
+        let second = map
+            .reserve(2 * PAGE_SIZE, MappingKind::Anonymous, true, true)
+            .unwrap();
+        let third = map
+            .reserve(PAGE_SIZE, MappingKind::Anonymous, true, true)
+            .unwrap();
+        assert_eq!(
+            (first, second, third),
+            (BASE, BASE + PAGE_SIZE, BASE + 3 * PAGE_SIZE)
+        );
+        let released = map.release_whole(second, 2 * PAGE_SIZE).unwrap().unwrap();
+        assert_eq!(released.kind, MappingKind::Anonymous);
+        assert_eq!(released.pages(), 2);
+        // 3 ページは穴（2 ページ）に収まらないので、その先へ。1 ページは穴に入る。
+        assert_eq!(
+            map.reserve(3 * PAGE_SIZE, MappingKind::Anonymous, true, true),
+            Ok(BASE + 4 * PAGE_SIZE)
+        );
+        assert_eq!(
+            map.reserve(PAGE_SIZE, MappingKind::Anonymous, true, true),
+            Ok(BASE + PAGE_SIZE)
+        );
+    }
+
+    /// 返すのは写像の全体だけ。一部や、またがる範囲は断る。写していない範囲は `None` で 0 になる。
+    #[test]
+    fn only_a_whole_mapping_is_released_and_an_empty_range_is_not_an_error() {
+        let mut map = active();
+        let start = map
+            .reserve(4 * PAGE_SIZE, MappingKind::Anonymous, true, true)
+            .unwrap();
+        assert_eq!(
+            map.release_whole(start, PAGE_SIZE),
+            Err(MapError::PartOfAMapping)
+        );
+        assert_eq!(
+            map.release_whole(start + PAGE_SIZE, 3 * PAGE_SIZE),
+            Err(MapError::PartOfAMapping)
+        );
+        assert_eq!(
+            map.release_whole(start, 5 * PAGE_SIZE),
+            Err(MapError::PartOfAMapping)
+        );
+        assert_eq!(
+            map.release_whole(start + 8 * PAGE_SIZE, PAGE_SIZE),
+            Ok(None)
+        );
+        assert_eq!(
+            map.release_whole(start + 1, PAGE_SIZE),
+            Err(MapError::BadRange)
+        );
+        assert_eq!(map.release_whole(start, 0), Err(MapError::BadRange));
+        let whole = map.release_whole(start, 4 * PAGE_SIZE).unwrap().unwrap();
+        assert_eq!((whole.start, whole.end), (start, start + 4 * PAGE_SIZE));
+        assert_eq!(map.find(start), None);
+    }
+
+    /// 表が一杯なら断る。要約は、数と両端と無名のページ数を言う。
+    #[test]
+    fn a_full_table_refuses_and_the_summary_counts_what_is_there() {
+        let mut map = MemoryMap::INACTIVE;
+        map.activate(BASE, BASE + (MAX_MAPPINGS as u64 + 1) * PAGE_SIZE);
+        for _ in 0..MAX_MAPPINGS {
+            map.reserve(PAGE_SIZE, MappingKind::Anonymous, true, true)
+                .unwrap();
+        }
+        assert_eq!(
+            map.reserve(PAGE_SIZE, MappingKind::Anonymous, true, true),
+            Err(MapError::TableFull)
+        );
+        let summary = map.summary();
+        assert_eq!(summary.count, MAX_MAPPINGS);
+        assert_eq!(summary.lowest, Some(BASE));
+        assert_eq!(
+            summary.highest,
+            Some(BASE + MAX_MAPPINGS as u64 * PAGE_SIZE)
+        );
+        assert_eq!(summary.anonymous_pages, MAX_MAPPINGS as u64);
+        assert_eq!(MemoryMap::INACTIVE.summary().count, 0);
+        // 共有メモリは、無名のページには数えない。
+        let mut map = active();
+        map.reserve(
+            2 * PAGE_SIZE,
+            MappingKind::SharedMemory { shm: 0 },
+            true,
+            true,
+        )
+        .unwrap();
+        assert_eq!(map.summary().anonymous_pages, 0);
+        assert_eq!(
+            map.find(BASE + PAGE_SIZE).map(|m| m.kind),
+            Some(MappingKind::SharedMemory { shm: 0 })
+        );
+    }
+}

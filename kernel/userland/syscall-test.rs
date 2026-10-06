@@ -134,6 +134,11 @@
 //! - `92` `fcntl(F_GETFD)` が 0 を返さなかったか、`F_DUPFD_CLOEXEC` が下限以上の番号を返さなかった
 //! - `93` `spawn("/bin/futex-wait")` が 137 を返さなかった（起こす者の居ない `FUTEX_WAIT` は、プロセスを終わらせる）
 //! - `94` `SA_RESTORER` の無いハンドラの `rt_sigaction(SIGUSR1, …)` が `-EINVAL` を返さなかった
+//! - `95` `mmap(NULL, 2 ページ, RW, MAP_PRIVATE|MAP_ANONYMOUS)` が、基点以上の番地を返さなかった（2026-10-06）
+//! - `96` 無名の写像が 0 で埋まっていなかったか、書いた値が読み戻せなかった
+//! - `97` 写像の全体の `munmap` が 0 を返さなかったか、次の `mmap` が同じ番地を使い直さなかった
+//! - `98` 写像の一部の `munmap` が `-EINVAL` を返さなかったか、長さ 0 の `mmap` が `-EINVAL` を返さなかった
+//! - `99` 写像の無い範囲の `munmap` が 0 を返さなかった
 //! - `69` 方向フラグを立てたまま打った `clock_gettime` が 0 を返さなかった（2026-09-24。
 //!   **判定の本体はカーネルの入口の監視である**——こちらは前提を作り、戻り値だけを見る）
 //! - `70` 読み込み先が読み取り専用のページ（このプログラムの `.rodata`）の `read` が `-EFAULT` を返さなかった
@@ -1719,6 +1724,87 @@ core::arch::global_asm!(
     "  mov eax, {sys_close}",
     "  mov rdi, r12",
     "  int 0x80",
+    // 95: mmap(NULL, 2 ページ, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) は基点以上の番地を返す。
+    "  mov eax, {sys_mmap}",
+    "  xor edi, edi",
+    "  mov esi, 8192",
+    "  mov edx, 3",
+    "  mov r10d, 0x22",
+    "  mov r8, -1",
+    "  xor r9d, r9d",
+    "  int 0x80",
+    "  mov edi, 95",
+    "  mov r13, 0x10000000",
+    "  cmp rax, r13",
+    "  jb 7f",
+    "  mov r12, rax",
+    // 96: 0 で埋まっていて、書いた値が読み戻せる（2 ページ目の末尾の語）。
+    "  mov edi, 96",
+    "  cmp qword ptr [r12], 0",
+    "  jne 7f",
+    "  cmp qword ptr [r12 + 8184], 0",
+    "  jne 7f",
+    "  mov rax, 0x5a5a1234",
+    "  mov qword ptr [r12 + 8184], rax",
+    "  cmp qword ptr [r12 + 8184], rax",
+    "  jne 7f",
+    // 98: 一部の munmap は -EINVAL。長さ 0 の mmap も -EINVAL。
+    "  mov eax, {sys_munmap}",
+    "  mov rdi, r12",
+    "  mov esi, 4096",
+    "  int 0x80",
+    "  mov edi, 98",
+    "  cmp rax, {minus_einval}",
+    "  jne 7f",
+    "  mov eax, {sys_mmap}",
+    "  xor edi, edi",
+    "  xor esi, esi",
+    "  mov edx, 3",
+    "  mov r10d, 0x22",
+    "  mov r8, -1",
+    "  xor r9d, r9d",
+    "  int 0x80",
+    "  mov edi, 98",
+    "  cmp rax, {minus_einval}",
+    "  jne 7f",
+    // 97: 全体の munmap は 0 で、次の mmap は同じ番地を使い直す。
+    "  mov eax, {sys_munmap}",
+    "  mov rdi, r12",
+    "  mov esi, 8192",
+    "  int 0x80",
+    "  mov edi, 97",
+    "  test rax, rax",
+    "  jne 7f",
+    "  mov eax, {sys_mmap}",
+    "  xor edi, edi",
+    "  mov esi, 4096",
+    "  mov edx, 3",
+    "  mov r10d, 0x22",
+    "  mov r8, -1",
+    "  xor r9d, r9d",
+    "  int 0x80",
+    "  mov edi, 97",
+    "  cmp rax, r12",
+    "  jne 7f",
+    // 使い直した 1 ページは 0 に戻っている（前の中身を渡さない）。
+    "  mov edi, 96",
+    "  cmp qword ptr [r12], 0",
+    "  jne 7f",
+    "  mov eax, {sys_munmap}",
+    "  mov rdi, r12",
+    "  mov esi, 4096",
+    "  int 0x80",
+    "  mov edi, 97",
+    "  test rax, rax",
+    "  jne 7f",
+    // 99: 写像の無い範囲の munmap は 0。
+    "  mov eax, {sys_munmap}",
+    "  mov rdi, r12",
+    "  mov esi, 8192",
+    "  int 0x80",
+    "  mov edi, 99",
+    "  test rax, rax",
+    "  jne 7f",
     // 93: spawn("/bin/futex-wait") は 137 を返す（子は、起こす者の居ない FUTEX_WAIT で終わらせられる）。
     "  mov eax, {sys_spawn}",
     "  lea rdi, [rip + FUTEX_WAIT_PATH]",
@@ -1900,6 +1986,7 @@ core::arch::global_asm!(
     sys_readlink = const 89u32,
     sys_fstat = const 5u32,
     sys_fcntl = const 72u32,
+    sys_munmap = const 11u32,
     sys_open = const SYS_OPEN,
     sys_close = const SYS_CLOSE,
     o_rdonly = const O_RDONLY,

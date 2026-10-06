@@ -125,3 +125,5 @@ pub const SYS_EXIT_GROUP: u64 = 231;
 pub const SYS_PRLIMIT64: u64 = 302;
 /// `getrandom(buf, len, flags)` の番号（2026-10-06。`__NR_getrandom`）。
 pub const SYS_GETRANDOM: u64 = 318;
+/// `munmap(addr, len)` の番号（2026-10-06。`__NR_munmap`）。
+pub const SYS_MUNMAP: u64 = 11;

@@ -81,6 +81,14 @@ pub const PROT_WRITE: u64 = 2;
 /// **今は、これを求める `mmap` を全部断る**（`-EPERM`。`crate::syscall` の `mmap` の本体）。
 pub const PROT_EXEC: u64 = 4;
 
+/// `PROT_READ`（読める葉を求める。2026-10-06）。
+pub const PROT_READ: u64 = 1;
+
+/// `MAP_FIXED`（番地を指定して置き換える）。**まだ受けない**（`-ENOSYS`。次の刻み）。
+pub const MAP_FIXED: u64 = 0x10;
+/// `MAP_ANONYMOUS`（fd の無い、ゼロで埋めた写像。2026-10-06）。
+pub const MAP_ANONYMOUS: u64 = 0x20;
+
 /// `SOL_SOCKET`（`cmsghdr` の level）。
 pub const SOL_SOCKET: u32 = 1;
 
