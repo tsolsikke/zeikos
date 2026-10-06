@@ -518,23 +518,6 @@ hello from ring 3
 [INFO] user-run: fault-test left Ring 3 (exited=false status=0 folded=true vector=14 rip=0x400030 cs=0x2b cr2=0x400000 err=0x7), it made 0 syscall(s) and the kernel was entered from Ring 3 (false), write(fd=0, 0 byte(s)) said ""
 [INFO] direction flag: fault-test entered the kernel through the exception entry with DF=1 1 time(s), and the handler ran with DF=0 each time (the stub clears it; a handler that sees DF=1 halts)
 [INFO] user-load: fault-test ran as a process in its own address space, ended as expected, and the kernel continued after the process was gone; the space was destroyed (10 frame(s) left the allocator and 10 reached quarantine (10 its own + 0 spawned), match=true leaked=0); the space took 10 frame(s) and the destroy collected 10 (match=true); the global difference was checked (checked 7 time(s) so far)
-[INFO] user-load: pie-hello is position-independent; placed at 0x400000 (image 0x400000..0x40202a, entry 0x401010)
-[INFO] user-load: pie-hello mapped PT_LOAD 0x400000..0x400190 (filesz=0x190 memsz=0x190 w=false) pages 0x400000..0x400000
-[INFO] user-load: pie-hello mapped PT_LOAD 0x401000..0x401199 (filesz=0x199 memsz=0x199 w=false) pages 0x401000..0x401000
-[INFO] user-load: pie-hello mapped PT_LOAD 0x402000..0x40202a (filesz=0x2a memsz=0x2a w=false) pages 0x402000..0x402000
-[INFO] user-load: pie-hello PT_LOAD segments: declared=3 mapped=3 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
-[INFO] user-load: mapped the user stack 0x7ffffbf000..0x7ffffff000 (w=true)
-[INFO] user-load: the page below the stack (0x7ffffbe000) is left unmapped as a guard; neither the heap nor mmap is placed on it
-[INFO] user-load: pie-hello initial stack at 0x7fffffeea0 (argc=1, envc=3, 16-byte aligned=true,          initial data 352 of 4096 byte(s))
-[INFO] stack-water: before entering pie-hello in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
-hello from a position-independent program
-[INFO] user-stack: pie-hello used 352 of 262144 byte(s) (0%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
-[INFO] ring3: pie-hello used 2882 of 65536 byte(s) of the depth-0 excursion stack (4%), which has a guard page below it
-[INFO] vfs: pie-hello opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
-[INFO] user-heap: pie-hello had brk take 0 frame(s) and give back 0 (equal means the shrink actually returned them; a program that only grows will not be equal, and that is not a failure)
-[INFO] page-perms: user program pie-hello: 4 row(s), 0 unnamed, 0 mapped where nothing should be, 0 dropped, digest=7d1c99669e45f90d
-[INFO] user-run: pie-hello left Ring 3 (exited=true status=0 folded=false vector=0 rip=0x0 cs=0x0 cr2=0x0 err=0x0), it made 2 syscall(s) and the kernel was entered from Ring 3 (true), write(fd=1, 42 byte(s)) said "hello from a position-independent program"
-[INFO] user-load: pie-hello ran as a process in its own address space, ended as expected, and the kernel continued after the process was gone; the space was destroyed (73 frame(s) left the allocator and 73 reached quarantine (73 its own + 0 spawned), match=true leaked=0); the space took 73 frame(s) and the destroy collected 73 (match=true); the global difference was checked (checked 8 time(s) so far)
 [INFO] user-load: syscall-test mapped PT_LOAD 0x400000..0x401002 (filesz=0x1002 memsz=0x1002 w=false) pages 0x400000..0x401000
 [INFO] user-load: syscall-test mapped PT_LOAD 0x402000..0x40231e (filesz=0x31e memsz=0x31e w=false) pages 0x402000..0x402000
 [INFO] user-load: syscall-test PT_LOAD segments: declared=2 mapped=2 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
@@ -556,7 +539,7 @@ hello from ring 3
 [INFO] vfs: /bin/hello opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
 [INFO] user-heap: /bin/hello had brk take 0 frame(s) and give back 0 (equal means the shrink actually returned them; a program that only grows will not be equal, and that is not a failure)
 [INFO] page-perms: user program /bin/hello: 3 row(s), 0 unnamed, 0 mapped where nothing should be, 0 dropped, digest=d221a4fd198b0ff1
-[INFO] spawn: /bin/hello ended (Exited(0)) after 2 syscall(s); its kernel entries ran on RSP 0xffffffff8032df50 (inside its own excursion stack 0xffffffff8031e000..0xffffffff8032e000 = true); the space was destroyed (11 frame(s) left the allocator and 11 reached quarantine (11 its own + 0 from what it spawned), match=true leaked=0); the space took 11 frame(s) and the destroy collected 11 (match=true); the global difference was checked (checked 9 time(s) so far)
+[INFO] spawn: /bin/hello ended (Exited(0)) after 2 syscall(s); its kernel entries ran on RSP 0xffffffff8032df50 (inside its own excursion stack 0xffffffff8031e000..0xffffffff8032e000 = true); the space was destroyed (11 frame(s) left the allocator and 11 reached quarantine (11 its own + 0 from what it spawned), match=true leaked=0); the space took 11 frame(s) and the destroy collected 11 (match=true); the global difference was checked (checked 8 time(s) so far)
 [INFO] spawn: /bin/pie-hello is 8520 byte(s) at inode 31; entering at depth 2 (the parent's excursion stack 0xffffffff8030d000..0xffffffff8031d000 has 9937 byte(s) used and 55599 left)
 [INFO] user-load: /bin/pie-hello is position-independent; placed at 0x400000 (image 0x400000..0x40202a, entry 0x401010)
 [INFO] user-load: /bin/pie-hello mapped PT_LOAD 0x400000..0x400190 (filesz=0x190 memsz=0x190 w=false) pages 0x400000..0x400000
@@ -572,7 +555,7 @@ hello from a position-independent program
 [INFO] vfs: /bin/pie-hello opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
 [INFO] user-heap: /bin/pie-hello had brk take 0 frame(s) and give back 0 (equal means the shrink actually returned them; a program that only grows will not be equal, and that is not a failure)
 [INFO] page-perms: user program /bin/pie-hello: 4 row(s), 0 unnamed, 0 mapped where nothing should be, 0 dropped, digest=7d1c99669e45f90d
-[INFO] spawn: /bin/pie-hello ended (Exited(0)) after 2 syscall(s); its kernel entries ran on RSP 0xffffffff8032df50 (inside its own excursion stack 0xffffffff8031e000..0xffffffff8032e000 = true); the space was destroyed (73 frame(s) left the allocator and 73 reached quarantine (73 its own + 0 from what it spawned), match=true leaked=0); the space took 73 frame(s) and the destroy collected 73 (match=true); the global difference was checked (checked 10 time(s) so far)
+[INFO] spawn: /bin/pie-hello ended (Exited(0)) after 2 syscall(s); its kernel entries ran on RSP 0xffffffff8032df50 (inside its own excursion stack 0xffffffff8031e000..0xffffffff8032e000 = true); the space was destroyed (73 frame(s) left the allocator and 73 reached quarantine (73 its own + 0 from what it spawned), match=true leaked=0); the space took 73 frame(s) and the destroy collected 73 (match=true); the global difference was checked (checked 9 time(s) so far)
 [INFO] spawn: /bin/spawn-test is 12720 byte(s) at inode 39; entering at depth 2 (the parent's excursion stack 0xffffffff8030d000..0xffffffff8031d000 has 9937 byte(s) used and 55599 left)
 [INFO] user-load: /bin/spawn-test mapped PT_LOAD 0x400000..0x401002 (filesz=0x1002 memsz=0x1002 w=false) pages 0x400000..0x401000
 [INFO] user-load: /bin/spawn-test mapped PT_LOAD 0x402000..0x40203e (filesz=0x3e memsz=0x3e w=false) pages 0x402000..0x402000
@@ -585,7 +568,7 @@ hello from a position-independent program
 [INFO] vfs: /bin/spawn-test opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
 [INFO] user-heap: /bin/spawn-test had brk take 0 frame(s) and give back 0 (equal means the shrink actually returned them; a program that only grows will not be equal, and that is not a failure)
 [INFO] page-perms: user program /bin/spawn-test: 3 row(s), 0 unnamed, 0 mapped where nothing should be, 0 dropped, digest=75314fe1f8bd318e
-[INFO] spawn: /bin/spawn-test ended (Exited(0)) after 2 syscall(s); its kernel entries ran on RSP 0xffffffff8032df50 (inside its own excursion stack 0xffffffff8031e000..0xffffffff8032e000 = true); the space was destroyed (12 frame(s) left the allocator and 12 reached quarantine (12 its own + 0 from what it spawned), match=true leaked=0); the space took 12 frame(s) and the destroy collected 12 (match=true); the global difference was checked (checked 11 time(s) so far)
+[INFO] spawn: /bin/spawn-test ended (Exited(0)) after 2 syscall(s); its kernel entries ran on RSP 0xffffffff8032df50 (inside its own excursion stack 0xffffffff8031e000..0xffffffff8032e000 = true); the space was destroyed (12 frame(s) left the allocator and 12 reached quarantine (12 its own + 0 from what it spawned), match=true leaked=0); the space took 12 frame(s) and the destroy collected 12 (match=true); the global difference was checked (checked 10 time(s) so far)
 [INFO] spawn: /bin/ls is 12784 byte(s) at inode 28; entering at depth 2 (the parent's excursion stack 0xffffffff8030d000..0xffffffff8031d000 has 9937 byte(s) used and 55599 left)
 [INFO] user-load: /bin/ls mapped PT_LOAD 0x400000..0x400eaf (filesz=0xeaf memsz=0xeaf w=false) pages 0x400000..0x400000
 [INFO] user-load: /bin/ls mapped PT_LOAD 0x401000..0x4012e8 (filesz=0x2e8 memsz=0x2e8 w=false) pages 0x401000..0x401000
@@ -608,7 +591,7 @@ tmp
 [INFO] vfs: /bin/ls opened 1 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
 [INFO] user-heap: /bin/ls had brk take 0 frame(s) and give back 0 (equal means the shrink actually returned them; a program that only grows will not be equal, and that is not a failure)
 [INFO] page-perms: user program /bin/ls: 4 row(s), 0 unnamed, 0 mapped where nothing should be, 0 dropped, digest=580a6969fad2b302
-[INFO] spawn: /bin/ls ended (Exited(0)) after 6 syscall(s); its kernel entries ran on RSP 0xffffffff8032df50 (inside its own excursion stack 0xffffffff8031e000..0xffffffff8032e000 = true); the space was destroyed (12 frame(s) left the allocator and 12 reached quarantine (12 its own + 0 from what it spawned), match=true leaked=0); the space took 12 frame(s) and the destroy collected 12 (match=true); the global difference was checked (checked 12 time(s) so far)
+[INFO] spawn: /bin/ls ended (Exited(0)) after 6 syscall(s); its kernel entries ran on RSP 0xffffffff8032df50 (inside its own excursion stack 0xffffffff8031e000..0xffffffff8032e000 = true); the space was destroyed (12 frame(s) left the allocator and 12 reached quarantine (12 its own + 0 from what it spawned), match=true leaked=0); the space took 12 frame(s) and the destroy collected 12 (match=true); the global difference was checked (checked 11 time(s) so far)
 [INFO] spawn: /bin/cat is 12776 byte(s) at inode 14; entering at depth 2 (the parent's excursion stack 0xffffffff8030d000..0xffffffff8031d000 has 9937 byte(s) used and 55599 left)
 [INFO] user-load: /bin/cat mapped PT_LOAD 0x400000..0x400c05 (filesz=0xc05 memsz=0xc05 w=false) pages 0x400000..0x400000
 [INFO] user-load: /bin/cat mapped PT_LOAD 0x401000..0x401214 (filesz=0x214 memsz=0x214 w=false) pages 0x401000..0x401000
@@ -623,7 +606,7 @@ welcome to ZeikOS
 [INFO] vfs: /bin/cat opened 1 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
 [INFO] user-heap: /bin/cat had brk take 0 frame(s) and give back 0 (equal means the shrink actually returned them; a program that only grows will not be equal, and that is not a failure)
 [INFO] page-perms: user program /bin/cat: 4 row(s), 0 unnamed, 0 mapped where nothing should be, 0 dropped, digest=580a6969fad2b302
-[INFO] spawn: /bin/cat ended (Exited(0)) after 6 syscall(s); its kernel entries ran on RSP 0xffffffff8032df50 (inside its own excursion stack 0xffffffff8031e000..0xffffffff8032e000 = true); the space was destroyed (12 frame(s) left the allocator and 12 reached quarantine (12 its own + 0 from what it spawned), match=true leaked=0); the space took 12 frame(s) and the destroy collected 12 (match=true); the global difference was checked (checked 13 time(s) so far)
+[INFO] spawn: /bin/cat ended (Exited(0)) after 6 syscall(s); its kernel entries ran on RSP 0xffffffff8032df50 (inside its own excursion stack 0xffffffff8031e000..0xffffffff8032e000 = true); the space was destroyed (12 frame(s) left the allocator and 12 reached quarantine (12 its own + 0 from what it spawned), match=true leaked=0); the space took 12 frame(s) and the destroy collected 12 (match=true); the global difference was checked (checked 12 time(s) so far)
 [INFO] spawn: /bin/cat is 12776 byte(s) at inode 14; entering at depth 2 (the parent's excursion stack 0xffffffff8030d000..0xffffffff8031d000 has 9937 byte(s) used and 55599 left)
 [INFO] user-load: /bin/cat mapped PT_LOAD 0x400000..0x400c05 (filesz=0xc05 memsz=0xc05 w=false) pages 0x400000..0x400000
 [INFO] user-load: /bin/cat mapped PT_LOAD 0x401000..0x401214 (filesz=0x214 memsz=0x214 w=false) pages 0x401000..0x401000
@@ -638,7 +621,7 @@ cat: cannot open
 [INFO] vfs: /bin/cat opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
 [INFO] user-heap: /bin/cat had brk take 0 frame(s) and give back 0 (equal means the shrink actually returned them; a program that only grows will not be equal, and that is not a failure)
 [INFO] page-perms: user program /bin/cat: 4 row(s), 0 unnamed, 0 mapped where nothing should be, 0 dropped, digest=580a6969fad2b302
-[INFO] spawn: /bin/cat ended (Exited(1)) after 3 syscall(s); its kernel entries ran on RSP 0xffffffff8032df50 (inside its own excursion stack 0xffffffff8031e000..0xffffffff8032e000 = true); the space was destroyed (12 frame(s) left the allocator and 12 reached quarantine (12 its own + 0 from what it spawned), match=true leaked=0); the space took 12 frame(s) and the destroy collected 12 (match=true); the global difference was checked (checked 14 time(s) so far)
+[INFO] spawn: /bin/cat ended (Exited(1)) after 3 syscall(s); its kernel entries ran on RSP 0xffffffff8032df50 (inside its own excursion stack 0xffffffff8031e000..0xffffffff8032e000 = true); the space was destroyed (12 frame(s) left the allocator and 12 reached quarantine (12 its own + 0 from what it spawned), match=true leaked=0); the space took 12 frame(s) and the destroy collected 12 (match=true); the global difference was checked (checked 13 time(s) so far)
 syscall-test wrote this
 syscall-test wrote this
 syscall-test is writing a line that does not fit the 64-byte record
@@ -652,7 +635,7 @@ syscall-test wrote this
 [INFO] user-run: syscall-test left Ring 3 (exited=true status=0 folded=false vector=0 rip=0x0 cs=0x0 cr2=0x0 err=0x0), it made 102 syscall(s) and the kernel was entered from Ring 3 (true), write(fd=1, 24 byte(s)) said "syscall-test wrote this"
 [INFO] user-abi: syscall-test issued the probe from user assembly and all 6 arguments arrived per ADR-0020 (arg4 came from R10, not RCX, which carried a sentinel); this checks the ABI contract itself, not the dispatcher — the boot-time probe assembles its arguments in Rust inside the kernel, this one assembles them in assembly, links, loads and enters Ring 3 like any program
 [INFO] direction flag: syscall-test entered the kernel through the syscall entry with DF=1 1 time(s), and the handler ran with DF=0 each time (the stub clears it; a handler that sees DF=1 halts)
-[INFO] user-load: syscall-test ran as a process in its own address space, ended as expected, and the kernel continued after the process was gone; the space was destroyed (145 frame(s) left the allocator and 145 reached quarantine (13 its own + 132 spawned), match=true leaked=0); the space took 13 frame(s) and the destroy collected 13 (match=true); the global difference was checked (checked 15 time(s) so far)
+[INFO] user-load: syscall-test ran as a process in its own address space, ended as expected, and the kernel continued after the process was gone; the space was destroyed (145 frame(s) left the allocator and 145 reached quarantine (13 its own + 132 spawned), match=true leaked=0); the space took 13 frame(s) and the destroy collected 13 (match=true); the global difference was checked (checked 14 time(s) so far)
 [INFO] user-load: syscall-insn mapped PT_LOAD 0x400000..0x400325 (filesz=0x325 memsz=0x325 w=false) pages 0x400000..0x400000
 [INFO] user-load: syscall-insn mapped PT_LOAD 0x401000..0x401018 (filesz=0x18 memsz=0x18 w=false) pages 0x401000..0x401000
 [INFO] user-load: syscall-insn PT_LOAD segments: declared=2 mapped=2 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
@@ -670,7 +653,7 @@ syscall-insn wrote this
 [INFO] user-run: syscall-insn left Ring 3 (exited=true status=0 folded=false vector=0 rip=0x0 cs=0x0 cr2=0x0 err=0x0), it made 17 syscall(s) and the kernel was entered from Ring 3 (true), write(fd=1, 24 byte(s)) said "syscall-insn wrote this"
 [INFO] user-abi: syscall-insn issued the probe from user assembly and all 6 arguments arrived per ADR-0020 (arg4 came from R10, not RCX, which carried a sentinel); this checks the ABI contract itself, not the dispatcher — the boot-time probe assembles its arguments in Rust inside the kernel, this one assembles them in assembly, links, loads and enters Ring 3 like any program
 [INFO] direction flag: syscall-insn entered the kernel through the syscall entry with DF=1 1 time(s), and the handler ran with DF=0 each time (the stub clears it; a handler that sees DF=1 halts)
-[INFO] user-load: syscall-insn ran as a process in its own address space, ended as expected, and the kernel continued after the process was gone; the space was destroyed (11 frame(s) left the allocator and 11 reached quarantine (11 its own + 0 spawned), match=true leaked=0); the space took 11 frame(s) and the destroy collected 11 (match=true); the global difference was checked (checked 16 time(s) so far)
+[INFO] user-load: syscall-insn ran as a process in its own address space, ended as expected, and the kernel continued after the process was gone; the space was destroyed (11 frame(s) left the allocator and 11 reached quarantine (11 its own + 0 spawned), match=true leaked=0); the space took 11 frame(s) and the destroy collected 11 (match=true); the global difference was checked (checked 15 time(s) so far)
 [INFO] user-load: debug-trap-syscall mapped PT_LOAD 0x400000..0x400024 (filesz=0x24 memsz=0x24 w=false) pages 0x400000..0x400000
 [INFO] user-load: debug-trap-syscall PT_LOAD segments: declared=1 mapped=1 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
@@ -683,7 +666,7 @@ syscall-insn wrote this
 [INFO] user-heap: debug-trap-syscall had brk take 0 frame(s) and give back 0 (equal means the shrink actually returned them; a program that only grows will not be equal, and that is not a failure)
 [INFO] page-perms: user program debug-trap-syscall: 2 row(s), 0 unnamed, 0 mapped where nothing should be, 0 dropped, digest=1452316fa47eacf6
 [INFO] user-run: debug-trap-syscall left Ring 3 (exited=false status=0 folded=true vector=1 rip=0x400022 cs=0x2b cr2=0x400000 err=0x0), it made 1 syscall(s) and the kernel was entered from Ring 3 (true), write(fd=0, 0 byte(s)) said ""
-[INFO] user-load: debug-trap-syscall ran as a process in its own address space, ended as expected, and the kernel continued after the process was gone; the space was destroyed (10 frame(s) left the allocator and 10 reached quarantine (10 its own + 0 spawned), match=true leaked=0); the space took 10 frame(s) and the destroy collected 10 (match=true); the global difference was checked (checked 17 time(s) so far)
+[INFO] user-load: debug-trap-syscall ran as a process in its own address space, ended as expected, and the kernel continued after the process was gone; the space was destroyed (10 frame(s) left the allocator and 10 reached quarantine (10 its own + 0 spawned), match=true leaked=0); the space took 10 frame(s) and the destroy collected 10 (match=true); the global difference was checked (checked 16 time(s) so far)
 [INFO] user-load: compat-syscall mapped PT_LOAD 0x400000..0x400034 (filesz=0x34 memsz=0x34 w=false) pages 0x400000..0x400000
 [INFO] user-load: compat-syscall PT_LOAD segments: declared=1 mapped=1 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
@@ -696,7 +679,24 @@ syscall-insn wrote this
 [INFO] user-heap: compat-syscall had brk take 0 frame(s) and give back 0 (equal means the shrink actually returned them; a program that only grows will not be equal, and that is not a failure)
 [INFO] page-perms: user program compat-syscall: 2 row(s), 0 unnamed, 0 mapped where nothing should be, 0 dropped, digest=1452316fa47eacf6
 [INFO] user-run: compat-syscall left Ring 3 (exited=false status=0 folded=true vector=6 rip=0x400032 cs=0x1b cr2=0x0 err=0x0), it made 0 syscall(s) and the kernel was entered from Ring 3 (false), write(fd=0, 0 byte(s)) said ""
-[INFO] user-load: compat-syscall ran as a process in its own address space, ended as expected, and the kernel continued after the process was gone; the space was destroyed (10 frame(s) left the allocator and 10 reached quarantine (10 its own + 0 spawned), match=true leaked=0); the space took 10 frame(s) and the destroy collected 10 (match=true); the global difference was checked (checked 18 time(s) so far)
+[INFO] user-load: compat-syscall ran as a process in its own address space, ended as expected, and the kernel continued after the process was gone; the space was destroyed (10 frame(s) left the allocator and 10 reached quarantine (10 its own + 0 spawned), match=true leaked=0); the space took 10 frame(s) and the destroy collected 10 (match=true); the global difference was checked (checked 17 time(s) so far)
+[INFO] user-load: pie-hello is position-independent; placed at 0x400000 (image 0x400000..0x40202a, entry 0x401010)
+[INFO] user-load: pie-hello mapped PT_LOAD 0x400000..0x400190 (filesz=0x190 memsz=0x190 w=false) pages 0x400000..0x400000
+[INFO] user-load: pie-hello mapped PT_LOAD 0x401000..0x401199 (filesz=0x199 memsz=0x199 w=false) pages 0x401000..0x401000
+[INFO] user-load: pie-hello mapped PT_LOAD 0x402000..0x40202a (filesz=0x2a memsz=0x2a w=false) pages 0x402000..0x402000
+[INFO] user-load: pie-hello PT_LOAD segments: declared=3 mapped=3 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
+[INFO] user-load: mapped the user stack 0x7ffffbf000..0x7ffffff000 (w=true)
+[INFO] user-load: the page below the stack (0x7ffffbe000) is left unmapped as a guard; neither the heap nor mmap is placed on it
+[INFO] user-load: pie-hello initial stack at 0x7fffffeea0 (argc=1, envc=3, 16-byte aligned=true,          initial data 352 of 4096 byte(s))
+[INFO] stack-water: before entering pie-hello in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
+hello from a position-independent program
+[INFO] user-stack: pie-hello used 352 of 262144 byte(s) (0%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
+[INFO] ring3: pie-hello used 2882 of 65536 byte(s) of the depth-0 excursion stack (4%), which has a guard page below it
+[INFO] vfs: pie-hello opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
+[INFO] user-heap: pie-hello had brk take 0 frame(s) and give back 0 (equal means the shrink actually returned them; a program that only grows will not be equal, and that is not a failure)
+[INFO] page-perms: user program pie-hello: 4 row(s), 0 unnamed, 0 mapped where nothing should be, 0 dropped, digest=7d1c99669e45f90d
+[INFO] user-run: pie-hello left Ring 3 (exited=true status=0 folded=false vector=0 rip=0x0 cs=0x0 cr2=0x0 err=0x0), it made 2 syscall(s) and the kernel was entered from Ring 3 (true), write(fd=1, 42 byte(s)) said "hello from a position-independent program"
+[INFO] user-load: pie-hello ran as a process in its own address space, ended as expected, and the kernel continued after the process was gone; the space was destroyed (73 frame(s) left the allocator and 73 reached quarantine (73 its own + 0 spawned), match=true leaked=0); the space took 73 frame(s) and the destroy collected 73 (match=true); the global difference was checked (checked 18 time(s) so far)
 [INFO] syscall-entry: so far 145 system call(s) came in through int 0x80, 13 through the syscall instruction, and 1 from compatibility mode (refused)
 [INFO] frame-allocator: after the user programs, lent out 109 time(s), given back 109 time(s), balanced=true, present=true
 [INFO] pit: channel 0 set to divisor=11932 for a requested 100 Hz; actual is 99.998 Hz (the divisor is an integer, so the period never matches exactly)

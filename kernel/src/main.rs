@@ -9511,21 +9511,6 @@ const USER_PROGRAMS: &[UserProgram] = &[
         // **`std` の後で #PF を起こす**（`kernel/userland/fault-test.rs`）。
         enters_with_direction_flag: Some(kernel::arch::x86_64::idt::EntryPath::Exception),
     },
-    // **位置独立の像（`ET_DYN`）を、ずらして載せる**（2026-10-06）。**入口のスタックから補助ベクタまで歩き、
-    // 積まれた値を自分で確かめる。** 食い違えば、その番号で終わる（[`PIE_HELLO_STATUS`]）。
-    // **`syscall-test` より前に置く**——あちらは `/bin/pie-hello` を `spawn` で起こすので、補助ベクタの破壊テストでは
-    // 先に `spawn` の失敗（79 番）で止まってしまい、`pie-hello` 自身の番号が出ない。
-    UserProgram {
-        name: "pie-hello",
-        image: PIE_HELLO_ELF,
-        outcome: UserProgramOutcome::Exit { status: 0 },
-        receiver_offset: PIE_HELLO_UD2_OFFSET,
-        expected_write: Some(PIE_HELLO_MESSAGE),
-        probes_abi: false,
-        status_meanings: PIE_HELLO_STATUS,
-        argv: &[b"pie-hello"],
-        enters_with_direction_flag: None,
-    },
     UserProgram {
         name: "syscall-test",
         image: SYSCALL_TEST_ELF,
@@ -9584,6 +9569,22 @@ const USER_PROGRAMS: &[UserProgram] = &[
         probes_abi: false,
         status_meanings: &[],
         argv: &[b"compat-syscall"],
+        enters_with_direction_flag: None,
+    },
+    // **位置独立の像（`ET_DYN`）を、ずらして載せる**（2026-10-06）。**入口のスタックから補助ベクタまで歩き、
+    // 積まれた値を自分で確かめる。** 食い違えば、その番号で終わる（[`PIE_HELLO_STATUS`]）。
+    // **最後に置く**——前に置くと、`syscall-test` を狙った破壊テスト（`write-half-only`・`no-auxv-terminator`）が、
+    // 先に `pie-hello` で止まり、期待した番号が出ない（全検査で踏んだ。2026-10-06）。位置独立の像を狙った破壊テストは、
+    // `syscall-test` が `spawn` で起こした `/bin/pie-hello` の結果の行で見る。
+    UserProgram {
+        name: "pie-hello",
+        image: PIE_HELLO_ELF,
+        outcome: UserProgramOutcome::Exit { status: 0 },
+        receiver_offset: PIE_HELLO_UD2_OFFSET,
+        expected_write: Some(PIE_HELLO_MESSAGE),
+        probes_abi: false,
+        status_meanings: PIE_HELLO_STATUS,
+        argv: &[b"pie-hello"],
         enters_with_direction_flag: None,
     },
 ];

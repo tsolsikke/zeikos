@@ -1452,40 +1452,55 @@ const RING3_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // **位置独立の像の区画を、ずらさずに載せる**（2026-10-06）。入口だけがずれた番地を指すので、`pie-hello` は
-    // 期待した終わり方（0 で終わる）にならない。
+    // **位置独立の像の区画を、ずらさずに載せる**（2026-10-06）。入口だけがずれた番地を指すので、`syscall-test` が
+    // `spawn` で起こした `/bin/pie-hello` は、入口のページフォルト（ベクタ 14）で畳まれる。**見るのは `spawn` の結果の
+    // 行である**——埋め込みの `pie-hello` は表の最後に居て、そこまで届かない（`syscall-test` が 79 番で止める）。
     CriticalTest {
         name: "pie-without-bias",
         feature: "pie-load-without-bias-test",
         expected_markers: &[
-            "user-run: pie-hello folded instead of exiting (vector=14 rip=0x401010",
+            "spawn: /bin/pie-hello ended (Folded(14))",
+            "user-run: syscall-test exited with status 79",
             "halting",
         ],
-        forbidden_markers: &["user-load: pie-hello ran as a process"],
+        forbidden_markers: &[
+            "spawn: /bin/pie-hello ended (Exited(0))",
+            "user-load: pie-hello ran as a process",
+        ],
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // **補助ベクタの `AT_ENTRY` に、ずらす前の番地を渡す**（2026-10-06）。`pie-hello` が、終了状態 1 で言う。
+    // **補助ベクタの `AT_ENTRY` に、ずらす前の番地を渡す**（2026-10-06）。`spawn` で起こした `/bin/pie-hello` が、
+    // 終了状態 1（`AT_ENTRY` が `_start` の番地と違う）で終わる。
     CriticalTest {
         name: "auxv-entry-not-biased",
         feature: "auxv-entry-not-biased-test",
         expected_markers: &[
-            "user-run: pie-hello exited with status 1, expected 0 (AT_ENTRY is not where _start is running)",
+            "spawn: /bin/pie-hello ended (Exited(1))",
+            "user-run: syscall-test exited with status 79",
             "halting",
         ],
-        forbidden_markers: &["user-load: pie-hello ran as a process"],
+        forbidden_markers: &[
+            "spawn: /bin/pie-hello ended (Exited(0))",
+            "user-load: pie-hello ran as a process",
+        ],
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // **補助ベクタの `AT_PHDR` に、ずらす前の番地を渡す**（2026-10-06）。`pie-hello` が、終了状態 2 で言う。
+    // **補助ベクタの `AT_PHDR` に、ずらす前の番地を渡す**（2026-10-06）。`spawn` で起こした `/bin/pie-hello` が、
+    // 終了状態 2（`AT_PHDR` が、自分の ELF ヘッダから求めた表の番地と違う）で終わる。
     CriticalTest {
         name: "auxv-phdr-not-biased",
         feature: "auxv-phdr-not-biased-test",
         expected_markers: &[
-            "user-run: pie-hello exited with status 2, expected 0 (AT_PHDR differs from the table's address",
+            "spawn: /bin/pie-hello ended (Exited(2))",
+            "user-run: syscall-test exited with status 79",
             "halting",
         ],
-        forbidden_markers: &["user-load: pie-hello ran as a process"],
+        forbidden_markers: &[
+            "spawn: /bin/pie-hello ended (Exited(0))",
+            "user-load: pie-hello ran as a process",
+        ],
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
