@@ -152,6 +152,8 @@
 //! - `110` `spawn("/bin/mprotect-ro")` が「畳まれた・ベクタ 14」を返さなかった（書けなくしたページへの書きは落ちる）
 //! - `111` 自分のコードのページへの `PROT_READ|PROT_WRITE` の `mprotect` が `-EPERM` を返さなかった（W^X）
 //! - `112` `spawn("/bin/mprotect-nx")` が「畳まれた・ベクタ 14」を返さなかった（`PROT_READ` にしたコードのページは実行できない）
+//! - `113` `spawn("/bin/linux/m1-rust", ["m1-rust", "/etc/motd", "a", "b"], [])` が 4（引数の数）で終わらなかった
+//!   （Linux 向けの musl の静的な像。M1。出力は `linux-programs/reference/m1-rust.txt` と、基本の検査が突き合わせる）
 //! - `69` 方向フラグを立てたまま打った `clock_gettime` が 0 を返さなかった（2026-09-24。
 //!   **判定の本体はカーネルの入口の監視である**——こちらは前提を作り、戻り値だけを見る）
 //! - `70` 読み込み先が読み取り専用のページ（このプログラムの `.rodata`）の `read` が `-EFAULT` を返さなかった
@@ -2163,6 +2165,16 @@ core::arch::global_asm!(
     "  mov edi, 112",
     "  cmp rax, {mprotect_nx_expected}",
     "  jne 7f",
+    // 113: spawn("/bin/linux/m1-rust", ["m1-rust", "/etc/motd", "a", "b"], []) は 4（引数の数）で終わる（M1。2026-10-06）。
+    //      環境変数は空——Linux 側の参照（env -i）と、出す行を揃えるため。
+    "  mov eax, {sys_spawn}",
+    "  lea rdi, [rip + M1_RUST_PATH]",
+    "  lea rsi, [rip + ARGV_M1_RUST]",
+    "  lea rdx, [rip + ENVP_EMPTY]",
+    "  int 0x80",
+    "  mov edi, 113",
+    "  cmp rax, 4",
+    "  jne 7f",
     // 93: spawn("/bin/futex-wait") は 137 を返す（子は、起こす者の居ない FUTEX_WAIT で終わらせられる）。
     "  mov eax, {sys_spawn}",
     "  lea rdi, [rip + FUTEX_WAIT_PATH]",
@@ -2230,6 +2242,16 @@ core::arch::global_asm!(
     "  .asciz \"/bin/mprotect-nx\"",
     "SPAWN_ARG_MPROTECT_NX:",
     "  .asciz \"mprotect-nx\"",
+    "M1_RUST_PATH:",
+    "  .asciz \"/bin/linux/m1-rust\"",
+    "SPAWN_ARG_M1_RUST:",
+    "  .asciz \"m1-rust\"",
+    "SPAWN_ARG_MOTD:",
+    "  .asciz \"/etc/motd\"",
+    "SPAWN_ARG_A:",
+    "  .asciz \"a\"",
+    "SPAWN_ARG_B:",
+    "  .asciz \"b\"",
     "SPAWN_ARG_FUTEX_WAIT:",
     "  .asciz \"futex-wait\"",
     "PROC_SELF_EXE:",
@@ -2254,6 +2276,12 @@ core::arch::global_asm!(
     "  .quad 0",
     "ARGV_MPROTECT_NX:",
     "  .quad SPAWN_ARG_MPROTECT_NX",
+    "  .quad 0",
+    "ARGV_M1_RUST:",
+    "  .quad SPAWN_ARG_M1_RUST",
+    "  .quad SPAWN_ARG_MOTD",
+    "  .quad SPAWN_ARG_A",
+    "  .quad SPAWN_ARG_B",
     "  .quad 0",
     // **空の `envp`（f-2。`ADR-0053` の Decision 2）。**
     //

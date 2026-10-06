@@ -9314,6 +9314,8 @@ const SYSCALL_TEST_STATUS: &[(u64, &str)] = &[
     // 111 と 112: W^X（2026-10-06）。
     (111, "mprotect of the program's own code page to PROT_READ|PROT_WRITE did not return -EPERM"),
     (112, "spawn(\"/bin/mprotect-nx\") did not report a fold with vector 14 (a code page made PROT_READ must stop executing)"),
+    // 113: Linux 向けの musl の静的な像（M1。2026-10-06）。
+    (113, "spawn(\"/bin/linux/m1-rust\", [\"m1-rust\", \"/etc/motd\", \"a\", \"b\"], []) did not end with status 4 (the argument count)"),
 ];
 
 /// `fault-test` が起こす #PF のエラーコード（S9-b-3-2a）。

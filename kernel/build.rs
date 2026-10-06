@@ -410,6 +410,51 @@ fn build_user_programs(manifest_dir: &str, out_dir: &str) {
 
     build_position_independent_programs(manifest_dir, out_dir);
     build_c_programs(manifest_dir, out_dir, &script);
+    build_linux_programs(manifest_dir, out_dir);
+}
+
+/// Linux 向けのプログラムの名前（`linux-programs/<名前>.rs`。像の `/bin/linux/<名前>` に置く）。
+const LINUX_PROGRAMS: &[&str] = &["m1-rust"];
+
+/// Linux 向けのプログラム（`linux-programs/`。musl で静的リンクした、`std` を使う Rust）を `rustc` でビルドする
+/// （2026-10-06。M1——Linux のプログラムをそのまま動かす）。
+///
+/// **ほかのプログラムとの違いは、ターゲットが `x86_64-unknown-linux-musl` であること、リンカスクリプトを渡さないこと、
+/// `std` を使うこと**（Linux の libc の起動の列をそのまま通すのが目的で、カーネルの側からは「よその ELF」である）。
+/// `-C target-feature=+crt-static` で静的にリンクし、既定で位置独立（static-pie）になる。版は `rust-toolchain.toml` の
+/// toolchain と `targets` で固定され、置き場を `--remap-path-prefix` で切り離すので、像のバイトは機械で変わらない。
+/// **`tools/build-linux-programs.sh` が同じ引数で、Linux 上で走らせて参照を控えるための写しを作る。**
+fn build_linux_programs(manifest_dir: &str, out_dir: &str) {
+    let dir = format!("{manifest_dir}/../linux-programs");
+    for name in LINUX_PROGRAMS {
+        let source = format!("{dir}/{name}.rs");
+        let output = format!("{out_dir}/linux-{name}.elf");
+        println!("cargo:rerun-if-changed={source}");
+        let status = std::process::Command::new(std::env::var("RUSTC").unwrap_or("rustc".into()))
+            .args([
+                "--edition",
+                "2021",
+                "--target",
+                "x86_64-unknown-linux-musl",
+                "-C",
+                "target-feature=+crt-static",
+                "-C",
+                "opt-level=2",
+                "-C",
+                "strip=symbols",
+                "--remap-path-prefix",
+                &format!("{dir}=linux-programs"),
+                "-o",
+                &output,
+                &source,
+            ])
+            .status()
+            .unwrap_or_else(|e| panic!("failed to run rustc for the Linux program {name}: {e}"));
+        assert!(
+            status.success(),
+            "rustc failed for the Linux program {name}"
+        );
+    }
 }
 
 /// 位置独立のユーザープログラム（`ET_DYN`）を `rustc` でビルドする（2026-10-06）。
@@ -764,6 +809,20 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
             format!("{staging}/bin/{name}"),
         )
         .unwrap_or_else(|e| panic!("failed to place {name} into the staging: {e}"));
+    }
+
+    // **Linux 向けのプログラムは `/bin/linux` に置く**（2026-10-06。M1）。ZeikOS 向けの `/bin` と分けるのは、
+    // 「よその ELF」であることが道で分かるようにするためである。
+    std::fs::create_dir_all(format!("{staging}/bin/linux"))
+        .expect("failed to create /bin/linux in the staging");
+    for name in LINUX_PROGRAMS {
+        std::fs::copy(
+            format!("{out_dir}/linux-{name}.elf"),
+            format!("{staging}/bin/linux/{name}"),
+        )
+        .unwrap_or_else(|e| {
+            panic!("failed to place the Linux program {name} into the staging: {e}")
+        });
     }
 
     // **単一間接ブロックの境界を挟む 2 本。** 直接ブロックは 12 個なので、

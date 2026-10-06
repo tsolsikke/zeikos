@@ -1,0 +1,8 @@
+m1-rust: 4 argument(s), 0 environment variable(s)
+m1-rust: argv[2] = a
+m1-rust: argv[3] = b
+m1-rust: read 18 byte(s) from the file named by argv[1]
+m1-rust: | welcome to ZeikOS
+m1-rust: 1 MiB vector, ends 0x5a 0xa5, sum 255
+m1-rust: hash map with 4 entries, total 10, two = 2
+exit status: 4

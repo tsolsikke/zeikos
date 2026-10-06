@@ -1,0 +1,7 @@
+m1-c: 4 argument(s), 0 environment variable(s)
+m1-c: argv[2] = a
+m1-c: argv[3] = b
+m1-c: read 18 byte(s) from the file named by argv[1]
+m1-c: | welcome to ZeikOS
+m1-c: 1 MiB buffer, ends 0x5a 0xa5, sum 255
+exit status: 4

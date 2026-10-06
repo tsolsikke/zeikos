@@ -16393,6 +16393,17 @@ fn judge_shell_session(
     // **落とす破壊テストは無い。** **`brk-skip-shrink-test` は縮める側を壊すもので、
     // 伸ばす側は通る**（実測でこの行は成功のままである）。**足すときに確かめた。**
     let c_heap_worked = after_shell.contains("heap ok");
+    // **Linux 向けの musl の静的な像が、シェルから起きて、Linux と同じ出力と終了の状態で終わること**（M1。2026-10-06）。
+    // **出力は `linux-programs/reference/m1-rust.txt` と突き合わせる**——環境変数の数の行だけは、シェルが渡す数で
+    // 変わるので、数を見ずに形だけ見る。終了の状態は `zash: exit status 4`（引数の数）で見る。
+    let m1_rust_matched_the_linux_reference = linux_program_output_matches(
+        &workspace_root()?,
+        "m1-rust",
+        after_shell,
+        LinuxReferenceEnvironment::AnyCount,
+    )
+    .unwrap_or(false)
+        && after_shell.contains("zash: exit status 4");
 
     // **`/` を含まない語が `/bin/` の下で見つかること（S12 前の手当ての 3 本目）。**
     //
@@ -16954,6 +16965,10 @@ fn judge_shell_session(
     println!("{context}: hello ran = {ran_hello}");
     println!("{context}: the C program ran = {ran_c_hello}");
     println!("{context}: the C program took heap from brk = {c_heap_worked}");
+    println!(
+        "{context}: m1-rust (Linux, musl static-pie) printed what Linux prints and exited with the argument count = \
+         {m1_rust_matched_the_linux_reference}"
+    );
     println!("{context}: bare names resolved under /bin = {bare_names_resolved}");
     println!("{context}: argv[0] stayed as typed = {argv0_is_as_typed}");
     println!("{context}: backspace edited the line = {backspace_edited_the_line}");
@@ -17320,6 +17335,10 @@ fn judge_shell_session(
         ("ran_hello", ran_hello),
         ("ran_c_hello", ran_c_hello),
         ("c_heap_worked", c_heap_worked),
+        (
+            "m1_rust_matched_the_linux_reference",
+            m1_rust_matched_the_linux_reference,
+        ),
         ("bare_names_resolved", bare_names_resolved),
         ("argv0_is_as_typed", argv0_is_as_typed),
         ("backspace_edited_the_line", backspace_edited_the_line),
@@ -20003,6 +20022,53 @@ const REFERENCE_BOOT_LOG: &str = "xtask/reference/boot-log-smp2.txt";
 /// 積まれる形（B-d で 512 行が 327 行になった）を、QEMU を起動せずに基本の検査で止める。**
 /// **採取の側も同じ所で止まる**（[`capture_boot_log`]）ので、この形が崩れたら、採取か参照の
 /// どちらかが壊れている。
+/// Linux 上で控えた参照の、環境変数の数の行をどう見るか。
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LinuxReferenceEnvironment {
+    /// 数まで一致を求める（`syscall-test` が空の環境で起こす形。参照も `env -i`）。
+    ExactCount,
+    /// 数は見ない（シェルが渡す環境変数の数は、参照の 0 と違う）。
+    AnyCount,
+}
+
+/// `linux-programs/reference/<name>.txt`（Linux 上で控えた stdout と終了の状態）の各行が、`output` に順に在るか
+/// （M1。2026-10-06）。**参照の最後の行 `exit status: N` は、出力の中では探さない**——終了の状態は呼ぶ側が別の行で見る
+/// （`spawn` の結果か `zash: exit status`）。`environment variable(s)` の行は、`how` に従って数を見るか形だけ見る。
+fn linux_program_output_matches(
+    workspace_root: &Path,
+    name: &str,
+    output: &str,
+    how: LinuxReferenceEnvironment,
+) -> Result<bool> {
+    let path = workspace_root.join(format!("linux-programs/reference/{name}.txt"));
+    let reference = fs::read_to_string(&path)
+        .with_context(|| format!("failed to read the Linux reference {}", path.display()))?;
+    let output_lines: Vec<&str> = output.lines().map(str::trim_end).collect();
+    let mut cursor = 0usize;
+    for expected in reference.lines() {
+        if expected.starts_with("exit status: ") {
+            continue;
+        }
+        let found = output_lines[cursor..].iter().position(|line| {
+            if how == LinuxReferenceEnvironment::AnyCount
+                && expected.contains(" environment variable(s)")
+            {
+                let Some((head, _)) = expected.split_once(", ") else {
+                    return false;
+                };
+                line.starts_with(head) && line.ends_with(" environment variable(s)")
+            } else {
+                *line == expected
+            }
+        });
+        match found {
+            Some(offset) => cursor += offset + 1,
+            None => return Ok(false),
+        }
+    }
+    Ok(true)
+}
+
 fn boot_log_reference_ends_at_prompt(reference: &str) -> Result<String> {
     let lines: Vec<&str> = reference.lines().collect();
     let [.., ready, prompt] = lines.as_slice() else {
@@ -28850,6 +28916,35 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
         }
     }
 
+    // **Linux 向けのプログラムの出力が、Linux 上で控えた参照と一致すること**（M1。2026-10-06）。**QEMU を起動せずに見る**
+    // ——`syscall-test` が `spawn` で起こした `/bin/linux/m1-rust` の行は、起動ログの参照に入っている。Linux 側の参照は
+    // `tools/record-linux-reference.sh` が `env -i` で控え、`syscall-test` も空の環境で起こすので、環境変数の数まで一致する。
+    total += 1;
+    begin_item(
+        Family::Base,
+        "the Linux program's lines in the boot log reference match the reference recorded on Linux",
+    );
+    match fs::read_to_string(workspace_root.join(REFERENCE_BOOT_LOG))
+        .context("failed to read the boot log reference")
+        .and_then(|text| {
+            linux_program_output_matches(
+                &workspace_root,
+                "m1-rust",
+                &text,
+                LinuxReferenceEnvironment::ExactCount,
+            )
+        }) {
+        Ok(true) => println!("--- linux program reference: OK (m1-rust: every line of linux-programs/reference/m1-rust.txt is in the boot log reference, in order, with the exit status 4)"),
+        Ok(false) => {
+            println!("--- linux program reference: FAILED (the boot log reference does not hold the lines of linux-programs/reference/m1-rust.txt in order; re-record the boot log, or the program's output changed)");
+            failed.push("linux program reference".to_string());
+        }
+        Err(error) => {
+            println!("--- linux program reference: FAILED ({error:#})");
+            failed.push("linux program reference".to_string());
+        }
+    }
+
     // **起動ログの参照に書いた期待**（2026-09-29。運用者の決定）。**QEMU を起動せずに見る。**
     total += 1;
     begin_item(
@@ -32049,8 +32144,8 @@ fn count_elements(text: &str) -> usize {
 
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
-    base: 62,
-    full: 495,
+    base: 63,
+    full: 496,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

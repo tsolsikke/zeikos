@@ -119,6 +119,10 @@ pub struct MemoryMap {
     active: bool,
     base: u64,
     limit: u64,
+    /// この表が最初に配った番地（`reserve` の 1 回目。2026-10-06）。**外されても変わらない**——`user-mmap:` の行の
+    /// 「最初の `mmap`」は、残っている写像のいちばん低い始まりではなく、カーネルが最初に選んだ番地である
+    /// （Rust の `std` は、最初に取った代替スタックを終わりに外す）。
+    first_reserved: Option<u64>,
     entries: [Option<Mapping>; MAX_MAPPINGS],
 }
 
@@ -128,6 +132,7 @@ impl MemoryMap {
         active: false,
         base: 0,
         limit: 0,
+        first_reserved: None,
         entries: [None; MAX_MAPPINGS],
     };
 
@@ -137,6 +142,7 @@ impl MemoryMap {
             active: true,
             base,
             limit,
+            first_reserved: None,
             entries: [None; MAX_MAPPINGS],
         };
     }
@@ -189,6 +195,9 @@ impl MemoryMap {
                         writable,
                         present,
                     });
+                    if self.first_reserved.is_none() {
+                        self.first_reserved = Some(candidate);
+                    }
                     return Ok(candidate);
                 }
             }
@@ -514,12 +523,17 @@ impl MemoryMap {
         )
     }
 
-    /// 要約——**`mmap` が配った写像**の数、いちばん低い始まり、いちばん高い終わり、無名のページの数。**判定の行に出す**
+    /// 要約——**`mmap` が配った写像**の数、最初に配った番地、いちばん高い終わり、無名のページの数。**判定の行に出す**
     /// （像・スタック・ヒープは数えない。`user-mmap:` の行は `mmap` の番地を言う）。
+    ///
+    /// **最初に配った番地は、カーネルが選んだ 1 回目の `reserve` の番地で、外されても変わらない**（2026-10-06）。
+    /// **いちばん高い終わりは、`mmap` の区画（基点から上）に在る写像だけで数える**——`MAP_FIXED` で区画の外に置いたもの
+    /// （musl の `malloc` が `brk` の先頭に置く見張り）は、数には入るが番地には出ない。行の「どのプロセスも基点から
+    /// 配り始める」は、カーネルが選んだ番地の話である。
     pub fn summary(&self) -> MapSummary {
         let mut summary = MapSummary {
             count: 0,
-            lowest: None,
+            first: self.first_reserved,
             highest: None,
             anonymous_pages: 0,
         };
@@ -528,19 +542,17 @@ impl MemoryMap {
                 continue;
             }
             summary.count += 1;
-            summary.lowest = Some(
-                summary
-                    .lowest
-                    .map_or(mapping.start, |low| low.min(mapping.start)),
-            );
+            if mapping.kind == MappingKind::Anonymous {
+                summary.anonymous_pages += mapping.pages();
+            }
+            if mapping.start < self.base {
+                continue;
+            }
             summary.highest = Some(
                 summary
                     .highest
                     .map_or(mapping.end, |high| high.max(mapping.end)),
             );
-            if mapping.kind == MappingKind::Anonymous {
-                summary.anonymous_pages += mapping.pages();
-            }
         }
         summary
     }
@@ -550,7 +562,7 @@ impl MemoryMap {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MapSummary {
     pub count: usize,
-    pub lowest: Option<u64>,
+    pub first: Option<u64>,
     pub highest: Option<u64>,
     pub anonymous_pages: u64,
 }
@@ -921,7 +933,7 @@ mod tests {
         );
         let summary = map.summary();
         assert_eq!(summary.count, MAX_MAPPINGS);
-        assert_eq!(summary.lowest, Some(BASE));
+        assert_eq!(summary.first, Some(BASE));
         assert_eq!(
             summary.highest,
             Some(BASE + MAX_MAPPINGS as u64 * PAGE_SIZE)
@@ -942,5 +954,35 @@ mod tests {
             map.find(BASE + PAGE_SIZE).map(|m| m.kind),
             Some(MappingKind::SharedMemory { shm: 0 })
         );
+    }
+
+    /// 区画の外へ `MAP_FIXED` で置いた写像（`brk` の見張り）は、要約の数には入るが、番地には出ない。最初に配った番地は、
+    /// その写像を外しても変わらない。
+    #[test]
+    fn a_fixed_mapping_below_the_base_counts_but_does_not_move_the_addresses() {
+        let mut map = active();
+        let guard = BASE - 16 * PAGE_SIZE;
+        map.register(
+            guard,
+            guard + PAGE_SIZE,
+            MappingKind::Anonymous,
+            false,
+            false,
+        )
+        .unwrap();
+        let summary = map.summary();
+        assert_eq!(summary.count, 1);
+        assert_eq!(summary.anonymous_pages, 1);
+        assert_eq!(summary.first, None);
+        assert_eq!(summary.highest, None);
+        map.reserve(PAGE_SIZE, MappingKind::Anonymous, true, true)
+            .unwrap();
+        map.reserve(PAGE_SIZE, MappingKind::Anonymous, true, true)
+            .unwrap();
+        map.release_whole(BASE, PAGE_SIZE).unwrap();
+        let summary = map.summary();
+        assert_eq!(summary.count, 2);
+        assert_eq!(summary.first, Some(BASE));
+        assert_eq!(summary.highest, Some(BASE + 2 * PAGE_SIZE));
     }
 }

@@ -1230,7 +1230,7 @@ pub fn load_user_program_from(
         // プロセスが同じ共有メモリを順にマップする）。行の形は変えていない——「次に配る番地」は、写像の
         // いちばん高い終わりである（空いた所を使い直す形になったので、次の `mmap` がそこへ行くとは限らない）。
         let summary = crate::mappings::with_loaded(|map| map.summary());
-        if let (Some(first), Some(next)) = (summary.lowest, summary.highest) {
+        if let (Some(first), Some(next)) = (summary.first, summary.highest) {
             logger.info(format_args!(
                 "user-mmap: {} had its first mmap at {first:#x} and would map next at {next:#x} \
                  (every process starts at {:#x}; a first address above it means the addresses \

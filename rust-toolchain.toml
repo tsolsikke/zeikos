@@ -1,4 +1,5 @@
 [toolchain]
 channel = "1.97.1"
 components = ["rustfmt", "clippy"]
-targets = ["x86_64-unknown-uefi", "x86_64-unknown-none"]
+# x86_64-unknown-linux-musl は、Linux 向けのプログラム（linux-programs/）を既定の像に入れるためのもの（2026-10-06）。
+targets = ["x86_64-unknown-uefi", "x86_64-unknown-none", "x86_64-unknown-linux-musl"]
