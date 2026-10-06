@@ -160,6 +160,14 @@ impl ProcessState {
         exec_name_len: 0,
     };
 
+    /// `signal`（1 から 64）の登録を読む（2026-10-06。`tkill` が `SIG_IGN` かを見る）。範囲の外は既定。
+    pub fn action(&self, signal: u64) -> SigAction {
+        match signal {
+            1..=64 => self.actions[(signal - 1) as usize],
+            _ => SigAction::DEFAULT,
+        }
+    }
+
     /// `rt_sigaction`（純粋な論理）。`new` が `Some` なら登録を替え、どちらでも前の登録を返す。
     ///
     /// - 番号は 1 から 64。`SIGKILL` と `SIGSTOP` は、問い合わせはできるが替えられない（Linux と同じ）。

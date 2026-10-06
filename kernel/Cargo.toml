@@ -908,6 +908,10 @@ auxv-entry-not-biased-test = []
 # 補助ベクタの AT_PHDR に、ずらす前の番地を渡す（2026-10-06）。`pie-hello` が、終了状態 2 で言う。
 # `--ring3-test auxv-phdr-not-biased`。
 auxv-phdr-not-biased-test = []
+# C の Linux 向けのプログラム（`musl-gcc` で手で作った `target/linux-programs/m1-c`）を像の `/bin/linux` に入れ、
+# `syscall-test` が `spawn` で起こす（2026-10-06。M1 の手元の確かめ。破壊テストではない。版が配布物に依るので
+# 既定の像には入れない）。`cargo xtask run --linux-c-test`。
+linux-c-test = []
 # 写像の表が、置くときに重なりを見ない（2026-10-06）。`MAP_FIXED_NOREPLACE` が写像の上でも断らず、`syscall-test` が
 # 103 番で止まる。`--syscall-test mappings-overlap-skip`。
 mappings-overlap-skip-test = []

@@ -46,12 +46,14 @@ pub const O_APPEND: u64 = 0o2000;
 
 /// `lseek` の `whence`——先頭からの絶対位置（`SEEK_SET`）。
 ///
-/// # ここだけ受ける
-///
-/// **`SEEK_CUR` と `SEEK_END` は受けない**（`-EINVAL`）。
-/// **使う者が居ない**——`/bin/tail` は `stat` で大きさを取ってから
-/// `SEEK_SET` で跳ぶ。**要る者が来たら足す。**
+/// **以前は `SEEK_SET` だけを受けていた**（`/bin/tail` は `stat` で大きさを取ってから `SEEK_SET` で跳ぶ）。
+/// **`SEEK_CUR` と `SEEK_END` は 2026-10-06 に足した**——Rust の `std` が、ファイルを読み切る前に
+/// `lseek(fd, 0, SEEK_CUR)` で今の位置を取る。
 pub const SEEK_SET: u64 = 0;
+/// `lseek` の `whence`——今の位置からの相対（`SEEK_CUR`。2026-10-06）。
+pub const SEEK_CUR: u64 = 1;
+/// `lseek` の `whence`——末尾からの相対（`SEEK_END`。2026-10-06）。
+pub const SEEK_END: u64 = 2;
 
 /// `FBIOGET_VSCREENINFO`（Linux の fbdev。`<linux/fb.h>`）。**`struct fb_var_screeninfo` を返す。**
 pub const FBIOGET_VSCREENINFO: u64 = 0x4600;
@@ -73,6 +75,8 @@ pub const SOCK_STREAM: u64 = 1;
 
 /// `POLLIN`（読めるようになった）。**v1 が見る唯一のビットである。**
 pub const POLLIN: u16 = 0x001;
+/// `POLLNVAL`（開いていない fd。`revents` にだけ立つ。2026-10-06）。
+pub const POLLNVAL: u16 = 0x020;
 
 /// `PROT_WRITE`（`mmap`。書ける葉を作る）。
 pub const PROT_WRITE: u64 = 2;

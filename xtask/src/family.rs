@@ -226,6 +226,7 @@ pub const PATH_RULES: &[PathRule] = &[
             "kernel/userland/futex-wait.rs",
             "kernel/userland/mprotect-ro.rs",
             "kernel/userland/mprotect-nx.rs",
+            "kernel/userland/tkill-self.rs",
             // **Linux 向けのプログラム**（2026-10-06。既定の像の `/bin/linux` に入り、`syscall-test` とシェルの台本が起こす）。
             "linux-programs/m1-rust.rs",
             "kernel/userland/chello.c",

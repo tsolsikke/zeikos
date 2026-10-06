@@ -2227,6 +2227,17 @@ fn register_loaded_mappings(logger: &mut Logger<Serial>, process: &UserProcess) 
     }
 }
 
+/// `tkill` で自分へ送ったシグナルで、プロセスを終わらせたことを 1 行出す（2026-10-06）。**`#[inline(never)]`** で、
+/// `format_args!` の一時値を [`run_loaded_program`] のフレームへ乗せない。
+#[inline(never)]
+fn report_signal_that_ended_the_process(logger: &mut Logger<Serial>, name: &str, signal: u64) {
+    logger.warn(format_args!(
+        "tkill: {name} sent itself signal {signal} and the kernel does not deliver signals, so the \
+         process was ended with status {} (128 + the signal)",
+        128 + signal
+    ));
+}
+
 /// `futex` で待つ場面に入ったプロセスを終わらせたことを 1 行出す（2026-10-06）。**`#[inline(never)]`** で、
 /// `format_args!` の一時値を [`run_loaded_program`] のフレームへ乗せない。
 #[inline(never)]
@@ -2459,6 +2470,11 @@ unsafe fn run_loaded_program(
         // **出したら消す**——記録はスロットごとで、親（`spawn` で待っていた側）が終わるときに、子のものを
         // もう 1 度出さないため。
         crate::syscall::clear_futex_deadlock_address();
+    }
+    // **`tkill` で自分へ送ったシグナルで終わらせたプロセス**（2026-10-06）。配送が無いので、名指しして終わらせる。
+    if let Some(signal) = crate::syscall::signal_that_ended_the_process() {
+        report_signal_that_ended_the_process(logger, process.name, signal);
+        crate::syscall::clear_signal_that_ended_the_process();
     }
 
     // **この遠征で遠征スタックをどれだけ使ったかを出す（S11-5）。**
@@ -2933,6 +2949,8 @@ pub fn spawn(
         SpawnOutcome::Folded(crate::arch::x86_64::excursion_fault_number())
     };
     let syscalls = crate::syscall::invocation_count();
+    let (unknown_numbers, last_unknown) = crate::syscall::unknown_numbers();
+    let last_unknown = last_unknown.unwrap_or(0);
 
     // **子のカーネル入場が、子の遠征スタックの上で起きたことを見る（S11-5）。**
     //
@@ -2998,8 +3016,9 @@ pub fn spawn(
     SPAWN_QUARANTINED.fetch_add(held, core::sync::atomic::Ordering::SeqCst);
     SPAWN_LEAKED.fetch_add(leaked, core::sync::atomic::Ordering::SeqCst);
     logger.info(format_args!(
-        "spawn: {name} ended ({child:?}) after {syscalls} syscall(s); its kernel entries ran on \
-         RSP {child_handler_sp:#x} (inside its own excursion stack \
+        "spawn: {name} ended ({child:?}) after {syscalls} syscall(s) ({unknown_numbers} with a \
+         number the kernel does not know; the last such number was {last_unknown}); its kernel \
+         entries ran on RSP {child_handler_sp:#x} (inside its own excursion stack \
          {child_bottom:#x}..{child_top:#x} = {handler_on_child_stack}); the space was destroyed \
          ({consumed} frame(s) left the allocator and {quarantined} reached quarantine \
          ({held} its own + {} from what it spawned), match={} leaked={all_leaked}); the space \

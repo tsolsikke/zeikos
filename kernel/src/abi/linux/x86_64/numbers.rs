@@ -129,3 +129,15 @@ pub const SYS_GETRANDOM: u64 = 318;
 pub const SYS_MUNMAP: u64 = 11;
 /// `mprotect(addr, len, prot)` の番号（2026-10-06。`__NR_mprotect`）。
 pub const SYS_MPROTECT: u64 = 10;
+/// `readv(fd, iov, iovcnt)` の番号（2026-10-06。`__NR_readv`。musl の stdio が読む形）。
+pub const SYS_READV: u64 = 19;
+/// `writev(fd, iov, iovcnt)` の番号（2026-10-06。`__NR_writev`。musl の stdio が書く形）。
+pub const SYS_WRITEV: u64 = 20;
+/// `madvise(addr, len, advice)` の番号（2026-10-06。`__NR_madvise`）。
+pub const SYS_MADVISE: u64 = 28;
+/// `getpid()` の番号（2026-10-06。`__NR_getpid`）。
+pub const SYS_GETPID: u64 = 39;
+/// `gettid()` の番号（2026-10-06。`__NR_gettid`）。
+pub const SYS_GETTID: u64 = 186;
+/// `tkill(tid, sig)` の番号（2026-10-06。`__NR_tkill`。musl の `raise`・`abort` が自分へ送る形）。
+pub const SYS_TKILL: u64 = 200;

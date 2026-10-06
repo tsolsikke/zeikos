@@ -125,6 +125,8 @@ fn build_user_programs(manifest_dir: &str, out_dir: &str) {
         "mprotect-ro",
         // **自分のコードのページを実行できない形にして、畳まれる 1 本**（2026-10-06。W^X の実行を外す向き）。
         "mprotect-nx",
+        // **`tkill` で自分へ `SIGABRT` を送って、終わらせられる 1 本**（2026-10-06。musl の `abort` の形）。
+        "tkill-self",
         "ls",
         "cat",
         "zash",
@@ -198,6 +200,9 @@ fn build_user_programs(manifest_dir: &str, out_dir: &str) {
         // **葉に実行禁止のビットを立てないビルド**（`nx-probe-only-leaf-test` と、それを含む構成）。`syscall-test` の
         // W^X の検算（111・112）は、ハードウェアが「実行できない」を表せないので成り立たず、期待を切り替える。
         ("CARGO_FEATURE_NX_PROBE_ONLY_LEAF_TEST", "leaves_without_nx"),
+        // **C の Linux 向けのプログラムを像に入れる手元の確かめ**（`linux-c-test`）。`syscall-test` が `/bin/linux/m1-c`
+        // も `spawn` で起こす（120 番）。
+        ("CARGO_FEATURE_LINUX_C_TEST", "linux_c_test"),
         (
             "CARGO_FEATURE_ZI_CURSOR_IGNORE_UPDOWN_TEST",
             "zi_cursor_ignore_updown",
@@ -761,6 +766,8 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
         "mprotect-ro",
         // **自分のコードのページを実行できない形にする 1 本**（2026-10-06）。同じく `spawn` で起こし、畳まれることを確かめる。
         "mprotect-nx",
+        // **`tkill` で自分へ `SIGABRT` を送る 1 本**（2026-10-06）。同じく `spawn` で起こし、134 で終わることを確かめる。
+        "tkill-self",
         "spawn-test",
         "ls",
         "cat",
@@ -822,6 +829,18 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
         )
         .unwrap_or_else(|e| {
             panic!("failed to place the Linux program {name} into the staging: {e}")
+        });
+    }
+    // **C の Linux 向けのプログラムは、`linux-c-test` のビルドだけが入れる**（2026-10-06）。`musl-gcc` で手で作った
+    // もの（`tools/build-linux-programs.sh`）で、版が配布物に依るので既定の像には入れない。無ければ名指しして止まる。
+    if std::env::var("CARGO_FEATURE_LINUX_C_TEST").is_ok() {
+        let built = format!("{manifest_dir}/../target/linux-programs/m1-c");
+        println!("cargo:rerun-if-changed={built}");
+        std::fs::copy(&built, format!("{staging}/bin/linux/m1-c")).unwrap_or_else(|e| {
+            panic!(
+                "linux-c-test needs {built} (build it with tools/build-linux-programs.sh, which \
+                 needs musl-gcc): {e}"
+            )
         });
     }
 

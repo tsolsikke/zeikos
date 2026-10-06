@@ -2390,6 +2390,7 @@ const RUN_FLAGS: &[(&str, RunValue)] = &[
     ("--complete-test", RunValue::None),
     ("--pipe-test", RunValue::None),
     ("--socket-test", RunValue::None),
+    ("--linux-c-test", RunValue::None),
     ("--input-test", RunValue::None),
     ("--poll-test", RunValue::None),
     ("--screen-test", RunValue::None),
@@ -2991,6 +2992,9 @@ fn main() -> Result<()> {
                 );
             }
             // **unix ドメインのストリームソケットの判定（`ADR-0064`）。台本のグループである。**
+            if rest.iter().any(|a| a == "--linux-c-test") {
+                return cmd_linux_c_test();
+            }
             if rest.iter().any(|a| a == "--socket-test") {
                 let sabotage: Vec<&str> = rest
                     .iter()
@@ -21218,6 +21222,103 @@ fn field_value(line: &str, field: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
+/// C の Linux 向けのプログラム（`musl-gcc` で手で作った `target/linux-programs/m1-c`）を像に入れた構成（`linux-c-test`）で
+/// 起動し、`syscall-test` が `spawn` で起こした `/bin/linux/m1-c` の出力と終了の状態を、Linux 上で控えた参照
+/// （`linux-programs/reference/m1-c.txt`）と突き合わせる（M1。2026-10-06）。
+///
+/// **道具が無くて作っていなければ、名指しして飛ばす**（通ったことにはしない——「skipped」の行が結果に残る。CI には
+/// `musl-gcc` が無い）。版が配布物に依るので、既定の像には入れない。
+fn cmd_linux_c_test() -> Result<()> {
+    let context = "linux-c-test";
+    let workspace_root = workspace_root()?;
+    let built = workspace_root.join("target/linux-programs/m1-c");
+    if !built.is_file() {
+        println!(
+            "{context}: skipped (m1-c is not built at {}; run tools/build-linux-programs.sh, which \
+             needs musl-gcc)",
+            built.display()
+        );
+        return Ok(());
+    }
+    let run = RunDir::create(&workspace_root, "linux-c-test")?;
+    let ovmf_vars = prepare_ovmf_vars(&run)?;
+    let bootloader_efi = build_bootloader(&workspace_root, false)?;
+    let kernel_elf = build_kernel_with_features(&workspace_root, &["linux-c-test"])?;
+    let esp_dir = stage_esp(&run, &bootloader_efi, &kernel_elf)?;
+
+    let serial_log = run.serial_log();
+    let _ = fs::remove_file(&serial_log);
+    let debug_log = run.debug_log();
+    let _ = fs::remove_file(&debug_log);
+
+    let qemu_args = qemu_launch_args(&QemuLaunchOptions {
+        ovmf_code: Path::new(OVMF_CODE_PATH),
+        ovmf_vars: &ovmf_vars,
+        esp_dir: &esp_dir,
+        disk_image: &run.disk_image(),
+        serial: &SerialSink::File(serial_log.clone()),
+        debug_log: &debug_log,
+        display: DisplayMode::None,
+        monitor_socket: None,
+        accelerator: Accelerator::Tcg,
+        debug_events: DebugEvents::IntAndCpuReset,
+    });
+    let outputs = [serial_log.as_path(), debug_log.as_path()];
+    let mut child = launch::spawn(&launch::Spec::new(
+        &qemu_args,
+        &outputs,
+        context,
+        PIPE_TEST_TIMEOUT,
+        launch::Deadline::Failure,
+    ))?;
+    let ended = "spawn: /bin/linux/m1-c ended";
+    let deadline = Instant::now() + PIPE_TEST_TIMEOUT;
+    loop {
+        if child.was_cut() {
+            break;
+        }
+        let text = read_lossy(&serial_log);
+        if text.contains(ended) || text.contains("[ERROR]") || Instant::now() >= deadline {
+            break;
+        }
+        metrics::sleep_poll(PANIC_TEST_POLL_INTERVAL);
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    let serial = read_lossy(&serial_log);
+
+    let ran = serial.contains("spawn: /bin/linux/m1-c ended (Exited(4))");
+    let matched = linux_program_output_matches(
+        &workspace_root,
+        "m1-c",
+        &serial,
+        LinuxReferenceEnvironment::ExactCount,
+    )?;
+    let unknown_free = serial
+        .lines()
+        .find(|line| line.contains(ended))
+        .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
+    let no_error = !serial.contains("[ERROR]");
+    println!("{context}: m1-c ended with status 4 = {ran}");
+    println!(
+        "{context}: m1-c printed what Linux prints (linux-programs/reference/m1-c.txt) = {matched}"
+    );
+    println!("{context}: m1-c hit no number the kernel does not know = {unknown_free}");
+    println!("{context}: no [ERROR] line = {no_error}");
+    if ran && matched && unknown_free && no_error {
+        println!("{context}: PASS");
+        return Ok(());
+    }
+    for line in serial
+        .lines()
+        .filter(|l| l.contains("m1-c") || l.contains("[ERROR]"))
+        .take(12)
+    {
+        println!("{context}: (info) {}", line.trim_end());
+    }
+    bail!("{context}: FAIL")
+}
+
 fn cmd_marker_test(
     tests: &[CriticalTest],
     kind_label: &str,
@@ -29641,6 +29742,21 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
         //
         // **1 回の起動で 6 つ見る**——**同時に進む / 遠征スタック / 回復点 / CR3 / FP / 前景。**
         // **破壊テストは 4 つで、切り替えが入れ替えるものとスロットに 1 つずつ用意した。**
+        // **C の Linux 向けのプログラム**（M1。2026-10-06）。`musl-gcc` が無くて作っていなければ、名指しして飛ばす
+        // （「skipped」の行が結果に残る。CI には無い）。
+        total += 1;
+        begin_item(
+            Family::Process,
+            "the C Linux program prints what Linux prints (skipped without musl-gcc)",
+        );
+        match cmd_linux_c_test() {
+            Ok(()) => println!("--- linux-c-test: OK"),
+            Err(error) => {
+                println!("--- linux-c-test: FAILED ({error})");
+                failed.push("linux-c-test".to_string());
+            }
+        }
+
         total += 1;
         begin_item(Family::Process, "two Ring 3 programs run at the same time");
         match cmd_concurrent_test(&[], true) {
@@ -32145,7 +32261,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 63,
-    full: 496,
+    full: 497,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

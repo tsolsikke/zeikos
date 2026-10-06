@@ -38,11 +38,12 @@ use common::addr::{DirectMap, PhysAddr};
 use crate::abi::linux::x86_64::{
     stat_bytes, ARCH_GET_FS, ARCH_GET_GS, ARCH_SET_FS, ARCH_SET_GS, STAT_LEN, SYS_ACCEPT,
     SYS_ARCH_PRCTL, SYS_BIND, SYS_BRK, SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT, SYS_EXIT,
-    SYS_EXIT_GROUP, SYS_FCNTL, SYS_FSTAT, SYS_FTRUNCATE, SYS_FUTEX, SYS_GETDENTS64, SYS_GETRANDOM,
-    SYS_IOCTL, SYS_LISTEN, SYS_LSEEK, SYS_MEMFD_CREATE, SYS_MKDIR, SYS_MMAP, SYS_MPROTECT,
-    SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPEN, SYS_POLL, SYS_PRLIMIT64, SYS_READ, SYS_READLINK,
-    SYS_RECVMSG, SYS_RMDIR, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SENDMSG, SYS_SENDTO,
-    SYS_SET_TID_ADDRESS, SYS_SIGALTSTACK, SYS_SOCKET, SYS_STAT, SYS_UNAME, SYS_UNLINK, SYS_WRITE,
+    SYS_EXIT_GROUP, SYS_FCNTL, SYS_FSTAT, SYS_FTRUNCATE, SYS_FUTEX, SYS_GETDENTS64, SYS_GETPID,
+    SYS_GETRANDOM, SYS_GETTID, SYS_IOCTL, SYS_LISTEN, SYS_LSEEK, SYS_MADVISE, SYS_MEMFD_CREATE,
+    SYS_MKDIR, SYS_MMAP, SYS_MPROTECT, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPEN, SYS_POLL,
+    SYS_PRLIMIT64, SYS_READ, SYS_READLINK, SYS_READV, SYS_RECVMSG, SYS_RMDIR, SYS_RT_SIGACTION,
+    SYS_RT_SIGPROCMASK, SYS_SENDMSG, SYS_SENDTO, SYS_SET_TID_ADDRESS, SYS_SIGALTSTACK, SYS_SOCKET,
+    SYS_STAT, SYS_TKILL, SYS_UNAME, SYS_UNLINK, SYS_WRITE, SYS_WRITEV,
 };
 use crate::abi::linux::{
     cmsg_one_fd_bytes, dirent64_record, dirent64_record_len, fb_fix_screeninfo_bytes,
@@ -54,8 +55,8 @@ use crate::abi::linux::{
     FBIOGET_FSCREENINFO, FBIOGET_VSCREENINFO, FB_TYPE_PACKED_PIXELS, FB_VISUAL_TRUECOLOR,
     INPUT_EVENT_LEN, IOVEC_LEN, MAP_ANONYMOUS, MAP_FIXED, MAP_FIXED_NOREPLACE, MSGHDR_CONTROLLEN,
     MSGHDR_LEN, O_ACCMODE, O_APPEND, O_CREAT, O_RDONLY, O_TRUNC, O_WRONLY, POLLFD_LEN, POLLIN,
-    PROT_EXEC, PROT_READ, PROT_WRITE, SCM_RIGHTS, SEEK_SET, SOCKADDR_UN_LEN, SOCK_STREAM,
-    SOL_SOCKET, TIMESPEC_LEN, TIOCGWINSZ, WINSIZE_LEN,
+    POLLNVAL, PROT_EXEC, PROT_READ, PROT_WRITE, SCM_RIGHTS, SEEK_CUR, SEEK_END, SEEK_SET,
+    SOCKADDR_UN_LEN, SOCK_STREAM, SOL_SOCKET, TIMESPEC_LEN, TIOCGWINSZ, WINSIZE_LEN,
 };
 use crate::abi::linux::{
     E2BIG, EACCES, EADDRINUSE, EAFNOSUPPORT, EAGAIN, EBADF, EBUSY, ECHILD, ECONNREFUSED, EEXIST,
@@ -354,6 +355,11 @@ struct SyscallState {
     futex_deadlock_address: AtomicU64,
     /// `syscall_entry` が呼ばれた回数（会計用。W1-c-3 で大域から移した）。
     invocation_count: AtomicU64,
+    /// 知らない番号（`-ENOSYS` を返した）の回数と、その最後の番号（2026-10-06）。
+    unknown_numbers: AtomicU64,
+    last_unknown_number: AtomicU64,
+    /// `tkill` で自分へ送って、終わらせることになったシグナルの番号（2026-10-06。無ければ 0）。
+    signal_that_ended_the_process: AtomicU64,
     /// 直近に受け取った番号（RAX）。往復検証で PROBE_NUMBER と突き合わせる。
     last_number: AtomicU64,
     /// 直近に受け取った 6 引数（RDI/RSI/RDX/R10/R8/R9）。PROBE_ARGS と突き合わせる。
@@ -380,6 +386,9 @@ impl SyscallState {
             process_exit_status: AtomicU64::new(0),
             futex_deadlock_address: AtomicU64::new(0),
             invocation_count: AtomicU64::new(0),
+            unknown_numbers: AtomicU64::new(0),
+            last_unknown_number: AtomicU64::new(0),
+            signal_that_ended_the_process: AtomicU64::new(0),
             last_number: AtomicU64::new(0),
             last_args: [const { AtomicU64::new(0) }; 6],
             handler_sp: AtomicU64::new(0),
@@ -844,6 +853,32 @@ unsafe fn dispatch(
             // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
             unsafe { sys_read(args[0], args[1], args[2], page_table_root, direct_map, bkl) }
         }
+        SYS_READV | SYS_WRITEV => {
+            // SAFETY: 同上。
+            unsafe {
+                vectored_from_ring3(
+                    number == SYS_WRITEV,
+                    args[0],
+                    args[1],
+                    args[2],
+                    page_table_root,
+                    direct_map,
+                    bkl,
+                )
+            }
+        }
+        // **`madvise` は助言で、どれも受けて何もしない**（2026-10-06。musl の `malloc` が返す前に `MADV_DONTNEED` を打つ
+        // ことが在る。ページの境界に無い番地は Linux と同じく `-EINVAL`）。
+        SYS_MADVISE => {
+            if args[0].is_multiple_of(crate::mappings::PAGE_SIZE) {
+                0
+            } else {
+                (-EINVAL) as u64
+            }
+        }
+        // **プロセスもスレッドも 1 つずつなので、番号は決まった値である**（2026-10-06。`set_tid_address` と同じ）。
+        SYS_GETPID | SYS_GETTID => THE_ONLY_TID,
+        SYS_TKILL => sys_tkill(args[0], args[1]),
         SYS_GETDENTS64 => {
             // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
             unsafe { sys_getdents64(args[0], args[1], args[2], page_table_root, direct_map) }
@@ -1080,8 +1115,13 @@ unsafe fn dispatch(
             }
             0
         }
-        // 失敗は -errno（-1..-4095）。
-        _ => (-ENOSYS) as u64,
+        // 失敗は -errno（-1..-4095）。**知らない番号は数えて、最後の番号を控える**（2026-10-06。プロセスの終わりの行に
+        // 出す。Linux のプログラムが、知らない番号を 1 つも打たずに終わったことを見るため）。
+        _ => {
+            state().unknown_numbers.fetch_add(1, Ordering::SeqCst);
+            state().last_unknown_number.store(number, Ordering::SeqCst);
+            (-ENOSYS) as u64
+        }
     }
 }
 
@@ -1816,9 +1856,24 @@ unsafe fn poll_from_ring3(
     // （`ADR-0071` の決定 1 の 2 で分けた。2026-09-30）。
     let (fds, _) = raw.as_chunks::<POLLFD_LEN>();
     let mut reasons = [None; MAX_POLL_FDS];
+    let mut invalid = [false; MAX_POLL_FDS];
     for (index, slot) in reasons.iter_mut().enumerate().take(count) {
         let request = parse_pollfd(&fds[index]);
-        if request.fd < 0 || request.events != POLLIN {
+        // **負の fd は見ない**（Linux と同じ。`revents` は 0 のまま）。
+        if request.fd < 0 {
+            continue;
+        }
+        // **`events` が 0 の欄は、開いているかの問い合わせである**（2026-10-06。Rust の `std` が起動時に 0・1・2 へ打つ）。
+        // 開いていなければ `POLLNVAL` を返し、開いていれば何も起きない（Linux と同じ）。
+        if request.events == 0 {
+            let open =
+                crate::vfs::with_current_files(|files| files.get(request.fd as usize).is_ok());
+            if !open {
+                invalid[index] = true;
+            }
+            continue;
+        }
+        if request.events != POLLIN {
             return (-EINVAL) as u64;
         }
         let Some(reason) = poll_reason_of(request.fd as u64) else {
@@ -1831,6 +1886,11 @@ unsafe fn poll_from_ring3(
         let mut ready = 0usize;
         let mut revents = [0u16; MAX_POLL_FDS];
         for (index, slot) in reasons.iter().enumerate().take(count) {
+            if invalid[index] {
+                revents[index] = POLLNVAL;
+                ready += 1;
+                continue;
+            }
             let Some(reason) = *slot else {
                 continue;
             };
@@ -4296,9 +4356,10 @@ unsafe fn sys_brk(requested: u64, direct_map: DirectMap) -> u64 {
 ///
 /// **利用者は `/bin/tail` である**（DIR-1b で同じ段階に作った）。
 ///
-/// # 受けるのは `SEEK_SET` だけである
+/// # `SEEK_SET`・`SEEK_CUR`・`SEEK_END` を受ける
 ///
-/// 理由は [`SEEK_SET`] の doc にある。**知らない `whence` は `-EINVAL`。**
+/// **`SEEK_CUR` と `SEEK_END` は 2026-10-06 に足した**（[`SEEK_SET`] の doc）。`offset` は符号つきで、結果が負なら
+/// `-EINVAL`。**知らない `whence` も `-EINVAL`。**
 ///
 /// # 末尾より先へ跳んでもよい
 ///
@@ -4312,7 +4373,7 @@ unsafe fn sys_brk(requested: u64, direct_map: DirectMap) -> u64 {
 /// **`fd` が端末なら `-ESPIPE` である**（Linux も同じ）。
 /// **位置を持たないものに位置を与えない。**
 fn sys_lseek(fd: u64, offset: u64, whence: u64) -> u64 {
-    if whence != SEEK_SET {
+    if whence != SEEK_SET && whence != SEEK_CUR && whence != SEEK_END {
         return (-EINVAL) as u64;
     }
     crate::vfs::with_current_files(|files| match files.get_mut(fd as usize) {
@@ -4320,7 +4381,18 @@ fn sys_lseek(fd: u64, offset: u64, whence: u64) -> u64 {
             if file.is_terminal() {
                 return (-ESPIPE) as u64;
             }
-            file.seek_to(offset);
+            let from = match whence {
+                SEEK_CUR => file.offset(),
+                SEEK_END => file.inode().map_or(0, |inode| inode.size()),
+                _ => 0,
+            };
+            let Some(target) = (from as i64).checked_add(offset as i64) else {
+                return (-EINVAL) as u64;
+            };
+            if target < 0 {
+                return (-EINVAL) as u64;
+            }
+            file.seek_to(target as u64);
             file.offset()
         }
         Err(e) => (-errno_for_file_table(e)) as u64,
@@ -4983,6 +5055,104 @@ unsafe fn sys_sigaltstack(
 /// このカーネルが返すスレッドの番号（`set_tid_address` の戻り値。2026-10-06）。**プロセスは 1 つずつ走り、スレッドは
 /// 無い**ので、決まった値である。`getpid` を足すときは、同じ値を返す。
 const THE_ONLY_TID: u64 = 1;
+
+/// 既定の振る舞いが「無視」のシグナル（`SIGCHLD`・`SIGURG`・`SIGWINCH`）と、止まっているプロセスを続ける `SIGCONT`。
+/// `tkill` で自分へ送っても、何も起きずに 0 が返る（Linux と同じ）。
+const SIGNALS_IGNORED_BY_DEFAULT: [u64; 4] = [17, 18, 23, 28];
+
+/// `tkill(tid, sig)` の本体（2026-10-06。`ADR-0081` の続き）。**自分（番号 1）以外は `-ESRCH`。**
+///
+/// **配送は無い。** 登録が `SIG_IGN` のシグナルと、既定が「無視」のシグナルは、何も起きずに 0。**それ以外（既定が
+/// 終了・コアダンプ・停止のものと、ハンドラを登録したもの）は、名指しの行を出してプロセスを終わらせる**——
+/// 終了状態は `128 + sig`（シェルが「シグナルで終わった」と見せる値）。musl の `abort` は `tkill(gettid(), SIGABRT)` を
+/// 打つので、落ちたプログラムは 134 で終わる。ハンドラを登録したシグナルを呼べない差は、`docs/deferred-decisions.md`
+/// の「シグナルの配送」の行。`sig` が 0 なら、居るかどうかの問い合わせで、0 を返す。
+fn sys_tkill(tid: u64, sig: u64) -> u64 {
+    if tid != THE_ONLY_TID {
+        return (-ESRCH) as u64;
+    }
+    if sig == 0 {
+        return 0;
+    }
+    if sig > crate::process_state::SIGNAL_COUNT as u64 {
+        return (-EINVAL) as u64;
+    }
+    let ignored = crate::process_state::with_current(|state| {
+        state.action(sig).handler == crate::process_state::SIG_IGN
+    });
+    if ignored || SIGNALS_IGNORED_BY_DEFAULT.contains(&sig) {
+        return 0;
+    }
+    state()
+        .signal_that_ended_the_process
+        .store(sig, Ordering::SeqCst);
+    state()
+        .process_exit_status
+        .store(128 + sig, Ordering::SeqCst);
+    state().process_exited.store(true, Ordering::SeqCst);
+    0
+}
+
+/// `readv`・`writev` の `iovcnt` の上限（Linux の `UIO_MAXIOV`）。越えれば `-EINVAL`。
+const UIO_MAXIOV: u64 = 1024;
+
+/// `readv(fd, iov, iovcnt)`・`writev(fd, iov, iovcnt)` の本体（2026-10-06。musl の stdio が打つ）。
+///
+/// **`struct iovec`（`iov_base`・`iov_len`。16 バイト）を 1 本ずつユーザーの番地から読み、`read`・`write` を 1 本ずつ
+/// 呼ぶ**（控えの配列を遠征スタックに置かない。`iov_len` が 0 の本は飛ばす——musl は `writev` の 2 本目に `NULL`/0 を
+/// 渡すことが在る）。返すのは、動いたバイトの合計。**途中の本で失敗したら、それまでに動いた分が在ればその数を、
+/// 無ければその失敗を返す**（Linux と同じ）。**`readv` は、1 本が短く終わったら（要らない分を待たないため）、または
+/// 0（終わり）なら、そこで止める。**
+///
+/// # Safety
+///
+/// `page_table_root` / `direct_map` が [`validate_user_range`] の契約を満たすこと。
+#[inline(never)]
+unsafe fn vectored_from_ring3(
+    write: bool,
+    fd: u64,
+    iov: u64,
+    iovcnt: u64,
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+    bkl: &mut Option<crate::bkl::BklGuard>,
+) -> u64 {
+    if iovcnt > UIO_MAXIOV {
+        return (-EINVAL) as u64;
+    }
+    let mut total = 0u64;
+    for index in 0..iovcnt {
+        let Some(address) = iov.checked_add(index * 16) else {
+            return (-EFAULT) as u64;
+        };
+        // SAFETY: 呼び出し元契約をそのまま渡す。
+        let Some(bytes) = (unsafe { read_user_fixed::<16>(page_table_root, direct_map, address) })
+        else {
+            return if total > 0 { total } else { (-EFAULT) as u64 };
+        };
+        let base = u64::from_le_bytes(bytes[0..8].try_into().expect("8 bytes"));
+        let len = u64::from_le_bytes(bytes[8..16].try_into().expect("8 bytes"));
+        if len == 0 {
+            continue;
+        }
+        // SAFETY: 同上。
+        let moved = unsafe {
+            if write {
+                sys_write(fd, base, len, page_table_root, direct_map, bkl)
+            } else {
+                sys_read(fd, base, len, page_table_root, direct_map, bkl)
+            }
+        };
+        if (moved as i64) < 0 {
+            return if total > 0 { total } else { moved };
+        }
+        total += moved;
+        if !write && moved < len {
+            break;
+        }
+    }
+    total
+}
 
 /// `set_tid_address(tidptr)`（2026-10-06）。**番地を控えて、スレッドの番号を返す。** スレッドが終わるときにそこへ 0 を
 /// 書いて `futex` で起こす仕組みは、スレッドが無いので要らない（番地は控えるだけ）。
@@ -6436,6 +6606,11 @@ pub fn reset_counters() {
     // **1 回だけ引く（W1-c-3。`syscall_entry` の同じ箇所の注記）。**
     let state = state();
     state.invocation_count.store(0, Ordering::SeqCst);
+    state.unknown_numbers.store(0, Ordering::SeqCst);
+    state.last_unknown_number.store(0, Ordering::SeqCst);
+    state
+        .signal_that_ended_the_process
+        .store(0, Ordering::SeqCst);
     state.last_number.store(0, Ordering::SeqCst);
     for slot in state.last_args.iter() {
         slot.store(0, Ordering::SeqCst);
@@ -6482,6 +6657,8 @@ pub fn reset_counters() {
 #[derive(Debug, Clone, Copy)]
 pub struct Records {
     invocation_count: u64,
+    unknown_numbers: u64,
+    last_unknown_number: u64,
     last_number: u64,
     last_args: [u64; 6],
     handler_sp: u64,
@@ -6513,6 +6690,8 @@ pub fn save_records() -> Records {
     }
     Records {
         invocation_count: state.invocation_count.load(Ordering::SeqCst),
+        unknown_numbers: state.unknown_numbers.load(Ordering::SeqCst),
+        last_unknown_number: state.last_unknown_number.load(Ordering::SeqCst),
         last_number: state.last_number.load(Ordering::SeqCst),
         last_args,
         handler_sp: state.handler_sp.load(Ordering::SeqCst),
@@ -6534,6 +6713,12 @@ pub fn restore_records(records: Records) {
     state
         .invocation_count
         .store(records.invocation_count, Ordering::SeqCst);
+    state
+        .unknown_numbers
+        .store(records.unknown_numbers, Ordering::SeqCst);
+    state
+        .last_unknown_number
+        .store(records.last_unknown_number, Ordering::SeqCst);
     state
         .last_number
         .store(records.last_number, Ordering::SeqCst);
@@ -6627,6 +6812,36 @@ pub fn process_exit_status() -> u64 {
 /// `syscall_entry` が呼ばれた回数。
 pub fn invocation_count() -> u64 {
     state().invocation_count.load(Ordering::SeqCst)
+}
+
+/// 知らない番号（`-ENOSYS` を返した）の回数と、その最後の番号（2026-10-06。1 つも無ければ `(0, None)`）。
+///
+/// # 契約（境界の関数。2026-10-06）
+///
+/// - 読むだけで、何も変えない。載せる側が、プロセスが終わった後の行に出す。
+pub fn unknown_numbers() -> (u64, Option<u64>) {
+    let count = state().unknown_numbers.load(Ordering::SeqCst);
+    let last = state().last_unknown_number.load(Ordering::SeqCst);
+    (count, (count > 0).then_some(last))
+}
+
+/// `tkill` で自分へ送って、プロセスを終わらせることになったシグナルの番号（2026-10-06。無ければ `None`）。
+///
+/// # 契約（境界の関数。2026-10-06）
+///
+/// - 読むだけで、何も変えない。載せる側が、プロセスが終わった後の行に出す。
+pub fn signal_that_ended_the_process() -> Option<u64> {
+    match state().signal_that_ended_the_process.load(Ordering::SeqCst) {
+        0 => None,
+        signal => Some(signal),
+    }
+}
+
+/// [`signal_that_ended_the_process`] の記録を消す（親が、子の記録をもう 1 度出さないため）。
+pub fn clear_signal_that_ended_the_process() {
+    state()
+        .signal_that_ended_the_process
+        .store(0, Ordering::SeqCst);
 }
 
 /// 直近に受け取った番号（RAX）。

@@ -9316,6 +9316,15 @@ const SYSCALL_TEST_STATUS: &[(u64, &str)] = &[
     (112, "spawn(\"/bin/mprotect-nx\") did not report a fold with vector 14 (a code page made PROT_READ must stop executing)"),
     // 113: Linux 向けの musl の静的な像（M1。2026-10-06）。
     (113, "spawn(\"/bin/linux/m1-rust\", [\"m1-rust\", \"/etc/motd\", \"a\", \"b\"], []) did not end with status 4 (the argument count)"),
+    // 114 から 119: writev・readv・lseek・poll・getpid・gettid・madvise・tkill（2026-10-06）。
+    (114, "writev(1, two iovecs, 2) did not return the total length, or with a zero-length iovec and an over-long count did not behave"),
+    (115, "readv on /etc/motd with two iovecs did not return the file's length with the first bytes in the first iovec"),
+    (116, "lseek with SEEK_END and SEEK_CUR did not return the expected positions, or a negative target did not return -EINVAL"),
+    (117, "poll with events=0 on fds 0, 1 and 2 did not return 0, or on a closed fd did not return 1 with POLLNVAL"),
+    (118, "getpid/gettid did not return 1, madvise did not return 0 (or -EINVAL off a page boundary), or tkill did not refuse another tid, accept signal 0, and ignore SIGCHLD and an ignored SIGUSR1"),
+    (119, "spawn(\"/bin/tkill-self\") did not end with status 134 (tkill(gettid(), SIGABRT) ends the process with 128 + 6)"),
+    // 120: C の Linux 向けのプログラム（`linux-c-test` のビルドだけ。2026-10-06）。
+    (120, "spawn(\"/bin/linux/m1-c\", [\"m1-c\", \"/etc/motd\", \"a\", \"b\"], []) did not end with status 4 (only in the linux-c-test build)"),
 ];
 
 /// `fault-test` が起こす #PF のエラーコード（S9-b-3-2a）。
@@ -10008,12 +10017,15 @@ fn check_user_program_outcome(
     let written = kernel::syscall::last_write_bytes(&mut bytes);
     let message = core::str::from_utf8(&bytes[..written]).unwrap_or("<not utf-8>");
 
+    let (unknown_numbers, last_unknown) = kernel::syscall::unknown_numbers();
     logger.info(format_args!(
         "user-run: {name} left Ring 3 (exited={exited} status={status} folded={folded} \
          vector={vector} rip={rip:#x} cs={cs:#x} cr2={cr2:#x} err={error_code:#x}), it made {} \
-         syscall(s) and the kernel was entered from Ring 3 ({}), write(fd={}, {written} byte(s)) \
-         said {:?}",
+         syscall(s) ({unknown_numbers} with a number the kernel does not know; the last such \
+         number was {}) and the kernel was entered from Ring 3 ({}), write(fd={}, {written} \
+         byte(s)) said {:?}",
         kernel::syscall::invocation_count(),
+        last_unknown.unwrap_or(0),
         kernel::syscall::in_ring3_at_entry(),
         kernel::syscall::last_write_fd(),
         message.trim_end()
@@ -13003,6 +13015,11 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "auxv-phdr-not-biased-test",
         cfg!(feature = "auxv-phdr-not-biased-test"),
         "補助ベクタの AT_PHDR に、ずらす前の番地を渡す",
+    ),
+    (
+        "linux-c-test",
+        cfg!(feature = "linux-c-test"),
+        "C の Linux 向けのプログラムを像に入れ、syscall-test が起こす（手元の確かめ）",
     ),
     (
         "mappings-overlap-skip-test",
