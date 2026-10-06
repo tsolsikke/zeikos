@@ -51,3 +51,13 @@ Accepted（2026-10-06に運用者がM2の設計案を承認し、2026-10-07に�
 - アイドルの定常ループが、`/dev/fb0`を開いている間だけBKLを取る（開いていなければ原子的な印を1つ読むだけ）。
 - 前景のプロセスがCPUを使い切っていて、システムコールも打たない間は、転送が起きない（アイドルが走らないため）。描いてから眠る・待つ形のプログラム（Seinasのfbdevの裏側、イベントのループ）では差が出ない。`docs/deferred-decisions.md`。
 - 遠征スタックの使用量は変えない（転送はカーネルのタスクの文脈で、`Console::present`を呼ぶだけである）。
+
+## Addendum（2026-10-07。Seinasの成果物の持ち込み方）
+
+M2の2つ目の刻みで、`seinas-fbdev`（musl静的PIE）をZeikOSの像に入れて走らせた。持ち込み方は、2026-10-06に運用者が決めたとおりである。
+
+- **成果物はSeinasのGitHubのreleaseから取る。** `tools/fetch-seinas.sh`がタグ（`v0.1.0`）・ファイル名・SHA-256を固定し、合わなければ置かずに止まる。取れた後は取り直さない。CIは置き場（`target/linux-programs/`）をキャッシュする——配布元が止まっても落ちないように（フォントと同じ形）。
+- **像へは`seinas-test`のfeatureのビルドだけが入れる**（`/bin/linux/seinas-fbdev`）。既定の像のバイトを変えない（起動ログの参照が機械で変わらない）。
+- **第三者のライセンスの表示は、成果物と同じ像の、成果物の隣（`/bin/linux/`）に入れる**（releaseの`seinas-fbdev-v0.1.0-third-party.tar.gz`をそのまま）。成果物と表示を離さないためと、根の項目の数（`syscall-test`が8と数える）を変えないためである。リポジトリの側は`README.md`の第三者の表と、submoduleの`external/seinas/THIRD-PARTY/`で辿れる。
+- **`external/seinas`は、releaseのタグに固定したsubmodule**にする。目的は、成果物とソースの版を揃えることと、手元で作る道（Seinasの`tools/build-musl.sh`）を残すこと。ZeikOSの検査は中を見ない。
+- 却下: 作ったELFをZeikOSのリポジトリに置く（方針に反する）／既定の像に入れる（CIで作れず、バイトが揺れる）／CIのたびにSeinasを作る（pixmanのmusl向けの静的ライブラリに、meson・ninja・bison・curlが要る）。
