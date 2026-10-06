@@ -195,6 +195,9 @@ fn build_user_programs(manifest_dir: &str, out_dir: &str) {
     // 載せた分だけがユーザー側へ届く形で、**列挙が全部である**——足すときは
     // この表へ 1 行足すこと。
     const USER_PROGRAM_CFGS: &[(&str, &str)] = &[
+        // **葉に実行禁止のビットを立てないビルド**（`nx-probe-only-leaf-test` と、それを含む構成）。`syscall-test` の
+        // W^X の検算（111・112）は、ハードウェアが「実行できない」を表せないので成り立たず、期待を切り替える。
+        ("CARGO_FEATURE_NX_PROBE_ONLY_LEAF_TEST", "leaves_without_nx"),
         (
             "CARGO_FEATURE_ZI_CURSOR_IGNORE_UPDOWN_TEST",
             "zi_cursor_ignore_updown",

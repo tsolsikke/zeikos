@@ -959,7 +959,7 @@ python3 tools/judgement-map.py /tmp/full.txt
 | `excursion-guard-skip-test` | 遠征スタックの下の見張りのページを張らない（2026-10-06。以前の形） | **張った直後の確かめが、写ったままのページを名指しして止まること**（`of the 4 excursion stacks, 0 have an unmapped guard page below them`と、`unmapped=false`。`--stack-test excursion-unguarded`）。最初の遠征まで進まないことも見る |
 | `excursion-guard-unrecorded-test` | 遠征スタックの見張りのページを、名指しの表に控えない（2026-10-06） | **同じ確かめが、控えられていないページを名指しして止まること**（`4 have an unmapped guard page below them and 0 have it recorded`と、`recorded under its own name=false`。`--stack-test excursion-unrecorded`） |
 | `excursion-budget-test` | 深さ0の遠征スタックを、止まる線（容量の4分の3）を越える深さまで使ってから戻る（2026-10-06。あふれはしない） | **プログラムが終わった後の使用量の判定が止めること**（`the depth-0 excursion stack is more than three quarters used`と、`the line is 49152`。`--stack-test excursion-budget`）。`#PF`が出ないことも見る |
-| `pie-load-without-bias-test` | 位置独立の像（`ET_DYN`）の区画を、ずらさずに載せる（2026-10-06。入口だけがずれた番地を指す） | **`spawn`で起こした`/bin/pie-hello`が、入口のページフォルトで畳まれること**（`spawn: /bin/pie-hello ended (Folded(14))`と、`syscall-test`が79番で止まる行。`--ring3-test pie-without-bias`）。**像の番地と入口の番地が、同じ量だけずれていることの確かめである** |
+| `pie-load-without-bias-test` | 位置独立の像（`ET_DYN`）の区画を、ずらさずに載せる（2026-10-06。入口だけがずれた番地を指す） | **載せたものを写像の表へ登録する所が、逆さまになった像の範囲（ずらした始まりから、ずらさないヒープの始まりまで）を`BadRange`で名指しして止まること**（`mappings: /bin/pie-hello could not register what the loader placed (BadRange`。`--ring3-test pie-without-bias`）。写像の表（`ADR-0082`）の前は、入口のページフォルトで畳まれる行（`spawn: /bin/pie-hello ended (Folded(14))`）で見ていた——そこへ届く前に止まるようになった（2026-10-06の全検査で見つけ、印を替えた）。**像の番地と入口の番地が、同じ量だけずれていることの確かめである** |
 | `auxv-entry-not-biased-test` | 補助ベクタの`AT_ENTRY`に、ずらす前の番地を渡す（2026-10-06） | **`spawn`で起こした`/bin/pie-hello`が、自分の`_start`の番地と突き合わせて、終了状態1で終わること**（`spawn: /bin/pie-hello ended (Exited(1))`と、`syscall-test`が79番で止まる行。`--ring3-test auxv-entry-not-biased`）。位置を決めてリンクした像では値が変わらないので、気づけるのは位置独立の像だけである |
 | `auxv-phdr-not-biased-test` | 補助ベクタの`AT_PHDR`に、ずらす前の番地を渡す（2026-10-06） | **`spawn`で起こした`/bin/pie-hello`が、自分のELFヘッダ（`__ehdr_start`）から求めた表の番地と突き合わせて、終了状態2で終わること**（`spawn: /bin/pie-hello ended (Exited(2))`と、`syscall-test`が79番で止まる行。`--ring3-test auxv-phdr-not-biased`）。番地を比べてから読むので、ずれた番地を読みに行って落ちる形にはならない |
 | `mappings-overlap-skip-test` | 写像の表が、置くときに重なりを見ない（2026-10-06。`register`と`overlaps_any`） | **`MAP_FIXED_NOREPLACE`が写像の上で`-EEXIST`を返すこと**（`syscall-test`が103番で止まる行。`--syscall-test mappings-overlap-skip`）。重なりを見ずに置きに行くと、既に写っているページで葉を足すのが失敗し、`-ENOMEM`が返る |
@@ -2586,7 +2586,7 @@ Linuxのlibcが起動の最初に呼ぶ小物（`set_tid_address`・`rt_sigactio
 | 補助ベクタの並びと値、`AT_PHDR`を積まない像、収まらない大きさ | ホストの試験 |
 | `AT_RANDOM`のTSCの側の16バイトが、入力で変わること | ホストの試験 |
 | 位置独立の像が、ずれて載り、補助ベクタの値が合うこと（埋め込みと`spawn`の両方） | 起動ログの参照（`pie-hello`と`/bin/pie-hello`の行） |
-| 区画をずらさずに載せたら、入口で落ちること | 破壊テスト`pie-load-without-bias-test`（`--ring3-test pie-without-bias`） |
+| 区画をずらさずに載せたら、写像の表への登録で止まること（表の前は、入口で落ちること） | 破壊テスト`pie-load-without-bias-test`（`--ring3-test pie-without-bias`） |
 | `AT_ENTRY`・`AT_PHDR`にずらす前の番地を渡したら、`pie-hello`が番号で言うこと | 破壊テスト`auxv-entry-not-biased-test`・`auxv-phdr-not-biased-test` |
 | 補助ベクタの終端を書かなかったら、`syscall-test`が歩いて気づくこと | 破壊テスト`syscall-test-no-auxv-terminator`（S11-1から。歩く形に直した） |
 

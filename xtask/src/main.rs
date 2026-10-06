@@ -1453,15 +1453,15 @@ const RING3_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // **位置独立の像の区画を、ずらさずに載せる**（2026-10-06）。入口だけがずれた番地を指すので、`syscall-test` が
-    // `spawn` で起こした `/bin/pie-hello` は、入口のページフォルト（ベクタ 14）で畳まれる。**見るのは `spawn` の結果の
-    // 行である**——埋め込みの `pie-hello` は表の最後に居て、そこまで届かない（`syscall-test` が 79 番で止める）。
+    // **位置独立の像の区画を、ずらさずに載せる**（2026-10-06）。入口だけがずれた番地を指す。**捕まえるのは、載せた
+    // ものを写像の表へ登録する所である**——像の範囲が「ずらした始まり」から「ずらさないヒープの始まり」までとなって
+    // 逆さまになり、`BadRange` で名指しして止まる。写像の表（2026-10-06）の前は、入口のページフォルトで畳まれる形
+    // （`spawn: /bin/pie-hello ended (Folded(14))`）で見ていた。そこへ届く前に止まるようになったので、印を替えた。
     CriticalTest {
         name: "pie-without-bias",
         feature: "pie-load-without-bias-test",
         expected_markers: &[
-            "spawn: /bin/pie-hello ended (Folded(14))",
-            "user-run: syscall-test exited with status 79",
+            "mappings: /bin/pie-hello could not register what the loader placed (BadRange",
             "halting",
         ],
         forbidden_markers: &[

@@ -4197,6 +4197,16 @@ unsafe fn sys_brk(requested: u64, direct_map: DirectMap) -> u64 {
         let free_before = allocator.free_frame_count();
         let mut page = have;
         while page < want {
+            // 破壊テスト (brk-skip-shrink-test): 縮めたときに外さなかった葉の上を、伸ばすときは飛ばす。**壊すのは
+            // 「上端だけ下がり、フレームは返らない」の形であって、伸ばし直せないことではない**——縮めて伸ばし直す
+            // 検算（`syscall-test` の 67 と 105）を通し、`zi` の「返した数が釣り合う」判定まで届かせる（2026-10-06）。
+            if cfg!(feature = "brk-skip-shrink-test")
+                && common::addr::VirtAddr::new(page)
+                    .is_some_and(|virt| matches!(table.translate(virt), Ok(Some(_))))
+            {
+                page += PAGE_SIZE;
+                continue;
+            }
             let Some(frame) = allocator.allocate_frame() else {
                 outcome = (-ENOMEM) as u64;
                 break;

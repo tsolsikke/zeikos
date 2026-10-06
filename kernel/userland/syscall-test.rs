@@ -231,6 +231,19 @@ const PROT_RW: u32 = 3;
 const PROT_RX: u32 = 5;
 /// `-EPERM`（Linux の値は 1）。
 const MINUS_EPERM: i32 = -1;
+
+/// 検算 111（自分のコードのページを書ける形にする求め）の期待。**既定のビルドでは `-EPERM`。**
+///
+/// **葉に実行禁止のビットを立てないビルド（cfg `leaves_without_nx`。`nx-probe-only-leaf-test` を含む構成）では 0。**
+/// そのビルドでは、ハードウェアが「実行できない」を表せないので、カーネルはどのページも「実行できる」とは見ず、W^X の
+/// 確かめそのものが成り立たない。是正ではなく、期待の切り替えである（2026-10-06）。
+const WX_WRITE_CODE_EXPECTED: i32 = if cfg!(leaves_without_nx) { 0 } else { MINUS_EPERM };
+
+/// 検算 112（`spawn("/bin/mprotect-nx")` の結果）の期待。**既定のビルドでは「畳まれた・ベクタ 14」（`0x100 | 14`）。**
+///
+/// 葉に実行禁止のビットを立てないビルドでは、`PROT_READ` にしたコードのページも走り続けるので、`mprotect-nx` は 1 で終わる
+/// （上の [`WX_WRITE_CODE_EXPECTED`] と同じ理由）。
+const MPROTECT_NX_EXPECTED: i32 = if cfg!(leaves_without_nx) { 1 } else { 0x10e };
 /// `MAP_SHARED`。
 const MAP_SHARED: u32 = 1;
 /// `-EBADF`。
@@ -2130,7 +2143,7 @@ core::arch::global_asm!(
     "  cmp rax, 0x10e",
     "  jne 7f",
     // 111: 実行できるページ（自分のコード。2 ページの範囲の一部）を書ける形にする求めは -EPERM。何も変わらないので、
-    //      この後も走り続けられる。
+    //      この後も走り続けられる。**葉に実行禁止のビットを立てないビルドでは 0**（WX_WRITE_CODE_EXPECTED の doc）。
     "  mov eax, {sys_mprotect}",
     "  lea rdi, [rip + _start]",
     "  and rdi, -4096",
@@ -2138,16 +2151,17 @@ core::arch::global_asm!(
     "  mov edx, 3",
     "  int 0x80",
     "  mov edi, 111",
-    "  cmp rax, {minus_eperm}",
+    "  cmp rax, {wx_write_code_expected}",
     "  jne 7f",
-    // 112: spawn("/bin/mprotect-nx") は「畳まれた・ベクタ 14」（0x100 | 14）を返す。
+    // 112: spawn("/bin/mprotect-nx") は「畳まれた・ベクタ 14」（0x100 | 14）を返す。**葉に実行禁止のビットを立てない
+    //      ビルドでは 1**（MPROTECT_NX_EXPECTED の doc）。
     "  mov eax, {sys_spawn}",
     "  lea rdi, [rip + MPROTECT_NX_PATH]",
     "  lea rsi, [rip + ARGV_MPROTECT_NX]",
     "  lea rdx, [rip + ENVP_EMPTY]",
     "  int 0x80",
     "  mov edi, 112",
-    "  cmp rax, 0x10e",
+    "  cmp rax, {mprotect_nx_expected}",
     "  jne 7f",
     // 93: spawn("/bin/futex-wait") は 137 を返す（子は、起こす者の居ない FUTEX_WAIT で終わらせられる）。
     "  mov eax, {sys_spawn}",
@@ -2406,6 +2420,8 @@ core::arch::global_asm!(
     prot_rw = const PROT_RW,
     prot_rx = const PROT_RX,
     minus_eperm = const MINUS_EPERM,
+    wx_write_code_expected = const WX_WRITE_CODE_EXPECTED,
+    mprotect_nx_expected = const MPROTECT_NX_EXPECTED,
     sys_arch_prctl = const 158u32,
     arch_set_gs = const 0x1001u32,
     arch_set_fs = const 0x1002u32,
