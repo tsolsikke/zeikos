@@ -35,6 +35,7 @@ use core::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 
 use common::addr::{DirectMap, PhysAddr};
 
+use crate::abi::linux::x86_64::SYS_CLOCK_NANOSLEEP;
 use crate::abi::linux::x86_64::{
     stat_bytes, ARCH_GET_FS, ARCH_GET_GS, ARCH_SET_FS, ARCH_SET_GS, STAT_LEN, SYS_ACCEPT,
     SYS_ARCH_PRCTL, SYS_BIND, SYS_BRK, SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT, SYS_EXIT,
@@ -918,6 +919,12 @@ unsafe fn dispatch(
         SYS_CLOCK_GETTIME => {
             // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
             unsafe { sys_clock_gettime(args[0], args[1], page_table_root, direct_map) }
+        }
+        SYS_CLOCK_NANOSLEEP => {
+            // SAFETY: 同上。
+            unsafe {
+                sys_clock_nanosleep(args[0], args[1], args[2], page_table_root, direct_map, bkl)
+            }
         }
         SYS_NANOSLEEP => {
             // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
@@ -5655,7 +5662,13 @@ unsafe fn sys_nanosleep(
         return (-EINVAL) as u64;
     };
     let deadline = crate::arch::x86_64::monotonic_ticks().saturating_add(ticks);
+    sleep_until_ticks(deadline, bkl);
+    0
+}
 
+/// タイマの刻み `deadline` まで眠る（`nanosleep`・`clock_nanosleep` の本体。2026-10-07 に分けた）。**BKL を解いて譲り、
+/// 起きたら取り直す。** 早く起きたら数えて、もう 1 度眠る。
+fn sleep_until_ticks(deadline: u64, bkl: &mut Option<crate::bkl::BklGuard>) {
     while crate::arch::x86_64::monotonic_ticks() < deadline {
         TIMER_WAITS.fetch_add(1, Ordering::Relaxed);
         crate::task::set_current_waiting(crate::task::Wait::Timer { deadline });
@@ -5666,6 +5679,64 @@ unsafe fn sys_nanosleep(
             EARLY_TIMER_WAKES.fetch_add(1, Ordering::Relaxed);
         }
     }
+}
+
+/// `clock_nanosleep` の `flags`——`req` を絶対の時刻として読む（`TIMER_ABSTIME`）。
+const TIMER_ABSTIME: u64 = 1;
+/// `CLOCK_REALTIME`。**このカーネルは壁の時計を持たない**ので、相対の眠りだけを受け、絶対の時刻は `-EINVAL`。
+const CLOCK_REALTIME: u64 = 0;
+
+/// `clock_nanosleep(clockid, flags, req, rem)` の本体（2026-10-07。`ADR-0081` の続き）。**musl の `nanosleep` と Rust の
+/// `std::thread::sleep` は、`nanosleep` ではなくこれを打つ**（Seinas の fbdev の裏側が、絵を出したまま待つのに使う。実測で
+/// `-ENOSYS` が返り、`std` が止まった）。
+///
+/// - `flags` が 0: 相対。`nanosleep` と同じ（`CLOCK_REALTIME` でも `CLOCK_MONOTONIC` でも）。
+/// - `flags` に `TIMER_ABSTIME`: `req` は `CLOCK_MONOTONIC` の絶対の時刻（`clock_gettime` と同じ、起動からの刻みの時計）。
+///   過ぎていれば眠らずに 0。`CLOCK_REALTIME` の絶対は、壁の時計が無いので `-EINVAL`。
+/// - `rem` は書かない（割り込まれて早く戻る道が無い）。ほかの時計と知らないフラグは `-EINVAL`。
+///
+/// # Safety
+///
+/// `page_table_root` / `direct_map` が [`validate_user_range`] の契約を満たすこと。
+#[inline(never)]
+unsafe fn sys_clock_nanosleep(
+    clockid: u64,
+    flags: u64,
+    req: u64,
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+    bkl: &mut Option<crate::bkl::BklGuard>,
+) -> u64 {
+    if clockid != CLOCK_MONOTONIC && clockid != CLOCK_REALTIME {
+        return (-EINVAL) as u64;
+    }
+    if flags & !TIMER_ABSTIME != 0 {
+        return (-EINVAL) as u64;
+    }
+    let absolute = flags & TIMER_ABSTIME != 0;
+    if absolute && clockid == CLOCK_REALTIME {
+        return (-EINVAL) as u64;
+    }
+    // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+    let Some(slice) =
+        (unsafe { validate_user_range(page_table_root, direct_map, req, TIMESPEC_LEN as u64) })
+    else {
+        return (-EFAULT) as u64;
+    };
+    let mut raw = [0u8; TIMESPEC_LEN];
+    // SAFETY: `slice` は検証済みで、長さは TIMESPEC_LEN ちょうどである。
+    unsafe { copy_from_user(&mut raw, &slice) };
+    let request = parse_timespec(&raw);
+    let hz = u64::from(crate::machine::pc::timer_frequency_hz());
+    let Ok(ticks) = common::time::ticks_for_duration(request.sec, request.nsec, hz) else {
+        return (-EINVAL) as u64;
+    };
+    let deadline = if absolute {
+        ticks
+    } else {
+        crate::arch::x86_64::monotonic_ticks().saturating_add(ticks)
+    };
+    sleep_until_ticks(deadline, bkl);
     0
 }
 

@@ -7,6 +7,7 @@ pub use layout::{stat_bytes, STAT_LEN};
 
 mod numbers;
 
+pub use numbers::SYS_CLOCK_NANOSLEEP;
 pub use numbers::{
     ARCH_GET_FS, ARCH_GET_GS, ARCH_SET_FS, ARCH_SET_GS, SYS_ACCEPT, SYS_ARCH_PRCTL, SYS_BIND,
     SYS_BRK, SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT, SYS_EXIT, SYS_FTRUNCATE, SYS_GETDENTS64,

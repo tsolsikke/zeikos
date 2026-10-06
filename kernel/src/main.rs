@@ -9415,6 +9415,8 @@ const SYSCALL_TEST_STATUS: &[(u64, &str)] = &[
     (117, "poll with events=0 on fds 0, 1 and 2 did not return 0, or on a closed fd did not return 1 with POLLNVAL"),
     (118, "getpid/gettid did not return 1, madvise did not return 0 (or -EINVAL off a page boundary), or tkill did not refuse another tid, accept signal 0, and ignore SIGCHLD and an ignored SIGUSR1"),
     (119, "spawn(\"/bin/tkill-self\") did not end with status 134 (tkill(gettid(), SIGABRT) ends the process with 128 + 6)"),
+    // 120: clock_nanosleep（2026-10-07）。
+    (120, "clock_nanosleep did not return 0 for a zero-length relative sleep and a past absolute deadline, or did not return -EINVAL for an unknown clock"),
 ];
 
 /// `fault-test` が起こす #PF のエラーコード（S9-b-3-2a）。

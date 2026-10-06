@@ -141,3 +141,6 @@ pub const SYS_GETPID: u64 = 39;
 pub const SYS_GETTID: u64 = 186;
 /// `tkill(tid, sig)` の番号（2026-10-06。`__NR_tkill`。musl の `raise`・`abort` が自分へ送る形）。
 pub const SYS_TKILL: u64 = 200;
+/// `clock_nanosleep(clockid, flags, req, rem)` の番号（2026-10-07。`__NR_clock_nanosleep`。musl の `nanosleep` と
+/// Rust の `std::thread::sleep` は、`nanosleep` ではなくこちらを打つ）。
+pub const SYS_CLOCK_NANOSLEEP: u64 = 230;

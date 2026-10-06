@@ -159,6 +159,8 @@
 //! - `118` `getpid`・`gettid` が 1 を返さなかったか、`madvise` が 0（境界の外は `-EINVAL`）を返さなかったか、`tkill` が
 //!   ほかの tid を `-ESRCH` で断る・シグナル 0 を受ける・`SIGCHLD` と `SIG_IGN` の `SIGUSR1` を無視する、のどれかが違った
 //! - `119` `spawn("/bin/tkill-self")` が 134（`tkill(gettid(), SIGABRT)` で終わらせた。128 + 6）で終わらなかった
+//! - `120` `clock_nanosleep` が、長さ 0 の相対の眠りと過ぎた絶対の時刻で 0 を返さなかったか、知らない時計で `-EINVAL` を返さなかった
+//!   （起動時のこのプログラムは、本当に眠ると戻ってこない——スケジューラの刻みで起こされる形は、シェルの `sleep` が確かめる）
 //! - `69` 方向フラグを立てたまま打った `clock_gettime` が 0 を返さなかった（2026-09-24。
 //!   **判定の本体はカーネルの入口の監視である**——こちらは前提を作り、戻り値だけを見る）
 //! - `70` 読み込み先が読み取り専用のページ（このプログラムの `.rodata`）の `read` が `-EFAULT` を返さなかった
@@ -2392,6 +2394,39 @@ core::arch::global_asm!(
     "  mov edi, 119",
     "  cmp rax, 134",
     "  jne 7f",
+    // 120: clock_nanosleep(CLOCK_MONOTONIC, 0, {0, 0}) は 0（長さ 0 なので眠らない——起動時のここでは本当に眠れない）。
+    //      clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, {0, 0}) は過ぎた時刻（起点）で 0。clock_nanosleep(7, 0, …) は -EINVAL。
+    //      起動時のここではタイマの刻みが進まないことが在るので、どちらも待たない値にしてある。
+    //      timespec は rsp+136（16 バイト）。
+    "  mov qword ptr [rsp + 136], 0",
+    "  mov qword ptr [rsp + 144], 0",
+    "  mov eax, {sys_clock_nanosleep}",
+    "  mov edi, {clock_monotonic}",
+    "  xor esi, esi",
+    "  lea rdx, [rsp + 136]",
+    "  xor r10d, r10d",
+    "  int 0x80",
+    "  mov edi, 120",
+    "  test rax, rax",
+    "  jne 7f",
+    "  mov eax, {sys_clock_nanosleep}",
+    "  mov edi, {clock_monotonic}",
+    "  mov esi, 1",
+    "  lea rdx, [rsp + 136]",
+    "  xor r10d, r10d",
+    "  int 0x80",
+    "  mov edi, 120",
+    "  test rax, rax",
+    "  jne 7f",
+    "  mov eax, {sys_clock_nanosleep}",
+    "  mov edi, 7",
+    "  xor esi, esi",
+    "  lea rdx, [rsp + 136]",
+    "  xor r10d, r10d",
+    "  int 0x80",
+    "  mov edi, 120",
+    "  cmp rax, {minus_einval}",
+    "  jne 7f",
     // 93: spawn("/bin/futex-wait") は 137 を返す（子は、起こす者の居ない FUTEX_WAIT で終わらせられる）。
     "  mov eax, {sys_spawn}",
     "  lea rdi, [rip + FUTEX_WAIT_PATH]",
@@ -2685,6 +2720,7 @@ core::arch::global_asm!(
     sys_socket = const SYS_SOCKET,
     sys_connect = const SYS_CONNECT,
     sys_clock_gettime = const SYS_CLOCK_GETTIME,
+    sys_clock_nanosleep = const 230u32,
     clock_monotonic = const CLOCK_MONOTONIC,
     af_unix = const 1,
     sock_stream = const 1,
