@@ -119,6 +119,21 @@
 //! - `76` カーネルの番地を基底にする求めが `-EPERM` を返さなかった
 //! - `77` 知らない `code` が `-EINVAL` を返さなかった
 //! - `78` 書けない番地を渡した `ARCH_GET_FS` が `-EFAULT` を返さなかった
+//! - `80` `set_tid_address` が 1（唯一のスレッドの番号）を返さなかった（2026-10-06）
+//! - `81` `rt_sigaction(SIGPIPE, SIG_IGN)` が 0 を返さなかったか、読み戻した登録が `SIG_IGN` でなかった
+//! - `82` `rt_sigaction(SIGKILL, …)` が `-EINVAL` を返さなかった
+//! - `83` `rt_sigprocmask(SIG_BLOCK)` の後の問い合わせが、塞いだ集合を返さなかった
+//! - `84` `sigaltstack` で据えた後の問い合わせが、同じ `ss_sp`・`ss_size` を返さなかった
+//! - `85` `prlimit64(RLIMIT_STACK)` が 0 と `rlim_cur = 8 MiB` を返さなかった
+//! - `86` `getrandom(16)` が 16 を返さなかったか、16 バイトが全部 0 だった
+//! - `87` `futex(FUTEX_WAKE)` が 0 を返さなかった
+//! - `88` 値の違う `futex(FUTEX_WAIT)` が `-EAGAIN` を返さなかった
+//! - `89` `uname` が 0 を返さなかったか、`sysname` が `Linux` でなかった
+//! - `90` `readlink("/proc/self/exe")` が、このプログラムの名前を返さなかった
+//! - `91` 開いたファイルの `fstat` が、`stat` と同じ大きさを返さなかった
+//! - `92` `fcntl(F_GETFD)` が 0 を返さなかったか、`F_DUPFD_CLOEXEC` が下限以上の番号を返さなかった
+//! - `93` `spawn("/bin/futex-wait")` が 137 を返さなかった（起こす者の居ない `FUTEX_WAIT` は、プロセスを終わらせる）
+//! - `94` `SA_RESTORER` の無いハンドラの `rt_sigaction(SIGUSR1, …)` が `-EINVAL` を返さなかった
 //! - `69` 方向フラグを立てたまま打った `clock_gettime` が 0 を返さなかった（2026-09-24。
 //!   **判定の本体はカーネルの入口の監視である**——こちらは前提を作り、戻り値だけを見る）
 //! - `70` 読み込み先が読み取り専用のページ（このプログラムの `.rodata`）の `read` が `-EFAULT` を返さなかった
@@ -164,8 +179,8 @@ const PROBE_ARG5: u32 = 0x6666_6666;
 const SENTINEL_RCX: u32 = 0xCCCC_CCCC;
 /// `write` の番号（Linux と同じ 1）。
 const SYS_WRITE: u32 = 1;
-/// `exit` の番号（Linux と同じ 60）。
-const SYS_EXIT: u32 = 60;
+/// `exit_group` の番号（Linux と同じ 231。2026-10-06 から、終わりはこれで呼ぶ——Linux の libc が終わりに呼ぶ入口）。
+const SYS_EXIT_GROUP: u32 = 231;
 /// **永久に実装しない番号。** `-ENOSYS` が返ることを確かめるための的である。
 const NEVER_IMPLEMENTED: u32 = 0x10FF;
 /// `-ENOSYS`。失敗は `-errno` で返る（`ADR-0020`）。
@@ -1475,12 +1490,262 @@ core::arch::global_asm!(
     "  mov edi, 69",
     "  jne 9f",
 
+    // --- 80〜94: 起動に要る小物（2026-10-06。`ADR-0081`）。スタックに 128 バイト取る。 ---
+    //
+    // **受け皿の後ろの節に置く**（`.userland.after`。`user.ld`）。受け皿の位置は `0x401000` に固定してあり、`.text` が
+    // そこを越えるとリンカが止める。ここまでの検算で `.text` はほぼ一杯なので、ここからは受け皿の後ろに続ける。
+    // 節をまたぐのは明示の `jmp` だけで、落ちて入ることは無い。
+    "  jmp 20f",
+    ".section .userland.after,\"ax\"",
+    "20:",
+    // [rsp] 作業用の語 / [rsp+8..40] 登録の読み戻し（32 バイト）/ [rsp+40..64] 代替スタックの読み戻し（24 バイト）
+    // / [rsp+64..80] 上限の読み戻し（16 バイト）/ [rsp+80..96] 乱数（16 バイト）/ [rsp+96..128] 登録（32 バイト）
+    "  sub rsp, 128",
+    // 80: set_tid_address。
+    "  mov eax, {sys_set_tid_address}",
+    "  mov rdi, rsp",
+    "  int 0x80",
+    "  mov edi, 80",
+    "  cmp rax, 1",
+    "  jne 8f",
+    // 81: rt_sigaction(SIGPIPE, SIG_IGN) を登録し、読み戻す。
+    "  mov qword ptr [rsp + 96], 1",   // sa_handler = SIG_IGN
+    "  mov qword ptr [rsp + 104], 0",  // sa_flags
+    "  mov qword ptr [rsp + 112], 0",  // sa_restorer
+    "  mov qword ptr [rsp + 120], 0",  // sa_mask
+    "  mov eax, {sys_rt_sigaction}",
+    "  mov edi, 13",
+    "  lea rsi, [rsp + 96]",
+    "  xor edx, edx",
+    "  mov r10d, 8",
+    "  int 0x80",
+    "  mov edi, 81",
+    "  test rax, rax",
+    "  jne 8f",
+    "  mov eax, {sys_rt_sigaction}",
+    "  mov edi, 13",
+    "  xor esi, esi",
+    "  lea rdx, [rsp + 8]",
+    "  mov r10d, 8",
+    "  int 0x80",
+    "  mov edi, 81",
+    "  test rax, rax",
+    "  jne 8f",
+    "  cmp qword ptr [rsp + 8], 1",
+    "  jne 8f",
+    // 82: SIGKILL は替えられない。
+    "  mov eax, {sys_rt_sigaction}",
+    "  mov edi, 9",
+    "  lea rsi, [rsp + 96]",
+    "  xor edx, edx",
+    "  mov r10d, 8",
+    "  int 0x80",
+    "  mov edi, 82",
+    "  cmp rax, {minus_einval}",
+    "  jne 8f",
+    // 94: SA_RESTORER の無いハンドラは断られる。
+    "  mov qword ptr [rsp + 96], 0x401000", // sa_handler = 番地（SIG_DFL でも SIG_IGN でもない）
+    "  mov eax, {sys_rt_sigaction}",
+    "  mov edi, 10",
+    "  lea rsi, [rsp + 96]",
+    "  xor edx, edx",
+    "  mov r10d, 8",
+    "  int 0x80",
+    "  mov edi, 94",
+    "  cmp rax, {minus_einval}",
+    "  jne 8f",
+    // 83: rt_sigprocmask(SIG_BLOCK, {SIGUSR1}) then query.
+    "  mov qword ptr [rsp], 0x200",   // 1 << (10 - 1)
+    "  mov eax, {sys_rt_sigprocmask}",
+    "  xor edi, edi",               // SIG_BLOCK
+    "  mov rsi, rsp",
+    "  xor edx, edx",
+    "  mov r10d, 8",
+    "  int 0x80",
+    "  mov edi, 83",
+    "  test rax, rax",
+    "  jne 8f",
+    "  mov qword ptr [rsp + 8], 0",
+    "  mov eax, {sys_rt_sigprocmask}",
+    "  xor edi, edi",
+    "  xor esi, esi",
+    "  lea rdx, [rsp + 8]",
+    "  mov r10d, 8",
+    "  int 0x80",
+    "  mov edi, 83",
+    "  test rax, rax",
+    "  jne 8f",
+    "  cmp qword ptr [rsp + 8], 0x200",
+    "  jne 8f",
+    // 84: sigaltstack を据えて、問い合わせる。
+    "  mov qword ptr [rsp + 40], 0x700000", // ss_sp
+    "  mov qword ptr [rsp + 48], 0",        // ss_flags（と詰め物）
+    "  mov qword ptr [rsp + 56], 8192",     // ss_size
+    "  mov eax, {sys_sigaltstack}",
+    "  lea rdi, [rsp + 40]",
+    "  xor esi, esi",
+    "  int 0x80",
+    "  mov edi, 84",
+    "  test rax, rax",
+    "  jne 8f",
+    "  mov qword ptr [rsp + 40], 0",
+    "  mov qword ptr [rsp + 56], 0",
+    "  mov eax, {sys_sigaltstack}",
+    "  xor edi, edi",
+    "  lea rsi, [rsp + 40]",
+    "  int 0x80",
+    "  mov edi, 84",
+    "  test rax, rax",
+    "  jne 8f",
+    "  cmp qword ptr [rsp + 40], 0x700000",
+    "  jne 8f",
+    "  cmp qword ptr [rsp + 56], 8192",
+    "  jne 8f",
+    // 85: prlimit64(0, RLIMIT_STACK, NULL, old)。
+    "  mov eax, {sys_prlimit64}",
+    "  xor edi, edi",
+    "  mov esi, 3",
+    "  xor edx, edx",
+    "  lea r10, [rsp + 64]",
+    "  int 0x80",
+    "  mov edi, 85",
+    "  test rax, rax",
+    "  jne 8f",
+    "  cmp qword ptr [rsp + 64], 0x800000",
+    "  jne 8f",
+    // 86: getrandom(buf, 16, 0)。
+    "  mov qword ptr [rsp + 80], 0",
+    "  mov qword ptr [rsp + 88], 0",
+    "  mov eax, {sys_getrandom}",
+    "  lea rdi, [rsp + 80]",
+    "  mov esi, 16",
+    "  xor edx, edx",
+    "  int 0x80",
+    "  mov edi, 86",
+    "  cmp rax, 16",
+    "  jne 8f",
+    "  mov rax, qword ptr [rsp + 80]",
+    "  or rax, qword ptr [rsp + 88]",
+    "  jz 8f",
+    // 87: futex(FUTEX_WAKE|PRIVATE) は 0。
+    "  mov dword ptr [rsp], 1",
+    "  mov eax, {sys_futex}",
+    "  mov rdi, rsp",
+    "  mov esi, 129",   // FUTEX_WAKE | FUTEX_PRIVATE_FLAG
+    "  mov edx, 1",
+    "  int 0x80",
+    "  mov edi, 87",
+    "  test rax, rax",
+    "  jne 8f",
+    // 88: 値の違う futex(FUTEX_WAIT|PRIVATE) は -EAGAIN。
+    "  mov eax, {sys_futex}",
+    "  mov rdi, rsp",
+    "  mov esi, 128",   // FUTEX_WAIT | FUTEX_PRIVATE_FLAG
+    "  mov edx, 2",     // [rsp] は 1
+    "  xor r10d, r10d",
+    "  int 0x80",
+    "  mov edi, 88",
+    "  cmp rax, {minus_eagain}",
+    "  jne 8f",
+    // 89: uname。390 バイトの受け皿はスタックの下に取る。
+    "  sub rsp, 400",
+    "  mov eax, {sys_uname}",
+    "  mov rdi, rsp",
+    "  int 0x80",
+    "  mov edi, 89",
+    "  test rax, rax",
+    "  jne 7f",
+    "  cmp dword ptr [rsp], 0x756e694c",  // "Linu"
+    "  jne 7f",
+    "  cmp byte ptr [rsp + 4], 0x78",     // "x"
+    "  jne 7f",
+    // 90: readlink("/proc/self/exe") → "syscall-test"（12 バイト）。
+    "  mov eax, {sys_readlink}",
+    "  lea rdi, [rip + PROC_SELF_EXE]",
+    "  mov rsi, rsp",
+    "  mov edx, 64",
+    "  int 0x80",
+    "  mov edi, 90",
+    "  cmp rax, 12",
+    "  jne 7f",
+    "  cmp dword ptr [rsp], 0x63737973",  // "sysc"
+    "  jne 7f",
+    // 91: fstat(open("/etc/motd")) の大きさが stat と同じ。
+    "  mov eax, {sys_open}",
+    "  lea rdi, [rip + MOTD_PATH]",
+    "  mov esi, {o_rdonly}",
+    "  int 0x80",
+    "  mov edi, 91",
+    "  test rax, rax",
+    "  js 7f",
+    "  mov r12, rax",
+    "  mov eax, {sys_fstat}",
+    "  mov rdi, r12",
+    "  mov rsi, rsp",
+    "  int 0x80",
+    "  mov edi, 91",
+    "  test rax, rax",
+    "  jne 7f",
+    "  mov r13, qword ptr [rsp + 48]",    // st_size
+    "  mov eax, {sys_stat}",
+    "  lea rdi, [rip + MOTD_PATH]",
+    "  mov rsi, rsp",
+    "  int 0x80",
+    "  mov edi, 91",
+    "  test rax, rax",
+    "  jne 7f",
+    "  cmp r13, qword ptr [rsp + 48]",
+    "  jne 7f",
+    // 92: fcntl(fd, F_GETFD) は 0、F_DUPFD_CLOEXEC は 10 以上の番号。
+    "  mov eax, {sys_fcntl}",
+    "  mov rdi, r12",
+    "  mov esi, 1",       // F_GETFD
+    "  int 0x80",
+    "  mov edi, 92",
+    "  test rax, rax",
+    "  jne 7f",
+    "  mov eax, {sys_fcntl}",
+    "  mov rdi, r12",
+    "  mov esi, 1030",    // F_DUPFD_CLOEXEC
+    "  mov edx, 10",
+    "  int 0x80",
+    "  mov edi, 92",
+    "  cmp rax, 10",
+    "  jl 7f",
+    "  mov r13, rax",
+    "  mov eax, {sys_close}",
+    "  mov rdi, r13",
+    "  int 0x80",
+    "  mov eax, {sys_close}",
+    "  mov rdi, r12",
+    "  int 0x80",
+    // 93: spawn("/bin/futex-wait") は 137 を返す（子は、起こす者の居ない FUTEX_WAIT で終わらせられる）。
+    "  mov eax, {sys_spawn}",
+    "  lea rdi, [rip + FUTEX_WAIT_PATH]",
+    "  lea rsi, [rip + ARGV_FUTEX_WAIT]",
+    "  lea rdx, [rip + ENVP_EMPTY]",
+    "  int 0x80",
+    "  mov edi, 93",
+    "  cmp rax, 137",
+    "  jne 7f",
+    "  add rsp, 400",
+    "  add rsp, 128",
+
     // すべて通った。
     "  xor edi, edi",
+    "  jmp 9f",
+    // 80 番台の検算の失敗の出口（スタックを戻してから終わる）。
+    "7:",
+    "  add rsp, 400",
+    "8:",
+    "  add rsp, 128",
+    "  jmp 9f",
+    ".section .text._start,\"ax\"",
 
-    // --- 4. exit(status)。ここから戻らない ---
+    // --- 4. exit(status)。ここから戻らない。**`exit_group` で終わる**（2026-10-06。Linux の libc が終わりに呼ぶ
+    //     入口。受けられなければ `-ENOSYS` が返って受け皿へ落ちる） ---
     "9:",
-    "  mov eax, {sys_exit}",
+    "  mov eax, {sys_exit_group}",
     "  int 0x80",
     // **`exit` が戻ってきたときの受け皿**（`hello.rs` と同じ規律）。
     // **位置はリンカが決める**（`user.ld` の `USER_RECEIVER_OFFSET`）ので、
@@ -1511,6 +1776,12 @@ core::arch::global_asm!(
     "  .asciz \"/bin/hello\"",
     "PIE_HELLO_PATH:",
     "  .asciz \"/bin/pie-hello\"",
+    "FUTEX_WAIT_PATH:",
+    "  .asciz \"/bin/futex-wait\"",
+    "SPAWN_ARG_FUTEX_WAIT:",
+    "  .asciz \"futex-wait\"",
+    "PROC_SELF_EXE:",
+    "  .asciz \"/proc/self/exe\"",
     "SPAWN_ARG_PIE_HELLO:",
     "  .asciz \"pie-hello\"",
     "SPAWN_TEST_PATH:",
@@ -1522,6 +1793,9 @@ core::arch::global_asm!(
     "  .quad 0",
     "ARGV_PIE_HELLO:",
     "  .quad SPAWN_ARG_PIE_HELLO",
+    "  .quad 0",
+    "ARGV_FUTEX_WAIT:",
+    "  .quad SPAWN_ARG_FUTEX_WAIT",
     "  .quad 0",
     // **空の `envp`（f-2。`ADR-0053` の Decision 2）。**
     //
@@ -1614,7 +1888,18 @@ core::arch::global_asm!(
     msg_len = const MESSAGE_LEN,
     never = const NEVER_IMPLEMENTED,
     minus_enosys = const MINUS_ENOSYS,
-    sys_exit = const SYS_EXIT,
+    sys_exit_group = const SYS_EXIT_GROUP,
+    sys_set_tid_address = const 218u32,
+    sys_rt_sigaction = const 13u32,
+    sys_rt_sigprocmask = const 14u32,
+    sys_sigaltstack = const 131u32,
+    sys_prlimit64 = const 302u32,
+    sys_getrandom = const 318u32,
+    sys_futex = const 202u32,
+    sys_uname = const 63u32,
+    sys_readlink = const 89u32,
+    sys_fstat = const 5u32,
+    sys_fcntl = const 72u32,
     sys_open = const SYS_OPEN,
     sys_close = const SYS_CLOSE,
     o_rdonly = const O_RDONLY,

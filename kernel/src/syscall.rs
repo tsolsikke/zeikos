@@ -38,9 +38,11 @@ use common::addr::{DirectMap, PhysAddr};
 use crate::abi::linux::x86_64::{
     stat_bytes, ARCH_GET_FS, ARCH_GET_GS, ARCH_SET_FS, ARCH_SET_GS, STAT_LEN, SYS_ACCEPT,
     SYS_ARCH_PRCTL, SYS_BIND, SYS_BRK, SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT, SYS_EXIT,
-    SYS_FTRUNCATE, SYS_GETDENTS64, SYS_IOCTL, SYS_LISTEN, SYS_LSEEK, SYS_MEMFD_CREATE, SYS_MKDIR,
-    SYS_MMAP, SYS_NANOSLEEP, SYS_OPEN, SYS_POLL, SYS_READ, SYS_RECVMSG, SYS_RMDIR, SYS_SENDMSG,
-    SYS_SOCKET, SYS_STAT, SYS_UNLINK, SYS_WRITE,
+    SYS_EXIT_GROUP, SYS_FCNTL, SYS_FSTAT, SYS_FTRUNCATE, SYS_FUTEX, SYS_GETDENTS64, SYS_GETRANDOM,
+    SYS_IOCTL, SYS_LISTEN, SYS_LSEEK, SYS_MEMFD_CREATE, SYS_MKDIR, SYS_MMAP, SYS_NANOSLEEP,
+    SYS_OPEN, SYS_POLL, SYS_PRLIMIT64, SYS_READ, SYS_READLINK, SYS_RECVMSG, SYS_RMDIR,
+    SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SENDMSG, SYS_SENDTO, SYS_SET_TID_ADDRESS,
+    SYS_SIGALTSTACK, SYS_SOCKET, SYS_STAT, SYS_UNAME, SYS_UNLINK, SYS_WRITE,
 };
 use crate::abi::linux::{
     cmsg_one_fd_bytes, dirent64_record, dirent64_record_len, fb_fix_screeninfo_bytes,
@@ -58,7 +60,7 @@ use crate::abi::linux::{
     E2BIG, EACCES, EADDRINUSE, EAFNOSUPPORT, EAGAIN, EBADF, EBUSY, ECHILD, ECONNREFUSED, EEXIST,
     EFAULT, EINVAL, EIO, EISCONN, EISDIR, EMFILE, EMSGSIZE, ENAMETOOLONG, ENOBUFS, ENODEV, ENOENT,
     ENOEXEC, ENOMEM, ENOSPC, ENOSYS, ENOTCONN, ENOTDIR, ENOTEMPTY, ENOTSOCK, ENOTTY, EPERM, EPIPE,
-    EPROTONOSUPPORT, EROFS, ESPIPE,
+    EPROTONOSUPPORT, EROFS, ESPIPE, ESRCH,
 };
 use crate::abi::private::{
     zdiag_text_len, DETACHED_STDOUT_TO_PIPE, FBIOZPRESENT, PROBE_NUMBER, SPAWN_FOLDED_FLAG,
@@ -346,6 +348,9 @@ struct SyscallState {
     process_exited: AtomicBool,
     /// [`SYS_EXIT`] が受け取った終了状態（RDI）。[`SyscallState::process_exited`] が真のときだけ意味を持つ。
     process_exit_status: AtomicU64,
+    /// `futex` の `FUTEX_WAIT` で、値が同じで待つ場面になった番地（2026-10-06）。**起こすスレッドが居ないので、
+    /// プロセスを終わらせる**。0 なら起きていない。載せる側が、判定の行に出す。
+    futex_deadlock_address: AtomicU64,
     /// `syscall_entry` が呼ばれた回数（会計用。W1-c-3 で大域から移した）。
     invocation_count: AtomicU64,
     /// 直近に受け取った番号（RAX）。往復検証で PROBE_NUMBER と突き合わせる。
@@ -372,6 +377,7 @@ impl SyscallState {
             user_window_end: AtomicU64::new(0),
             process_exited: AtomicBool::new(false),
             process_exit_status: AtomicU64::new(0),
+            futex_deadlock_address: AtomicU64::new(0),
             invocation_count: AtomicU64::new(0),
             last_number: AtomicU64::new(0),
             last_args: [const { AtomicU64::new(0) }; 6],
@@ -740,16 +746,13 @@ pub unsafe fn copy_to_user(slice: &UserSliceMut, at: u64, src: &[u8]) -> usize {
 ///`page_table_root` / `direct_map` は稼働中テーブルのもの（syscall_entry
 /// が用意する）で、ポインタ検証にのみ使う。
 ///
-/// # `exit_group`（231）はまだ無い
+/// # `exit_group`（231）は `exit` と同じ
 ///
 /// あちらは「呼んだスレッドが属するスレッドグループ全体を終わらせる」呼び出しで、
-/// **ZeikOS にはスレッドの概念が無い。** 番号を用意しても、`exit` と区別できる
-/// 振る舞いが書けない。**同じ振る舞いの入口を 2 つ置くと、どちらが正なのかが
-/// 呼び出し側にも実装側にも決まらない。** そう考えて、スレッドを作る段階で足すことにしていた。
-///
-/// **この前提は 2026-10-04 に変わった**（`ADR-0074`。Linux のプログラムをそのまま動かすことを目指す）。
-/// Linux 向けの libc は、スレッドを使わないプログラムでも、終わるときに `exit_group` を呼ぶ。
-/// したがって、スレッドより前の、Linux のプログラムを動かす段で足す。スレッドが無い間は `exit` と同じ振る舞いになる。
+/// **ZeikOS にはスレッドの概念が無い。** 以前は「`exit` と区別できる振る舞いが書けないので、スレッドを作る段階で
+/// 足す」としていた。**この前提は 2026-10-04 に変わった**（`ADR-0074`。Linux のプログラムをそのまま動かすことを
+/// 目指す）。Linux 向けの libc は、スレッドを使わないプログラムでも、終わるときに `exit_group` を呼ぶ。
+/// **2026-10-06 に足した。** スレッドが無い間は `exit` と同じ振る舞いである（同じ分岐を通る）。
 ///
 /// # Safety
 ///
@@ -959,7 +962,84 @@ unsafe fn dispatch(
                 Err(e) => (-errno_for_file_table(e)) as u64,
             }
         }
-        SYS_EXIT => {
+        SYS_FSTAT => {
+            // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+            unsafe { sys_fstat(args[0], args[1], page_table_root, direct_map) }
+        }
+        SYS_RT_SIGACTION => {
+            // SAFETY: 同上。
+            unsafe {
+                sys_rt_sigaction(
+                    args[0],
+                    args[1],
+                    args[2],
+                    args[3],
+                    page_table_root,
+                    direct_map,
+                )
+            }
+        }
+        SYS_RT_SIGPROCMASK => {
+            // SAFETY: 同上。
+            unsafe {
+                sys_rt_sigprocmask(
+                    args[0],
+                    args[1],
+                    args[2],
+                    args[3],
+                    page_table_root,
+                    direct_map,
+                )
+            }
+        }
+        SYS_SIGALTSTACK => {
+            // SAFETY: 同上。
+            unsafe { sys_sigaltstack(args[0], args[1], page_table_root, direct_map) }
+        }
+        SYS_SET_TID_ADDRESS => sys_set_tid_address(args[0]),
+        SYS_FUTEX => {
+            // SAFETY: 同上。
+            unsafe { sys_futex(args[0], args[1], args[2], page_table_root, direct_map) }
+        }
+        SYS_PRLIMIT64 => {
+            // SAFETY: 同上。
+            unsafe {
+                sys_prlimit64(
+                    args[0],
+                    args[1],
+                    args[2],
+                    args[3],
+                    page_table_root,
+                    direct_map,
+                )
+            }
+        }
+        SYS_GETRANDOM => {
+            // SAFETY: 同上。
+            unsafe { sys_getrandom(args[0], args[1], args[2], page_table_root, direct_map) }
+        }
+        SYS_UNAME => {
+            // SAFETY: 同上。
+            unsafe { sys_uname(args[0], page_table_root, direct_map) }
+        }
+        SYS_READLINK => {
+            // SAFETY: 同上。
+            unsafe { sys_readlink(args[0], args[1], args[2], page_table_root, direct_map) }
+        }
+        SYS_FCNTL => sys_fcntl(args[0], args[1], args[2]),
+        SYS_SENDTO => {
+            // **繋いだ相手へ送る `sendto` は `write` と同じである**（`addr` を渡す形は、繋がないソケットの
+            // ものなので断る）。`flags`（`MSG_DONTWAIT`・`MSG_NOSIGNAL`）は見ない——ソケットへの `write` は
+            // 待たないし、シグナルは無い。
+            if args[4] != 0 {
+                (-EISCONN) as u64
+            } else {
+                // SAFETY: 同上。
+                unsafe { sys_write(args[0], args[1], args[2], page_table_root, direct_map, bkl) }
+            }
+        }
+        // **`exit_group` は、スレッドが無い間は `exit` と同じである**（この関数の doc。2026-10-06 に足した）。
+        SYS_EXIT | SYS_EXIT_GROUP => {
             // **記録するだけである。** Ring 3 へ返らない分岐は `syscall_entry` が
             // 持つ（この関数の doc）。**戻り値は読まれない。**
             //
@@ -2997,12 +3077,14 @@ pub(crate) unsafe extern "sysv64" fn syscall_entry(
         }
     };
 
-    // **exit だけは Ring 3 へ返らない。**
+    // **プロセスを終わらせる呼び出しは、Ring 3 へ返らない。** `exit` と `exit_group`（2026-10-06 に足した。スレッドが
+    // 無い間は同じ）と、`futex` の待つ場面（起こす者が居ないので終わらせる。`dispatch` が終了の印を立てる）である。
+    // **見るのは番号ではなく、終了の印である**——どの経路でも、印が立っていれば返らない。
     //
     // 破壊テスト (S9-b-3-1, user-exit-ignored): 終了させずに Ring 3 へ返す。プロセスは
     // `exit` の直後に置いた `ud2` へ落ち、ベクタ 6 の例外による終了処理として現れる。
     #[cfg(not(feature = "user-exit-ignored"))]
-    if request.number == SYS_EXIT {
+    if state.process_exited.load(Ordering::SeqCst) {
         // **BKL は自分で解く。** 下の `leave_user_mode` は longjmp で、`Drop` を
         // 走らせない。**取ったまま戻ると、二度と解かれない。**
         //
@@ -4233,6 +4315,552 @@ unsafe fn sys_arch_prctl(
     page_table_root: PhysAddr,
     direct_map: DirectMap,
 ) -> u64 {
+    sys_arch_prctl_body(code, address, page_table_root, direct_map)
+}
+
+/// ユーザーの番地から、決まった長さの値を読む（2026-10-06。小物の呼び出しの共通の形）。**範囲を検証してから写す。**
+/// 読めなければ `None`（呼ぶ側が `-EFAULT` にする）。
+///
+/// # Safety
+///
+/// `page_table_root` / `direct_map` が稼働中のテーブルのものであること。
+unsafe fn read_user_fixed<const N: usize>(
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+    address: u64,
+) -> Option<[u8; N]> {
+    // SAFETY: 呼び出し元契約による。
+    let slice = unsafe { validate_user_range(page_table_root, direct_map, address, N as u64) }?;
+    let mut bytes = [0u8; N];
+    // SAFETY: slice は検証済みで、長さは N ちょうどである。
+    (unsafe { copy_from_user(&mut bytes, &slice) } == N).then_some(bytes)
+}
+
+/// ユーザーの番地へ、決まった長さの値を書く（2026-10-06）。**範囲を検証してから写す。** 書けなければ `false`。
+///
+/// # Safety
+///
+/// `page_table_root` / `direct_map` が稼働中のテーブルのものであること。
+unsafe fn write_user_fixed(
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+    address: u64,
+    bytes: &[u8],
+) -> bool {
+    // SAFETY: 呼び出し元契約による。
+    let Some(slice) = (unsafe {
+        validate_user_range_for_write(page_table_root, direct_map, address, bytes.len() as u64)
+    }) else {
+        return false;
+    };
+    // SAFETY: slice は検証済みで、長さは bytes.len() ちょうどである。
+    unsafe { copy_to_user(&slice, 0, bytes) == bytes.len() }
+}
+
+/// [`crate::process_state::StateError`] を errno へ写す。
+fn errno_for_state(error: crate::process_state::StateError) -> u64 {
+    use crate::process_state::StateError;
+    match error {
+        StateError::Invalid => (-EINVAL) as u64,
+        StateError::TooSmall => (-ENOMEM) as u64,
+    }
+}
+
+/// `rt_sigaction(sig, act, oldact, sigsetsize)`（2026-10-06。`ADR-0081`）。**登録して、前の登録を返す。配送はしない。**
+///
+/// `sigsetsize` は 8 だけ（Linux と同じ）。`act` が 0 なら問い合わせ、`oldact` が 0 なら返さない。
+///
+/// # Safety
+///
+/// `page_table_root` / `direct_map` が稼働中のテーブルのものであること（遠征の中で呼ぶ）。
+#[inline(never)]
+unsafe fn sys_rt_sigaction(
+    signal: u64,
+    act: u64,
+    oldact: u64,
+    sigsetsize: u64,
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+) -> u64 {
+    use crate::process_state::SigAction;
+
+    if sigsetsize != 8 {
+        return (-EINVAL) as u64;
+    }
+    let new = if act == 0 {
+        None
+    } else {
+        // SAFETY: 呼び出し元契約をそのまま渡す。
+        match unsafe { read_user_fixed::<32>(page_table_root, direct_map, act) } {
+            Some(bytes) => Some(SigAction::from_bytes(&bytes)),
+            None => return (-EFAULT) as u64,
+        }
+    };
+    let old = match crate::process_state::with_current(|state| state.set_action(signal, new)) {
+        Ok(old) => old,
+        Err(error) => return errno_for_state(error),
+    };
+    if oldact != 0 {
+        // SAFETY: 呼び出し元契約をそのまま渡す。
+        let written =
+            unsafe { write_user_fixed(page_table_root, direct_map, oldact, &old.to_bytes()) };
+        if !written {
+            return (-EFAULT) as u64;
+        }
+    }
+    0
+}
+
+/// `rt_sigprocmask(how, set, oldset, sigsetsize)`（2026-10-06）。**マスクを控えて、前のマスクを返す。** 配送が無いので
+/// 値は振る舞いに効かない——控えるのは、問い合わせに同じ値を返すためである。
+///
+/// # Safety
+///
+/// `page_table_root` / `direct_map` が稼働中のテーブルのものであること。
+#[inline(never)]
+unsafe fn sys_rt_sigprocmask(
+    how: u64,
+    set: u64,
+    oldset: u64,
+    sigsetsize: u64,
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+) -> u64 {
+    if sigsetsize != 8 {
+        return (-EINVAL) as u64;
+    }
+    let new = if set == 0 {
+        None
+    } else {
+        // SAFETY: 呼び出し元契約をそのまま渡す。
+        match unsafe { read_user_fixed::<8>(page_table_root, direct_map, set) } {
+            Some(bytes) => Some(u64::from_le_bytes(bytes)),
+            None => return (-EFAULT) as u64,
+        }
+    };
+    let old = match crate::process_state::with_current(|state| state.change_mask(how, new)) {
+        Ok(old) => old,
+        Err(error) => return errno_for_state(error),
+    };
+    if oldset != 0 {
+        // SAFETY: 呼び出し元契約をそのまま渡す。
+        let written =
+            unsafe { write_user_fixed(page_table_root, direct_map, oldset, &old.to_le_bytes()) };
+        if !written {
+            return (-EFAULT) as u64;
+        }
+    }
+    0
+}
+
+/// `sigaltstack(ss, old_ss)`（2026-10-06）。**控えて、前の値を返す。** 代替スタックの上で何かを走らせることは、
+/// 配送が無いので、まだ無い。
+///
+/// # Safety
+///
+/// `page_table_root` / `direct_map` が稼働中のテーブルのものであること。
+#[inline(never)]
+unsafe fn sys_sigaltstack(
+    ss: u64,
+    old_ss: u64,
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+) -> u64 {
+    use crate::process_state::AltStack;
+
+    let new = if ss == 0 {
+        None
+    } else {
+        // SAFETY: 呼び出し元契約をそのまま渡す。
+        match unsafe { read_user_fixed::<24>(page_table_root, direct_map, ss) } {
+            Some(bytes) => Some(AltStack::from_bytes(&bytes)),
+            None => return (-EFAULT) as u64,
+        }
+    };
+    let old = match crate::process_state::with_current(|state| state.set_alt_stack(new)) {
+        Ok(old) => old,
+        Err(error) => return errno_for_state(error),
+    };
+    if old_ss != 0 {
+        // SAFETY: 呼び出し元契約をそのまま渡す。
+        let written =
+            unsafe { write_user_fixed(page_table_root, direct_map, old_ss, &old.to_bytes()) };
+        if !written {
+            return (-EFAULT) as u64;
+        }
+    }
+    0
+}
+
+/// このカーネルが返すスレッドの番号（`set_tid_address` の戻り値。2026-10-06）。**プロセスは 1 つずつ走り、スレッドは
+/// 無い**ので、決まった値である。`getpid` を足すときは、同じ値を返す。
+const THE_ONLY_TID: u64 = 1;
+
+/// `set_tid_address(tidptr)`（2026-10-06）。**番地を控えて、スレッドの番号を返す。** スレッドが終わるときにそこへ 0 を
+/// 書いて `futex` で起こす仕組みは、スレッドが無いので要らない（番地は控えるだけ）。
+fn sys_set_tid_address(address: u64) -> u64 {
+    crate::process_state::with_current(|state| state.set_tid_address(address));
+    THE_ONLY_TID
+}
+
+/// `futex` の `op` から、`FUTEX_PRIVATE_FLAG`（128）と `FUTEX_CLOCK_REALTIME`（256）を外した命令の部分。
+const FUTEX_CMD_MASK: u64 = 0x7f;
+const FUTEX_WAIT: u64 = 0;
+const FUTEX_WAKE: u64 = 1;
+const FUTEX_WAIT_BITSET: u64 = 9;
+const FUTEX_WAKE_BITSET: u64 = 10;
+
+/// `futex(uaddr, op, val, …)`（2026-10-06。`ADR-0081`）。**スレッドが 1 本しか無い間の形である。**
+///
+/// - `FUTEX_WAKE`: 起こす相手は居ないので、0（起こした数）を返す。
+/// - `FUTEX_WAIT`: `*uaddr` が `val` と違えば `-EAGAIN`（Linux と同じ。待たずに戻る）。**同じなら、本当なら待つ場面
+///   である。起こすスレッドは居ないので、偽りの戻り値は返さず、番地を控えてプロセスを終わらせる**（終了状態は
+///   [`FUTEX_DEADLOCK_STATUS`]。載せる側が判定の行に出す）。行き詰まりを隠さない。スレッドが入ったら、本当に待つ形にする
+///   （`docs/deferred-decisions.md`）。
+/// - ほかの `op` は `-ENOSYS`。
+///
+/// # Safety
+///
+/// `page_table_root` / `direct_map` が稼働中のテーブルのものであること。
+#[inline(never)]
+unsafe fn sys_futex(
+    uaddr: u64,
+    op: u64,
+    val: u64,
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+) -> u64 {
+    match op & FUTEX_CMD_MASK {
+        FUTEX_WAKE | FUTEX_WAKE_BITSET => 0,
+        FUTEX_WAIT | FUTEX_WAIT_BITSET => {
+            // SAFETY: 呼び出し元契約をそのまま渡す。
+            let Some(bytes) = (unsafe { read_user_fixed::<4>(page_table_root, direct_map, uaddr) })
+            else {
+                return (-EFAULT) as u64;
+            };
+            if u64::from(u32::from_le_bytes(bytes)) != (val & 0xffff_ffff) {
+                return (-EAGAIN) as u64;
+            }
+            // **待つ場面である。** 起こす者が居ないので、終わらせる。
+            state()
+                .futex_deadlock_address
+                .store(uaddr, Ordering::SeqCst);
+            state()
+                .process_exit_status
+                .store(FUTEX_DEADLOCK_STATUS, Ordering::SeqCst);
+            state().process_exited.store(true, Ordering::SeqCst);
+            0
+        }
+        _ => (-ENOSYS) as u64,
+    }
+}
+
+/// `FUTEX_WAIT` で待つ場面になったプロセスの終了状態（2026-10-06）。**128 + 9（`SIGKILL`）**——シェルが「シグナルで
+/// 終わった」と見せる値で、`exit` が返しうる 0 から 255 の値とは、判定の行の文言で区別する。
+pub const FUTEX_DEADLOCK_STATUS: u64 = 137;
+
+/// `prlimit64` の資源の番号（`asm-generic/resource.h`）。
+const RLIMIT_STACK: u64 = 3;
+const RLIMIT_NOFILE: u64 = 7;
+/// `RLIM64_INFINITY`。
+const RLIM_INFINITY: u64 = u64::MAX;
+/// `RLIMIT_STACK` の `rlim_cur`（8 MiB。Linux の既定と同じ値を答える。実際のスタックは配置が決める——
+/// `crate::userland::ProcessLayout`）。
+const STACK_LIMIT_ANSWER: u64 = 8 * 1024 * 1024;
+
+/// `prlimit64(pid, resource, new, old)`（2026-10-06）。**問い合わせだけを受ける。**
+///
+/// `pid` は 0（自分）か [`THE_ONLY_TID`]。`new` を渡す求め（上限を変える）は `-EPERM`——変える意味の在る上限が無い。
+/// 答えるのは `RLIMIT_STACK`（8 MiB・無限）と `RLIMIT_NOFILE`（fd の表の大きさ）で、ほかは `-EINVAL`。
+///
+/// # Safety
+///
+/// `page_table_root` / `direct_map` が稼働中のテーブルのものであること。
+#[inline(never)]
+unsafe fn sys_prlimit64(
+    pid: u64,
+    resource: u64,
+    new_limit: u64,
+    old_limit: u64,
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+) -> u64 {
+    if pid != 0 && pid != THE_ONLY_TID {
+        return (-ESRCH) as u64;
+    }
+    if new_limit != 0 {
+        return (-EPERM) as u64;
+    }
+    let (current, max) = match resource {
+        RLIMIT_STACK => (STACK_LIMIT_ANSWER, RLIM_INFINITY),
+        RLIMIT_NOFILE => (
+            crate::vfs::MAX_OPEN_FILES as u64,
+            crate::vfs::MAX_OPEN_FILES as u64,
+        ),
+        _ => return (-EINVAL) as u64,
+    };
+    if old_limit != 0 {
+        let mut bytes = [0u8; 16];
+        bytes[..8].copy_from_slice(&current.to_le_bytes());
+        bytes[8..].copy_from_slice(&max.to_le_bytes());
+        // SAFETY: 呼び出し元契約をそのまま渡す。
+        if !unsafe { write_user_fixed(page_table_root, direct_map, old_limit, &bytes) } {
+            return (-EFAULT) as u64;
+        }
+    }
+    0
+}
+
+/// `getrandom` の `flags`（`GRND_NONBLOCK`・`GRND_RANDOM`・`GRND_INSECURE`）。どれも見ない——出所は 1 つで、待たない。
+const GRND_KNOWN_FLAGS: u64 = 0b111;
+/// 1 回の `getrandom` で書く長さの上限。Linux は長い要求を途中で切って返してよい（呼ぶ側は足りない分を呼び直す）。
+const GETRANDOM_MAX: u64 = 256;
+
+/// `getrandom(buf, len, flags)`（2026-10-06）。**`AT_RANDOM` と同じ出所の 16 バイトを並べて書く。暗号に使える値ではない**
+/// （`crate::arch::x86_64::random` の doc。`docs/deferred-decisions.md`）。
+///
+/// # Safety
+///
+/// `page_table_root` / `direct_map` が稼働中のテーブルのものであること。
+#[inline(never)]
+unsafe fn sys_getrandom(
+    buf: u64,
+    len: u64,
+    flags: u64,
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+) -> u64 {
+    if flags & !GRND_KNOWN_FLAGS != 0 {
+        return (-EINVAL) as u64;
+    }
+    let len = len.min(GETRANDOM_MAX);
+    // SAFETY: 呼び出し元契約をそのまま渡す。
+    let Some(slice) =
+        (unsafe { validate_user_range_for_write(page_table_root, direct_map, buf, len) })
+    else {
+        return (-EFAULT) as u64;
+    };
+    let mut written = 0u64;
+    while written < len {
+        let (bytes, _) = crate::arch::x86_64::weak_random_bytes();
+        let take = (len - written).min(bytes.len() as u64) as usize;
+        // SAFETY: slice は検証済みで、`written + take <= len` である。
+        if unsafe { copy_to_user(&slice, written, &bytes[..take]) } != take {
+            return (-EFAULT) as u64;
+        }
+        written += take as u64;
+    }
+    written
+}
+
+/// `struct utsname` の 1 欄の長さ（`__NEW_UTS_LEN + 1`）。6 欄で 390 バイト。
+const UTSNAME_FIELD: usize = 65;
+/// `uname` が答える値（2026-10-06。`ADR-0081`）。**`sysname` は `Linux`、`release` は Linux の版の形**——Linux と完全互換の
+/// 方針（`ADR-0074`）で、libc はこの 2 つを見て振る舞いを選ぶ（glibc は `release` の数字でカーネルの版を確かめる）。
+/// `version` にこの OS の名前を置く。
+const UTSNAME_FIELDS: [&[u8]; 6] = [
+    b"Linux",
+    b"zeikos",
+    b"6.1.0-zeikos",
+    b"#1 ZeikOS",
+    b"x86_64",
+    b"(none)",
+];
+
+/// `uname(buf)`（2026-10-06）。**欄を 1 つずつ書く**（390 バイトの控えを遠征スタックに置かない）。
+///
+/// # Safety
+///
+/// `page_table_root` / `direct_map` が稼働中のテーブルのものであること。
+#[inline(never)]
+unsafe fn sys_uname(buf: u64, page_table_root: PhysAddr, direct_map: DirectMap) -> u64 {
+    let total = (UTSNAME_FIELD * UTSNAME_FIELDS.len()) as u64;
+    // SAFETY: 呼び出し元契約をそのまま渡す。
+    let Some(slice) =
+        (unsafe { validate_user_range_for_write(page_table_root, direct_map, buf, total) })
+    else {
+        return (-EFAULT) as u64;
+    };
+    for (index, value) in UTSNAME_FIELDS.iter().enumerate() {
+        let mut field = [0u8; UTSNAME_FIELD];
+        field[..value.len()].copy_from_slice(value);
+        // SAFETY: slice は検証済みで、欄は範囲の中に収まる。
+        if unsafe { copy_to_user(&slice, (index * UTSNAME_FIELD) as u64, &field) } != UTSNAME_FIELD
+        {
+            return (-EFAULT) as u64;
+        }
+    }
+    0
+}
+
+/// `readlink(path, buf, bufsiz)`（2026-10-06）。**答えるのは `/proc/self/exe` だけ**（Rust の `std` が、自分の実行ファイルの
+/// 名前を求めて読む）。ext2 にシンボリックリンクはまだ無いので、ほかの道は `-EINVAL`（在るがリンクでない）か `-ENOENT`。
+/// 返すのは、載せたときに控えた名前（`crate::process_state`）で、長ければ `bufsiz` で切る（Linux と同じ。NUL は付けない）。
+///
+/// # Safety
+///
+/// `page_table_root` / `direct_map` が稼働中のテーブルのものであること。
+#[inline(never)]
+unsafe fn sys_readlink(
+    path: u64,
+    buf: u64,
+    bufsiz: u64,
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+) -> u64 {
+    let mut name = [0u8; PATH_MAX];
+    // SAFETY: 呼び出し元契約をそのまま渡す。
+    let len = match unsafe { copy_user_path(&mut name, path, page_table_root, direct_map) } {
+        Ok(len) => len,
+        Err(errno) => return (-errno) as u64,
+    };
+    if &name[..len] != b"/proc/self/exe" {
+        return match crate::vfs::root_filesystem().and_then(|fs| fs.lookup(&name[..len])) {
+            Ok(_) => (-EINVAL) as u64,
+            Err(e) => (-errno_for_ext2(e)) as u64,
+        };
+    }
+    let mut exec = [0u8; crate::process_state::EXEC_NAME_MAX];
+    let exec_len = crate::process_state::with_current(|state| {
+        let found = state.exec_name();
+        exec[..found.len()].copy_from_slice(found);
+        found.len()
+    });
+    let take = (exec_len as u64).min(bufsiz) as usize;
+    // SAFETY: 同上。
+    if !unsafe { write_user_fixed(page_table_root, direct_map, buf, &exec[..take]) } {
+        return (-EFAULT) as u64;
+    }
+    take as u64
+}
+
+/// `fcntl` の `cmd`（`asm-generic/fcntl.h`）。
+const F_DUPFD: u64 = 0;
+const F_GETFD: u64 = 1;
+const F_SETFD: u64 = 2;
+const F_GETFL: u64 = 3;
+const F_SETFL: u64 = 4;
+const F_DUPFD_CLOEXEC: u64 = 1030;
+const F_ADD_SEALS: u64 = 1033;
+const F_GET_SEALS: u64 = 1034;
+
+/// `fcntl(fd, cmd, arg)`（2026-10-06）。**fd の表の小物。**
+///
+/// - `F_GETFD`・`F_SETFD`: `FD_CLOEXEC` は持たない（`exec` が無い）。問い合わせは 0、設定は受けて 0。
+/// - `F_GETFL`・`F_SETFL`: 開いたときのフラグは持たない。問い合わせは 0、設定（`O_NONBLOCK` など）は受けて 0
+///   ——**ソケットの読みは、もとから待たない**（`-EAGAIN`）。
+/// - `F_DUPFD`・`F_DUPFD_CLOEXEC`: 同じ `File` を、`arg` 以上の最小の空き番号へ写す。**Regular は位置を共有しない**
+///   （Linux は共有する。`File` が位置を持つため。`docs/deferred-decisions.md`）。
+/// - `F_ADD_SEALS`・`F_GET_SEALS`: 共有メモリにだけ。印は持たないので、足す求めは受けて 0、問い合わせは 0。
+/// - 知らない `cmd` は `-EINVAL`。無い fd は `-EBADF`。
+fn sys_fcntl(fd: u64, cmd: u64, arg: u64) -> u64 {
+    let fd = fd as usize;
+    match cmd {
+        F_GETFD | F_SETFD | F_GETFL | F_SETFL => {
+            crate::vfs::with_current_files(|files| match files.get(fd) {
+                Ok(_) => 0,
+                Err(error) => (-errno_for_file_table(error)) as u64,
+            })
+        }
+        F_DUPFD | F_DUPFD_CLOEXEC => crate::vfs::with_current_files(|files| {
+            let copy = match files.get(fd) {
+                Ok(file) => *file,
+                Err(error) => return (-errno_for_file_table(error)) as u64,
+            };
+            match files.insert_at_or_above(copy, arg as usize) {
+                Ok(new_fd) => new_fd as u64,
+                Err(error) => (-errno_for_file_table(error)) as u64,
+            }
+        }),
+        F_ADD_SEALS | F_GET_SEALS => crate::vfs::with_current_files(|files| match files.get(fd) {
+            Ok(crate::vfs::File::Shm { .. }) => 0,
+            Ok(_) => (-EINVAL) as u64,
+            Err(error) => (-errno_for_file_table(error)) as u64,
+        }),
+        _ => (-EINVAL) as u64,
+    }
+}
+
+/// `fstat(fd, statbuf)`（2026-10-06）。**`stat` と同じ欄を、fd から埋める。**
+///
+/// - 開いたファイル: inode の値（`stat` と同じ）。
+/// - 共有メモリ: 普通のファイル（`S_IFREG | 0o600`）で、据えた大きさ。
+/// - ソケット: `S_IFSOCK | 0o777`。パイプ: `S_IFIFO | 0o600`。
+/// - 端末・入力・画面: 文字装置（`S_IFCHR | 0o620`。Linux の `/dev/tty` の形）。
+///
+/// # Safety
+///
+/// `page_table_root` / `direct_map` が稼働中のテーブルのものであること。
+#[inline(never)]
+unsafe fn sys_fstat(
+    fd: u64,
+    statbuf: u64,
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+) -> u64 {
+    const S_IFREG: u32 = 0o100000;
+    const S_IFCHR: u32 = 0o020000;
+    const S_IFSOCK: u32 = 0o140000;
+    const S_IFIFO: u32 = 0o010000;
+
+    let found = crate::vfs::with_current_files(|files| files.get(fd as usize).copied());
+    let stat = match found {
+        Err(error) => return (-errno_for_file_table(error)) as u64,
+        Ok(crate::vfs::File::Regular { inode, .. }) => Stat {
+            ino: u64::from(inode.number()),
+            nlink: u64::from(inode.links_count()),
+            mode: u32::from(inode.mode()),
+            size: inode.size(),
+            blocks: u64::from(inode.blocks_512()),
+        },
+        Ok(crate::vfs::File::Shm { shm }) => {
+            let size = crate::shm::size_of(shm).unwrap_or(0);
+            Stat {
+                ino: 0,
+                nlink: 1,
+                mode: S_IFREG | 0o600,
+                size,
+                blocks: size.div_ceil(512),
+            }
+        }
+        Ok(crate::vfs::File::Socket { .. }) => Stat {
+            ino: 0,
+            nlink: 1,
+            mode: S_IFSOCK | 0o777,
+            size: 0,
+            blocks: 0,
+        },
+        Ok(crate::vfs::File::PipeRead { .. }) | Ok(crate::vfs::File::PipeWrite { .. }) => Stat {
+            ino: 0,
+            nlink: 1,
+            mode: S_IFIFO | 0o600,
+            size: 0,
+            blocks: 0,
+        },
+        // 端末・入力・画面は、文字装置として答える。
+        Ok(_) => Stat {
+            ino: 0,
+            nlink: 1,
+            mode: S_IFCHR | 0o620,
+            size: 0,
+            blocks: 0,
+        },
+    };
+    let out = stat_bytes(&stat);
+    // SAFETY: 呼び出し元契約をそのまま渡す。
+    if !unsafe { write_user_fixed(page_table_root, direct_map, statbuf, &out) } {
+        return (-EFAULT) as u64;
+    }
+    0
+}
+
+/// `arch_prctl` の本体（`sys_arch_prctl` から分けた。2026-10-06。中身は変えていない）。
+fn sys_arch_prctl_body(
+    code: u64,
+    address: u64,
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+) -> u64 {
     let read = match code {
         ARCH_SET_FS => {
             return if crate::arch::x86_64::set_user_fs_base(address) {
@@ -5328,6 +5956,7 @@ pub fn reset_counters() {
     state.in_ring3_at_entry.store(false, Ordering::SeqCst);
     state.process_exited.store(false, Ordering::SeqCst);
     state.process_exit_status.store(0, Ordering::SeqCst);
+    state.futex_deadlock_address.store(0, Ordering::SeqCst);
     state.write_fd.store(0, Ordering::SeqCst);
     state.write_len.store(0, Ordering::SeqCst);
     for slot in state.write_buf.iter() {
@@ -5476,6 +6105,28 @@ pub fn probe_seen_args() -> [u64; 6] {
 }
 
 /// [`SYS_EXIT`] を受け取ったか（S9-b-3-1）。
+/// `futex` の待つ場面の記録を消す（2026-10-06）。**載せる側が、判定の行に出した後に呼ぶ**——記録はスロットごとで、
+/// 消さないと、親が終わるときに子のものをもう 1 度出す。
+///
+/// # 契約（境界の関数。2026-10-06）
+///
+/// - 記録を 0 に戻すだけである。
+pub fn clear_futex_deadlock_address() {
+    state().futex_deadlock_address.store(0, Ordering::SeqCst);
+}
+
+/// `futex` の `FUTEX_WAIT` で待つ場面になって、プロセスを終わらせたときの番地（2026-10-06。無ければ `None`）。
+///
+/// # 契約（境界の関数。2026-10-06）
+///
+/// - 読むだけで、何も変えない。載せる側が、プロセスが終わった後の判定の行に出す。
+pub fn futex_deadlock_address() -> Option<u64> {
+    match state().futex_deadlock_address.load(Ordering::SeqCst) {
+        0 => None,
+        address => Some(address),
+    }
+}
+
 pub fn process_exited() -> bool {
     state().process_exited.load(Ordering::SeqCst)
 }

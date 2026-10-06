@@ -596,6 +596,21 @@ impl FileTable {
         Err(FileTableError::NoFreeDescriptor)
     }
 
+    /// `at` 以上の最小の空き番号へ置き、その番号を返す（`fcntl` の `F_DUPFD`。2026-10-06）。
+    pub fn insert_at_or_above(&mut self, file: File, at: usize) -> Result<usize, FileTableError> {
+        if at >= self.slots.len() {
+            return Err(FileTableError::BadDescriptor(at));
+        }
+        for (fd, slot) in self.slots.iter_mut().enumerate().skip(at) {
+            if slot.is_none() {
+                *slot = Some(file);
+                self.opened = self.opened.saturating_add(1);
+                return Ok(fd);
+            }
+        }
+        Err(FileTableError::NoFreeDescriptor)
+    }
+
     /// 番号を閉じる。**開いていない番号は拒む。**
     pub fn remove(&mut self, fd: usize) -> Result<File, FileTableError> {
         self.slots

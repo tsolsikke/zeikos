@@ -98,3 +98,30 @@ pub const SYS_RECVMSG: u64 = 47;
 
 /// `memfd_create` の番号（`ADR-0065`。`asm/unistd_64.h` の `__NR_memfd_create`）。
 pub const SYS_MEMFD_CREATE: u64 = 319;
+
+/// `fstat(fd, statbuf)` の番号（2026-10-06。`__NR_fstat`）。
+pub const SYS_FSTAT: u64 = 5;
+/// `rt_sigaction(sig, act, oldact, sigsetsize)` の番号（2026-10-06。`__NR_rt_sigaction`）。
+pub const SYS_RT_SIGACTION: u64 = 13;
+/// `rt_sigprocmask(how, set, oldset, sigsetsize)` の番号（2026-10-06。`__NR_rt_sigprocmask`）。
+pub const SYS_RT_SIGPROCMASK: u64 = 14;
+/// `sendto(fd, buf, len, flags, addr, addrlen)` の番号（2026-10-06。`__NR_sendto`）。
+pub const SYS_SENDTO: u64 = 44;
+/// `uname(buf)` の番号（2026-10-06。`__NR_uname`）。
+pub const SYS_UNAME: u64 = 63;
+/// `fcntl(fd, cmd, arg)` の番号（2026-10-06。`__NR_fcntl`）。
+pub const SYS_FCNTL: u64 = 72;
+/// `readlink(path, buf, bufsiz)` の番号（2026-10-06。`__NR_readlink`）。
+pub const SYS_READLINK: u64 = 89;
+/// `sigaltstack(ss, old_ss)` の番号（2026-10-06。`__NR_sigaltstack`）。
+pub const SYS_SIGALTSTACK: u64 = 131;
+/// `futex(uaddr, op, val, timeout, uaddr2, val3)` の番号（2026-10-06。`__NR_futex`）。
+pub const SYS_FUTEX: u64 = 202;
+/// `set_tid_address(tidptr)` の番号（2026-10-06。`__NR_set_tid_address`）。
+pub const SYS_SET_TID_ADDRESS: u64 = 218;
+/// `exit_group(status)` の番号（2026-10-06。`__NR_exit_group`）。
+pub const SYS_EXIT_GROUP: u64 = 231;
+/// `prlimit64(pid, resource, new, old)` の番号（2026-10-06。`__NR_prlimit64`）。
+pub const SYS_PRLIMIT64: u64 = 302;
+/// `getrandom(buf, len, flags)` の番号（2026-10-06。`__NR_getrandom`）。
+pub const SYS_GETRANDOM: u64 = 318;

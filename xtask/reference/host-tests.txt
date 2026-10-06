@@ -706,6 +706,11 @@ kernel::paging::plan::tests::resolve_pages_never_produces_zero_size_gaps_between
 kernel::paging::plan::tests::resolve_pages_uses_2mib_core_and_4kib_fringe
 kernel::paging::plan::tests::unmapped_types_are_excluded
 kernel::pipe::tests::the_pipe_frees_itself_only_when_both_ends_and_the_reservation_are_gone
+kernel::process_state::tests::a_sigaction_survives_the_round_trip_through_its_bytes
+kernel::process_state::tests::sigaction_refuses_what_linux_refuses_and_returns_the_old_action
+kernel::process_state::tests::the_alternate_stack_is_kept_checked_and_read_back
+kernel::process_state::tests::the_exec_name_is_kept_up_to_the_limit
+kernel::process_state::tests::the_mask_changes_by_how_and_never_blocks_kill_or_stop
 kernel::quarantine::tests::a_frame_is_not_returned_while_its_generation_is_still_live
 kernel::quarantine::tests::a_frame_is_returned_once_every_core_has_passed_its_generation
 kernel::quarantine::tests::a_released_slot_can_be_reused_by_a_later_free

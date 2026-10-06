@@ -119,6 +119,8 @@ fn build_user_programs(manifest_dir: &str, out_dir: &str) {
         "debug-trap-syscall",
         "compat-syscall",
         "spawn-test",
+        // **`FUTEX_WAIT` で待つ場面に入り、終わらせられる 1 本**（2026-10-06。`syscall-test` が `spawn` で起こす）。
+        "futex-wait",
         "ls",
         "cat",
         "zash",
@@ -701,6 +703,8 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
         // **位置独立の像（2026-10-06）。** `syscall-test` が `spawn` で起こし、ファイルシステムを通る道で
         // 位置独立の像が載ることを確かめる。
         "pie-hello",
+        // **`FUTEX_WAIT` で待つ場面に入る 1 本**（2026-10-06）。`syscall-test` が `spawn` で起こし、終わらせられることを確かめる。
+        "futex-wait",
         "spawn-test",
         "ls",
         "cat",

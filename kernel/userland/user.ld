@@ -109,6 +109,11 @@ SECTIONS
   . = MAX(ALIGN(., 4096), USER_LOAD_ADDR + USER_RECEIVER_OFFSET);
   .userland.receiver : { KEEP(*(.userland.receiver)) }
 
+  /* 受け皿の後ろに続く本文（2026-10-06。`syscall-test` の 80 番台の検算）。**同じ権限（r-x）なので、同じ PT_LOAD
+   * に入る。** 受け皿を越える長さの本文を、受け皿の位置を動かさずに置くための節で、**明示の `jmp` でだけ出入り
+   * する。** このセクションを持たないプログラムでは何も起きない。 */
+  .userland.after : { *(.userland.after) }
+
   /* **受け皿が動いていないことを要求する。**
    *
    * **`MAX` は、上の上限が消える代わりに 1 つ静かに壊れる道を開ける**——

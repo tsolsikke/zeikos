@@ -175,6 +175,7 @@ pub const PATH_RULES: &[PathRule] = &[
             // **Ring 3 の核**——**既定の起動が `init` とシェルと起動時の `syscall-test` を走らせ、SMP の
             // 項目も Ring 3 を AP で走らせる。**
             "kernel/src/syscall.rs",
+            "kernel/src/process_state.rs",
             "kernel/src/userland.rs",
             "kernel/userland/userlib.rs",
             "kernel/userland/user.ld",
@@ -221,6 +222,7 @@ pub const PATH_RULES: &[PathRule] = &[
             "kernel/userland/spin.rs",
             "kernel/userland/hello.rs",
             "kernel/userland/pie-hello.rs",
+            "kernel/userland/futex-wait.rs",
             "kernel/userland/chello.c",
             "kernel/userland/dbfault.c",
             "kernel/userland/fp*.c",

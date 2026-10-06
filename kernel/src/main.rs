@@ -9276,6 +9276,22 @@ const SYSCALL_TEST_STATUS: &[(u64, &str)] = &[
         78,
         "arch_prctl did not return -EFAULT for a destination it cannot write",
     ),
+    // 80 から 93: 起動に要る小物（2026-10-06。`ADR-0081`）。
+    (80, "set_tid_address did not return the only thread id (1)"),
+    (81, "rt_sigaction(SIGPIPE, SIG_IGN) did not return 0, or reading it back did not give SIG_IGN"),
+    (82, "rt_sigaction(SIGKILL, ...) did not return -EINVAL"),
+    (83, "rt_sigprocmask(SIG_BLOCK) then a query did not return the blocked set"),
+    (84, "sigaltstack: setting a stack then querying did not return the same sp and size"),
+    (85, "prlimit64(RLIMIT_STACK) did not return 0 with rlim_cur = 8 MiB"),
+    (86, "getrandom(16 bytes) did not return 16, or the bytes were all zero"),
+    (87, "futex(FUTEX_WAKE) did not return 0"),
+    (88, "futex(FUTEX_WAIT) with a different value did not return -EAGAIN"),
+    (89, "uname did not return 0 with sysname = Linux"),
+    (90, "readlink(/proc/self/exe) did not return the program's name"),
+    (91, "fstat on an open file did not report the same size as stat"),
+    (92, "fcntl(F_GETFD) did not return 0, or F_DUPFD_CLOEXEC did not return a descriptor at or above the floor"),
+    (93, "spawn(\"/bin/futex-wait\") did not return 137 (a FUTEX_WAIT with no one to wake must end the process)"),
+    (94, "rt_sigaction(SIGUSR1, handler without SA_RESTORER) did not return -EINVAL"),
 ];
 
 /// `fault-test` が起こす #PF のエラーコード（S9-b-3-2a）。

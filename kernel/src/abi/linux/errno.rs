@@ -11,6 +11,9 @@ pub const ENOSYS: i64 = 38;
 /// `-EFAULT`（不正なアドレス）の errno。ユーザーポインタ検証に落ちたとき返す。
 pub const EFAULT: i64 = 14;
 
+/// `-ESRCH`（そのプロセスは居ない）の errno。`prlimit64` が、自分以外の `pid` に返す（2026-10-06）。
+pub const ESRCH: i64 = 3;
+
 /// `-EINVAL`（引数が不正）の errno（S9-a）。**アドレスは正しいが、値が受け付け
 /// られない**ときに返す。現在の用途は [`crate::syscall::CHECKSUM_BUF_LEN`] の超過だけである。
 ///

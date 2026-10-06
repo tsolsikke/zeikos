@@ -50,6 +50,7 @@ pub mod memory_map;
 pub mod page_survey;
 pub mod paging;
 pub mod pipe;
+pub mod process_state;
 pub mod quarantine;
 pub mod ring;
 pub mod shm;

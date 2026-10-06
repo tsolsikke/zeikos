@@ -136,6 +136,13 @@ pub fn pages_for(size: u64) -> usize {
 ///
 /// 破壊テスト (`ADR-0065`, shm-ftruncate-ignores-size): 何ページ要っても 1 ページしか取らない。
 /// **模様の後ろが欠け、往復のバイト比べが落ちる。**
+/// 据えた大きさ（バイト。`fstat` が答える。2026-10-06）。**無い共有メモリなら `None`。**
+pub fn size_of(shm: u8) -> Option<u64> {
+    let index = shm as usize;
+    let shms = SHMS.lock();
+    (index < MAX_SHM && shms[index].in_use).then(|| shms[index].len)
+}
+
 pub fn set_size(shm: u8, size: u64) -> TruncateOutcome {
     let index = shm as usize;
     {

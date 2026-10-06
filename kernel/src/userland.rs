@@ -2226,6 +2226,17 @@ fn report_user_stack_high_water(logger: &mut Logger<Serial>, process: &UserProce
     ));
 }
 
+/// `futex` で待つ場面に入ったプロセスを終わらせたことを 1 行出す（2026-10-06）。**`#[inline(never)]`** で、
+/// `format_args!` の一時値を [`run_loaded_program`] のフレームへ乗せない。
+#[inline(never)]
+fn report_futex_deadlock(logger: &mut Logger<Serial>, name: &str, address: u64) {
+    logger.warn(format_args!(
+        "futex: {name} waited on {address:#x} (FUTEX_WAIT with the expected value) and there is no \
+         other thread to wake it; the process was ended with status {} instead of sleeping forever",
+        crate::syscall::FUTEX_DEADLOCK_STATUS
+    ));
+}
+
 /// カーネルスタックの高水位を 1 行出す（`ADR-0068` の (c)）。
 ///
 /// **`#[inline(never)]` にしてある**——**`format_args!` の一時値を [`run_loaded_program`] のフレームへ
@@ -2303,6 +2314,9 @@ unsafe fn run_loaded_program(
     let previous_files = crate::vfs::swap_current_files(core::mem::take(&mut process.files));
     // **ヒープも据える（H-a）。** **据える側が戻す**（`files` と同じ形）。
     let previous_heap = swap_current_heap(process.heap);
+    // **プロセスごとの小さな状態（シグナルの登録など）を初めの形に戻し、名前を控える**（2026-10-06）。スロットと
+    // 深さで引くので、据え替えの写しは要らない（`crate::process_state`）。
+    crate::process_state::reset_for_next_process(process.name.as_bytes());
     // **前景を取る（S11-10）。** 取っているあいだ、カーネル側の消費者
     // （`interrupts::drain_keyboard`）はスキャンコードを取り出さない。
     // **入力の消費者は同時に 1 つである**（`crate::input` の不変条件）。
@@ -2434,6 +2448,14 @@ unsafe fn run_loaded_program(
     // **限界も同じである**——**プログラムが毒値そのものを書いたら、使ったとは
     // 数えられない。** **下側から数えるので、間に毒値が挟まっても影響しない。**
     report_user_stack_high_water(logger, process);
+    // **`futex` で待つ場面に入って、終わらせたプロセス**（2026-10-06。`ADR-0081`）。スレッドが 1 本しか無い間は、
+    // 起こす者が居ないので、偽りの戻り値を返さずに終わらせる。**行き詰まりを隠さない。**
+    if let Some(address) = crate::syscall::futex_deadlock_address() {
+        report_futex_deadlock(logger, process.name, address);
+        // **出したら消す**——記録はスロットごとで、親（`spawn` で待っていた側）が終わるときに、子のものを
+        // もう 1 度出さないため。
+        crate::syscall::clear_futex_deadlock_address();
+    }
 
     // **この遠征で遠征スタックをどれだけ使ったかを出す（S11-5）。**
     //
