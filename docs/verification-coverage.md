@@ -2545,6 +2545,21 @@ Linux向けのプログラムは、スレッドローカルの領域（TLS）を
 
 **確かめていないこと。** 並べて走る項目は、終わったときに塊でログへ書かれる。走っている途中の項目の中で出た異常は、その項目が終わるまで、この道具からは見えない（見えるのは、長く走っていることだけである）。
 
+### 起動に要る小さなシステムコールと、シグナルの登録（2026-10-06）
+
+Linuxのlibcが起動の最初に呼ぶ小物（`set_tid_address`・`rt_sigaction`・`rt_sigprocmask`・`sigaltstack`・`futex`・`prlimit64`・`getrandom`・`uname`・`readlink`・`fstat`・`fcntl`・`sendto`・`exit_group`）を足した。設計と理由は`ADR-0081`に在る。
+
+**起動のたびに確かめていること。** `syscall-test`の検算80から94が、それぞれの呼び出しを打って、戻り値と読み戻した値を見る（番号の意味は`kernel/src/main.rs`の`SYSCALL_TEST_STATUS`と、`kernel/userland/syscall-test.rs`の頭の表）。`syscall-test`自身は`exit_group`で終わる——受けられなければ`-ENOSYS`が返って受け皿へ落ち、`folded instead of exiting`で止まる。`spawn("/bin/futex-wait")`が137を返すこと（検算93）と、`futex: /bin/futex-wait waited on … the process was ended with status 137`の行が、起動ログの参照に在る。
+
+| 何を | どう確かめているか |
+|---|---|
+| シグナルの登録・マスク・代替スタックの純粋な論理（断る条件、前の値を返すこと、並びの往復） | ホストの試験（`kernel/src/process_state.rs`） |
+| 13本の呼び出しが、Linuxの形で受けて返すこと | `syscall-test`の検算80から94 |
+| 起こす者の居ない`FUTEX_WAIT`が、偽りの戻り値を返さずにプロセスを終わらせること | `syscall-test`の検算93（`/bin/futex-wait`を`spawn`する）と、起動ログの参照 |
+| `exit`・`exit_group`・`futex`の待つ場面が、同じ「返らない」道を通ること | `syscall-test`が`exit_group`で終わること（既定の起動） |
+
+**確かめていないこと。** `fstat`の端末・ソケット・パイプ・共有メモリの欄の値は、検算に入れていない（開いたファイルだけ）。`sendto`は`socket-test`の側で、`write`と同じ道を通ることを前提にしており、`sendto`そのものは打っていない。`readlink`の`/proc/self/exe`以外の道（`-EINVAL`・`-ENOENT`）も検算に入れていない。破壊テストは、まだ足していない（小物の1つを壊すと`syscall-test`の対応する番号で止まるので、検算そのものが破壊の受け皿になる）。
+
 ### 位置独立の像の読み込みと、補助ベクタ（2026-10-06）
 
 位置独立の像（`ET_DYN`。静的PIE）を、決まった量だけずらして載せる。載せる側は、像の全体を持たず、範囲を読む口から要る所だけを読む。初期スタックには、補助ベクタ（`auxv`）を積む。設計と理由は`ADR-0080`に在る（ユーザースタックを4ページにした経緯は`ADR-0041`のAddendum）。
