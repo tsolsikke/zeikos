@@ -760,7 +760,7 @@ kernel::task::tests::workers_rotate
 kernel::userland::tests::a_new_process_maps_from_the_base
 kernel::userland::tests::mmap_stops_at_the_end_of_the_layout
 kernel::userland::tests::the_default_environment_carries_home
-kernel::userland::tests::the_executable_layout_keeps_the_old_addresses
+kernel::userland::tests::the_executable_layout_has_a_four_page_stack_above_a_guard
 kernel::userland::tests::the_idle_heap_hands_out_no_mmap_address
 kernel::userland::tests::the_mmap_address_does_not_outlive_the_process
 kernel::userland::tests::the_position_independent_layout_keeps_its_regions_apart

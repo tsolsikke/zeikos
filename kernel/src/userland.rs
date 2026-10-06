@@ -42,13 +42,20 @@ use crate::syscall::{MAX_ARGV_BYTES, MAX_ENVP_BYTES, MAX_EXECUTABLE_SIZE, PATH_M
 /// 新しい空間の下位は空なので関係が無い。**
 pub const USER_PROGRAM_SUBTREE_INDEX: usize = 0;
 
-/// ユーザープログラムのスタックの上端（S9-b-1）。1 ページだけマップする。
+/// ユーザープログラムのスタックの上端（S9-b-1）。
 ///
 /// `hello` のイメージは `0x400000` から 2 ページなので、十分離れた位置に置く。
 ///
 /// **位置を決めてリンクした像（`ET_EXEC`）の配置である**（[`ProcessLayout::EXECUTABLE`]）。位置独立の像は、別の配置を
 /// 使う（[`ProcessLayout::POSITION_INDEPENDENT`]）。
 const USER_PROGRAM_STACK_TOP: u64 = 0x0080_0000;
+
+/// 位置を決めてリンクした像のスタックの大きさ（4 ページ。2026-10-06）。
+///
+/// **S9-b-1 から 1 ページだった。** 補助ベクタを積むようになって初期データが約 190 バイト増え、`/bin/ls` と `zash` の
+/// 使用量が 1 ページの半分を越えた（`ADR-0041` の決定 4 の決めどき。実測で 51% と 71%）。4 ページにして、下に見張りの
+/// ページを置いた（`ADR-0041` の Addendum）。
+const USER_PROGRAM_STACK_BYTES: u64 = 4 * 4096;
 
 /// プロセスの番地の配置（2026-10-05）。**像の種類ごとに 1 つ在る。**
 ///
@@ -63,11 +70,12 @@ const USER_PROGRAM_STACK_TOP: u64 = 0x0080_0000;
 ///
 /// | | 像 | ヒープ | `mmap` | スタック |
 /// |---|---|---|---|---|
-/// | `ET_EXEC`（今までの形） | リンクした番地 | 像の末尾 〜 `0x7ff000` | `0x1000_0000` 〜 | `0x7ff000..0x800000`（1 ページ） |
+/// | `ET_EXEC`（今までの形） | リンクした番地 | 像の末尾 〜 `0x7fb000` | `0x1000_0000` 〜 | `0x7fc000..0x800000`（4 ページ） |
 /// | `ET_DYN`（静的 PIE） | `0x400000` だけずらす | 像の末尾 〜 `0x0fff_f000` | `0x1000_0000` 〜 スタックの見張りの下 | `0x7f_ffff_f000` の下の 256 KiB |
 ///
-/// **位置独立の像のスタックの下には、写さないページを 1 枚置く**（見張りのページ）。スタックが尽きると、そこを踏んで
-/// ページフォルトになり、プロセスが終わる。`mmap` は、そのページより下までしか配らない。
+/// **どちらの配置も、スタックの下に写さないページを 1 枚置く**（見張りのページ。`ET_EXEC` は 2026-10-06 から。
+/// それまでは 1 ページのスタックのすぐ下がヒープの上限で、あふれるとヒープを黙って壊すおそれが在った）。スタックが
+/// 尽きると、そこを踏んでページフォルトになり、プロセスが終わる。`ET_DYN` の `mmap` は、そのページより下までしか配らない。
 ///
 /// **`ET_EXEC` の配置は、1 つも変えていない**（既存のプログラムは、今までと同じ番地に載る）。2 つを 1 つに揃えるか
 /// どうかは、後で決める（`docs/deferred-decisions.md`）。
@@ -94,8 +102,8 @@ impl ProcessLayout {
     /// 位置を決めてリンクした像（`ET_EXEC`）の配置。**今までの定数と同じ値である。**
     pub const EXECUTABLE: Self = Self {
         stack_top: USER_PROGRAM_STACK_TOP,
-        stack_bytes: Self::PAGE,
-        stack_guard: false,
+        stack_bytes: USER_PROGRAM_STACK_BYTES,
+        stack_guard: true,
         heap_limit: HEAP_LIMIT,
         mmap_base: crate::syscall::MMAP_BASE,
         mmap_limit: 1 << 47,
@@ -715,9 +723,9 @@ pub fn with_current_heap<R>(body: impl FnOnce(&mut Heap) -> R) -> R {
 
 /// ヒープが越えられない上端（H-a。ADR-0044 の決定 4）。
 ///
-/// **ユーザースタックの下端である。** **ガードページは置かず、ここで断る**
-/// ——**越えなければ衝突しない。**
-pub const HEAP_LIMIT: u64 = USER_PROGRAM_STACK_TOP - HEAP_PAGE_SIZE;
+/// **ユーザースタックの見張りのページの下端である**（2026-10-06 まではスタックの下端そのもので、見張りのページは
+/// 無かった）。ヒープはここで断られ、スタックは見張りのページで止まる——**どちらが尽きても、もう一方を黙って壊さない。**
+pub const HEAP_LIMIT: u64 = USER_PROGRAM_STACK_TOP - USER_PROGRAM_STACK_BYTES - HEAP_PAGE_SIZE;
 
 /// ユーザースタックの未使用部分を埋める既知のバイト（EV。ADR-0041）。
 ///
@@ -1706,8 +1714,8 @@ fn note_position_independent_placement(
 #[inline(never)]
 fn note_stack_guard_page(logger: &mut Logger<Serial>, guard: u64) {
     logger.info(format_args!(
-        "user-load: the page below the stack ({guard:#x}) is left unmapped as a guard; mmap hands \
-         out addresses below it"
+        "user-load: the page below the stack ({guard:#x}) is left unmapped as a guard; neither the \
+         heap nor mmap is placed on it"
     ));
 }
 
@@ -1963,8 +1971,15 @@ fn load_segments_and_stack(
             return Err(UserLoadError::OutOfFrames);
         };
         let at = direct_map.phys_to_virt(frame).as_u64() as *mut u8;
+        // **いちばん上のページは 0 で埋め（初期データを積んだ後に、その下を既知のバイトで埋める）、下のページは
+        // 初めから既知のバイトで埋める**（2026-10-06。使用量を、スタックの全部で測るため）。
+        let fill = if page == stack_page {
+            0
+        } else {
+            USER_STACK_FILL
+        };
         // SAFETY: いま取ったフレーム。direct map が覆っている。
-        unsafe { core::ptr::write_bytes(at, 0, PAGE_SIZE as usize) };
+        unsafe { core::ptr::write_bytes(at, fill, PAGE_SIZE as usize) };
         let Some(virt) = common::addr::VirtAddr::new(page) else {
             let _ = allocator.deallocate_frame(frame);
             return Err(UserLoadError::NotCanonical(page));
@@ -2059,9 +2074,9 @@ fn load_segments_and_stack(
     };
     process.stack_top = initial_sp;
 
-    // **未使用部分を既知のバイトで埋める（EV）。** **初期データの下は、
+    // **いちばん上のページの未使用部分を既知のバイトで埋める（EV）。** **初期データの下は、
     // これからプログラムが使う領域である。** 遠征スタックと同じ形で、
-    // **戻ってから高水位を読む**（[`USER_STACK_FILL`]）。
+    // **戻ってから高水位を読む**（[`USER_STACK_FILL`]。下のページは、写すときに埋めてある）。
     //
     // **順序に理由がある。** **積んだ後に埋める**——先に埋めると、
     // 積んだ文字列と表を毒値が上書きする。
@@ -2138,56 +2153,69 @@ fn load_segments_and_stack(
     Ok(())
 }
 
-/// ユーザースタックの高水位を判定行に出す（EV。ADR-0041）。
+/// ユーザースタックの高水位を出す（EV。ADR-0041 の決定 4）。
 ///
-/// # 解禁条件を機械にする
+/// **スタックの全部のページを、下から読む**（2026-10-06。それまでは 1 ページだった）。各ページは、載せるときに既知の
+/// バイトで埋めてある（いちばん上のページは、初期データの下だけ）。**既知のバイトでない最初の位置から上端までが、
+/// 使った量である。**
 ///
-/// **ADR-0041 は「半分を超えていたら、そのとき増やす判断をする」と書いた。**
-/// **書いただけの条件は発火しない**（`deferred-decisions.md` の遠征スタックの行が
-/// 同じ轍を踏んでいる）。**超えたことが判定行に出る形にしておく。**
+/// **ページの物理の在りかは、この空間のページテーブルを降りて求める**（載せた側の控えを持たない。`stack_scratch` は、
+/// 載せたかどうかの印としてだけ使う）。**プログラムはもう走っていない**ので、読む間に書き手は居ない。
 ///
-/// **止めない。** **超えても壊れてはいない**——**判断が要るだけである。**
-/// **壊れる側（ガードページを踏む）は、そもそもこのページの下が
-/// マップされていないので `#PF` になる。**
+/// # 限界
+///
+/// **プログラムが既知のバイトそのものを書いたら、使ったとは数えられない。** 下から数えるので、間に既知のバイトが
+/// 挟まっても影響しない。**壊れる側（見張りのページを踏む）は、そもそもその下が写っていないので `#PF` になる。**
 fn report_user_stack_high_water(logger: &mut Logger<Serial>, process: &UserProcess) {
-    /// スタックページの大きさ。**1 枚だけマップしてある。**
-    const PAGE_SIZE: usize = 4096;
+    const PAGE_SIZE: u64 = 4096;
+    let direct_map = common::addr::direct_map();
 
     if process.stack_scratch == 0 {
         // **マップしていない。** 走らせずに戻る経路（`run` が偽）がここへ来る。
         return;
     }
+    let layout = ProcessLayout::for_kind(process.kind);
+    let (bottom, top) = (layout.stack_bottom(), layout.stack_top);
+    let stack_bytes = layout.stack_bytes;
 
-    let page = process.stack_scratch as *const u8;
-    let mut lowest = PAGE_SIZE;
-    for offset in 0..PAGE_SIZE {
-        // SAFETY: `stack_scratch` はスタックページを direct map 越しに指しており、
-        // `PAGE_SIZE` バイト読める。書き手はもう走っていない。
-        if unsafe { page.add(offset).read() } != USER_STACK_FILL {
-            lowest = offset;
-            break;
+    // **下のページから順に、既知のバイトでない最初の位置を探す。**
+    let mut lowest_used = None;
+    let mut unresolved = 0usize;
+    let mut page = bottom;
+    'pages: while page < top {
+        let Some(virt) = common::addr::VirtAddr::new(page) else {
+            unresolved += 1;
+            page += PAGE_SIZE;
+            continue;
+        };
+        // SAFETY: この空間の PML4 は有効で、direct map が配下を覆っている。読み取りのみ。
+        let Ok(resolved) = (unsafe {
+            crate::arch::x86_64::walk_page_table(process.space.root(), direct_map, virt)
+        }) else {
+            unresolved += 1;
+            page += PAGE_SIZE;
+            continue;
+        };
+        let bytes = direct_map.phys_to_virt(resolved.phys).as_u64() as *const u8;
+        for offset in 0..PAGE_SIZE {
+            // SAFETY: `bytes` は、この空間に写してあるスタックのページを direct map 越しに指しており、
+            // `PAGE_SIZE` バイト読める。書き手はもう走っていない。
+            if unsafe { bytes.add(offset as usize).read() } != USER_STACK_FILL {
+                lowest_used = Some(page + offset);
+                break 'pages;
+            }
         }
+        page += PAGE_SIZE;
     }
-    let used = PAGE_SIZE - lowest;
-    let over_half = used * 2 > PAGE_SIZE;
-
-    // **スタックが 1 ページより大きい配置では、測れるのは、いちばん上のページだけである**（2026-10-05。位置独立の像の
-    // 256 KiB のスタック。既知のバイトで埋めるのも、読むのも、上の 1 ページである）。**行を分けて、そう書く。**
-    // 上のページを使い切っていれば、その下も使っている。
-    let stack_bytes = ProcessLayout::for_kind(process.kind).stack_bytes;
-    if stack_bytes > PAGE_SIZE as u64 {
-        logger.info(format_args!(
-            "user-stack: {} used {used} of the top {PAGE_SIZE} byte(s) of its {stack_bytes}-byte stack \
-             (only the top page is measured; a full top page means the use went below it)",
-            process.name
-        ));
-        return;
-    }
+    let used = lowest_used.map_or(0, |at| top - at);
+    let over_half = used * 2 > stack_bytes;
 
     logger.info(format_args!(
-        "user-stack: {} used {used} of {PAGE_SIZE} byte(s) ({}%), over half={over_half}          (the initial argv/envp table is counted in; ADR-0041 says to decide about growing          the stack when this goes over half)",
+        "user-stack: {} used {used} of {stack_bytes} byte(s) ({}%), over half={over_half}, pages that did not \
+         resolve={unresolved} (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about \
+         growing the stack when this goes over half)",
         process.name,
-        used * 100 / PAGE_SIZE
+        used * 100 / stack_bytes
     ));
 }
 
@@ -3299,15 +3327,17 @@ mod tests {
         );
     }
 
-    /// 位置を決めてリンクした像の配置は、今までの定数と同じ値である（2026-10-05。既存のプログラムの番地を変えない）。
+    /// 位置を決めてリンクした像の配置（2026-10-06 に、スタックを 4 ページにして、下に見張りのページを置いた）。
+    /// **像の番地と `mmap` の始まりは、今までの定数と同じ値である。** ヒープの上端は、見張りのページの下端である。
     #[test]
-    fn the_executable_layout_keeps_the_old_addresses() {
+    fn the_executable_layout_has_a_four_page_stack_above_a_guard() {
         let layout = super::ProcessLayout::for_kind(common::elf::ElfKind::Executable);
         assert_eq!(layout, super::ProcessLayout::EXECUTABLE);
         assert_eq!(layout.stack_top, 0x0080_0000);
-        assert_eq!(layout.stack_bottom(), 0x007f_f000);
-        assert_eq!(layout.stack_guard_page(), None);
-        assert_eq!(layout.heap_limit, 0x007f_f000);
+        assert_eq!(layout.stack_bytes, 4 * 4096);
+        assert_eq!(layout.stack_bottom(), 0x007f_c000);
+        assert_eq!(layout.stack_guard_page(), Some(0x007f_b000));
+        assert_eq!(layout.heap_limit, 0x007f_b000);
         assert_eq!(layout.mmap_base, crate::syscall::MMAP_BASE);
         // 範囲では断らない（今までどおり、写す所が断る）。
         let policy = layout.load_policy(common::elf::ElfKind::Executable);

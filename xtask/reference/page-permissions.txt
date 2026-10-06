@@ -34,66 +34,66 @@ user program corrupt | segment 0 | 4K | w=0 u=1 x=1 cache=0 g=0 shared=0 tables(
 
 user program hello | segment 0 | 4K | w=0 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
 user program hello | segment 1 | 4K | w=0 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
-user program hello | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
+user program hello | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=4
 
 user program nx-stack | segment 0 | 4K | w=0 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
-user program nx-stack | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
+user program nx-stack | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=4
 
 user program nx-data | segment 0 | 4K | w=0 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
 user program nx-data | segment 1 | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
-user program nx-data | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
+user program nx-data | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=4
 
 user program nx-rodata | segment 0 | 4K | w=0 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
 user program nx-rodata | segment 1 | 4K | w=0 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
-user program nx-rodata | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
+user program nx-rodata | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=4
 
 user program nx-brk | segment 0 | 4K | w=0 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
 user program nx-brk | heap | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=15
-user program nx-brk | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
+user program nx-brk | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=4
 
 user program debug-trap | segment 0 | 4K | w=0 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
-user program debug-trap | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
+user program debug-trap | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=4
 
 user program fault-test | segment 0 | 4K | w=0 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
-user program fault-test | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
+user program fault-test | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=4
 
 user program /bin/hello | segment 0 | 4K | w=0 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
 user program /bin/hello | segment 1 | 4K | w=0 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
-user program /bin/hello | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
+user program /bin/hello | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=4
 
 user program /bin/spawn-test | segment 0 | 4K | w=0 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=2
 user program /bin/spawn-test | segment 1 | 4K | w=0 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
-user program /bin/spawn-test | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
+user program /bin/spawn-test | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=4
 
 user program /bin/ls | segment 0 | 4K | w=0 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
 user program /bin/ls | segment 1 | 4K | w=0 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
 user program /bin/ls | segment 2 | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
-user program /bin/ls | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
+user program /bin/ls | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=4
 
 user program /bin/cat | segment 0 | 4K | w=0 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
 user program /bin/cat | segment 1 | 4K | w=0 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
 user program /bin/cat | segment 2 | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
-user program /bin/cat | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
+user program /bin/cat | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=4
 
 user program /bin/cat | segment 0 | 4K | w=0 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
 user program /bin/cat | segment 1 | 4K | w=0 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
 user program /bin/cat | segment 2 | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
-user program /bin/cat | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
+user program /bin/cat | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=4
 
 user program syscall-test | segment 0 | 4K | w=0 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=2
 user program syscall-test | segment 1 | 4K | w=0 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
-user program syscall-test | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
+user program syscall-test | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=4
 user program syscall-test | mapped by request | 4K | w=1 u=1 x=0 cache=0 g=0 shared=1 tables(w=1 u=1 x=1) | pages=1
 
 user program syscall-insn | segment 0 | 4K | w=0 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
 user program syscall-insn | segment 1 | 4K | w=0 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
-user program syscall-insn | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
+user program syscall-insn | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=4
 
 user program debug-trap-syscall | segment 0 | 4K | w=0 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
-user program debug-trap-syscall | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
+user program debug-trap-syscall | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=4
 
 user program compat-syscall | segment 0 | 4K | w=0 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
-user program compat-syscall | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
+user program compat-syscall | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=4
 
 user program pie-hello | segment 0 | 4K | w=0 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
 user program pie-hello | segment 1 | 4K | w=0 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
@@ -142,5 +142,5 @@ user program /bin/bss-test | segment 0 | 4K | w=0 u=1 x=1 cache=0 g=0 shared=0 t
 user program /bin/bss-test | segment 1 | 4K | w=0 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
 user program /bin/bss-test | segment 2 | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
 user program /bin/bss-test | segment 3 | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=2
-user program /bin/bss-test | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
+user program /bin/bss-test | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=4
 
