@@ -9305,6 +9305,15 @@ const SYSCALL_TEST_STATUS: &[(u64, &str)] = &[
     (103, "MAP_FIXED_NOREPLACE over a mapping did not return -EEXIST, or on free space did not return the address"),
     (104, "MAP_FIXED over the stack or its guard page did not return -EINVAL"),
     (105, "the brk guard flow failed (brk, MAP_FIXED PROT_NONE at the heap start, brk back, munmap)"),
+    // 106 から 110: mprotect（2026-10-06）。
+    (106, "mprotect to PROT_READ and back to PROT_READ|PROT_WRITE did not return 0 with the value kept"),
+    (107, "mprotect to PROT_NONE and back did not keep the page's contents"),
+    (108, "mprotect of a never-mapped PROT_NONE mapping to PROT_READ|PROT_WRITE did not give a zero page that can be written"),
+    (109, "mprotect with PROT_EXEC did not return -EPERM, or over the stack guard page did not return -EINVAL, or over a hole did not return -ENOMEM"),
+    (110, "spawn(\"/bin/mprotect-ro\") did not report a fold with vector 14 (writing to a page made read-only must fault)"),
+    // 111 と 112: W^X（2026-10-06）。
+    (111, "mprotect of the program's own code page to PROT_READ|PROT_WRITE did not return -EPERM"),
+    (112, "spawn(\"/bin/mprotect-nx\") did not report a fold with vector 14 (a code page made PROT_READ must stop executing)"),
 ];
 
 /// `fault-test` が起こす #PF のエラーコード（S9-b-3-2a）。

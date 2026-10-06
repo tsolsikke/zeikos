@@ -121,6 +121,10 @@ fn build_user_programs(manifest_dir: &str, out_dir: &str) {
         "spawn-test",
         // **`FUTEX_WAIT` で待つ場面に入り、終わらせられる 1 本**（2026-10-06。`syscall-test` が `spawn` で起こす）。
         "futex-wait",
+        // **書けなくしたページへ書いて、畳まれる 1 本**（2026-10-06。`mprotect`。`syscall-test` が `spawn` で起こす）。
+        "mprotect-ro",
+        // **自分のコードのページを実行できない形にして、畳まれる 1 本**（2026-10-06。W^X の実行を外す向き）。
+        "mprotect-nx",
         "ls",
         "cat",
         "zash",
@@ -705,6 +709,10 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
         "pie-hello",
         // **`FUTEX_WAIT` で待つ場面に入る 1 本**（2026-10-06）。`syscall-test` が `spawn` で起こし、終わらせられることを確かめる。
         "futex-wait",
+        // **書けなくしたページへ書く 1 本**（2026-10-06）。`syscall-test` が `spawn` で起こし、畳まれることを確かめる。
+        "mprotect-ro",
+        // **自分のコードのページを実行できない形にする 1 本**（2026-10-06）。同じく `spawn` で起こし、畳まれることを確かめる。
+        "mprotect-nx",
         "spawn-test",
         "ls",
         "cat",

@@ -127,3 +127,5 @@ pub const SYS_PRLIMIT64: u64 = 302;
 pub const SYS_GETRANDOM: u64 = 318;
 /// `munmap(addr, len)` の番号（2026-10-06。`__NR_munmap`）。
 pub const SYS_MUNMAP: u64 = 11;
+/// `mprotect(addr, len, prot)` の番号（2026-10-06。`__NR_mprotect`）。
+pub const SYS_MPROTECT: u64 = 10;

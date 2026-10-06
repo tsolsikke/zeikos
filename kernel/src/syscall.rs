@@ -39,10 +39,10 @@ use crate::abi::linux::x86_64::{
     stat_bytes, ARCH_GET_FS, ARCH_GET_GS, ARCH_SET_FS, ARCH_SET_GS, STAT_LEN, SYS_ACCEPT,
     SYS_ARCH_PRCTL, SYS_BIND, SYS_BRK, SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT, SYS_EXIT,
     SYS_EXIT_GROUP, SYS_FCNTL, SYS_FSTAT, SYS_FTRUNCATE, SYS_FUTEX, SYS_GETDENTS64, SYS_GETRANDOM,
-    SYS_IOCTL, SYS_LISTEN, SYS_LSEEK, SYS_MEMFD_CREATE, SYS_MKDIR, SYS_MMAP, SYS_MUNMAP,
-    SYS_NANOSLEEP, SYS_OPEN, SYS_POLL, SYS_PRLIMIT64, SYS_READ, SYS_READLINK, SYS_RECVMSG,
-    SYS_RMDIR, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SENDMSG, SYS_SENDTO, SYS_SET_TID_ADDRESS,
-    SYS_SIGALTSTACK, SYS_SOCKET, SYS_STAT, SYS_UNAME, SYS_UNLINK, SYS_WRITE,
+    SYS_IOCTL, SYS_LISTEN, SYS_LSEEK, SYS_MEMFD_CREATE, SYS_MKDIR, SYS_MMAP, SYS_MPROTECT,
+    SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPEN, SYS_POLL, SYS_PRLIMIT64, SYS_READ, SYS_READLINK,
+    SYS_RECVMSG, SYS_RMDIR, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SENDMSG, SYS_SENDTO,
+    SYS_SET_TID_ADDRESS, SYS_SIGALTSTACK, SYS_SOCKET, SYS_STAT, SYS_UNAME, SYS_UNLINK, SYS_WRITE,
 };
 use crate::abi::linux::{
     cmsg_one_fd_bytes, dirent64_record, dirent64_record_len, fb_fix_screeninfo_bytes,
@@ -934,6 +934,8 @@ unsafe fn dispatch(
         },
         // SAFETY: 同上。
         SYS_MUNMAP => unsafe { munmap_from_ring3(args[0], args[1], direct_map) },
+        // SAFETY: 同上。
+        SYS_MPROTECT => unsafe { mprotect_from_ring3(args[0], args[1], args[2], direct_map) },
         // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
         SYS_SENDMSG => unsafe {
             sendmsg_from_ring3(args[0], args[1], page_table_root, direct_map, bkl)
@@ -2194,6 +2196,8 @@ fn errno_for_map(error: crate::mappings::MapError) -> u64 {
         MapError::NotActive | MapError::NoRoom | MapError::TableFull => (-ENOMEM) as u64,
         MapError::BadRange | MapError::PartOfAMapping | MapError::NotRemovable => (-EINVAL) as u64,
         MapError::Overlap => (-EEXIST) as u64,
+        // Linux の `mprotect` は、範囲に写していない所が在れば `-ENOMEM` を返す。
+        MapError::NotMapped => (-ENOMEM) as u64,
     }
 }
 
@@ -2362,6 +2366,126 @@ unsafe fn munmap_from_ring3(addr: u64, len: u64, direct_map: DirectMap) -> u64 {
         Ok(()) => 0,
         Err(error) => errno_for_map(error),
     }
+}
+
+/// `mprotect(addr, len, prot)`（2026-10-06。`ADR-0082`）。**範囲に掛かる写像の、書けるか・写してあるかを変える。**
+///
+/// - `addr` はページの境界、`len` は 0 でなく、ページへ切り上げる。範囲の全部が写像で覆われていなければ `-ENOMEM`
+///   （Linux と同じ）。
+/// - `PROT_EXEC` は `-EPERM`——**書けるページを実行できるページにはしない**（W^X。`ADR-0071`。JIT は目指さない）。
+///   **実行できるページ（`NX` が 0）を書ける形にする求めも `-EPERM`**——範囲の一部でもそのページが在れば、何も変えずに
+///   断る。`PROT_EXEC` を付けない `mprotect` は、ページを実行できない形にする（Linux と同じ。実行を外す向きだけを許す）。
+/// - `PROT_NONE`: 葉の `P` を落とし、フレームは持ったままにする（`entry::PTE_RETAINED`）。**読める形へ戻すと、同じ中身が戻る。**
+///   初めから写していなかった無名の写像（`mmap(PROT_NONE)`）を読める形にするときは、その時点で 0 のフレームを写す。
+/// - 変えてよい種類は、無名・ヒープ・像・スタック。見張りのページ・共有メモリ・画面は `-EINVAL`（`docs/deferred-decisions.md`）。
+/// - 変えた葉は、この CPU の TLB から 1 本ずつ落とす（`invlpg`）。**プロセスは 1 つの CPU に留まるので、ほかの CPU は
+///   見ない**——スレッドが入ると、この前提は崩れる（`docs/deferred-decisions.md`）。
+///
+/// # Safety
+///
+/// 呼び出し元契約により `direct_map` は有効で、遠征の中なので CR3 はこのプロセスのもの。
+#[inline(never)]
+unsafe fn mprotect_from_ring3(addr: u64, len: u64, prot: u64, direct_map: DirectMap) -> u64 {
+    use crate::arch::x86_64::ActivePageTable;
+    use crate::mappings::{MappingKind, Released, PAGE_SIZE};
+    use crate::paging::permissions::PagePermissions;
+
+    if len == 0 || !addr.is_multiple_of(PAGE_SIZE) {
+        return (-EINVAL) as u64;
+    }
+    if prot & PROT_EXEC != 0 {
+        return (-EPERM) as u64;
+    }
+    let bytes = len.div_ceil(PAGE_SIZE) * PAGE_SIZE;
+    let writable = prot & PROT_WRITE != 0;
+    let present = prot & (PROT_READ | PROT_WRITE) != 0;
+    // SAFETY: 遠征の中なので CR3 はこのプロセスの表である。
+    let mut table = unsafe { ActivePageTable::current(direct_map) };
+    if writable && range_holds_an_executable_page(&table, addr, bytes) {
+        return (-EPERM) as u64;
+    }
+    let mut pieces: Released = [None; crate::mappings::MAX_MAPPINGS];
+    let count = match crate::mappings::with_current(|map| {
+        map.change_protection(addr, bytes, writable, present, &mut pieces)
+    }) {
+        Ok(count) => count,
+        Err(error) => return errno_for_map(error),
+    };
+    let Some(allocator) = crate::frame_allocator::take() else {
+        return (-ENOMEM) as u64;
+    };
+    let free_before = allocator.free_frame_count();
+    let mut outcome = 0u64;
+    'pieces: for piece in pieces.iter().take(count).flatten() {
+        let mut page = piece.start;
+        while page < piece.end {
+            let Some(virt) = common::addr::VirtAddr::new(page) else {
+                outcome = (-EINVAL) as u64;
+                break 'pieces;
+            };
+            // SAFETY: 稼働中の表の、このプロセスの葉を書き換える（写していない葉は `NotMapped` で返る）。
+            let changed = unsafe { table.set_leaf_access(virt, writable, present) };
+            if changed.is_err() {
+                // **写していないページ**（`mmap(PROT_NONE)` の無名の写像）。読める形にするなら、ここで 0 のフレームを写す。
+                if present && piece.kind == MappingKind::Anonymous {
+                    let Some(frame) = allocator.allocate_frame() else {
+                        outcome = (-ENOMEM) as u64;
+                        break 'pieces;
+                    };
+                    // SAFETY: いま取ったフレームで、direct map が覆っている。
+                    unsafe {
+                        core::ptr::write_bytes(
+                            direct_map.phys_to_virt(frame).as_u64() as *mut u8,
+                            0,
+                            PAGE_SIZE as usize,
+                        )
+                    };
+                    let attributes = PagePermissions::user_program(writable, false);
+                    // SAFETY: 稼働中の表へ、ユーザーの範囲を、いま取ったフレームで写す。
+                    if unsafe { table.map_4kib(virt, frame, attributes, allocator) }.is_err() {
+                        let _ = allocator.deallocate_frame(frame);
+                        outcome = (-ENOMEM) as u64;
+                        break 'pieces;
+                    }
+                } else if present {
+                    // 像・スタック・ヒープは、写していないページを持たないはずである。
+                    outcome = (-ENOMEM) as u64;
+                    break 'pieces;
+                }
+            }
+            page += PAGE_SIZE;
+        }
+    }
+    let taken = free_before.saturating_sub(allocator.free_frame_count());
+    crate::frame_allocator::give_back(allocator);
+    crate::userland::note_post_load_frames(taken as usize);
+    outcome
+}
+
+/// `[addr, addr + bytes)` に、実行できるページ（写してあって `NX` が 0）が 1 つでも在るか（2026-10-06。W^X）。
+///
+/// `mprotect` が `PROT_WRITE` を求めたとき、**表を変える前に**見る——一部でも在れば、何も変えずに断るためである。
+/// 写していないページと、扱えない番地は数えない（前者は `mprotect` の本体が扱い、後者は表の側が断る）。
+/// 実行できるかは、翻訳の結果（`Translation::is_executable`）で見る。
+fn range_holds_an_executable_page(
+    table: &crate::arch::x86_64::ActivePageTable,
+    addr: u64,
+    bytes: u64,
+) -> bool {
+    use crate::mappings::PAGE_SIZE;
+
+    let mut page = addr;
+    while page < addr.saturating_add(bytes) {
+        if let Some(virt) = common::addr::VirtAddr::new(page) {
+            if let Ok(Some(translation)) = table.translate(virt) {
+                if translation.is_executable() {
+                    return true;
+                }
+            }
+        }
+        page = page.saturating_add(PAGE_SIZE);
+    }
+    false
 }
 
 /// `MAP_FIXED` の置き方。

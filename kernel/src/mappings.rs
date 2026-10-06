@@ -57,6 +57,14 @@ impl MappingKind {
     pub const fn can_be_replaced(self) -> bool {
         matches!(self, MappingKind::Anonymous | MappingKind::Heap)
     }
+
+    /// `mprotect` で権限を変えてよい種類か。共有メモリと画面（フレームが自分のものでない）と、見張りのページは変えない。
+    pub const fn can_change_protection(self) -> bool {
+        matches!(
+            self,
+            MappingKind::Anonymous | MappingKind::Heap | MappingKind::Image | MappingKind::Stack
+        )
+    }
 }
 
 /// 1 つの写像。`end` は排他である。
@@ -99,6 +107,8 @@ pub enum MapError {
     NotRemovable,
     /// 置きたい範囲に、写像が在る（`MAP_FIXED_NOREPLACE`。`-EEXIST`）、または登録の範囲が重なる。
     Overlap,
+    /// 範囲の全部が写像で覆われていない（`mprotect`。Linux は `-ENOMEM`）。
+    NotMapped,
 }
 
 /// [`MemoryMap::release_range`] が返す、外した断片の入れ物。
@@ -324,6 +334,94 @@ impl MemoryMap {
             }
         }
         Ok(released)
+    }
+
+    /// `start` から `bytes` の範囲に掛かる写像の、書けるか・写してあるかを変える（純粋な論理。表だけを変える。葉を
+    /// 書き換えるのは呼ぶ側である）。**範囲の一部に掛かる写像は、範囲の中と外で分ける。** 変える前の断片（古い
+    /// `writable`・`present` を持つ）を `out` へ置き、数を返す。
+    ///
+    /// 範囲の全部が写像で覆われていなければ `NotMapped`（Linux の `mprotect` は `-ENOMEM`）。
+    /// `can_change_protection` が偽の種類が掛かっていれば `NotRemovable`。欄が足りなければ `TableFull`。どの失敗でも、表は
+    /// 変えない。
+    pub fn change_protection(
+        &mut self,
+        start: u64,
+        bytes: u64,
+        writable: bool,
+        present: bool,
+        out: &mut Released,
+    ) -> Result<usize, MapError> {
+        if !self.active {
+            return Err(MapError::NotActive);
+        }
+        if bytes == 0 || !start.is_multiple_of(PAGE_SIZE) || !bytes.is_multiple_of(PAGE_SIZE) {
+            return Err(MapError::BadRange);
+        }
+        let end = start.checked_add(bytes).ok_or(MapError::BadRange)?;
+        // **1 度目: 変えずに確かめる。** 覆われていること、種類、欄の数。
+        let mut covered = 0u64;
+        let mut extra_slots_needed = 0usize;
+        for mapping in self.entries.iter().flatten() {
+            if !mapping.overlaps(start, end) {
+                continue;
+            }
+            if !mapping.kind.can_change_protection() {
+                return Err(MapError::NotRemovable);
+            }
+            covered += mapping.end.min(end) - mapping.start.max(start);
+            extra_slots_needed +=
+                usize::from(mapping.start < start) + usize::from(end < mapping.end);
+        }
+        if covered != bytes {
+            return Err(MapError::NotMapped);
+        }
+        let free_slots = self.entries.iter().filter(|slot| slot.is_none()).count();
+        if extra_slots_needed > free_slots {
+            return Err(MapError::TableFull);
+        }
+        // **2 度目: 分けて、範囲の中の断片の権限を変える。**
+        let mut changed = 0usize;
+        for index in 0..MAX_MAPPINGS {
+            let Some(mapping) = self.entries[index] else {
+                continue;
+            };
+            if !mapping.overlaps(start, end) {
+                continue;
+            }
+            let piece = Mapping {
+                start: mapping.start.max(start),
+                end: mapping.end.min(end),
+                ..mapping
+            };
+            out[changed] = Some(piece);
+            changed += 1;
+            self.entries[index] = Some(Mapping {
+                writable,
+                present,
+                ..piece
+            });
+            for remainder in [
+                (mapping.start < start).then_some(Mapping {
+                    end: start,
+                    ..mapping
+                }),
+                (end < mapping.end).then_some(Mapping {
+                    start: end,
+                    ..mapping
+                }),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                let slot = self
+                    .entries
+                    .iter()
+                    .position(Option::is_none)
+                    .expect("the free slots were counted above");
+                self.entries[slot] = Some(remainder);
+            }
+        }
+        Ok(changed)
     }
 
     /// `start` から `bytes` の範囲に、写像が 1 つでも掛かっているか。
@@ -698,6 +796,60 @@ mod tests {
         assert!(MappingKind::Anonymous.can_be_replaced() && MappingKind::Heap.can_be_replaced());
         assert!(!MappingKind::Image.can_be_replaced() && !MappingKind::Guard.can_be_replaced());
         assert!(!MappingKind::Heap.can_unmap() && MappingKind::Anonymous.can_unmap());
+    }
+
+    /// `mprotect`: 範囲の中の断片の権限が変わり、外の断片は元のまま。覆われていなければ変えない。変えられない種類も。
+    #[test]
+    fn changing_protection_splits_and_keeps_the_old_flags_for_the_caller() {
+        let mut map = active();
+        let start = map
+            .reserve(4 * PAGE_SIZE, MappingKind::Anonymous, true, true)
+            .unwrap();
+        let mut out: Released = [None; MAX_MAPPINGS];
+        // 真ん中の 2 ページを読むだけにする。
+        let n = map
+            .change_protection(start + PAGE_SIZE, 2 * PAGE_SIZE, false, true, &mut out)
+            .unwrap();
+        assert_eq!(n, 1);
+        assert_eq!(
+            out[0].map(|m| (m.start, m.end, m.writable)),
+            Some((start + PAGE_SIZE, start + 3 * PAGE_SIZE, true))
+        );
+        assert_eq!(map.find(start).map(|m| m.writable), Some(true));
+        assert_eq!(
+            map.find(start + PAGE_SIZE).map(|m| (m.writable, m.end)),
+            Some((false, start + 3 * PAGE_SIZE))
+        );
+        assert_eq!(
+            map.find(start + 3 * PAGE_SIZE).map(|m| m.writable),
+            Some(true)
+        );
+        assert_eq!(map.summary().count, 3);
+        // 全部を写さない形（PROT_NONE）にすると、3 つの断片が返り、どれも present が偽になる。
+        let n = map
+            .change_protection(start, 4 * PAGE_SIZE, false, false, &mut out)
+            .unwrap();
+        assert_eq!(n, 3);
+        assert!(out.iter().take(3).flatten().all(|m| m.present));
+        assert!((0..4).all(|i| map.find(start + i * PAGE_SIZE).is_some_and(|m| !m.present)));
+        // 覆われていない範囲は NotMapped で、何も変えない。
+        assert_eq!(
+            map.change_protection(start + 3 * PAGE_SIZE, 2 * PAGE_SIZE, true, true, &mut out),
+            Err(MapError::NotMapped)
+        );
+        // 見張りのページは変えられない。
+        map.register(
+            BASE + 0x100000,
+            BASE + 0x101000,
+            MappingKind::Guard,
+            false,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            map.change_protection(BASE + 0x100000, PAGE_SIZE, true, true, &mut out),
+            Err(MapError::NotRemovable)
+        );
     }
 
     /// `brk` のヒープの終わりは、伸ばす・縮める・消す・作り直す。途中が置き換えられていても、いちばん高い断片が動く。

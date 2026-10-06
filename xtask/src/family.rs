@@ -224,6 +224,8 @@ pub const PATH_RULES: &[PathRule] = &[
             "kernel/userland/hello.rs",
             "kernel/userland/pie-hello.rs",
             "kernel/userland/futex-wait.rs",
+            "kernel/userland/mprotect-ro.rs",
+            "kernel/userland/mprotect-nx.rs",
             "kernel/userland/chello.c",
             "kernel/userland/dbfault.c",
             "kernel/userland/fp*.c",

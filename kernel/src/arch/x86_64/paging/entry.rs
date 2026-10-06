@@ -70,6 +70,12 @@ pub const PTE_GLOBAL: u64 = 1 << 8;
 /// 使う思想である**（`docs/architecture.md` の「ABIの形は合わせる」）。
 pub const PTE_SHARED: u64 = 1 << 9;
 
+/// フレームを持ったまま、写していない葉の目印（ソフトウェア用の空きビット 10。2026-10-06。`mprotect(PROT_NONE)`）。
+/// **CPU は無視する**——`P` が 0 なので、触ればページフォルトになる。**番地の部分にはフレームが残っている**ので、
+/// 読める形へ戻すとき（`mprotect(PROT_READ)`）に同じ中身が戻り、外すとき（`munmap`・空間の破棄）にフレームが返る。
+/// **`P` と同時には立たない。**
+pub const PTE_RETAINED: u64 = 1 << 10;
+
 /// 実行の禁止（ビット 63。XD）。**`EFER.NXE` が 0 の CPU では予約のビットで、立てた項目を引くと `#PF` になる。**
 ///
 /// **立てるのは、権限の変換（[`leaf_flags`]）である**——実行しない権限の葉に付く（カーネルの側は 2026-10-02、
@@ -134,6 +140,11 @@ pub const fn is_present(entry: u64) -> bool {
 ///
 /// **PT レベル（4KiB）のエントリに対して呼んではならない。** そちらでは同じ
 /// ビットが PAT を意味する。
+/// フレームを持ったまま写していない葉か（[`PTE_RETAINED`]。`P` が 0 のときだけ意味を持つ）。
+pub const fn is_retained(entry: u64) -> bool {
+    entry & PTE_RETAINED != 0 && !is_present(entry)
+}
+
 pub const fn is_shared(entry: u64) -> bool {
     entry & PTE_SHARED != 0
 }

@@ -573,7 +573,9 @@ impl AddressSpace {
                     for pt_index in 0..entry::ENTRIES_PER_TABLE {
                         // SAFETY: 上で present を確かめたテーブル。
                         let pt_entry = unsafe { read_entry(direct_map, pt, pt_index) };
-                        if entry::is_present(pt_entry) {
+                        // **写していないがフレームを持つ葉（`mprotect(PROT_NONE)` の後。`entry::PTE_RETAINED`）も集める**
+                        // （2026-10-06。集めないと、そのフレームが漏れる）。
+                        if entry::is_present(pt_entry) || entry::is_retained(pt_entry) {
                             // **共有メモリの葉は集めない（`ADR-0065` の「共有フレームの寿命」）。**
                             // **目印は PTE のビット 9（`is_shared`。立てるのは `mmap` だけ）。**
                             // **返すのは `crate::shm` の参照数である**——**ここで集めると、もう片側の

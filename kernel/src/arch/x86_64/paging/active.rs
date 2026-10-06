@@ -48,6 +48,16 @@ pub struct Translation {
     pub entry: u64,
 }
 
+impl Translation {
+    /// このページは実行できるか（実行禁止のビットが 0。2026-10-06。`mprotect` の W^X が見る）。
+    ///
+    /// 実行禁止のビットを立てないビルド（[`entry::LEAVES_CARRY_EXECUTE_DISABLE`] が偽。破壊テストだけ）では、
+    /// ビットから実行できるかは読めないので、偽を返す——そのビルドはユーザーのプログラムまで届かない。
+    pub const fn is_executable(&self) -> bool {
+        entry::LEAVES_CARRY_EXECUTE_DISABLE && self.entry & entry::PTE_NO_EXECUTE == 0
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PageSize {
     Size4KiB,
@@ -495,7 +505,8 @@ impl ActivePageTable {
     ///
     /// そのビルドでは、権限の変換が実行禁止のビットを立てない（[`entry::LEAVES_CARRY_EXECUTE_DISABLE`]）。
     /// 試しのページ（`crate::arch::x86_64::execute_disable_probe`）の葉にだけ、ここで足す。**既定のビルドには
-    /// 無い**——既に在る葉の権限を変える所は、既定のビルドには 1 つも無い。
+    /// 無い**——既に在る葉の権限を変える所は、既定のビルドでは `mprotect` の [`Self::set_leaf_access`] だけである
+    /// （2026-10-06）。
     ///
     /// # Safety
     ///
@@ -526,6 +537,65 @@ impl ActivePageTable {
         }
         // SAFETY: 同上。ビットを足すだけで、番地もほかの権限も変えない。
         unsafe { self.write(pt, pt_index, pte | entry::PTE_NO_EXECUTE) };
+        // SAFETY: テーブルの書き換えが終わってから、変えた 1 本を落とす。
+        unsafe { cpu::invalidate_tlb_entry(virt.as_u64()) };
+        Ok(())
+    }
+
+    /// `virt` を含む 4KiB の葉の、書けるか・写してあるかを書き換え、実行できない形にする（2026-10-06。`mprotect`）。
+    ///
+    /// - `present` が真: `P` を立て、[`entry::PTE_RETAINED`] を落とし、`W` を `writable` に合わせる。
+    /// - `present` が偽: `P` と `W` を落とし、[`entry::PTE_RETAINED`] を立てる。**フレームの番地と、ほかのビット（`U`・
+    ///   共有の印）は変えない。** 読める形へ戻すときに、同じフレームが戻る。
+    /// - どちらでも、実行禁止のビット（`NX`）を立てる（[`entry::LEAVES_CARRY_EXECUTE_DISABLE`] のビルドで）。
+    ///   **実行できる形へ変える道は無い**——`mprotect` は `PROT_EXEC` を断るので、実行を外す向きだけが在る（W^X。
+    ///   `crate::syscall` の `mprotect` の doc）。
+    ///
+    /// 写していない葉（`P` も `RETAINED` も 0）では `NotMapped`。変えた 1 本を、この CPU の TLB から落とす（`invlpg`）。
+    /// **ほかの CPU の TLB は見ない**——プロセスは 1 つの CPU に留まる（`crate::syscall` の `mprotect` の doc）。
+    ///
+    /// # Safety
+    ///
+    /// [`Self::unmap_4kib`] と同じ。加えて、書ける葉を書けなくした後、または写していない葉にした後に、そこへ書かない
+    /// （書けば #PF になる）ことは呼び出し側の責任である。
+    pub unsafe fn set_leaf_access(
+        &mut self,
+        virt: VirtAddr,
+        writable: bool,
+        present: bool,
+    ) -> Result<(), MapUpdateError> {
+        Self::refuse_kernel_mapping_change_after_boot(virt)?;
+        let _guard = InterruptGuard::enter();
+
+        let (pd, pd_index) = self.locate_pd(virt)?;
+        // SAFETY: `locate_pd` の契約による。
+        let pde = unsafe { self.read(pd, pd_index) };
+        if !entry::is_present(pde) {
+            return Err(MapUpdateError::NotMapped);
+        }
+        if entry::is_huge(pde) {
+            return Err(MapUpdateError::AlreadySmall);
+        }
+        let pt = entry::table_address(pde);
+        let pt_index = entry::pt_index(virt);
+        // SAFETY: `pt` は PD が指す有効な PT で、添字は 512 未満。
+        let pte = unsafe { self.read(pt, pt_index) };
+        if !entry::is_present(pte) && !entry::is_retained(pte) {
+            return Err(MapUpdateError::NotMapped);
+        }
+        let kept = pte & !(entry::PTE_PRESENT | entry::PTE_WRITABLE | entry::PTE_RETAINED);
+        let no_execute = if entry::LEAVES_CARRY_EXECUTE_DISABLE {
+            entry::PTE_NO_EXECUTE
+        } else {
+            0
+        };
+        let new = if present {
+            kept | entry::PTE_PRESENT | no_execute | if writable { entry::PTE_WRITABLE } else { 0 }
+        } else {
+            kept | entry::PTE_RETAINED | no_execute
+        };
+        // SAFETY: 同上。番地と、上で残したビットは変えない（実行禁止は足す向きだけ）。
+        unsafe { self.write(pt, pt_index, new) };
         // SAFETY: テーブルの書き換えが終わってから、変えた 1 本を落とす。
         unsafe { cpu::invalidate_tlb_entry(virt.as_u64()) };
         Ok(())
@@ -577,7 +647,8 @@ impl ActivePageTable {
         let pt_index = entry::pt_index(virt);
         // SAFETY: `pt` は PD が指す有効な PT で、添字は 512 未満。
         let pte = unsafe { self.read(pt, pt_index) };
-        if !entry::is_present(pte) {
+        // **フレームを持ったまま写していない葉（`mprotect(PROT_NONE)` の後）も、外してフレームを返す**（2026-10-06）。
+        if !entry::is_present(pte) && !entry::is_retained(pte) {
             return Err(MapUpdateError::NotMapped);
         }
 
