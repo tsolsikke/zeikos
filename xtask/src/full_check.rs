@@ -1684,6 +1684,56 @@ fn copy_seinas_artifacts(main: &Path, worktree: &Path) {
     }
 }
 
+/// 作業ツリーで Linux 向けのプログラム（`m1-rust` の写しと、`musl-gcc` の `m1-c`）を作る（2026-10-07。運用者の決定）。
+/// **`musl-gcc` が無ければ作らず、`linux-c` の項目は今までどおり名指しで飛ぶ**（`!SKIPPED` に出る）。
+/// **作業ツリーの `tools/build-linux-programs.sh` を、作業ツリーの `target/linux-programs/` へ走らせる**——
+/// 同じ道具・同じ版なら、メインの作業ツリーで作ったものと同じバイトになる。**以前は作っていなかったので、
+/// 作業ツリーの全検査では `linux-c` の項目がいつも飛んでいた**（実測。2026-10-07 の 505 項目の回）。失敗しても全検査は止めない。
+fn build_linux_programs_in_the_worktree(worktree: &Path) {
+    let script = worktree.join("tools").join("build-linux-programs.sh");
+    if !script.is_file() {
+        println!(
+            "full: Linux programs: not built ({} is missing); the linux-c item will be skipped by name",
+            script.display()
+        );
+        return;
+    }
+    let has_musl_gcc = std::process::Command::new("musl-gcc")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success());
+    if !has_musl_gcc {
+        println!("full: Linux programs: musl-gcc is not installed; the linux-c item will be skipped by name");
+        return;
+    }
+    let output = std::process::Command::new("sh")
+        .arg(&script)
+        .arg(worktree.join("target").join("linux-programs"))
+        .current_dir(worktree)
+        .output();
+    match output {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            for line in stdout.lines().chain(stderr.lines()) {
+                println!("full: Linux programs: {line}");
+            }
+            if !output.status.success() {
+                println!(
+                    "full: Linux programs: the script failed ({}); the linux-c item may be skipped by name",
+                    output.status
+                );
+            }
+        }
+        Err(error) => println!(
+            "full: Linux programs: could not run {} ({error})",
+            script.display()
+        ),
+    }
+}
+
 /// 子を上限つきで待つ（`None` なら上限を過ぎた）。**止めはしない**——**固まった子は運用者に確かめて
 /// から止める**（`ADR-0069` の決定 7 の 3 の (5)）。
 fn wait_within(child: &mut std::process::Child, limit: Duration) -> Result<Option<ExitStatus>> {
@@ -1865,6 +1915,7 @@ fn run(target: &str) -> Result<()> {
     let disk_start = sectors_written(&main);
     prepare_worktree(&main, &worktree, &commit)?;
     copy_seinas_artifacts(&main, &worktree);
+    build_linux_programs_in_the_worktree(&worktree);
     if let Some(dir) = log.parent() {
         fs::create_dir_all(dir).with_context(|| format!("could not create {}", dir.display()))?;
     }
