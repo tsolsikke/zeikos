@@ -66,7 +66,7 @@ Accepted（2026-10-06に運用者が設計案を承認し、同じ日に実装�
 
 ## Consequences
 
-- muslの静的なプログラムの起動の列（`arch_prctl`から`rt_sigprocmask`まで）が、`mmap`・`mprotect`を除いて通る。終わりの`exit_group`も通る。
+- muslの静的なプログラムの起動の列（`arch_prctl`から`rt_sigprocmask`まで）が、`mmap`・`mprotect`を除いて通る。終わりの`exit_group`も通る。**→ `mmap`・`mprotect`は`ADR-0082`で入り、列の全部が通る**（2026-10-06）。
 - `syscall-test`に検算を15本足した（80から94）。`FUTEX_WAIT`で待つ場面に入るプログラム（`/bin/futex-wait`）を`spawn`で起こし、137で終わることを見る。`syscall-test`自身も`exit_group`で終わる。
 - 遠征スタックの使用量は変わっていない（実測。`syscall-test` 32,280のまま。小物の呼び出しは、載せる経路より浅い）。
 - `.bss`が、プロセスごとの状態の表の分（4欄×約2.2KiB）増えた。
@@ -84,6 +84,7 @@ Linux向けのmuslの静的な像（`linux-programs/m1-rust`・`m1-c`。`ADR-007
 | `getpid`・`gettid` | 1（`set_tid_address`と同じ。プロセスもスレッドも1つずつ） |
 | `madvise` | 助言は受けて何もしない（0）。ページの境界に無い番地は`-EINVAL` |
 | `tkill` | 自分（1）以外は`-ESRCH`。シグナル0は問い合わせで0。登録が`SIG_IGN`のものと、既定が「無視」のもの（`SIGCHLD`・`SIGCONT`・`SIGURG`・`SIGWINCH`）は0で何も起きない。**それ以外は、配送が無いので、名指しの行を出してプロセスを終わらせる**（終了状態は`128 + sig`。muslの`abort`は`tkill(gettid(), SIGABRT)`なので134） |
+| `clock_nanosleep`（2026-10-07。M2の実測で足した） | 相対の眠りと、`CLOCK_MONOTONIC`の絶対の時刻（`TIMER_ABSTIME`）を受け、`nanosleep`と眠りの本体を共にする。`CLOCK_REALTIME`の絶対は、壁の時計が無いので`-EINVAL`。`rem`は書かない（割り込まれて早く戻る道が無い）。**muslの`nanosleep`とRustの`std::thread::sleep`は、`nanosleep`ではなくこれを打つ**——無いと`-ENOSYS`で`std`が止まった（`ADR-0083`のAddendum） |
 
 知らない番号（`-ENOSYS`を返した）の回数と最後の番号を数え、プロセスの終わりの行（`spawn: … ended`・`user-run: … left Ring 3`）に出すようにした。Linuxのプログラムが、知らない番号を1つも打たずに終わったことを、起動ログで見るためである。数えはスロットの記録で、`spawn`の前後で親のものを退避して戻す（ほかの記録と同じ）。
 
