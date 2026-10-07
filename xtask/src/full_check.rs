@@ -121,6 +121,22 @@ fn prune_before_the_run(main: &Path, worktree: &Path) {
         let _ = fs::remove_file(logs.join(name));
     }
     for tree in [main, worktree] {
+        // **ユーザープログラムの写しの置き場**（`kernel/build.rs` の `ProgramCache`。2026-10-07）。**7 日触られていない
+        // ものを消す**——当たるたびに触った時刻が進むので、残るのは使われなくなった鍵（消えた cfg・古い原本）のものである。
+        let cache = tree.join("target").join("user-program-cache");
+        if let Ok(entries) = fs::read_dir(&cache) {
+            for entry in entries.flatten() {
+                let old = entry
+                    .metadata()
+                    .and_then(|meta| meta.modified())
+                    .ok()
+                    .and_then(|modified| modified.elapsed().ok())
+                    .is_some_and(|age| age > KEPT_BUILD_MAX_AGE);
+                if old && entry.file_type().is_ok_and(|kind| kind.is_file()) {
+                    let _ = fs::remove_file(entry.path());
+                }
+            }
+        }
         for kind in ["kernel", "bootloader"] {
             let kept = tree.join("target").join("kernel-builds").join(kind);
             let Ok(entries) = fs::read_dir(&kept) else {

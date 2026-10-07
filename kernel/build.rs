@@ -12,6 +12,8 @@
 //! （通常の crt0/エントリポイント）が壊れてプロセス起動直後に
 //! セグメンテーション違反を起こす。そのため、実際にビルド対象が
 //! `x86_64-unknown-none` のときだけリンカ引数を渡すようにする。
+use std::os::unix::fs::PermissionsExt;
+
 fn main() {
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is not set");
     println!("cargo:rerun-if-changed=link.ld");
@@ -684,8 +686,17 @@ fn build_c_programs(manifest_dir: &str, out_dir: &str, script: &str, cache: &Pro
 /// # 書く量
 ///
 /// 当たれば 1 バイトも書かない。外れた分だけ、作ったものを 1 度写しへ入れる（プログラムは 10〜500 KiB）。置き場は育つが、
-/// 組み合わせは少ない（プログラム × cfg の違い）。消すのは `cargo clean` と一緒である。
+/// 組み合わせは少ない（プログラム × cfg の違い）。**7 日触られていないものは全検査の始めに消す**（`xtask` の
+/// `prune_before_the_run`。当たるたびに触った時刻を進める）。`cargo clean` でも消える。
 /// **`ZEIKOS_USER_PROGRAM_CACHE=off` で止められる**（当たりと外れの中身が同じことを確かめるため）。
+///
+/// # ハードリンク越しに置き場を書き換えない
+///
+/// **`OUT_DIR` のファイルは置き場と同じ実体である。** 外れたとき、`OUT_DIR` に前の当たりのハードリンクが残っていると、
+/// コンパイラがその道へ書いて置き場の実体（別の鍵のもの）を書き換える——**作る前に出力の道を外す**（`remove_file`）。
+/// さらに**置き場のファイルは読み取り専用にする**（その場で書き換えようとする処理が在れば、黙って通らずに失敗する）。
+/// このビルドスクリプトは、作った後にプログラムの道へ書き戻す処理（strip・objcopy の類）を持たない（2026-10-07 に読んで
+/// 確かめた。`strip=symbols` はリンクのときの指定で、像へは `fs::copy` で写す）。
 struct ProgramCache {
     /// 置き場。**無ければ写しを使わない**（その場で作る）。
     dir: Option<std::path::PathBuf>,
@@ -766,11 +777,17 @@ impl ProgramCache {
                 if std::fs::hard_link(cached, output).is_ok()
                     || std::fs::copy(cached, output).is_ok()
                 {
+                    // **触った時刻を進める**（片付けが「7 日触られていない」で見るため）。失敗しても当たりは当たり。
+                    if let Ok(file) = std::fs::File::open(cached) {
+                        let _ = file.set_modified(std::time::SystemTime::now());
+                    }
                     self.hits.set(self.hits.get() + 1);
                     return;
                 }
             }
         }
+        // **作る前に出力の道を外す**——前の当たりのハードリンクが残っていると、置き場の実体を書き換えてしまう。
+        let _ = std::fs::remove_file(output);
         let status = command
             .status()
             .unwrap_or_else(|e| panic!("failed to run the compiler for the {what} {name}: {e}"));
@@ -782,8 +799,12 @@ impl ProgramCache {
         if let Some(cached) = cached {
             // **作ったものを写しへ入れる（途中の名前で書いてから改名する。失敗しても作ったものは在る）。**
             let part = cached.with_extension(format!("part{}", std::process::id()));
-            if std::fs::copy(output, &part).is_ok() && std::fs::rename(&part, &cached).is_err() {
-                let _ = std::fs::remove_file(&part);
+            if std::fs::copy(output, &part).is_ok() {
+                // **読み取り専用にしてから置く**（ハードリンク越しの書き換えを、黙って通さない）。
+                let _ = std::fs::set_permissions(&part, std::fs::Permissions::from_mode(0o444));
+                if std::fs::rename(&part, &cached).is_err() {
+                    let _ = std::fs::remove_file(&part);
+                }
             }
         }
     }
