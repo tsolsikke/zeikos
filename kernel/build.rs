@@ -835,7 +835,7 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
     // **Seinas の fbdev の裏側は、`seinas-test` のビルドだけが入れる**（2026-10-07。M2。`ADR-0083` の Addendum）。
     // release の成果物を `tools/fetch-seinas.sh` が SHA-256 を固定して取ったもので、既定の像には入れない（バイトが release
     // に依る）。**第三者のライセンスの表示も、同じ像の、成果物の隣（`/bin/linux/`）に入れる**——成果物と表示を離さないためと、
-    // 根の項目の数（`syscall-test` が 8 と数える）を変えないため。無ければ名指しして止まる。
+    // 根の項目の数（`syscall-test` が `.` と `..` を含めて 9 と数える）を変えないため。無ければ名指しして止まる。
     if std::env::var("CARGO_FEATURE_SEINAS_TEST").is_ok() {
         let fetched = format!("{manifest_dir}/../target/linux-programs");
         let binary = format!("{fetched}/seinas-fbdev");
