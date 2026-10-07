@@ -364,57 +364,72 @@ fn build_user_programs(manifest_dir: &str, out_dir: &str) {
         }
     }
 
+    // **写しの置き場**（[`ProgramCache`]）。取り込むファイルの中身は鍵に入れる（`rerun-if-changed` に載せたものと同じ）。
+    let cache = ProgramCache::open(out_dir);
+    let userlib = input_bytes(&format!("{manifest_dir}/userland/userlib.rs"));
+    let window = input_bytes(&format!("{manifest_dir}/../common/src/window.rs"));
+    let env_source = input_bytes(&format!("{manifest_dir}/../common/src/env.rs"));
+    let user_ld = input_bytes(&script);
+
     for name in PROGRAMS {
         let source = format!("{manifest_dir}/userland/{name}.rs");
         let output = format!("{out_dir}/{name}.elf");
         println!("cargo:rerun-if-changed={source}");
+        let source_bytes = input_bytes(&source);
 
         let mut command =
             std::process::Command::new(std::env::var("RUSTC").unwrap_or("rustc".into()));
+        // **名前の出る cfg だけ渡す**（[`ProgramCache`] の doc）。
         for cfg in &extra_cfgs {
-            command.args(["--cfg", cfg]);
+            if mentions_cfg(cfg, &[&source_bytes, &userlib, &window, &env_source]) {
+                command.args(["--cfg", cfg]);
+            }
         }
-        let status = command
-            .args([
-                "--edition",
-                "2021",
-                "--target",
-                "x86_64-unknown-none",
-                // **イメージをチェックアウト先から切り離す（2026-09-06）。**
-                //
-                // **原本を絶対パスで渡しているので、`panic` の位置がその
-                // まま `.rodata` へ載る。** **イメージのバイトがチェックアウト先で
-                // 変わり、起動ログの checksum の判定が別の機械で落ちた**
-                // （CI の実測。`docs/troubleshooting.md` の 2026-09-06）。
-                //
-                // **`mke2fs` の出力を決定的にしたのと同じ種類である**——
-                // **決定的にする範囲に、ビルドする場所も入る。**
-                "--remap-path-prefix",
-                &format!("{manifest_dir}=kernel"),
-                "-C",
-                "panic=abort",
-                // 既定に依存せず、非 PIE を明示する。
-                "-C",
-                "relocation-model=static",
-                "-C",
-                "opt-level=s",
-                "-C",
-                "strip=symbols",
-                "-C",
-                &format!("link-arg=-T{script}"),
-                "-o",
-                &output,
-                &source,
-            ])
-            .status()
-            .unwrap_or_else(|e| panic!("failed to run rustc for the user program {name}: {e}"));
-
-        assert!(status.success(), "rustc failed for the user program {name}");
+        command.args([
+            "--edition",
+            "2021",
+            "--target",
+            "x86_64-unknown-none",
+            // **イメージをチェックアウト先から切り離す（2026-09-06）。**
+            //
+            // **原本を絶対パスで渡しているので、`panic` の位置がその
+            // まま `.rodata` へ載る。** **イメージのバイトがチェックアウト先で
+            // 変わり、起動ログの checksum の判定が別の機械で落ちた**
+            // （CI の実測。`docs/troubleshooting.md` の 2026-09-06）。
+            //
+            // **`mke2fs` の出力を決定的にしたのと同じ種類である**——
+            // **決定的にする範囲に、ビルドする場所も入る。**
+            "--remap-path-prefix",
+            &format!("{manifest_dir}=kernel"),
+            "-C",
+            "panic=abort",
+            // 既定に依存せず、非 PIE を明示する。
+            "-C",
+            "relocation-model=static",
+            "-C",
+            "opt-level=s",
+            "-C",
+            "strip=symbols",
+            "-C",
+            &format!("link-arg=-T{script}"),
+            "-o",
+            &output,
+            &source,
+        ]);
+        cache.build(
+            "user program",
+            name,
+            &cache.rustc_version,
+            &[&source_bytes, &userlib, &window, &env_source, &user_ld],
+            &output,
+            &mut command,
+        );
     }
 
-    build_position_independent_programs(manifest_dir, out_dir);
-    build_c_programs(manifest_dir, out_dir, &script);
-    build_linux_programs(manifest_dir, out_dir);
+    build_position_independent_programs(manifest_dir, out_dir, &cache);
+    build_c_programs(manifest_dir, out_dir, &script, &cache);
+    build_linux_programs(manifest_dir, out_dir, &cache);
+    cache.write_tally(out_dir);
 }
 
 /// Linux 向けのプログラムの名前（`linux-programs/<名前>.rs`。像の `/bin/linux/<名前>` に置く）。
@@ -428,35 +443,39 @@ const LINUX_PROGRAMS: &[&str] = &["m1-rust"];
 /// `-C target-feature=+crt-static` で静的にリンクし、既定で位置独立（static-pie）になる。版は `rust-toolchain.toml` の
 /// toolchain と `targets` で固定され、置き場を `--remap-path-prefix` で切り離すので、像のバイトは機械で変わらない。
 /// **`tools/build-linux-programs.sh` が同じ引数で、Linux 上で走らせて参照を控えるための写しを作る。**
-fn build_linux_programs(manifest_dir: &str, out_dir: &str) {
+fn build_linux_programs(manifest_dir: &str, out_dir: &str, cache: &ProgramCache) {
     let dir = format!("{manifest_dir}/../linux-programs");
     for name in LINUX_PROGRAMS {
         let source = format!("{dir}/{name}.rs");
         let output = format!("{out_dir}/linux-{name}.elf");
         println!("cargo:rerun-if-changed={source}");
-        let status = std::process::Command::new(std::env::var("RUSTC").unwrap_or("rustc".into()))
-            .args([
-                "--edition",
-                "2021",
-                "--target",
-                "x86_64-unknown-linux-musl",
-                "-C",
-                "target-feature=+crt-static",
-                "-C",
-                "opt-level=2",
-                "-C",
-                "strip=symbols",
-                "--remap-path-prefix",
-                &format!("{dir}=linux-programs"),
-                "-o",
-                &output,
-                &source,
-            ])
-            .status()
-            .unwrap_or_else(|e| panic!("failed to run rustc for the Linux program {name}: {e}"));
-        assert!(
-            status.success(),
-            "rustc failed for the Linux program {name}"
+        let source_bytes = input_bytes(&source);
+        let mut command =
+            std::process::Command::new(std::env::var("RUSTC").unwrap_or("rustc".into()));
+        command.args([
+            "--edition",
+            "2021",
+            "--target",
+            "x86_64-unknown-linux-musl",
+            "-C",
+            "target-feature=+crt-static",
+            "-C",
+            "opt-level=2",
+            "-C",
+            "strip=symbols",
+            "--remap-path-prefix",
+            &format!("{dir}=linux-programs"),
+            "-o",
+            &output,
+            &source,
+        ]);
+        cache.build(
+            "Linux program",
+            name,
+            &cache.rustc_version,
+            &[&source_bytes],
+            &output,
+            &mut command,
         );
     }
 }
@@ -468,45 +487,53 @@ fn build_linux_programs(manifest_dir: &str, out_dir: &str) {
 /// `--no-dynamic-linker` で、動的リンカの名前（`PT_INTERP`）を付けさせない。ローダーは、それを持つ像を断る。
 ///
 /// **破壊テストの cfg は渡さない**（いまの 1 本は、どの cfg も読まない）。
-fn build_position_independent_programs(manifest_dir: &str, out_dir: &str) {
+fn build_position_independent_programs(manifest_dir: &str, out_dir: &str, cache: &ProgramCache) {
     const PROGRAMS: &[&str] = &["pie-hello"];
 
     let script = format!("{manifest_dir}/userland/pie.ld");
     println!("cargo:rerun-if-changed={script}");
+    let pie_ld = input_bytes(&script);
     for name in PROGRAMS {
         let source = format!("{manifest_dir}/userland/{name}.rs");
         let output = format!("{out_dir}/{name}.elf");
         println!("cargo:rerun-if-changed={source}");
-        let status = std::process::Command::new(std::env::var("RUSTC").unwrap_or("rustc".into()))
-            .args([
-                "--edition",
-                "2021",
-                "--target",
-                "x86_64-unknown-none",
-                // イメージをチェックアウト先から切り離す（上の `build_user_programs` と同じ理由）。
-                "--remap-path-prefix",
-                &format!("{manifest_dir}=kernel"),
-                "-C",
-                "panic=abort",
-                "-C",
-                "relocation-model=pie",
-                "-C",
-                "opt-level=s",
-                "-C",
-                "strip=symbols",
-                "-C",
-                "link-arg=-pie",
-                "-C",
-                "link-arg=--no-dynamic-linker",
-                "-C",
-                &format!("link-arg=-T{script}"),
-                "-o",
-                &output,
-                &source,
-            ])
-            .status()
-            .unwrap_or_else(|e| panic!("failed to run rustc for the user program {name}: {e}"));
-        assert!(status.success(), "rustc failed for the user program {name}");
+        let source_bytes = input_bytes(&source);
+        let mut command =
+            std::process::Command::new(std::env::var("RUSTC").unwrap_or("rustc".into()));
+        command.args([
+            "--edition",
+            "2021",
+            "--target",
+            "x86_64-unknown-none",
+            // イメージをチェックアウト先から切り離す（上の `build_user_programs` と同じ理由）。
+            "--remap-path-prefix",
+            &format!("{manifest_dir}=kernel"),
+            "-C",
+            "panic=abort",
+            "-C",
+            "relocation-model=pie",
+            "-C",
+            "opt-level=s",
+            "-C",
+            "strip=symbols",
+            "-C",
+            "link-arg=-pie",
+            "-C",
+            "link-arg=--no-dynamic-linker",
+            "-C",
+            &format!("link-arg=-T{script}"),
+            "-o",
+            &output,
+            &source,
+        ]);
+        cache.build(
+            "position-independent program",
+            name,
+            &cache.rustc_version,
+            &[&source_bytes, &pie_ld],
+            &output,
+            &mut command,
+        );
     }
 }
 
@@ -541,7 +568,7 @@ fn build_position_independent_programs(manifest_dir: &str, out_dir: &str) {
 /// - `-ffunction-sections` / `-fdata-sections` / `-Wl,--gc-sections`——
 ///   **`ttfglyph.c` が `stb_truetype` の SDF 用の 4 つを「宣言だけ」置き、
 ///   ここが「どこからも届かない」を証明する**（あちらの doc）
-fn build_c_programs(manifest_dir: &str, out_dir: &str, script: &str) {
+fn build_c_programs(manifest_dir: &str, out_dir: &str, script: &str, cache: &ProgramCache) {
     /// C で書いたユーザープログラム。**足すときはここへ 1 行足す。**
     const C_PROGRAMS: &[&str] = &[
         "chello", "fptest", "fpchild", "fpfault", "dbfault", "ttfglyph", "tickera", "tickerb",
@@ -559,12 +586,26 @@ fn build_c_programs(manifest_dir: &str, out_dir: &str, script: &str) {
     // **外から持ってきたヘッダ（B-c）。** **`ttfglyph` が丸ごと抱える。**
     println!("cargo:rerun-if-changed={manifest_dir}/../third_party/stb/stb_truetype.h");
 
+    // **鍵に入れる取り込みのファイル**（上の `rerun-if-changed` と同じもの）。
+    let mut shared: Vec<Vec<u8>> = LIBC_SOURCES
+        .iter()
+        .map(|source| input_bytes(&format!("{manifest_dir}/userland/{source}")))
+        .collect();
+    shared.push(input_bytes(&format!("{manifest_dir}/userland/libc.h")));
+    shared.push(input_bytes(&format!("{manifest_dir}/userland/ticker.h")));
+    shared.push(input_bytes(&format!(
+        "{manifest_dir}/../third_party/stb/stb_truetype.h"
+    )));
+    shared.push(input_bytes(script));
+
     for name in C_PROGRAMS {
         let source = format!("{manifest_dir}/userland/{name}.c");
         let output = format!("{out_dir}/{name}.elf");
         println!("cargo:rerun-if-changed={source}");
+        let source_bytes = input_bytes(&source);
 
-        let status = std::process::Command::new(std::env::var("CC").unwrap_or("cc".into()))
+        let mut command = std::process::Command::new(std::env::var("CC").unwrap_or("cc".into()));
+        command
             .args([
                 "-ffreestanding",
                 "-nostdlib",
@@ -601,12 +642,177 @@ fn build_c_programs(manifest_dir: &str, out_dir: &str, script: &str) {
                 LIBC_SOURCES
                     .iter()
                     .map(|source| format!("{manifest_dir}/userland/{source}")),
-            )
-            .status()
-            .unwrap_or_else(|e| panic!("failed to run cc for the C program {name}: {e}"));
-
-        assert!(status.success(), "cc failed for the C program {name}");
+            );
+        let mut inputs: Vec<&[u8]> = vec![&source_bytes];
+        inputs.extend(shared.iter().map(Vec::as_slice));
+        cache.build(
+            "C program",
+            name,
+            &cache.cc_version,
+            &inputs,
+            &output,
+            &mut command,
+        );
     }
+}
+
+/// ユーザープログラムの写しの置き場（2026-10-07。全検査の項目がカーネルのビルドを待つ時間を減らす）。
+///
+/// # なぜ在るのか
+///
+/// **cargo は feature の組ごとにこのビルドスクリプトを走らせ直す**（`CARGO_FEATURE_*` が変わるため）。走り直すたびに
+/// 56 本のプログラム（Rust 44 本・位置独立 1 本・C 8 本・Linux 向け 1 本）を全部作り直していた——**1 組あたり約 6.4 秒で、
+/// 1 組のビルド約 10 秒の 3 分の 2 である**（`cargo build --timings` の実測。カーネル本体は約 2.5 秒）。全検査は約 410 組を
+/// 作るので、カーネルに触った回は cargo の合計が 61〜70 分になり、壁時計と同じになっていた——**裏のビルドの流れが最初から
+/// 最後まで塞がり、項目が待つ**（2026-10-06〜07 の全検査の記録。待ちの合計 25〜47 分）。
+///
+/// **ところが、プログラムのバイトは、組が違っても同じであることがほとんどである**——変わるのは、その組の feature が
+/// `USER_PROGRAM_CFGS` で `--cfg` に写るプログラムだけで、それも cfg を読むプログラムだけである。
+///
+/// # 形
+///
+/// **入力の中身で引く写しの置き場**（cargo の `target/` の下の `user-program-cache/`。feature の組をまたいで共有する）。
+/// 鍵は、道具の版（`rustc -vV`・`cc --version`）・渡す引数（出力の道は除く）・原本と取り込むファイルの中身
+/// （`rerun-if-changed` に載せているものと同じ）のハッシュである。**在ればハードリンクで置き（書かない）、無ければ作って
+/// から写しへ入れる。** rustc も cc も同じ入力から同じバイトを出す（像のバイトを機械で変えないために、既にそれに依っている）。
+///
+/// **`--cfg` は、そのプログラムの原本か取り込むファイルに名前が出るものだけ渡す**——出ない cfg は読まれないので、渡しても
+/// 同じ中身になる。渡さなければ鍵が同じになり、写しが当たる。
+///
+/// # 書く量
+///
+/// 当たれば 1 バイトも書かない。外れた分だけ、作ったものを 1 度写しへ入れる（プログラムは 10〜500 KiB）。置き場は育つが、
+/// 組み合わせは少ない（プログラム × cfg の違い）。消すのは `cargo clean` と一緒である。
+/// **`ZEIKOS_USER_PROGRAM_CACHE=off` で止められる**（当たりと外れの中身が同じことを確かめるため）。
+struct ProgramCache {
+    /// 置き場。**無ければ写しを使わない**（その場で作る）。
+    dir: Option<std::path::PathBuf>,
+    rustc_version: String,
+    cc_version: String,
+    hits: std::cell::Cell<usize>,
+    misses: std::cell::Cell<usize>,
+}
+
+impl ProgramCache {
+    fn open(out_dir: &str) -> Self {
+        println!("cargo:rerun-if-env-changed=ZEIKOS_USER_PROGRAM_CACHE");
+        let enabled = std::env::var("ZEIKOS_USER_PROGRAM_CACHE")
+            .ok()
+            .is_none_or(|value| value != "off");
+        // **cargo の `target/` は、`OUT_DIR`（`target/<標的>/debug/build/kernel-<hash>/out`）から上へ辿った、
+        // 最初の `target` という名前の置き場である。**
+        let dir = if enabled {
+            std::path::Path::new(out_dir)
+                .ancestors()
+                .find(|ancestor| ancestor.file_name().is_some_and(|name| name == "target"))
+                .map(|target| target.join("user-program-cache"))
+                .filter(|dir| std::fs::create_dir_all(dir).is_ok())
+        } else {
+            None
+        };
+        let rustc = std::env::var("RUSTC").unwrap_or("rustc".into());
+        let rustc_version = std::process::Command::new(&rustc)
+            .arg("-vV")
+            .output()
+            .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string())
+            .unwrap_or_else(|_| "unknown".to_string());
+        ProgramCache {
+            dir,
+            rustc_version,
+            cc_version: cc_version(),
+            hits: std::cell::Cell::new(0),
+            misses: std::cell::Cell::new(0),
+        }
+    }
+
+    /// 写しが在ればそれを置き、無ければ `command` で作ってから写しへ入れる。`inputs` は鍵に入れる中身（原本と取り込む
+    /// ファイル）。`command` の引数も鍵に入れる（`output` だけは除く——`OUT_DIR` は組ごとに違う）。
+    fn build(
+        &self,
+        what: &str,
+        name: &str,
+        tool_version: &str,
+        inputs: &[&[u8]],
+        output: &str,
+        command: &mut std::process::Command,
+    ) {
+        let cached = self.dir.as_ref().map(|dir| {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            let mut feed = |bytes: &[u8]| {
+                std::hash::Hasher::write_usize(&mut hasher, bytes.len());
+                std::hash::Hasher::write(&mut hasher, bytes);
+            };
+            feed(tool_version.as_bytes());
+            for arg in command.get_args() {
+                if arg == std::ffi::OsStr::new(output) {
+                    feed(b"<output>");
+                } else {
+                    feed(arg.as_encoded_bytes());
+                }
+            }
+            for input in inputs {
+                feed(input);
+            }
+            dir.join(format!(
+                "{name}-{:016x}",
+                std::hash::Hasher::finish(&hasher)
+            ))
+        });
+        if let Some(cached) = &cached {
+            if cached.is_file() {
+                let _ = std::fs::remove_file(output);
+                if std::fs::hard_link(cached, output).is_ok()
+                    || std::fs::copy(cached, output).is_ok()
+                {
+                    self.hits.set(self.hits.get() + 1);
+                    return;
+                }
+            }
+        }
+        let status = command
+            .status()
+            .unwrap_or_else(|e| panic!("failed to run the compiler for the {what} {name}: {e}"));
+        assert!(
+            status.success(),
+            "the compiler failed for the {what} {name}"
+        );
+        self.misses.set(self.misses.get() + 1);
+        if let Some(cached) = cached {
+            // **作ったものを写しへ入れる（途中の名前で書いてから改名する。失敗しても作ったものは在る）。**
+            let part = cached.with_extension(format!("part{}", std::process::id()));
+            if std::fs::copy(output, &part).is_ok() && std::fs::rename(&part, &cached).is_err() {
+                let _ = std::fs::remove_file(&part);
+            }
+        }
+    }
+
+    /// 当たりと外れの数を `OUT_DIR` へ書く（人が読むため。cargo の出力には出さない）。
+    fn write_tally(&self, out_dir: &str) {
+        let _ = std::fs::write(
+            format!("{out_dir}/user-program-cache.txt"),
+            format!(
+                "cache: {}\nhits: {}\nmisses: {}\n",
+                self.dir
+                    .as_ref()
+                    .map_or("off".to_string(), |dir| dir.display().to_string()),
+                self.hits.get(),
+                self.misses.get()
+            ),
+        );
+    }
+}
+
+/// 鍵に入れるファイルの中身を読む（無ければ止まる——その場で作っても落ちる入力である）。
+fn input_bytes(path: &str) -> Vec<u8> {
+    std::fs::read(path).unwrap_or_else(|e| panic!("failed to read {path}: {e}"))
+}
+
+/// `cfg` の名前が、原本か取り込むファイルのどれかに出るか（出なければ、渡しても読まれない）。
+fn mentions_cfg(cfg: &str, texts: &[&[u8]]) -> bool {
+    texts.iter().any(|text| {
+        text.windows(cfg.len())
+            .any(|window| window == cfg.as_bytes())
+    })
 }
 
 /// `NAME = 0x...;` の形の代入から値を読む。
