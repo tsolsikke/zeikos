@@ -2330,9 +2330,16 @@ unsafe fn mmap_anonymous_from_ring3(
             Err(error) => return errno_for_map(error),
         },
         Some((addr, how)) => {
-            // **番地を指定する形**（2026-10-06）。ページの境界で、ユーザーの範囲（配置の `mmap` の終わりより下）に在ること。
+            // **番地を指定する形**（2026-10-06）。ページの境界に在ること。**ユーザーの範囲に収まること**（2026-10-07。
+            // 下限より下は `-EPERM`、上限を越えれば `-ENOMEM`。Linux の `mmap_min_addr` と `TASK_SIZE_MAX` と同じ答え）。
             if !addr.is_multiple_of(PAGE_SIZE) || addr == 0 {
                 return (-EINVAL) as u64;
+            }
+            if addr < USER_MAPPING_MIN {
+                return (-EPERM) as u64;
+            }
+            if exceeds_user_limit(addr, bytes) {
+                return (-ENOMEM) as u64;
             }
             let placed = match how {
                 // SAFETY: 呼び出し元契約をそのまま渡す。
@@ -2451,6 +2458,11 @@ unsafe fn munmap_from_ring3(addr: u64, len: u64, direct_map: DirectMap) -> u64 {
         return (-EINVAL) as u64;
     }
     let bytes = len.div_ceil(PAGE_SIZE) * PAGE_SIZE;
+    // **上限を越える範囲は `-EINVAL`**（2026-10-07。Linux と同じ答え。表に無い範囲なので外すものは無いが、番地を見ずに通すと
+    // 「成功」と答えることになる）。
+    if exceeds_user_limit(addr, bytes) {
+        return (-EINVAL) as u64;
+    }
     // SAFETY: 呼び出し元契約をそのまま渡す。
     match unsafe { release_range_and_unmap(addr, bytes, MappingKind::can_unmap, direct_map) } {
         Ok(()) => 0,
@@ -2488,6 +2500,10 @@ unsafe fn mprotect_from_ring3(addr: u64, len: u64, prot: u64, direct_map: Direct
         return (-EPERM) as u64;
     }
     let bytes = len.div_ceil(PAGE_SIZE) * PAGE_SIZE;
+    // **上限を越える範囲は `-ENOMEM`**（2026-10-07。Linux は写像の無い範囲として同じ答えを返す）。
+    if exceeds_user_limit(addr, bytes) {
+        return (-ENOMEM) as u64;
+    }
     let writable = prot & PROT_WRITE != 0;
     let present = prot & (PROT_READ | PROT_WRITE) != 0;
     // SAFETY: 遠征の中なので CR3 はこのプロセスの表である。
@@ -2594,6 +2610,24 @@ fn range_holds_an_executable_page(
         page = page.saturating_add(PAGE_SIZE);
     }
     false
+}
+
+/// ユーザーの写像を置いてよい番地の下限（2026-10-07）。Linux の `mmap_min_addr` の既定（64 KiB）と同じ。**番地 0 の近くへ
+/// `MAP_FIXED` で写させない**（ヌルの参照が有効な番地にならないように）。
+const USER_MAPPING_MIN: u64 = 0x1_0000;
+
+/// `addr` から `bytes` の範囲が、ユーザーの番地の上限（`USER_ADDRESS_LIMIT`。Linux の `TASK_SIZE_MAX` に同じで、`syscall`
+/// 命令の戻り先の確かめと同じ値）を越えるか（2026-10-07。`ADR-0082` の Addendum）。**`mmap(MAP_FIXED)`・`munmap`・
+/// `mprotect` の入口で見る**——実測で、`MAP_FIXED` が上限のページと上限をまたぐ範囲を写して書かせ、写像の無いカーネルの
+/// 番地にも「写した」と答えていた（写像の表は番地を見ず、ページテーブルの操作は上半分へも届く）。足し算があふれる形（末尾が 2^64 を越える）も越えたと扱う。
+fn exceeds_user_limit(addr: u64, bytes: u64) -> bool {
+    use crate::arch::x86_64::USER_ADDRESS_LIMIT;
+    // 破壊テスト (2026-10-07, mmap-fixed-ignores-user-limit-test): 上限を見ない（直す前の形）。`syscall-test` が 121 番で止まる。
+    if cfg!(feature = "mmap-fixed-ignores-user-limit-test") {
+        return false;
+    }
+    addr.checked_add(bytes)
+        .is_none_or(|end| end > USER_ADDRESS_LIMIT)
 }
 
 /// `MAP_FIXED` の置き方。

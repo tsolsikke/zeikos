@@ -9421,6 +9421,9 @@ const SYSCALL_TEST_STATUS: &[(u64, &str)] = &[
     (119, "spawn(\"/bin/tkill-self\") did not end with status 134 (tkill(gettid(), SIGABRT) ends the process with 128 + 6)"),
     // 120: clock_nanosleep（2026-10-07）。
     (120, "clock_nanosleep did not return 0 for a zero-length relative sleep and a past absolute deadline, or did not return -EINVAL for an unknown clock"),
+    // 121・122: ユーザーの番地の上限（2026-10-07）。
+    (121, "mmap(MAP_FIXED) at the user address limit, across it, at a non-canonical or kernel address was not refused with -ENOMEM, or under 64 KiB with -EPERM"),
+    (122, "munmap beyond the user address limit did not return -EINVAL, or mprotect beyond it (or wrapping around) did not return -ENOMEM"),
 ];
 
 /// `fault-test` が起こす #PF のエラーコード（S9-b-3-2a）。
@@ -13171,6 +13174,11 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "munmap-keeps-frames-test",
         cfg!(feature = "munmap-keeps-frames-test"),
         "munmap が外したフレームを返さない",
+    ),
+    (
+        "mmap-fixed-ignores-user-limit-test",
+        cfg!(feature = "mmap-fixed-ignores-user-limit-test"),
+        "mmap(MAP_FIXED)・munmap・mprotect がユーザーの番地の上限を見ない",
     ),
     (
         "mprotect-allows-exec-test",

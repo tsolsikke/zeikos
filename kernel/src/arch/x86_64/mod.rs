@@ -68,7 +68,7 @@ pub use stack::{
     kernel_stack_high_water, kernel_stack_range, record_guard_page, GuardedStack,
     KERNEL_STACK_FILL,
 };
-pub use system_call_entry::refuse_system_call_return;
+pub use system_call_entry::{refuse_system_call_return, USER_ADDRESS_LIMIT};
 pub use task_frame::{build_initial_context, raise_yield_interrupt};
 pub use user_registers::{
     restore_user_registers, restore_user_segment_bases, save_user_registers, set_user_fs_base,

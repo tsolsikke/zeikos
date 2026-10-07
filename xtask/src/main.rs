@@ -1625,6 +1625,16 @@ const SYSCALL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
+    // **`mmap(MAP_FIXED)`・`munmap`・`mprotect` がユーザーの番地の上限を見ない**（2026-10-07。直す前の形）。上限のページへの
+    // `MAP_FIXED` が通ってしまい、`syscall-test` が 121 番で止まる。
+    CriticalTest {
+        name: "mmap-fixed-ignores-user-limit",
+        feature: "mmap-fixed-ignores-user-limit-test",
+        expected_markers: &["user-run: syscall-test exited with status 121", "halting"],
+        forbidden_markers: &["user-run: syscall-test left Ring 3 (exited=true status=0"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
     // **`mprotect` が `PROT_EXEC` を断らない**（2026-10-06。W と X を同時に通す形）。`syscall-test` が 109 番で止まる。
     CriticalTest {
         name: "mprotect-allows-exec",
@@ -32942,7 +32952,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 63,
-    full: 504,
+    full: 505,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

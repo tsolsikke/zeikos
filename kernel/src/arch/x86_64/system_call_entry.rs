@@ -94,9 +94,9 @@ const STUB_SWITCHES_STACK: usize = if cfg!(feature = "syscall-stub-keeps-user-st
 /// **正準な番地の下半分の、最後の 1 ページを使わせない。** 最後のページの末尾に `syscall` 命令を置くと、戻り先
 /// （命令の次の番地）が `0x0000_8000_0000_0000` になり、正準でなくなる。Linux も同じ値を上限にしている。
 ///
-/// **番地を指定する `mmap`（`MAP_FIXED`）は 2026-10-06 に入ったが、写す側はまだこの上限を見ていない**
-/// （`docs/deferred-decisions.md` の行。2026-10-07 の突き合わせで気づいた）。**戻る直前の確かめ
-/// （`IrqContext::returns_to_user_address`）は在る。**
+/// **写す側（`mmap(MAP_FIXED)`・`munmap`・`mprotect`）も、この上限を見る**（2026-10-07。`crate::syscall` の
+/// `exceeds_user_limit`。それまでは見ていなかった——`ADR-0082` の Addendum）。**戻る直前の確かめ
+/// （`IrqContext::returns_to_user_address`）も在る。**
 pub const USER_ADDRESS_LIMIT: u64 = 0x0000_7fff_ffff_f000;
 
 /// スタブが、ユーザーの RSP を退避する欄（CPU ごと）。
