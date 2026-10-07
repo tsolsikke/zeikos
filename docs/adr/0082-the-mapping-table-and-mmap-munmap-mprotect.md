@@ -65,3 +65,11 @@ Accepted（2026-10-06に運用者が設計案を承認し、同じ日に4つの�
 - `user-mmap:`の行に、プロセスの終わりに表に残っていた写像の数と無名のページの数が出る。`mmap`で取って返さないプログラムが見える。
 - 外したフレームをその場で返す形は、スレッドが入ると崩れる（上の3）。持ち越しに書き、スレッドの課題の前提にする。
 - 権限の一覧（`page-perms`）には、`PROT_NONE`にした葉が出ない。一覧で見たいなら、印の葉を読む形を足す（`docs/deferred-decisions.md`）。
+
+## Addendum（2026-10-07。ユーザーの番地の範囲）
+
+`MAP_FIXED`・`munmap`・`mprotect`が、番地の範囲を見ていなかった（決定1の表は番地を見ず、ページテーブルの操作は上半分へも届く）。実測で、上限のページ（`0x7fff_ffff_f000`）と上限をまたぐ範囲への`MAP_FIXED`が通って書け、写像の無いカーネルの番地（`0xffff_ffff_7000_0000`）には「写した」と答えた（書くと#PFで畳まれるが、カーネルの共有の表に葉が残る）。正準でない番地と、写像の在るカーネルの番地は`-ENOMEM`だった。
+
+- **上の端**: 範囲の末尾がユーザーの番地の上限`0x0000_7fff_ffff_f000`（`ADR-0075`の決定5。Linuxの`TASK_SIZE_MAX`）を越える`mmap(MAP_FIXED・MAP_FIXED_NOREPLACE)`は`-ENOMEM`、`munmap`は`-EINVAL`、`mprotect`は`-ENOMEM`（Linuxと同じ答え）。足し算があふれる範囲も越えたと扱う（`kernel/src/syscall.rs`の`exceeds_user_limit`）。
+- **下の端**: 64 KiB（`0x1_0000`）より下への`MAP_FIXED`は`-EPERM`（Linuxの`mmap_min_addr`の既定と同じ。番地0の近くへ写させない）。`munmap`・`mprotect`は下の端を見ない——表に無い範囲なので、Linuxと同じく0と`-ENOMEM`になる。
+- `syscall-test`の121・122で確かめ、上限を見ない形の破壊テスト（`mmap-fixed-ignores-user-limit-test`）を足した。
