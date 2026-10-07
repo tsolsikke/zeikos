@@ -1647,6 +1647,43 @@ fn prepare_worktree(main: &Path, worktree: &Path, commit: &str) -> Result<()> {
     Ok(())
 }
 
+/// Seinas の成果物（`seinas-fbdev` と第三者の表示）を、メインの置き場（`target/linux-programs/`）から作業ツリーへ写す
+/// （2026-10-07。運用者の決定）。**SHA-256 が合うものだけで、ネットワークへは行かない**（`tools/fetch-seinas.sh` の
+/// `ZEIKOS_SEINAS_SOURCE`）。**無ければ写さず、その項目は今までどおり名指しで飛ぶ**——飛んだ項目は全検査のまとめに
+/// 数と名前で出る（`!SKIPPED`）。**以前は写していなかったので、作業ツリーの全検査では Seinas の項目がいつも飛んでいた**
+/// （実測。2026-10-07 の 504 項目の回）。失敗しても全検査は止めない。
+fn copy_seinas_artifacts(main: &Path, worktree: &Path) {
+    let source = main.join("target").join("linux-programs");
+    let script = worktree.join("tools").join("fetch-seinas.sh");
+    if !source.is_dir() || !script.is_file() {
+        println!(
+            "full: Seinas artifacts: not copied ({} or {} is missing); the Seinas item will be skipped by name",
+            source.display(),
+            script.display()
+        );
+        return;
+    }
+    let output = std::process::Command::new("sh")
+        .arg(&script)
+        .arg(worktree.join("target").join("linux-programs"))
+        .env("ZEIKOS_SEINAS_SOURCE", &source)
+        .current_dir(worktree)
+        .output();
+    match output {
+        Ok(output) => {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            for line in stdout.lines().chain(stderr.lines()) {
+                println!("full: Seinas artifacts: {line}");
+            }
+        }
+        Err(error) => println!(
+            "full: Seinas artifacts: could not run {} ({error})",
+            script.display()
+        ),
+    }
+}
+
 /// 子を上限つきで待つ（`None` なら上限を過ぎた）。**止めはしない**——**固まった子は運用者に確かめて
 /// から止める**（`ADR-0069` の決定 7 の 3 の (5)）。
 fn wait_within(child: &mut std::process::Child, limit: Duration) -> Result<Option<ExitStatus>> {
@@ -1827,6 +1864,7 @@ fn run(target: &str) -> Result<()> {
     prune_before_the_run(&main, &worktree);
     let disk_start = sectors_written(&main);
     prepare_worktree(&main, &worktree, &commit)?;
+    copy_seinas_artifacts(&main, &worktree);
     if let Some(dir) = log.parent() {
         fs::create_dir_all(dir).with_context(|| format!("could not create {}", dir.display()))?;
     }

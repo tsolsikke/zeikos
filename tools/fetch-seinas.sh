@@ -5,6 +5,9 @@
 # - 取れた後は取り直さない（置き場に在って SHA-256 が合えば、何もせずに終わる）。CI はこの置き場をキャッシュする。
 # - 置き場は target/linux-programs/（像へ入れるのは seinas-test の feature のビルドだけ。既定の像のバイトは変えない）。
 #
+# - ZEIKOS_SEINAS_SOURCE=<置き場> を与えると、ネットワークへは行かず、そこに在って SHA-256 が合うものだけを写す
+#   （全検査が、作業ツリーへメインの置き場から写すのに使う。無ければ写さずに終了 1。項目は今までどおり名指しで飛ぶ）。
+#
 # 使い方: tools/fetch-seinas.sh [置き場]   （既定は target/linux-programs）
 set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -23,6 +26,16 @@ fetch() {
         return
     fi
     tmp="$target.part"
+    if [ -n "${ZEIKOS_SEINAS_SOURCE:-}" ]; then
+        src="$ZEIKOS_SEINAS_SOURCE/$name"
+        if [ -f "$src" ] && printf '%s  %s\n' "$sha" "$src" | sha256sum -c --status; then
+            cp "$src" "$tmp" && mv "$tmp" "$target"
+            echo "copied: $target from $src (SHA-256 matches; not fetched)"
+            return
+        fi
+        echo "not copied: $name is not at $ZEIKOS_SEINAS_SOURCE with the pinned SHA-256 (offline; not fetched either)" >&2
+        return 1
+    fi
     curl -fsSL --retry 3 -o "$tmp" "$base/$name"
     if ! printf '%s  %s\n' "$sha" "$tmp" | sha256sum -c --status; then
         echo "refused: $name from $base does not have the pinned SHA-256 $sha (not placed)" >&2

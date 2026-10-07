@@ -10564,6 +10564,7 @@ fn cmd_seinas_fbdev_test() -> Result<()> {
             "{context}: skipped (seinas-fbdev is not at {}; fetch it with tools/fetch-seinas.sh)",
             binary.display()
         );
+        note_skipped_item("seinas-fbdev test (seinas-fbdev is not at target/linux-programs; tools/fetch-seinas.sh)");
         return Ok(());
     }
     let run = RunDir::create(&workspace_root, "seinas-fbdev-test")?;
@@ -21863,6 +21864,7 @@ fn cmd_linux_c_test() -> Result<()> {
              needs musl-gcc)",
             built.display()
         );
+        note_skipped_item("linux-c test (m1-c is not built at target/linux-programs; tools/build-linux-programs.sh needs musl-gcc)");
         return Ok(());
     }
     let run = RunDir::create(&workspace_root, "linux-c-test")?;
@@ -32510,6 +32512,9 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
         }
     }
 
+    // **名指しで飛ばした項目を、まとめに数と名前で出す**（2026-10-07。運用者の決定）。飛ばした項目は通った数に入るので、
+    // ここに出さないと、飛ばしたまま緑に見える。
+    print_skipped_items_line();
     let item_seconds = Some(item_time_total().as_secs_f64());
     if failed.is_empty() {
         full_check::end("pass", Some(total), item_seconds);
@@ -33689,6 +33694,35 @@ static ITEMS_DONE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsi
 /// 項目の所要の合計（ミリ秒。`ADR-0065` の後）。**`--full` の完了時に直前の成功した回と
 /// 比べる**（[`report_item_time_slowness`]）。**[`finish_item`] が項目ごとに足す。**
 static ITEM_TIME_TOTAL_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// 名指しで飛ばした項目（2026-10-07。運用者の決定）。道具や成果物が無くて走れなかった項目は `skipped` の行を出して通った数に
+/// 入る——**全検査のまとめに数と名前で出す**（[`print_skipped_items_line`]）。**全検査の作業ツリーで Seinas の項目がいつも
+/// 飛んでいたのに、まとめは緑だった**（実測。2026-10-07）。
+static SKIPPED_ITEMS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// 項目を名指しで飛ばしたことを控える（`skipped` の行を出す所で呼ぶ）。
+fn note_skipped_item(what: &str) {
+    if let Ok(mut items) = SKIPPED_ITEMS.lock() {
+        items.push(what.to_string());
+    }
+}
+
+/// 飛ばした項目の数と名前を 1 行で出す（無ければ何も出さない）。`!SKIPPED` の印は、人と見張りが目で拾うため。
+/// 結果の行（`xtask check: all N check(s) passed`）の直前に出るので、全検査のまとめ（`print_log_summary`）にも載る。
+fn print_skipped_items_line() {
+    let items = SKIPPED_ITEMS
+        .lock()
+        .map(|items| items.clone())
+        .unwrap_or_default();
+    if items.is_empty() {
+        return;
+    }
+    println!(
+        "(warn) !SKIPPED {} item(s) were skipped by name and counted as passed: {}",
+        items.len(),
+        items.join("; ")
+    );
+}
 
 /// `--full` の自前の上限（VIEW-c の後）。**過ぎたらそこで止める。**
 static TIME_LIMIT: std::sync::Mutex<Option<(Instant, std::time::Duration)>> =
