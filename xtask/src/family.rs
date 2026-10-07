@@ -228,6 +228,7 @@ pub const PATH_RULES: &[PathRule] = &[
             "kernel/userland/mprotect-nx.rs",
             "kernel/userland/tkill-self.rs",
             "kernel/userland/fb-test.rs",
+            "kernel/userland/frame-hog.rs",
             // **Linux 向けのプログラム**（2026-10-06。既定の像の `/bin/linux` に入り、起動時の `linux-check`（カーネル。
             // `bss-check` の後）とシェルの台本が起こす。2026-10-07 までは `syscall-test` が起こしていた）。
             "linux-programs/m1-rust.rs",

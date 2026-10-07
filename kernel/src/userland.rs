@@ -904,10 +904,21 @@ static mut SPAWN_QUARANTINE: [crate::quarantine::Quarantine; crate::arch::x86_64
 /// [`spawn`] が起動した子が漏らしたフレームの累計（S11-5）。
 static SPAWN_LEAKED: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
+/// [`spawn`] が起動した子の破棄が、隔離に残っていた前の破棄のフレームを返した本数の累計（2026-10-07。
+/// `crate::quarantine::Retired::released_others`）。**親の窓の中で空きフレームが増える**ので、親は消えた数へ足し戻す。
+static SPAWN_RELEASED_OTHERS: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
 /// 子の会計を 0 に戻す（S11-5）。**プログラムを 1 本走らせる直前に呼ぶ。**
 pub fn reset_spawn_accounting() {
     SPAWN_QUARANTINED.store(0, core::sync::atomic::Ordering::SeqCst);
     SPAWN_LEAKED.store(0, core::sync::atomic::Ordering::SeqCst);
+    SPAWN_RELEASED_OTHERS.store(0, core::sync::atomic::Ordering::SeqCst);
+}
+
+/// 子の破棄が、隔離に残っていた前の破棄のフレームを返した本数の累計（2026-10-07）。
+pub fn spawn_released_others() -> usize {
+    SPAWN_RELEASED_OTHERS.load(core::sync::atomic::Ordering::SeqCst)
 }
 
 /// 子が隔離へ入れた枚数と漏らした枚数（S11-5）。
@@ -916,6 +927,79 @@ pub fn spawn_accounting() -> (usize, usize) {
         SPAWN_QUARANTINED.load(core::sync::atomic::Ordering::SeqCst),
         SPAWN_LEAKED.load(core::sync::atomic::Ordering::SeqCst),
     )
+}
+
+/// 破棄の結果（スロットごと。2026-10-07）。**[`run_loaded_program`] が書き、会計（`spawn` と起動時の表）が
+/// [`last_destroy`] で読む。**
+static mut LAST_DESTROY: [crate::quarantine::Retired; crate::arch::x86_64::USER_TASK_SLOTS] =
+    [crate::quarantine::Retired::ZERO; crate::arch::x86_64::USER_TASK_SLOTS];
+
+/// 隔離（[`SPAWN_QUARANTINE`]）にフレームが残っているか（2026-10-07）。**BSP のアイドルが BKL を取らずに読む印**——
+/// 残っていれば BKL を取って [`release_retired_quarantines`] を呼ぶ。隔離の道を通った破棄の後だけ立つ。
+static QUARANTINE_HOLDS: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+
+/// 今まさに空間を壊している数（2026-10-07）。**隔離の道は、一杯になると BKL を放して待つ**ので、その間にアイドルが
+/// 同じ隔離を触らないように、[`release_retired_quarantines`] はこれが 0 のときだけ動く。
+static DESTROYS_IN_PROGRESS: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
+/// 空間をどの道で壊すか（2026-10-07。`crate::quarantine::Retire` の doc）。
+fn destroy_route(ran_on: u64) -> crate::quarantine::Retire {
+    // 確かめ (2026-10-07, destroy-through-quarantine-test): どの空間も隔離の道を通す（一杯になって待つ形を踏ませる）。
+    if cfg!(feature = "destroy-through-quarantine-test") {
+        return crate::quarantine::Retire::ThroughQuarantine;
+    }
+    let here = 1u64 << common::percpu::cpu_id();
+    if ran_on & !here == 0 {
+        crate::quarantine::Retire::Directly
+    } else {
+        crate::quarantine::Retire::ThroughQuarantine
+    }
+}
+
+fn note_destroy(slot: usize, retired: crate::quarantine::Retired) {
+    // SAFETY: BKL の内側で、自分のスロットの欄だけを書く。
+    unsafe { (*core::ptr::addr_of_mut!(LAST_DESTROY))[slot] = retired };
+    if retired.still_quarantined() > 0 {
+        QUARANTINE_HOLDS.store(true, core::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// 今のスロットの、直近の破棄の結果（2026-10-07）。
+pub fn last_destroy() -> crate::quarantine::Retired {
+    let slot = crate::arch::x86_64::current_excursion_slot();
+    // SAFETY: 自分のスロットの欄を読むだけ。書くのは同じスロットの破棄だけである。
+    unsafe { (*core::ptr::addr_of!(LAST_DESTROY))[slot] }
+}
+
+/// 隔離にフレームが残っているか（BKL を取らずに読める印。2026-10-07）。
+pub fn quarantine_holds_frames() -> bool {
+    QUARANTINE_HOLDS.load(core::sync::atomic::Ordering::SeqCst)
+}
+
+/// 隔離に残るフレームのうち、世代が退いたものを返す（2026-10-07。BSP のアイドルの定常経路から）。**BKL を保持したまま
+/// 呼ぶこと。** 返した本数を返す。アロケータが借りられているか、破棄の途中なら何もしない。
+pub fn release_retired_quarantines() -> usize {
+    if DESTROYS_IN_PROGRESS.load(core::sync::atomic::Ordering::SeqCst) != 0 {
+        return 0;
+    }
+    let Some(allocator) = crate::frame_allocator::take() else {
+        return 0;
+    };
+    let mut released = 0;
+    let mut remaining = 0;
+    // SAFETY: BKL の内側で、破棄の途中でない（上で確かめた）ので、ほかに触る者は居ない。
+    let quarantines = unsafe { &mut *core::ptr::addr_of_mut!(SPAWN_QUARANTINE) };
+    for quarantine in quarantines.iter_mut() {
+        released += quarantine.release_retired(allocator, crate::bkl::generation_is_retired);
+        remaining += quarantine.held_count();
+    }
+    crate::frame_allocator::give_back(allocator);
+    if remaining == 0 {
+        QUARANTINE_HOLDS.store(false, core::sync::atomic::Ordering::SeqCst);
+    }
+    released
 }
 
 /// `spawn` が受け取った `argv` を置く場所（S11-7）。
@@ -1041,6 +1125,11 @@ pub struct UserProcess {
     /// **配置の値そのものは持たない。** この値は、プログラムが走っている間ずっと、遠征スタックの上に在る。遠征スタックの
     /// 使用量は、容量の半分の手前に在る（`docs/deferred-decisions.md` の「遠征スタックにガードページが無い」）。
     kind: common::elf::ElfKind,
+    /// このプロセスが走った CPU の印（ビット = CPU の番号。2026-10-07）。**空間を壊すときに、その場で返してよいか
+    /// （この CPU でしか走らなかったか）を決める**（`crate::quarantine::Retire` の doc）。Ring 3 へ入る所で立てる。
+    /// **スレッド（M3a）を入れるときは、別の CPU で走らせる所でも立てること**——立て忘れると、ほかの CPU の TLB に
+    /// 翻訳が残ったままフレームが配られる。
+    ran_on: u64,
     /// 判定行に出す名前。
     name: &'static str,
     /// このプロセスが開いているファイルの表（S10-b）。
@@ -1171,6 +1260,7 @@ pub fn load_user_program_from(
         stack_scratch: 0,
         heap: Heap::EMPTY,
         kind: common::elf::ElfKind::Executable,
+        ran_on: 0,
         name,
         files: {
             // **次の `spawn` へ渡す端を据える（`ADR-0063` の (b3)）。** **`a | b` の右は
@@ -1284,23 +1374,50 @@ pub fn load_user_program_from(
     let (held, leaked) = if keep_space {
         (0, 0)
     } else {
-        let guard = crate::bkl::acquire(crate::bkl::KernelEntry::SteadyLoop);
-        // SAFETY: BKL を保持している。**この隔離は破棄の間しか使わず、破棄は
-        // 入れ子にならない**（[`SPAWN_QUARANTINE`] の doc）。
-        let quarantine = unsafe {
-            &mut (*core::ptr::addr_of_mut!(SPAWN_QUARANTINE))
-                [crate::arch::x86_64::current_excursion_slot()]
-        };
-        quarantine.reset();
+        let mut bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::SteadyLoop));
+        let slot = crate::arch::x86_64::current_excursion_slot();
+        // SAFETY: BKL を保持している。**隔離はスロットごとで、破棄は入れ子にならない**（[`SPAWN_QUARANTINE`] の doc）。
+        // **空にはしない**（2026-10-07）——前の破棄が隔離の道を通していれば、退いた分を破棄の始めに返す。
+        let quarantine = unsafe { &mut (*core::ptr::addr_of_mut!(SPAWN_QUARANTINE))[slot] };
         // **破棄する前に、この空間を指したままのタスクが無いかを見る（W1-b-2）。**
         // **遠征の戻りが元の値へ戻していれば、何も見つからない。** **見つかったら
         // 不変条件が破れかけていたので、消してから声を出す**——**死んだテーブルを
         // 載せる形は静かに効くので、黙って直さない。**
         forget_task_root_before_destroy(logger, &process);
-        // SAFETY: この空間はどのコアでも稼働していない。direct map は覆っている。
-        unsafe {
-            crate::quarantine::retire_address_space(process.space, direct_map, quarantine, &guard)
+        // **この CPU でしか走らなかった空間は、その場で返す。ほかの CPU でも走った空間は隔離を通す**（2026-10-07。
+        // `crate::quarantine::Retire` の doc）。
+        let how = destroy_route(process.ran_on);
+        DESTROYS_IN_PROGRESS.fetch_add(1, core::sync::atomic::Ordering::SeqCst);
+        // **アロケータは使うときだけ借りる**（`Frames::OnLoan`。待つ間は持たない）。借りられなければ、隔離の道へ倒れる。
+        // SAFETY: この空間はどのコアでも稼働していない。direct map は覆っている。BKL を持っている。
+        let retired = unsafe {
+            crate::quarantine::retire_address_space(
+                process.space,
+                direct_map,
+                how,
+                quarantine,
+                &mut crate::quarantine::Frames::OnLoan,
+                &mut bkl,
+            )
+        };
+        DESTROYS_IN_PROGRESS.fetch_sub(1, core::sync::atomic::Ordering::SeqCst);
+        note_destroy(slot, retired);
+        drop(bkl);
+        // **大きな空間の破棄は、道と掛かった時間を出す**（1,024 本以上。既定の起動には出ない）。揺れる値なので判定には使わない。
+        if retired.collected() >= 1024 {
+            logger.info(format_args!(
+                "user-destroy: {} returned {} frame(s) at once and quarantined {} ({} wait(s), {} released \
+                 meanwhile, {} leaked) in {} cycle(s)",
+                process.name,
+                retired.returned,
+                retired.quarantined,
+                retired.waits,
+                retired.released_meanwhile,
+                retired.leaked,
+                retired.cycles
+            ));
         }
+        (retired.returned + retired.quarantined, retired.leaked)
     };
 
     // **空間ごとの会計（`ADR-0063` の (b1)）。** **取った本数と、破棄が集めた本数が
@@ -2399,6 +2516,8 @@ unsafe fn run_loaded_program(
     // 空回りする**ので、止められるまでに来たタイマはどれも DF=1 の文脈から入る（下の判定行）。
     let irq_entries_from_df_before =
         crate::arch::x86_64::entries_from_direction_flag_set(crate::arch::x86_64::EntryPath::Irq);
+    // **走る CPU の印を立てる**（2026-10-07。[`UserProcess::ran_on`]）。
+    process.ran_on |= 1u64 << common::percpu::cpu_id();
     // SAFETY: entry と stack は今マップしたユーザーページで、`ud2` が必ずフォルト
     // する。main_entry_stack_top はメインのカーネルスタック上端。単一実行文脈である。
     unsafe {
@@ -2776,6 +2895,7 @@ pub fn spawn(
     // **シェルが `ls` と `cat` と `hello` を起動したところで出た**——
     // 実測で 35 枚消えて、シェル自身の隔離は 9 枚だった（9 + 9 + 9 + 8）。
     let (children_before, leaked_before) = spawn_accounting();
+    let released_before_children = spawn_released_others();
     // **会計のウィンドウを開く（`ADR-0063` の (b1)）。** **他のウィンドウと交差したら、大域の差は主張しない。**
     let window = open_spawn_window();
 
@@ -3004,26 +3124,39 @@ pub fn spawn(
     // **覆う判定**——**`shm` の created==released（フレームは参照数で返る。`shm:` の計測）。**
     let shared_after = crate::shm::frames_held();
     let shared_net = shared_after.saturating_sub(shared_before) as usize;
-    let consumed = (free_before.saturating_sub(free_after) as usize).saturating_sub(shared_net);
+    // **その場で返した分と、途中で退いて返した分は、消えた数に入らない**（2026-10-07）。**隔離に残る分だけが「消えたまま」
+    // である。** 前の破棄のフレームがこの窓の中で返っていれば（`released_others`）、その分を消えた数へ足し戻す。
+    let destroy = last_destroy();
+    let own_still = destroy.still_quarantined();
+    let released_by_children = spawn_released_others().saturating_sub(released_before_children);
+    let consumed = (free_before as i64 - free_after as i64 - shared_net as i64
+        + destroy.released_others as i64
+        + released_by_children as i64)
+        .max(0) as usize;
     // **ウィンドウを閉じる。** **交差していたら、大域の差は相手の分を取り込んでいる**（`ADR-0063` の (b1)）。
     let crossed = close_spawn_window(window);
     // **孫のぶんを足す。** 子が更に起動していれば、そのぶんも消えている。
     let (children_after, leaked_after) = spawn_accounting();
-    let quarantined = held + children_after.saturating_sub(children_before);
+    let quarantined = own_still + children_after.saturating_sub(children_before);
     let all_leaked = leaked + leaked_after.saturating_sub(leaked_before);
-    // **親の会計へ回す（S11-5）。** 隔離へ入ったフレームは世代が退くまで
+    // **親の会計へ回す（S11-5）。** 隔離に残るフレームは世代が退くまで
     // アロケータへ戻らないので、**親から見ると消えたままである。**
-    SPAWN_QUARANTINED.fetch_add(held, core::sync::atomic::Ordering::SeqCst);
+    SPAWN_QUARANTINED.fetch_add(own_still, core::sync::atomic::Ordering::SeqCst);
+    SPAWN_RELEASED_OTHERS.fetch_add(
+        destroy.released_others,
+        core::sync::atomic::Ordering::SeqCst,
+    );
     SPAWN_LEAKED.fetch_add(leaked, core::sync::atomic::Ordering::SeqCst);
     logger.info(format_args!(
         "spawn: {name} ended ({child:?}) after {syscalls} syscall(s) ({unknown_numbers} with a \
          number the kernel does not know; the last such number was {last_unknown}); its kernel \
          entries ran on RSP {child_handler_sp:#x} (inside its own excursion stack \
          {child_bottom:#x}..{child_top:#x} = {handler_on_child_stack}); the space was destroyed \
-         ({consumed} frame(s) left the allocator and {quarantined} reached quarantine \
-         ({held} its own + {} from what it spawned), match={} leaked={all_leaked}); the space \
+         ({consumed} frame(s) left the allocator; {} returned at once, {quarantined} still quarantined \
+         ({own_still} its own + {} from what it spawned), match={} leaked={all_leaked}); the space \
          took {taken} frame(s) and the destroy collected {} (match={}); the global difference \
          was {} (checked {} time(s) so far)",
+        destroy.returned,
         children_after.saturating_sub(children_before),
         consumed == quarantined,
         held + leaked,

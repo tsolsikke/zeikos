@@ -1561,6 +1561,43 @@ const RING3_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
+    // **隔離の容量（256）より多いフレームを持つ空間を壊しても漏れない**（2026-10-07。確かめ。`/bin/frame-hog` は 16 MiB の
+    // 無名の `mmap` を 2 つ持つ）。この CPU でしか走らなかったので、その場で返す道を通る。`frame-hog-check` の行は、
+    // `spawn` の会計（取った数と集めた数の釣り合い、漏れ 0）が通ったときだけ `Ok(Exited(0))` になる。
+    CriticalTest {
+        name: "frame-hog",
+        feature: "frame-hog-test",
+        expected_markers: &[
+            "user-destroy: /bin/frame-hog returned",
+            "frame-hog-check: /bin/frame-hog ended Ok(Exited(0))",
+        ],
+        forbidden_markers: &["left the allocator short", "left the space short"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // **同じ空間を隔離の道で壊す**（2026-10-07。確かめ。`destroy-through-quarantine-test` でどの空間も隔離を通す）。
+    // 一杯になるたびに BKL を放して世代が退くのを待ち、退いた分を返してから続ける。漏れは 0 になる。
+    CriticalTest {
+        name: "frame-hog-through-quarantine",
+        feature: "frame-hog-test,destroy-through-quarantine-test",
+        expected_markers: &[
+            "user-destroy: /bin/frame-hog returned 0 frame(s) at once and quarantined",
+            "frame-hog-check: /bin/frame-hog ended Ok(Exited(0))",
+        ],
+        forbidden_markers: &["left the allocator short", "left the space short"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // **隔離が一杯になっても待たず、漏らす**（2026-10-07。直す前の形）。容量を越える分が漏れ、`spawn` の会計が釣り合わずに
+    // 名指しして止まる。
+    CriticalTest {
+        name: "quarantine-overflow-leaks",
+        feature: "frame-hog-test,destroy-through-quarantine-test,quarantine-overflow-leaks-test",
+        expected_markers: &["left the allocator short", "halting"],
+        forbidden_markers: &["frame-hog-check: /bin/frame-hog ended Ok(Exited(0))"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
     // 終了状態を RDI でなく RSI から読む。**終了状態の一致も、判定行が主張して
     // いる道の 1 つである。** 記録された値は主張しない（`hello` の `.rodata` の
     // アドレスに依る）。**主張するのは「0 でない値が入り、判定が落ちること」までである。**
@@ -32957,7 +32994,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 63,
-    full: 505,
+    full: 508,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

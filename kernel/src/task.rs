@@ -1611,6 +1611,12 @@ extern "sysv64" fn bsp_idle_main() -> ! {
         // **眠った回数を数える（W2-c-1 の計測）。** **眠る前に数える**——**起きてから
         // 数えると、起こした割り込みの中で読む値が 1 つ足りない。**
         IDLE_HALTS.fetch_add(1, Ordering::Relaxed);
+        // **隔離に残るフレームを、世代が退いていれば返す**（2026-10-07。`crate::quarantine::Retire`）。隔離の道を通った
+        // 破棄の後だけ印が立つ。印が無ければ BKL を取らずに通る。
+        if crate::userland::quarantine_holds_frames() {
+            let _bkl = crate::bkl::acquire(crate::bkl::KernelEntry::SteadyLoop);
+            crate::userland::release_retired_quarantines();
+        }
         // **`/dev/fb0` の裏バッファを、間隔が過ぎていれば画面へ転送する**（2026-10-07。`ADR-0083`）。**割り込みの中では
         // 行わない**——アイドルは Ring 0 の定常ループで、BKL を取ってから転送し、放してから `hlt` する。前景のプロセスが
         // 眠っている間（`nanosleep`）は、ここしか走る者が居ない。開いていなければ、BKL を取らずに通る。

@@ -2079,6 +2079,8 @@ extern "sysv64" fn kernel_main() -> ! {
     // **`init` へ入る前である**——あちらは戻らない。
     verify_bss_is_mapped(&mut logger);
     verify_linux_programs(&mut logger);
+    #[cfg(feature = "frame-hog-test")]
+    verify_frame_hog(&mut logger);
 
     // **カーネル側の PML4 の項目の指紋を採る**（2026-09-27。`ADR-0071` の決定 5）。**ここから後は、カーネル側の
     // 項目を誰も変えない**——**`AddressSpace::new` が突き合わせる。**
@@ -5261,7 +5263,7 @@ fn demo_two_address_spaces(
     //
     // **隔離は静的に置く**（2026-10-07）。**隔離の容量を 4096 にしたとき、ここの局所が 64 KiB になって、起動のカーネル
     // スタックをあふれさせた**（実測。見張りのページが止めた）。**静的なら、容量をいくつにしてもスタックは 1 バイトも
-    // 増えない**（`crate::quarantine` の `RETIRING_FRAMES` と同じ理由）。
+    // 増えない。** 容量は同じ日に 256 へ戻したが、静的のままにする。
     static mut DEMO_QUARANTINE: kernel::quarantine::Quarantine =
         kernel::quarantine::Quarantine::new();
     // SAFETY: この試しは起動の 1 回だけ、BSP が走らせる。ほかに触る者は居ない。
@@ -5270,9 +5272,20 @@ fn demo_two_address_spaces(
     let generation_before = kernel::bkl::tlb_generation();
     let free_before = allocator.free_frame_count();
     let (held, leaked) = {
-        let guard = kernel::bkl::acquire(kernel::bkl::KernelEntry::SteadyLoop);
-        // SAFETY: A はいま稼働していない（本番へ戻してある）。BKL を保持している。
-        unsafe { kernel::quarantine::retire_address_space(space_a, direct_map, quarantine, &guard) }
+        let mut bkl = Some(kernel::bkl::acquire(kernel::bkl::KernelEntry::SteadyLoop));
+        // SAFETY: A はいま稼働していない（本番へ戻してある）。BKL を保持している。**隔離の道を通す**——この試しは、
+        // 世代が退くまで配られないことを見せる側である（2026-10-07 に道が 2 つになった。`kernel::quarantine::Retire`）。
+        let retired = unsafe {
+            kernel::quarantine::retire_address_space(
+                space_a,
+                direct_map,
+                kernel::quarantine::Retire::ThroughQuarantine,
+                quarantine,
+                &mut kernel::quarantine::Frames::Owned(allocator),
+                &mut bkl,
+            )
+        };
+        (retired.quarantined, retired.leaked)
     };
     let free_after_destroy = allocator.free_frame_count();
     logger.info(format_args!(
@@ -5296,9 +5309,19 @@ fn demo_two_address_spaces(
 
     // B は生かしたままにしない。同じ経路で片付ける。
     let (held_b, leaked_b) = {
-        let guard = kernel::bkl::acquire(kernel::bkl::KernelEntry::SteadyLoop);
+        let mut bkl = Some(kernel::bkl::acquire(kernel::bkl::KernelEntry::SteadyLoop));
         // SAFETY: B も稼働していない。BKL を保持している。
-        unsafe { kernel::quarantine::retire_address_space(space_b, direct_map, quarantine, &guard) }
+        let retired = unsafe {
+            kernel::quarantine::retire_address_space(
+                space_b,
+                direct_map,
+                kernel::quarantine::Retire::ThroughQuarantine,
+                quarantine,
+                &mut kernel::quarantine::Frames::Owned(allocator),
+                &mut bkl,
+            )
+        };
+        (retired.quarantined, retired.leaked)
     };
     drop(kernel::bkl::acquire(kernel::bkl::KernelEntry::SteadyLoop));
     let released_b = quarantine.release_retired(allocator, kernel::bkl::generation_is_retired);
@@ -6597,6 +6620,25 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
     verify_linux_program(logger, b"/bin/linux/m1-rust", b"m1-rust\0/etc/motd\0a\0b\0");
     #[cfg(feature = "linux-c-test")]
     verify_linux_program(logger, b"/bin/linux/m1-c", b"m1-c\0/etc/motd\0a\0b\0");
+}
+
+/// 隔離の容量（256 フレーム）より多いフレームを持つプロセス（`/bin/frame-hog`。32 MiB の無名の `mmap`）を起こし、
+/// 壊した後に漏れが 0 で、取った数と集めた数が釣り合うことを見る（2026-10-07。`frame-hog-test`。`kernel::quarantine::Retire`）。
+/// **会計は `spawn` が見る**——釣り合わなければ `spawn` が `Err` を返すので、ここは終了の状態だけを見る。
+#[cfg(feature = "frame-hog-test")]
+fn verify_frame_hog(logger: &mut Logger<Serial>) {
+    let outcome = kernel::userland::spawn(b"/bin/frame-hog", b"frame-hog\0", 1, None);
+    if matches!(outcome, Ok(kernel::userland::SpawnOutcome::Exited(0))) {
+        logger.info(format_args!(
+            "frame-hog-check: /bin/frame-hog ended {outcome:?} (the destroy accounting is in the spawn line above)"
+        ));
+        return;
+    }
+    logger.error(format_args!(
+        "frame-hog-check: /bin/frame-hog ended {outcome:?}, expected Exited(0); the destroy leaked or did not \
+         balance. halting"
+    ));
+    cpu::halt_forever();
 }
 
 /// [`verify_linux_programs`] の 1 本ぶん。`argv` は NUL 区切りの 4 つ。
@@ -9850,8 +9892,15 @@ fn load_embedded_user_program(logger: &mut Logger<Serial>) -> Result<(), UserLoa
         // アロケータへ戻らないので、**親から見ると消えたままである。**
         // **実測で踏んだ**——`syscall-test` が子を 2 本起動したところ、24 枚消えて
         // 自分の隔離は 8 枚だった。差の 16 枚が子 2 本のぶんである。
-        let consumed = (free_before - frame_count_now(logger)) as usize;
-        let quarantined = held + child_held;
+        // **その場で返した分は消えた数に入らない**（2026-10-07。`kernel::quarantine::Retire`）。隔離に残る分だけを
+        // 「消えたまま」と数え、前の破棄のフレームがこの窓で返った分（`released_others`）は足し戻す。
+        let destroy = kernel::userland::last_destroy();
+        let own_still = destroy.still_quarantined();
+        let consumed = (free_before as i64 - frame_count_now(logger) as i64
+            + destroy.released_others as i64
+            + kernel::userland::spawn_released_others() as i64)
+            .max(0) as usize;
+        let quarantined = own_still + child_held;
         let all_leaked = leaked + child_leaked;
         // **空間ごとの一致はいつも見る**（`ADR-0063` の (b1)）。
         if held + leaked != taken {
@@ -9869,7 +9918,7 @@ fn load_embedded_user_program(logger: &mut Logger<Serial>) -> Result<(), UserLoa
         if !crossed && (consumed != quarantined || all_leaked != 0) {
             logger.error(format_args!(
                 "user-load: {name} left the allocator short: {consumed} frame(s) consumed but \
-                 {quarantined} quarantined ({held} its own + {child_held} from the process(es) \
+                 {quarantined} quarantined ({own_still} its own + {child_held} from the process(es) \
                  it spawned, {all_leaked} leaked)"
             ));
             return Err(UserLoadError::DestroyAccounting {
@@ -9881,10 +9930,11 @@ fn load_embedded_user_program(logger: &mut Logger<Serial>) -> Result<(), UserLoa
         logger.info(format_args!(
             "user-load: {name} ran as a process in its own address space, ended as expected, \
              and the kernel continued after the process was gone; the space was destroyed \
-             ({consumed} frame(s) left the allocator and {quarantined} reached quarantine \
-             ({held} its own + {child_held} spawned), match={} leaked={all_leaked}); the space \
+             ({consumed} frame(s) left the allocator; {} returned at once, {quarantined} still \
+             quarantined ({own_still} its own + {child_held} spawned), match={} leaked={all_leaked}); the space \
              took {taken} frame(s) and the destroy collected {} (match={}); the global \
              difference was {} (checked {} time(s) so far)",
+            destroy.returned,
             consumed == quarantined,
             held + leaked,
             held + leaked == taken,
@@ -9967,6 +10017,7 @@ fn verify_corrupt_user_program_is_not_loaded(logger: &mut Logger<Serial>) {
 
     let free_before = frame_count_now(logger);
     let mut quarantined_total = 0usize;
+    let mut released_others_total = 0usize;
 
     /// 書き換え 1 つ（位置・値・幅）。
     type Patch = (usize, u64, usize);
@@ -10054,7 +10105,11 @@ fn verify_corrupt_user_program_is_not_loaded(logger: &mut Logger<Serial>) {
             ));
             cpu::halt_forever();
         }
-        quarantined_total += held;
+        // **その場で返した分は数えない**（2026-10-07。`kernel::quarantine::Retire`）。隔離に残る分だけが「消えたまま」である。
+        let destroy = kernel::userland::last_destroy();
+        quarantined_total += destroy.still_quarantined();
+        released_others_total += destroy.released_others;
+        let _ = held;
         if leaked != 0 {
             logger.error(format_args!(
                 "user-load-corrupt: {what} leaked {leaked} frame(s) on the failure path; halting"
@@ -10068,17 +10123,19 @@ fn verify_corrupt_user_program_is_not_loaded(logger: &mut Logger<Serial>) {
     // 絶対値は出さない。**空きフレーム数はコア数で変わる**（AP ごとに per-CPU
     // スタックを取る）ので、出すと `-smp 1/2/4` で起動ログが一致しなくなる。
     // **実測で踏んだ。差だけならコア数に依らない。**
-    let consumed = (free_before - frame_count_now(logger)) as usize;
+    let consumed = (free_before as i64 - frame_count_now(logger) as i64
+        + released_others_total as i64)
+        .max(0) as usize;
     logger.info(format_args!(
         "user-load-corrupt: all {case_count} corrupted images were refused by the loader and the \
-         kernel continued; {consumed} frame(s) left the allocator and {quarantined_total} reached \
-         quarantine (match={})",
+         kernel continued; {consumed} frame(s) left the allocator and {quarantined_total} are still \
+         in quarantine (match={})",
         consumed == quarantined_total
     ));
     if consumed != quarantined_total {
         logger.error(format_args!(
             "user-load-corrupt: {consumed} frame(s) left the allocator but only \
-             {quarantined_total} reached quarantine; the failure path lost the rest; halting"
+             {quarantined_total} are still in quarantine; the failure path lost the rest; halting"
         ));
         cpu::halt_forever();
     }
@@ -13179,6 +13236,21 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "mmap-fixed-ignores-user-limit-test",
         cfg!(feature = "mmap-fixed-ignores-user-limit-test"),
         "mmap(MAP_FIXED)・munmap・mprotect がユーザーの番地の上限を見ない",
+    ),
+    (
+        "destroy-through-quarantine-test",
+        cfg!(feature = "destroy-through-quarantine-test"),
+        "空間を壊すとき、どの空間も隔離の道を通す",
+    ),
+    (
+        "quarantine-overflow-leaks-test",
+        cfg!(feature = "quarantine-overflow-leaks-test"),
+        "隔離が一杯になっても待たず、漏らす",
+    ),
+    (
+        "frame-hog-test",
+        cfg!(feature = "frame-hog-test"),
+        "隔離の容量より多いフレームを持つ /bin/frame-hog を起動時に起こす",
     ),
     (
         "mprotect-allows-exec-test",

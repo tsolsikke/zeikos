@@ -156,6 +156,8 @@ fn build_user_programs(manifest_dir: &str, out_dir: &str) {
         "gfxc",
         // **`/dev/fb0` を Linux の fbdev の形で開いて四隅に色を置く 1 本**（2026-10-07。`ADR-0083`）。
         "fb-test",
+        // **隔離の容量より多いフレーム（32 MiB の無名の `mmap`）を持つ 1 本**（2026-10-07。`frame-hog-test` の像だけに入れる）。
+        "frame-hog",
         // **画面・入力・ソケット・共有メモリを 1 つの組で通す（`ADR-0066` の Y-d）。**
         "compd",
         "compc",
@@ -1023,6 +1025,16 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
             format!("{staging}/bin/{name}"),
         )
         .unwrap_or_else(|e| panic!("failed to place {name} into the staging: {e}"));
+    }
+
+    // **隔離の容量より多いフレームを持つプログラムは、`frame-hog-test` の像だけに入れる**（2026-10-07。既定の像のバイトを
+    // 変えない。`seinas-test` と同じ形）。
+    if std::env::var("CARGO_FEATURE_FRAME_HOG_TEST").is_ok() {
+        std::fs::copy(
+            format!("{out_dir}/frame-hog.elf"),
+            format!("{staging}/bin/frame-hog"),
+        )
+        .unwrap_or_else(|e| panic!("failed to place frame-hog into the staging: {e}"));
     }
 
     // **Linux 向けのプログラムは `/bin/linux` に置く**（2026-10-06。M1）。ZeikOS 向けの `/bin` と分けるのは、

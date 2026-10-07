@@ -945,6 +945,14 @@ munmap-keeps-frames-test = []
 # `mmap(MAP_FIXED)`・`munmap`・`mprotect` が、ユーザーの番地の上限（`0x7fff_ffff_f000`）を見ない（2026-10-07。直す前の形）。
 # 上限のページへの `MAP_FIXED` が通り、`syscall-test` が 121 番で止まる。`--syscall-test mmap-fixed-ignores-user-limit`。
 mmap-fixed-ignores-user-limit-test = []
+# 空間を壊すとき、どの空間も隔離の道を通す（2026-10-07。確かめ。一杯になって待つ形を踏ませる）。`--ring3-test frame-hog-through-quarantine`。
+destroy-through-quarantine-test = []
+# 隔離が一杯になっても待たず、漏らす（2026-10-07。直す前の形）。容量を越える空間の破棄で、会計が釣り合わず名指しして止まる。
+# `--ring3-test quarantine-overflow-leaks`。
+quarantine-overflow-leaks-test = []
+# 隔離の容量（256）より多いフレームを持つプログラム（`/bin/frame-hog`。16 MiB の無名の `mmap` を 2 つ）を起動時に起こし、
+# 漏れが 0 であることを見る（2026-10-07。確かめ）。`--ring3-test frame-hog`。
+frame-hog-test = []
 # `mprotect` が `PROT_EXEC` を断らない（2026-10-06。W と X を同時に通す形）。`syscall-test` が 109 番で止まる。
 # `--syscall-test mprotect-allows-exec`。
 mprotect-allows-exec-test = []

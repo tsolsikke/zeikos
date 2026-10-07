@@ -528,26 +528,15 @@ impl AddressSpace {
     ///   失効条件）。呼ぶのは `crate::quarantine` の `retire_address_space` だけで、BKL を持っていることは、
     ///   そちらが引数（`BklGuard`）で受けて示す。
     /// - `direct_map` が、この空間の表を覆っていること。
-    pub unsafe fn detach(
-        self,
-        direct_map: DirectMap,
-        into: &mut [Option<PhysAddr>],
-    ) -> (usize, usize) {
+    pub unsafe fn detach(self, direct_map: DirectMap, sink: &mut dyn FnMut(PhysAddr)) {
         use crate::arch::x86_64::paging::entry;
 
-        let capacity = into.len();
+        // **外したフレームは、その場で `sink` へ渡す**（2026-10-07）。**以前は固定長の入れ物に集めて呼び出し側が
+        // 隔離へ入れていた**——入れ物（容量 4096）に入り切らない分を漏らしていた。渡す順は、葉のフレーム、その表、
+        // その上の表の順で、**表のフレームは読み終えてから渡す**（受け取った側がすぐ返してよい）。
+        let mut collect = |frame: PhysAddr, _count: &mut usize, _leaked: &mut usize| sink(frame);
         let mut count = 0usize;
         let mut leaked = 0usize;
-
-        let mut collect = |frame: PhysAddr, count: &mut usize, leaked: &mut usize| {
-            if *count < capacity {
-                into[*count] = Some(frame);
-                *count += 1;
-            } else {
-                // **入れ物が足りなければ漏らす。** 早く返すより漏らすほうが安全である。
-                *leaked += 1;
-            }
-        };
 
         for pml4_index in PRIVATE_INDEX_RANGE {
             // SAFETY: 自分の PML4。添字は 512 未満。
@@ -598,7 +587,7 @@ impl AddressSpace {
         }
 
         collect(self.pml4, &mut count, &mut leaked);
-        (count, leaked)
+        let _ = (count, leaked);
     }
 }
 

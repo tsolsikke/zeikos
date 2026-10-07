@@ -55,81 +55,291 @@ use common::addr::{DirectMap, PhysAddr};
 /// 「測った値に余裕を足す」形のままにする**——**穴を持つアロケータも、
 /// ヒープを返さずに終わるプログラムも、まだ無い。**
 ///
-/// **4096 へ上げた（2026-10-07）。** Linux 向けの像（Seinas の fbdev の裏側。1.5 MiB の像 + 4 MiB の確保が 2 つ）が
-/// 途中で落ちたとき、480 フレームが破棄に来て 224 が漏れた（実測。`ADR-0083` の Addendum）。像の上限は 16 MiB
-/// （`crate::syscall` の `MAX_EXECUTABLE_SIZE`）、無名の `mmap` の 1 回の上限も 16 MiB なので、4096（16 MiB）で、
-/// 像 1 本か確保 1 つを丸ごと持てる。表は静的（`Option<PhysAddr>` 16 バイト × 4096 = 64 KiB が 2 つ）で、遠征スタックは
-/// 増えない。**それでも溢れうる**——溢れは今までどおり漏れとして示される。
+/// **4096 へ上げ、同じ日に 256 へ戻した（2026-10-07）。** Linux 向けの像（Seinas の fbdev の裏側。1.5 MiB の像 + 4 MiB の
+/// 確保が 2 つ）が途中で落ちたとき、480 フレームが破棄に来て 224 が漏れた（実測。`ADR-0083` の Addendum）ので、いったん
+/// 4096 へ上げた。**その後、破棄に 2 つの道を置いた**（[`Retire`]。`ADR-0027` の 2026-10-07 の Addendum）——この CPU でしか
+/// 走らなかった空間は隔離を通らず、隔離を通る空間は一杯になっても待って続ける。**容量は、1 回の待ち（1 ティック）で返せる量を
+/// 決めるだけになり、溢れは漏れではなく待ちになった。** 256 で足りる（表は 1 本 6 KiB。静的なので遠征スタックは増えない）。
 ///
-/// 溢れたときの扱いは [`Quarantine::push`] の doc。
-pub const QUARANTINE_CAPACITY: usize = 4096;
+/// 一杯になったときの扱いは [`retire_address_space`] の doc。
+pub const QUARANTINE_CAPACITY: usize = 256;
 
-/// アドレス空間を壊すときに、外したフレームを一時的に置く場所（B-d で静的にした。2026-10-02 に、
-/// ページテーブルの置き場からここへ移した）。
+/// 空間を壊すときの、フレームの返し方（2026-10-07）。
 ///
-/// # なぜスタックに置かないか
+/// # 2 つの道
 ///
-/// **`Option<PhysAddr>` は 16 バイトで、容量に比例してスタックを食う。**
-/// **B-d で隔離の容量を 64 から 256 へ上げたとき、これが 1 KiB から 4 KiB へ
-/// 育ち、遠征スタックの高水位が半分を越えて起動が止まった**（実測）。
-/// **静的に置けば、容量をいくつにしても遠征スタックは 1 バイトも増えない。**
+/// - **その場で返す**（[`Retire::Directly`]）——**この CPU でしか走らなかった空間**に使う。古い翻訳を持ちうるのは、
+///   その空間を走らせた CPU の TLB だけで、その CPU は遠征から戻るときに CR3 を載せ替えて（G ビットは使わない）
+///   翻訳を全部落としている。**念のため、返す前にもう 1 度この CPU の TLB を落とす**（[`crate::bkl::flush_this_cpu`]）。
+///   隔離を通らないので、容量の上限が無く、漏れない。**`munmap` がその場で返しているのと同じ根拠である**
+///   （`crate::syscall` の `release_range_and_unmap`）。
+/// - **隔離を通す**（[`Retire::ThroughQuarantine`]）——**ほかの CPU でも走った空間**（スレッド、または CPU をまたいだ
+///   移動が入ったとき）に使う。`ADR-0027` の Addendum の不変条件どおり、世代が退くまで隔離する。**隔離が一杯になったら、
+///   BKL を放して世代が退くのを待ち、退いた分を返してから続ける**（`wait_until_retired`）。**待てなかったときだけ漏らす**
+///   （上限 `WAIT_LIMIT_CYCLES`。起動の直線で、ほかの CPU が BKL を通らない間）。
 ///
-/// # 同時に 2 つ走らない
+/// # どちらを使うかは「どの CPU で走ったか」で決める
 ///
-/// **[`retire_address_space`] は BKL の内側でしか呼べない**（引数の `BklGuard` が型で示す）。
-/// **入れ子にもならない**——壊す処理は、ほかの空間を壊す処理を呼ばない。
-static mut RETIRING_FRAMES: [Option<PhysAddr>; QUARANTINE_CAPACITY] = [None; QUARANTINE_CAPACITY];
+/// プロセスは走った CPU の印（`UserProcess::ran_on`）を持つ。**今は 1 つの CPU に留まる**（切り替えで CPU を変えない）
+/// ので、いつも「その場で返す」になる。**スレッド（M3a）が入って印が 2 つ以上になった空間は、隔離の道を通る**——
+/// 前提に頼らず、印で分ける。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Retire {
+    /// この CPU でしか走らなかった空間。その場でアロケータへ返す。
+    Directly,
+    /// ほかの CPU でも走った（かもしれない）空間。世代が退くまで隔離する。
+    ThroughQuarantine,
+}
 
-/// アドレス空間を壊し、**下位で使っていたフレームをすべて隔離へ入れる**（S7-d。2026-10-02 に、順序を持つ側を
-/// ページテーブルの置き場からここへ移した）。
+/// 空間を壊した結果（2026-10-07）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Retired {
+    /// その場でアロケータへ返した本数（[`Retire::Directly`]）。
+    pub returned: usize,
+    /// 隔離へ入れた本数（[`Retire::ThroughQuarantine`]）。
+    pub quarantined: usize,
+    /// 隔離へ入れた後、同じ破棄の中で世代が退いて返した本数（一杯になって待った分）。
+    pub released_meanwhile: usize,
+    /// 隔離に残っていた、前の破棄のフレームのうち、この破棄の始めに返した本数（会計の補正に使う）。
+    pub released_others: usize,
+    /// 漏らした本数（隔離が一杯で、待てなかった分）。
+    pub leaked: usize,
+    /// 一杯になって待った回数。
+    pub waits: usize,
+    /// 壊すのに掛かったサイクル（`rdtsc`。揺れる値。判定に使わない）。
+    pub cycles: u64,
+}
+
+impl Retired {
+    pub const ZERO: Retired = Retired {
+        returned: 0,
+        quarantined: 0,
+        released_meanwhile: 0,
+        released_others: 0,
+        leaked: 0,
+        waits: 0,
+        cycles: 0,
+    };
+
+    /// 破棄が集めた本数（返した + 隔離へ入れた + 漏らした）。空間が取った本数と釣り合うべき数。
+    pub fn collected(&self) -> usize {
+        self.returned + self.quarantined + self.leaked
+    }
+
+    /// この破棄のフレームのうち、まだ隔離に残っている本数。
+    pub fn still_quarantined(&self) -> usize {
+        self.quarantined.saturating_sub(self.released_meanwhile)
+    }
+}
+
+/// 一杯になった隔離が解けるのを待つ上限（`rdtsc` のサイクル）。**1 ティック（10 ms）で解ける**ので、十分に長い。
+/// 越えるのは、ほかの CPU が BKL を通らない区間（起動の直線）だけである。
+const WAIT_LIMIT_CYCLES: u64 = 2_000_000_000;
+
+/// 空間を壊す側が、フレームのアロケータへどう触るか（2026-10-07。運用者のレビューで分けた）。
 ///
-/// **アロケータへ直接は返さない。** ほかのコアの変換の控え（TLB）に古い翻訳が残りうるので、
-/// **`ADR-0027` の Addendum の不変条件どおり、世代が退くまで隔離する。**
+/// - [`Frames::OnLoan`]——**使うときだけ借りて、使い終えたら返す**（`crate::frame_allocator::take` / `give_back`）。
+///   **隔離の道で BKL を放して待つ間は、何も持たない**——持ったままだと、その間にフレームを取りに来たほかの CPU が
+///   「貸し出し中」で失敗する（待たされるのではなく、`mmap` や `spawn` が失敗で返る）。プロセスの破棄はこちらである。
+/// - [`Frames::Owned`]——呼び出し側が持っているアロケータを使う。**起動の試し（`demo_two_address_spaces`）だけ**——
+///   起動の直線で、ほかの CPU はフレームを取らず、試しの空間は小さいので待ちも起きない。
+pub enum Frames<'a> {
+    Owned(&'a mut FrameAllocator),
+    OnLoan,
+}
+
+impl Frames<'_> {
+    /// アロケータを借りる。**借りられなければ `None`**（`OnLoan` で、ほかの CPU が借りている間）。返すのは落ちるときである。
+    fn borrow(&mut self) -> Option<Lease<'_>> {
+        match self {
+            Frames::Owned(allocator) => Some(Lease::Owned(allocator)),
+            Frames::OnLoan => {
+                crate::frame_allocator::take().map(|allocator| Lease::Taken(Some(allocator)))
+            }
+        }
+    }
+
+    /// アロケータを使う。**借りられなければ `None`。**
+    fn with<T>(&mut self, f: impl FnOnce(&mut FrameAllocator) -> T) -> Option<T> {
+        let mut lease = self.borrow()?;
+        Some(f(&mut lease))
+    }
+}
+
+/// 借りている間のアロケータ（[`Frames::borrow`]）。**`Taken` は落ちるときに返す**（`Option` は、落ちるときに値で取り出して
+/// `give_back` へ渡すため。落ちるまでは必ず `Some`）。
+enum Lease<'a> {
+    Owned(&'a mut FrameAllocator),
+    Taken(Option<&'static mut FrameAllocator>),
+}
+
+impl core::ops::Deref for Lease<'_> {
+    type Target = FrameAllocator;
+    fn deref(&self) -> &FrameAllocator {
+        match self {
+            Lease::Owned(allocator) => allocator,
+            Lease::Taken(allocator) => allocator
+                .as_deref()
+                .expect("the lease holds the allocator until it drops"),
+        }
+    }
+}
+
+impl core::ops::DerefMut for Lease<'_> {
+    fn deref_mut(&mut self) -> &mut FrameAllocator {
+        match self {
+            Lease::Owned(allocator) => allocator,
+            Lease::Taken(allocator) => allocator
+                .as_deref_mut()
+                .expect("the lease holds the allocator until it drops"),
+        }
+    }
+}
+
+impl Drop for Lease<'_> {
+    fn drop(&mut self) {
+        if let Lease::Taken(allocator) = self {
+            if let Some(allocator) = allocator.take() {
+                crate::frame_allocator::give_back(allocator);
+            }
+        }
+    }
+}
+
+/// 退いた分を返す（借りられるまで、BKL を放して少し待つのを繰り返す。上限 100 回）。返した本数。借りられなければ `None`。
+fn release_retired_when_borrowable(
+    quarantine: &mut Quarantine,
+    frames: &mut Frames<'_>,
+    bkl: &mut Option<crate::bkl::BklGuard>,
+) -> Option<usize> {
+    for _ in 0..100 {
+        if let Some(released) = frames.with(|allocator| {
+            quarantine.release_retired(allocator, crate::bkl::generation_is_retired)
+        }) {
+            return Some(released);
+        }
+        drop(bkl.take());
+        for _ in 0..10_000 {
+            core::hint::spin_loop();
+        }
+        *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::SteadyLoop));
+    }
+    None
+}
+
+/// BKL を放して、世代 `generation` が退くのを待つ（2026-10-07）。**退いたら BKL を取り直して真を返す。**
 ///
-/// # 順序が要である
+/// 自分の見た世代は `acquire` が進める（`flush_if_generation_is_stale`）ので、**放す→少し待つ→取り直す→確かめる**を
+/// 繰り返す。ほかの CPU は、タイマの入口で 100 Hz で BKL を通り、そのときに見た世代を進める。
+fn wait_until_retired(generation: u64, bkl: &mut Option<crate::bkl::BklGuard>) -> bool {
+    let started = common::arch::x86_64::read_timestamp_counter();
+    loop {
+        drop(bkl.take());
+        for _ in 0..10_000 {
+            core::hint::spin_loop();
+        }
+        *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::SteadyLoop));
+        if crate::bkl::generation_is_retired(generation) {
+            return true;
+        }
+        if common::arch::x86_64::read_timestamp_counter().wrapping_sub(started) > WAIT_LIMIT_CYCLES
+        {
+            return false;
+        }
+    }
+}
+
+/// アドレス空間を壊し、下位で使っていたフレームを返す（S7-d。2026-10-07 に、2 つの道と、一杯になって待つ形にした）。
 ///
-/// (1) マッピングを外し（[`AddressSpace::detach`]）、(2) 外し終えてから世代を上げ、(3) その世代で隔離へ入れる。
+/// # 隔離の道の順序
 ///
-/// **上げてから外すと、上げた直後に控えを捨てたコアが、まだ生きているマッピングを読み直しうる。**
-/// **外し終えてから上げれば、その世代以降に捨てたコアは、外れた後の状態しか見ていない。**
-/// **判定が `>=` で足りるのはこの順序による**（[`crate::bkl::generation_is_retired`]）。
-///
-/// 返すのは（隔離へ入れた本数, 漏らした本数）。漏らすのは、一時の置き場か隔離に入り切らなかった分である。
+/// (1) 世代を上げ、(2) マッピングを外しながら、外したフレームをその世代で隔離へ入れる。**先に上げてよいのは、この空間が
+/// どの CPU でも稼働していないからである**——古い翻訳は、上げる前からしか作られていない。**上げた後に控えを捨てた CPU は、
+/// この空間の翻訳を持たない。** 隔離が一杯になったら、BKL を放して世代が退くのを待ち（`wait_until_retired`）、
+/// 退いた分を返してから続ける。**待った後に入れる分も同じ世代でよい**（もう退いているので、次に返す所で返る）。
 ///
 /// # Safety
 ///
 /// - **この空間がどのコアでも稼働していないこと。** 稼働中の表を壊すと、そのコアは次の翻訳で死ぬ。
 /// - `direct_map` が、この空間の表を覆っていること。
-/// - BKL を持っていること（`_guard` が示す）。**マッピングの変更と世代の更新は、BKL の内側でしか行わない。**
+/// - BKL を持っていること（`bkl` が `Some`）。**隔離の道では、一杯になったときに放して取り直す**——
+///   **その間、アロケータは持たない**（[`Frames::OnLoan`]。使うときだけ借りる）。
+///
+/// **その場で返す道で、アロケータが借りられなければ（ほかの CPU が借りている間）、隔離の道へ倒す**——隔離は借りずに入れられ、
+/// 残った分はアイドルの定常経路が返す。漏らさない。
 pub unsafe fn retire_address_space(
     space: AddressSpace,
     direct_map: DirectMap,
+    how: Retire,
     quarantine: &mut Quarantine,
-    _guard: &crate::bkl::BklGuard,
-) -> (usize, usize) {
-    // SAFETY: BKL を保持している（`_guard`）。**壊す処理は入れ子にならないので、この参照が生きている間、
-    // ほかに触る者は居ない**（[`RETIRING_FRAMES`] の doc）。
-    let frames: &mut [Option<PhysAddr>; QUARANTINE_CAPACITY] =
-        unsafe { &mut *core::ptr::addr_of_mut!(RETIRING_FRAMES) };
-
-    // (1) マッピングを外し、外したフレームを集める。
-    // SAFETY: 呼び出し元の契約（稼働していない空間、覆っている direct map、BKL の内側）。
-    let (count, mut leaked) = unsafe { space.detach(direct_map, frames) };
-
-    // (2) ここまででマッピングは外れている。**外し終えてから上げる。**
-    crate::bkl::note_mapping_changed();
-    let generation = crate::bkl::tlb_generation();
-
-    // (3) その世代で隔離へ入れる。
-    let mut held = 0usize;
-    for frame in frames.iter().take(count).flatten() {
-        if quarantine.push(*frame, generation) {
-            held += 1;
-        } else {
-            leaked += 1;
+    frames: &mut Frames<'_>,
+    bkl: &mut Option<crate::bkl::BklGuard>,
+) -> Retired {
+    assert!(bkl.is_some(), "retire_address_space needs the BKL");
+    let started = common::arch::x86_64::read_timestamp_counter();
+    let mut result = Retired::ZERO;
+    // **前の破棄のフレームで、退いたものを先に返す**（隔離に空きを作る。会計のために数を控える）。借りられなければ、次の機会に。
+    result.released_others = frames
+        .with(|allocator| quarantine.release_retired(allocator, crate::bkl::generation_is_retired))
+        .unwrap_or(0);
+    let mut how = how;
+    if how == Retire::Directly {
+        // **先に借りる。借りられなければ隔離の道へ倒す**（`space` はまだ壊していない）。
+        match frames.borrow() {
+            Some(mut allocator) => {
+                crate::bkl::flush_this_cpu();
+                // SAFETY: 呼び出し元の契約（稼働していない空間、覆っている direct map、BKL の内側）。
+                unsafe {
+                    space.detach(direct_map, &mut |frame| {
+                        if allocator.deallocate_frame(frame).is_ok() {
+                            result.returned += 1;
+                        } else {
+                            result.leaked += 1;
+                        }
+                    })
+                };
+                return finish(result, started);
+            }
+            None => how = Retire::ThroughQuarantine,
         }
     }
-    (held, leaked)
+    if how == Retire::ThroughQuarantine {
+        crate::bkl::note_mapping_changed();
+        let generation = crate::bkl::tlb_generation();
+        // SAFETY: 同上。**途中で BKL を放す区間は、この空間の表しか触らない**（稼働していない）。
+        unsafe {
+            space.detach(direct_map, &mut |frame| {
+                if quarantine.push(frame, generation) {
+                    result.quarantined += 1;
+                    return;
+                }
+                // 破壊テスト (2026-10-07, quarantine-overflow-leaks-test): 一杯になっても待たず、漏らす（直す前の形）。
+                if cfg!(feature = "quarantine-overflow-leaks-test") {
+                    result.leaked += 1;
+                    return;
+                }
+                result.waits += 1;
+                if wait_until_retired(generation, bkl) {
+                    if let Some(released) = release_retired_when_borrowable(quarantine, frames, bkl)
+                    {
+                        result.released_meanwhile += released;
+                    }
+                    if quarantine.push(frame, generation) {
+                        result.quarantined += 1;
+                        return;
+                    }
+                }
+                result.leaked += 1;
+            })
+        };
+    }
+    finish(result, started)
+}
+
+/// 掛かったサイクルを埋めて返す。
+fn finish(mut result: Retired, started: u64) -> Retired {
+    result.cycles = common::arch::x86_64::read_timestamp_counter().wrapping_sub(started);
+    result
 }
 
 /// 隔離中の 1 件。

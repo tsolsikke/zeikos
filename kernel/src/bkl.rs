@@ -400,6 +400,15 @@ pub fn generation_is_retired(generation: u64) -> bool {
 /// **`cargo xtask check` がその裏取りをする**（既定ビルドのバイナリにこの関数の
 /// シンボルが在ることを見る）。**`#[inline(never)]` はそのために付けてある。**
 #[inline(never)]
+/// この CPU の TLB を落とす（2026-10-07。空間をその場で返す道が、返す前に念のため落とす。
+/// `crate::quarantine::Retire` の doc）。**BKL を保持したまま呼ぶこと。** 中身は `flush_if_generation_is_stale` と同じ
+/// 載せ替えである。
+pub fn flush_this_cpu() {
+    let root = crate::arch::x86_64::active_page_table_root();
+    // SAFETY: 今読んだ値をそのまま書き戻すだけで、マッピングは変えない。G ビットは使わない（起動時に検査している）。
+    unsafe { crate::arch::x86_64::set_active_page_table_root(root) };
+}
+
 fn flush_if_generation_is_stale() {
     let current = TLB_GENERATION.load(Ordering::Relaxed);
     let seen = SEEN_GENERATION.this_cpu();
