@@ -165,20 +165,9 @@ fn build_user_programs(manifest_dir: &str, out_dir: &str) {
         "compc",
     ];
 
-    // **共有する包み（S11-9）。** `ls` と `cat` が `mod userlib;` で取り込む。
-    // **`PROGRAMS` には入れない**——単独ではビルドできない（`_start` はあるが
-    // `zeikos_main` が無い）。**変わったらビルドし直す必要はあるので、ここで見る。**
-    println!("cargo:rerun-if-changed={manifest_dir}/userland/userlib.rs");
-
-    // **`common` から取り込む純粋な論理（VIEW-a。ADR-0045 の決定 3）。**
-    //
-    // **載せないと、`common` 側を直してもユーザープログラムがビルドし直されない。**
-    // **`userlib.rs` を載せているのと同じ理由である。**
-    println!("cargo:rerun-if-changed={manifest_dir}/../common/src/window.rs");
-    println!("cargo:rerun-if-changed={manifest_dir}/../common/src/env.rs");
-
+    // **取り込むファイル（`userlib.rs`、`common` の純粋な論理など）は、原本から辿る**（[`ProgramInputs`]）。
+    // 作り直しの合図・写しの鍵・cfg を渡すかの判定は、プログラムごとのその 1 つの一覧だけを使う。
     let script = format!("{manifest_dir}/userland/user.ld");
-    println!("cargo:rerun-if-changed={script}");
 
     // **受け皿の位置は `user.ld` が唯一の出所である**（S10-b の完了）。
     // 以前はアセンブリの `.org` と Rust の定数の 2 か所にあり、**検算を足して
@@ -368,24 +357,20 @@ fn build_user_programs(manifest_dir: &str, out_dir: &str) {
         }
     }
 
-    // **写しの置き場**（[`ProgramCache`]）。取り込むファイルの中身は鍵に入れる（`rerun-if-changed` に載せたものと同じ）。
+    // **写しの置き場**（[`ProgramCache`]）。
     let cache = ProgramCache::open(out_dir);
-    let userlib = input_bytes(&format!("{manifest_dir}/userland/userlib.rs"));
-    let window = input_bytes(&format!("{manifest_dir}/../common/src/window.rs"));
-    let env_source = input_bytes(&format!("{manifest_dir}/../common/src/env.rs"));
-    let user_ld = input_bytes(&script);
 
     for name in PROGRAMS {
         let source = format!("{manifest_dir}/userland/{name}.rs");
         let output = format!("{out_dir}/{name}.elf");
-        println!("cargo:rerun-if-changed={source}");
-        let source_bytes = input_bytes(&source);
+        let inputs = ProgramInputs::trace(std::slice::from_ref(&source), &[]).passing(&script);
+        inputs.announce();
 
         let mut command =
             std::process::Command::new(std::env::var("RUSTC").unwrap_or("rustc".into()));
         // **名前の出る cfg だけ渡す**（[`ProgramCache`] の doc）。
         for cfg in &extra_cfgs {
-            if mentions_cfg(cfg, &[&source_bytes, &userlib, &window, &env_source]) {
+            if inputs.mentions(cfg) {
                 command.args(["--cfg", cfg]);
             }
         }
@@ -424,7 +409,7 @@ fn build_user_programs(manifest_dir: &str, out_dir: &str) {
             "user program",
             name,
             &cache.rustc_version,
-            &[&source_bytes, &userlib, &window, &env_source, &user_ld],
+            &inputs.key(),
             &output,
             &mut command,
         );
@@ -452,8 +437,8 @@ fn build_linux_programs(manifest_dir: &str, out_dir: &str, cache: &ProgramCache)
     for name in LINUX_PROGRAMS {
         let source = format!("{dir}/{name}.rs");
         let output = format!("{out_dir}/linux-{name}.elf");
-        println!("cargo:rerun-if-changed={source}");
-        let source_bytes = input_bytes(&source);
+        let inputs = ProgramInputs::trace(std::slice::from_ref(&source), &[]);
+        inputs.announce();
         let mut command =
             std::process::Command::new(std::env::var("RUSTC").unwrap_or("rustc".into()));
         command.args([
@@ -477,7 +462,7 @@ fn build_linux_programs(manifest_dir: &str, out_dir: &str, cache: &ProgramCache)
             "Linux program",
             name,
             &cache.rustc_version,
-            &[&source_bytes],
+            &inputs.key(),
             &output,
             &mut command,
         );
@@ -495,13 +480,11 @@ fn build_position_independent_programs(manifest_dir: &str, out_dir: &str, cache:
     const PROGRAMS: &[&str] = &["pie-hello"];
 
     let script = format!("{manifest_dir}/userland/pie.ld");
-    println!("cargo:rerun-if-changed={script}");
-    let pie_ld = input_bytes(&script);
     for name in PROGRAMS {
         let source = format!("{manifest_dir}/userland/{name}.rs");
         let output = format!("{out_dir}/{name}.elf");
-        println!("cargo:rerun-if-changed={source}");
-        let source_bytes = input_bytes(&source);
+        let inputs = ProgramInputs::trace(std::slice::from_ref(&source), &[]).passing(&script);
+        inputs.announce();
         let mut command =
             std::process::Command::new(std::env::var("RUSTC").unwrap_or("rustc".into()));
         command.args([
@@ -534,7 +517,7 @@ fn build_position_independent_programs(manifest_dir: &str, out_dir: &str, cache:
             "position-independent program",
             name,
             &cache.rustc_version,
-            &[&source_bytes, &pie_ld],
+            &inputs.key(),
             &output,
             &mut command,
         );
@@ -581,32 +564,24 @@ fn build_c_programs(manifest_dir: &str, out_dir: &str, script: &str, cache: &Pro
     /// 自前の libc（C-c。`ADR-0057`）。**すべての C のプログラムと一緒にビルドする。**
     const LIBC_SOURCES: &[&str] = &["libc.c", "libc_string.c", "libc_math.c"];
 
-    for source in LIBC_SOURCES {
-        println!("cargo:rerun-if-changed={manifest_dir}/userland/{source}");
-    }
-    println!("cargo:rerun-if-changed={manifest_dir}/userland/libc.h");
-    // **`tickera` と `tickerb` の本体（W1-c-4）。** **2 本が取り込む。**
-    println!("cargo:rerun-if-changed={manifest_dir}/userland/ticker.h");
-    // **外から持ってきたヘッダ（B-c）。** **`ttfglyph` が丸ごと抱える。**
-    println!("cargo:rerun-if-changed={manifest_dir}/../third_party/stb/stb_truetype.h");
-
-    // **鍵に入れる取り込みのファイル**（上の `rerun-if-changed` と同じもの）。
-    let mut shared: Vec<Vec<u8>> = LIBC_SOURCES
+    // **取り込むヘッダ（`libc.h`・`ticker.h`・`third_party` の `stb_truetype.h`）は、原本と libc から辿る**
+    // （[`ProgramInputs`]。`-I` に渡すのと同じ置き場を探す）。
+    let include_dirs = [
+        format!("{manifest_dir}/userland"),
+        format!("{manifest_dir}/../third_party/stb"),
+    ];
+    let libc_sources: Vec<String> = LIBC_SOURCES
         .iter()
-        .map(|source| input_bytes(&format!("{manifest_dir}/userland/{source}")))
+        .map(|source| format!("{manifest_dir}/userland/{source}"))
         .collect();
-    shared.push(input_bytes(&format!("{manifest_dir}/userland/libc.h")));
-    shared.push(input_bytes(&format!("{manifest_dir}/userland/ticker.h")));
-    shared.push(input_bytes(&format!(
-        "{manifest_dir}/../third_party/stb/stb_truetype.h"
-    )));
-    shared.push(input_bytes(script));
 
     for name in C_PROGRAMS {
         let source = format!("{manifest_dir}/userland/{name}.c");
         let output = format!("{out_dir}/{name}.elf");
-        println!("cargo:rerun-if-changed={source}");
-        let source_bytes = input_bytes(&source);
+        let mut roots = vec![source.clone()];
+        roots.extend(libc_sources.iter().cloned());
+        let inputs = ProgramInputs::trace(&roots, &include_dirs).passing(script);
+        inputs.announce();
 
         let mut command = std::process::Command::new(std::env::var("CC").unwrap_or("cc".into()));
         command
@@ -647,13 +622,11 @@ fn build_c_programs(manifest_dir: &str, out_dir: &str, script: &str, cache: &Pro
                     .iter()
                     .map(|source| format!("{manifest_dir}/userland/{source}")),
             );
-        let mut inputs: Vec<&[u8]> = vec![&source_bytes];
-        inputs.extend(shared.iter().map(Vec::as_slice));
         cache.build(
             "C program",
             name,
             &cache.cc_version,
-            &inputs,
+            &inputs.key(),
             &output,
             &mut command,
         );
@@ -677,7 +650,7 @@ fn build_c_programs(manifest_dir: &str, out_dir: &str, script: &str, cache: &Pro
 ///
 /// **入力の中身で引く写しの置き場**（cargo の `target/` の下の `user-program-cache/`。feature の組をまたいで共有する）。
 /// 鍵は、道具の版（`rustc -vV`・`cc --version`）・渡す引数（出力の道は除く）・原本と取り込むファイルの中身
-/// （`rerun-if-changed` に載せているものと同じ）のハッシュである。**在ればハードリンクで置き（書かない）、無ければ作って
+/// （[`ProgramInputs`] が原本から辿った一覧。`rerun-if-changed` と cfg の判定も同じ一覧を使う）のハッシュである。**在ればハードリンクで置き（書かない）、無ければ作って
 /// から写しへ入れる。** rustc も cc も同じ入力から同じバイトを出す（像のバイトを機械で変えないために、既にそれに依っている）。
 ///
 /// **`--cfg` は、そのプログラムの原本か取り込むファイルに名前が出るものだけ渡す**——出ない cfg は読まれないので、渡しても
@@ -832,6 +805,160 @@ impl ProgramCache {
             ),
         );
     }
+}
+
+/// プログラムを作るときに読むファイル（2026-10-08）。**作り直しの合図（`rerun-if-changed`）・写しの鍵・`--cfg` を渡すかの
+/// 判定は、この 1 つの一覧だけを使う。**
+///
+/// # なぜ原本から辿るのか
+///
+/// 以前は、取り込むファイルを 3 か所に手で書いていた。`zi` が `common/src/text.rs` を、`zash` が `common/src/complete.rs`
+/// を取り込むようになったとき、どこにも足されず、`text.rs` を直しても作り直されず、写しの鍵も変わらず、`text.rs` にだけ
+/// 名前の出る cfg（`width_always_one`）が `zi` へ渡らなかった（`docs/troubleshooting.md` の 2026-10-08 の項）。
+/// **原本から辿れば、取り込みを足した時点で 3 つとも付いてくる。**
+///
+/// # 辿るもの
+///
+/// - Rust: `#[path = "…"]` の付いた `mod`、付いていない `mod 名前;`（同じ置き場の `名前.rs`）、`include!`・`include_str!`・
+///   `include_bytes!` の文字列。道は取り込む側のファイルの置き場から引く。`//` で始まる行は見ない。
+/// - C: `#include "…"`（取り込む側の置き場、次に `-I` と同じ置き場）。`<…>` は道具のものなので見ない。
+///
+/// 辿った先が無ければ止まる（コンパイラも同じ所で落ちる）。同じファイルは 1 度だけ読む。
+/// リンカスクリプトは取り込みではないので [`ProgramInputs::passing`] で足す（合図と鍵には入り、cfg の判定には入らない）。
+struct ProgramInputs {
+    /// 原本と、そこから辿った取り込み（道と中身）。
+    sources: Vec<(String, Vec<u8>)>,
+    /// 取り込みではないが、コンパイラへ渡すファイル（リンカスクリプト）。
+    passed: Vec<(String, Vec<u8>)>,
+}
+
+impl ProgramInputs {
+    fn trace(roots: &[String], include_dirs: &[String]) -> Self {
+        let mut sources: Vec<(String, Vec<u8>)> = Vec::new();
+        let mut pending: Vec<String> = roots.to_vec();
+        while let Some(path) = pending.pop() {
+            let canonical = std::fs::canonicalize(&path)
+                .unwrap_or_else(|e| panic!("failed to resolve {path}: {e}"))
+                .to_string_lossy()
+                .into_owned();
+            if sources.iter().any(|(seen, _)| *seen == canonical) {
+                continue;
+            }
+            let bytes = input_bytes(&canonical);
+            let dir = std::path::Path::new(&canonical)
+                .parent()
+                .expect("a source file has a directory")
+                .to_path_buf();
+            for found in included_files(&canonical, &String::from_utf8_lossy(&bytes)) {
+                let mut candidates = std::iter::once(dir.join(&found)).chain(
+                    include_dirs
+                        .iter()
+                        .map(|d| std::path::Path::new(d).join(&found)),
+                );
+                let resolved = candidates
+                    .find(|candidate| candidate.is_file())
+                    .unwrap_or_else(|| panic!("{canonical} includes {found}, which was not found"));
+                pending.push(resolved.to_string_lossy().into_owned());
+            }
+            sources.push((canonical, bytes));
+        }
+        // **並びを決める**（鍵が辿った順に依らないように）。
+        sources.sort_by(|a, b| a.0.cmp(&b.0));
+        ProgramInputs {
+            sources,
+            passed: Vec::new(),
+        }
+    }
+
+    /// 取り込みではないが、コンパイラへ渡すファイルを足す。
+    fn passing(mut self, path: &str) -> Self {
+        self.passed.push((path.to_string(), input_bytes(path)));
+        self
+    }
+
+    /// 作り直しの合図を出す。
+    fn announce(&self) {
+        for (path, _) in self.sources.iter().chain(self.passed.iter()) {
+            println!("cargo:rerun-if-changed={path}");
+        }
+    }
+
+    /// 写しの鍵に入れる中身（原本・取り込み・渡すファイル）。
+    fn key(&self) -> Vec<&[u8]> {
+        self.sources
+            .iter()
+            .chain(self.passed.iter())
+            .map(|(_, bytes)| bytes.as_slice())
+            .collect()
+    }
+
+    /// `cfg` の名前が、原本か取り込むファイルのどれかに出るか（出なければ、渡しても読まれない）。
+    fn mentions(&self, cfg: &str) -> bool {
+        let texts: Vec<&[u8]> = self
+            .sources
+            .iter()
+            .map(|(_, bytes)| bytes.as_slice())
+            .collect();
+        mentions_cfg(cfg, &texts)
+    }
+}
+
+/// 1 つのファイルが取り込むファイルの道（[`ProgramInputs`] の「辿るもの」。純粋な論理）。
+fn included_files(path: &str, text: &str) -> Vec<String> {
+    let is_c = path.ends_with(".c") || path.ends_with(".h");
+    let mut found = Vec::new();
+    let mut path_attribute: Option<String> = None;
+    for line in text.lines() {
+        let line = line.trim();
+        if line.starts_with("//") {
+            continue;
+        }
+        if is_c {
+            if let Some(rest) = line.strip_prefix("#include") {
+                if let Some(name) = quoted(rest.trim_start()) {
+                    found.push(name);
+                }
+            }
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("#[path") {
+            path_attribute = quoted(rest.trim_start().trim_start_matches('=').trim_start());
+            continue;
+        }
+        if let Some(rest) = line
+            .strip_prefix("mod ")
+            .or_else(|| line.strip_prefix("pub mod "))
+        {
+            if let Some(name) = rest.strip_suffix(';') {
+                found.push(
+                    path_attribute
+                        .take()
+                        .unwrap_or_else(|| format!("{}.rs", name.trim())),
+                );
+                continue;
+            }
+        }
+        for mac in ["include!(", "include_str!(", "include_bytes!("] {
+            let mut rest = line;
+            while let Some(at) = rest.find(mac) {
+                rest = &rest[at + mac.len()..];
+                if let Some(name) = quoted(rest.trim_start()) {
+                    found.push(name);
+                }
+            }
+        }
+        if !line.starts_with("#[") {
+            path_attribute = None;
+        }
+    }
+    found
+}
+
+/// `"…"` で始まる文字列の中身（純粋な論理）。
+fn quoted(text: &str) -> Option<String> {
+    let rest = text.strip_prefix('"')?;
+    let end = rest.find('"')?;
+    Some(rest[..end].to_string())
 }
 
 /// 鍵に入れるファイルの中身を読む（無ければ止まる——その場で作っても落ちる入力である）。
