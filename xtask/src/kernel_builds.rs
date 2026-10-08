@@ -267,11 +267,14 @@ impl Service {
             waited: queue.waited,
             ..Tally::default()
         };
-        for done in queue.done.values() {
+        for (key, done) in &queue.done {
             tally.builds += 1;
             tally.build_seconds += done.seconds;
-            if done.result.is_err() {
+            if let Err(error) = &done.result {
                 tally.failed += 1;
+                tally
+                    .failures
+                    .push((key.clone(), first_error_line(error).to_string()));
             }
             if done.asked {
                 tally.built_when_asked += 1;
@@ -282,6 +285,8 @@ impl Service {
                 tally.unused_seconds += done.seconds;
             }
         }
+        // **並びを決める**（`HashMap` の順に依らず、まとめの行が毎回同じ順になるように）。
+        tally.failures.sort();
         tally
     }
 }
@@ -310,6 +315,8 @@ pub struct Tally {
     pub builds: usize,
     pub build_seconds: f64,
     pub failed: usize,
+    /// 失敗した組と、cargo のエラーの最初の 1 行（[`first_error_line`]）。**まとめの行の後に 1 組ずつ出す**（2026-10-08）。
+    pub failures: Vec<(Key, String)>,
     pub built_when_asked: usize,
     pub built_ahead_and_used: usize,
     pub built_ahead_unused: usize,
@@ -363,6 +370,67 @@ pub fn canonical_order(keys: &[Key], normalize: &Normalize) -> Vec<Key> {
         }
     }
     ordered
+}
+
+/// ビルドの失敗の文字列から、最初のエラーの行を取る（2026-10-08。純粋な論理）。**`error` で始まる最初の行**——cargo の
+/// stderr には、その前に `Compiling` や `warning:` の行が来ることがある。無ければ、最初の空でない行を返す。
+pub fn first_error_line(message: &str) -> &str {
+    let mut lines = message
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty());
+    message
+        .lines()
+        .map(str::trim)
+        .find(|line| line.starts_with("error"))
+        .or_else(|| lines.next())
+        .unwrap_or("")
+}
+
+/// 順の記録から、宣言されていない feature を含む組を落とす（2026-10-08。純粋な論理）。返すのは、残した組と、落とした組と
+/// その中の宣言されていない feature の名前。**落とした組は、呼ぶ側が 1 行ずつ出す**（黙って消さない）。
+///
+/// # なぜ要るのか
+///
+/// [`render_order`] は、前の記録にしか無い組も後ろに残す。feature の名前を変えたり消したりすると、古い名前の組がどの
+/// 項目にも求められないまま記録に残り続け、毎回の全検査が先に作って cargo に断られていた（改名した feature の組が
+/// 1 つ、2026-10-04 から残っていた。まとめの行の「1 failed」）。
+pub fn without_undeclared(
+    keys: Vec<Key>,
+    declared: &dyn Fn(&str) -> bool,
+) -> (Vec<Key>, Vec<(Key, Vec<String>)>) {
+    let mut kept = Vec::new();
+    let mut dropped = Vec::new();
+    for key in keys {
+        let missing: Vec<String> = key
+            .iter()
+            .filter(|feature| !declared(feature))
+            .cloned()
+            .collect();
+        if missing.is_empty() {
+            kept.push(key);
+        } else {
+            dropped.push((key, missing));
+        }
+    }
+    (kept, dropped)
+}
+
+/// 順の記録を書き戻す形にする（2026-10-08。純粋な論理）。この回に求めた組と前の記録の組から、宣言されていない feature を
+/// 含む組を落とし（[`without_undeclared`]）、[`render_order`] の形にする。返すのは、書く文字列と、落とした組（重ねを除く）。
+pub fn order_to_write(
+    requests: Vec<Key>,
+    previous: Vec<Key>,
+    declared: &dyn Fn(&str) -> bool,
+) -> (String, Vec<(Key, Vec<String>)>) {
+    let (requests, mut dropped) = without_undeclared(requests, declared);
+    let (previous, more) = without_undeclared(previous, declared);
+    for entry in more {
+        if !dropped.contains(&entry) {
+            dropped.push(entry);
+        }
+    }
+    (render_order(&requests, &previous), dropped)
 }
 
 /// 組の写しの置き場の名前（**空は `default`**。純粋な論理）。
@@ -1056,6 +1124,53 @@ mod tests {
         let tally = service.tally();
         assert_eq!(tally.built_ahead_and_used, 2);
         assert_eq!(tally.failed, 1);
+        // **失敗した組の名前と、エラーの最初の行も持つ**（まとめの行の後に出す）。
+        assert_eq!(
+            tally.failures,
+            vec![(key_of(&["b"]), "error: no such feature".to_string())]
+        );
         assert_eq!(tally.ready_on_ask, 2);
+    }
+
+    /// cargo の stderr から、最初のエラーの行を取る（2026-10-08）。前に `Compiling` や `warning:` が在っても飛ばす。
+    #[test]
+    fn the_first_error_line_skips_progress_and_warnings() {
+        let cargo = "   Compiling kernel v0.1.0\nwarning: unused import\nerror: the package 'kernel' does not contain \
+                     this feature: gone-test\nerror: could not compile\nkernel build failed (exit status: 101)\n";
+        assert_eq!(
+            first_error_line(cargo),
+            "error: the package 'kernel' does not contain this feature: gone-test"
+        );
+        assert_eq!(
+            first_error_line("\n  the kernel for [a] was not handed over\n"),
+            "the kernel for [a] was not handed over"
+        );
+        assert_eq!(first_error_line(""), "");
+    }
+
+    /// 順の記録を書き戻すとき、宣言されていない feature を含む組を落とし、落とした組と名前を返す（2026-10-08）。
+    /// 前の記録にしか無い組（宣言されているもの）は、今までどおり後ろに残す。
+    #[test]
+    fn the_order_drops_sets_with_undeclared_features_and_names_them() {
+        let declared = |feature: &str| ["a", "b", "c"].contains(&feature);
+        let requests = vec![key_of(&["b"]), Vec::new(), key_of(&["a", "gone-request"])];
+        let previous = vec![
+            key_of(&["c"]),
+            key_of(&["gone-test"]),
+            key_of(&["a", "gone-request"]),
+        ];
+        let (text, dropped) = order_to_write(requests, previous, &declared);
+        let written = parse_order(&text);
+        assert_eq!(written, vec![key_of(&["b"]), Vec::new(), key_of(&["c"])]);
+        assert_eq!(
+            dropped,
+            vec![
+                (
+                    key_of(&["a", "gone-request"]),
+                    vec!["gone-request".to_string()]
+                ),
+                (key_of(&["gone-test"]), vec!["gone-test".to_string()]),
+            ]
+        );
     }
 }

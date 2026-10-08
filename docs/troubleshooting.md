@@ -1377,6 +1377,16 @@ checksumが1行と、`.rodata`が縮んだぶんのPT_LOADが4行**（`/bin/ls`�
 
 **目安。** **載せた後に稼働中の表へページを足す経路は、`mmap`だけではない**——**同じ入口（`map_4kib`）を通る経路を数え上げ、全部が会計へ入っているかを見ること。** **プログラムの出力の一致だけを見る検査は、カーネルの側の`[ERROR]`と、利用者から見える失敗の表示（シェルの「cannot run」）も見ること**——**両方見るのは、出し方が変わったときに片方だけでは見逃すからである。** ほかの検査でどこまで見ているかの調べは、この直しの報告に載せた。
 
+## 2026-10-08: full checkのビルドのまとめに、毎回「1 failed」が出ていた——廃止したfeatureの組が先行ビルドの順序の記録に残っていた
+
+full checkのまとめの行（`kernel builds in the background:`）に、2026-10-06以降のどの回にも「1 failed」が出ていた。full checkは通っていた。失敗していたのは、2026-10-04に名前を変えたfeature（`cpu-state-sees-sce-test`。今は`cpu-state-sees-sce-clear-test`）だけの組のビルドで、cargoが`error: the package 'kernel' does not contain this feature`で断っていた。
+
+原因は、先行ビルドの順序の記録（gitの共通のディレクトリの zeikos/kernel-build-order.txt。追跡しないファイル）の書き戻し方である。記録は、この回に要求された組の後ろに、前回の記録にしか無い組も残す（途中で止まった回が残りの順序を消さないため。`render_order`のdoc）。名前を変えたfeatureの組はどの項目からも要求されないので、記録から消えず、毎回の full check が先行ビルドして失敗していた。失敗の結果は要求した項目にだけ渡るので、どの項目も落ちなかった。まとめの行は数だけを出し、どの組が何で失敗したかは出していなかった。
+
+直し方: 宣言されていないfeature（`kernel/Cargo.toml`に無いもの）を含む組は、記録を読むときに先行ビルドから外し、書き戻すときに落とす（`kernel_builds::without_undeclared`）。どちらも、外した組を1行ずつ出す。まとめの行の後に、失敗した組の名前とcargoのエラーの最初の1行を出す。前回の組を残す振る舞いは変えていない。
+
+目安。記録を前回から引き継ぐ形にしたときは、引き継いだものが今も有効かを、読むときと書くときに確かめる。数だけのまとめは、本物の失敗が古い失敗に紛れるので、失敗したものの名前も出す。
+
 ## 2026-10-08: `PROT_NONE`にしたページを`munmap`して写し直すと、フレームが戻らなかった
 
 バグ探しで、`mmap`→書く→`mprotect(PROT_NONE)`→`munmap`→同じ番地へ`mmap`、と、`PROT_NONE`のページの上へ`MAP_FIXED`、を1回ずつ打つと、空間の会計が`[ERROR] user-space: the space of /bin/spin took 52 frame(s) but the destroy collected 50`を出し、シェルは走り終えたプログラムを「cannot run」と言った。取れるだけ`mmap`して数えたページは、1回ごとに2枚減って戻らなかった。

@@ -853,7 +853,9 @@ xtask::kernel_builds::tests::an_asked_build_goes_before_the_builds_ahead
 xtask::kernel_builds::tests::fingerprints_give_the_features_in_the_order_they_were_built
 xtask::kernel_builds::tests::keys_are_sorted_and_named
 xtask::kernel_builds::tests::one_build_gets_one_name
+xtask::kernel_builds::tests::the_first_error_line_skips_progress_and_warnings
 xtask::kernel_builds::tests::the_order_and_the_asks_meet_on_the_same_name
+xtask::kernel_builds::tests::the_order_drops_sets_with_undeclared_features_and_names_them
 xtask::launch::tests::a_cut_run_is_log_limit_before_anything_else
 xtask::launch::tests::a_declared_run_that_ran_to_its_limit_is_counted_apart
 xtask::launch::tests::a_harness_fault_survives_added_context

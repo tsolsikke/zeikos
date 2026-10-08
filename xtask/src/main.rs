@@ -35227,6 +35227,21 @@ fn start_kernel_builds(root: &Path) {
         .map(|text| {
             kernel_builds::canonical_order(&kernel_builds::parse_order(&text), normalize.as_ref())
         })
+        // **宣言されていない feature を含む組は、読むときにも先に作らない**（2026-10-08）。書き戻すときに落とす
+        // （[`finish_kernel_builds`]）だけだと、名前を変えた直後の 1 回は、古い名前の組を作って cargo に断られる。
+        .map(|order| {
+            let (kept, dropped) =
+                kernel_builds::without_undeclared(order, &|feature| features.declared(feature));
+            for (key, missing) in &dropped {
+                println!(
+                    "(info) kernel builds in the background: not building [{}] from the recorded order (not declared \
+                     in kernel/Cargo.toml: {})",
+                    key.join(","),
+                    missing.join(", ")
+                );
+            }
+            kept
+        })
         .filter(|order| !order.is_empty());
     let (ahead, source) = match recorded {
         Some(order) => {
@@ -35287,6 +35302,14 @@ fn finish_kernel_builds(root: &Path) -> Vec<String> {
         tally.ready_on_ask,
         tally.waited.as_secs_f64() / 60.0
     )];
+    // **失敗した組は、名前と cargo のエラーの最初の 1 行を出す**（2026-10-08）。数だけでは、どの組が何で落ちたか分からず、
+    // 本物の失敗が古い記録の組の失敗に紛れる。
+    for (key, error) in &tally.failures {
+        lines.push(format!(
+            "(info) kernel builds in the background: failed [{}]: {error}",
+            key.join(",")
+        ));
+    }
     match kernel_build_order_path(root) {
         Ok(path) => {
             // **前の記録も、この回と同じ名前へ揃えてから残す**（揃える前の名前で書いた記録が、同じ組を 2 度並べないように）。
@@ -35298,7 +35321,33 @@ fn finish_kernel_builds(root: &Path) -> Vec<String> {
                     )
                 })
                 .unwrap_or_default();
-            match fs::write(&path, kernel_builds::render_order(&requests, &previous)) {
+            // **宣言されていない feature を含む組は書き戻さない**（2026-10-08。`kernel_builds::without_undeclared` の doc）。
+            // 落とした組は 1 行ずつ出す。feature の表が読めなければ、落とさずにそう出す。
+            let (text, dropped) = match KernelFeatures::read(root) {
+                Ok(features) => {
+                    kernel_builds::order_to_write(requests.clone(), previous, &|feature| {
+                        features.declared(feature)
+                    })
+                }
+                Err(error) => {
+                    lines.push(format!(
+                        "(info) kernel build order: the feature tables could not be read, so no set was checked \
+                         for undeclared features: {error:#}"
+                    ));
+                    (
+                        kernel_builds::render_order(&requests, &previous),
+                        Vec::new(),
+                    )
+                }
+            };
+            for (key, missing) in &dropped {
+                lines.push(format!(
+                    "(info) kernel build order: dropped [{}] (not declared in kernel/Cargo.toml: {})",
+                    key.join(","),
+                    missing.join(", ")
+                ));
+            }
+            match fs::write(&path, text) {
                 Ok(()) => lines.push(format!(
                     "(info) kernel build order: {} set(s) asked in this run, written to {}",
                     requests.len(),
