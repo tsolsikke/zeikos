@@ -2479,19 +2479,30 @@ const RUN_FLAGS: &[(&str, RunValue)] = &[
     ("--only-masked", RunValue::None),
 ];
 
-/// モードと一緒のときだけ効くフラグと、そのフラグを読むモードの一覧（2026-10-08）。**ここに在るフラグを、
-/// 読むモードのどれも無しに渡すと、入口で名前つきで断る**（[`run_arguments_problem`]）。
+/// `cargo xtask run` のフラグが、どこで効くか（2026-10-08）。
+#[derive(Clone, Copy)]
+enum RunFlagScope {
+    /// 一覧のモードと一緒のときだけ効く（`--update-reference` は `--page-permissions` か `--boot-log-diff` と一緒）。
+    WithModes(&'static [&'static str]),
+    /// 既定の起動（モードの無い `run`）だけが読む（`--kvm`）。
+    DefaultRunOnly,
+}
+
+/// モードではないフラグが、どこで効くかの一覧（2026-10-08）。**ここに無い `RUN_FLAGS` のフラグは、モードである**
+/// （`run` の処理が、上から順に見て当たった所で終わるフラグ）。**合わない組み合わせは、入口で名前つきで断る**
+/// （[`run_arguments_problem`]）——モードと一緒のときだけ効くフラグを、そのモードのどれも無しに渡したときと、既定の
+/// 起動だけが読むフラグを、モードと一緒に渡したときである。
 ///
-/// **以前は黙って無視していた。** `run` の処理は、モードのフラグを上から順に見て、当たった所で終わる。モードが
-/// 1 つも無ければ既定の起動まで落ちるので、`cargo xtask run --update-reference` は、リファレンスを書き換えずに
-/// 普通の起動を走らせた。
+/// **以前は、どちらも黙って無視していた。** モードが 1 つも無ければ既定の起動まで落ちるので、
+/// `cargo xtask run --update-reference` はリファレンスを書き換えずに普通の起動を走らせ、モードが在ればそこで終わるので、
+/// `--kvm` を付けた検査は KVM を使わずに走った。
 ///
-/// **モードを足したり、モードが読むフラグを変えたりしたら、ここも直す。** 一覧が `run` の処理と合っていること
-/// は、ホストのテストがソースを読んで確かめる。
-const RUN_FLAGS_WITH_MODES: &[(&str, &[&str])] = &[
+/// **フラグやモードを足したり、モードが読むフラグを変えたりしたら、ここも直す。** 一覧が `run` の処理と合っていることは、
+/// ホストのテストがソースを読んで確かめる。
+const RUN_FLAG_SCOPES: &[(&str, RunFlagScope)] = &[
     (
         "--sabotage",
-        &[
+        RunFlagScope::WithModes(&[
             "--ansi-test",
             "--complete-test",
             "--compose-test",
@@ -2519,31 +2530,50 @@ const RUN_FLAGS_WITH_MODES: &[(&str, &[&str])] = &[
             "--virtio-irq-test",
             "--virtio-test",
             "--zi-test",
-        ],
+        ]),
     ),
     (
         "--update-reference",
-        &["--page-permissions", "--boot-log-diff"],
+        RunFlagScope::WithModes(&["--page-permissions", "--boot-log-diff"]),
     ),
-    ("--scene", &["--page-permissions"]),
-    ("--allow-shrink", &["--boot-log-diff"]),
-    ("--only-masked", &["--boot-log-diff"]),
-    ("--drop-arrows", &["--shell-test"]),
-    ("--drop-esc", &["--shell-test"]),
-    ("--reopen", &["--serial-test"]),
-    ("--ending", &["--fb-test"]),
-    ("--config", &["--machine-variant"]),
-    ("--media", &["--machine-variant"]),
+    ("--scene", RunFlagScope::WithModes(&["--page-permissions"])),
+    (
+        "--allow-shrink",
+        RunFlagScope::WithModes(&["--boot-log-diff"]),
+    ),
+    (
+        "--only-masked",
+        RunFlagScope::WithModes(&["--boot-log-diff"]),
+    ),
+    ("--drop-arrows", RunFlagScope::WithModes(&["--shell-test"])),
+    ("--drop-esc", RunFlagScope::WithModes(&["--shell-test"])),
+    ("--reopen", RunFlagScope::WithModes(&["--serial-test"])),
+    ("--ending", RunFlagScope::WithModes(&["--fb-test"])),
+    ("--config", RunFlagScope::WithModes(&["--machine-variant"])),
+    ("--media", RunFlagScope::WithModes(&["--machine-variant"])),
     (
         "--rebuild-between",
-        &["--persist-test", "--persist-zi-test", "--persist-env-test"],
+        RunFlagScope::WithModes(&["--persist-test", "--persist-zi-test", "--persist-env-test"]),
     ),
-    ("--ignore-file", &["--persist-env-test"]),
-    ("--smp", &["--drift-test"]),
+    (
+        "--ignore-file",
+        RunFlagScope::WithModes(&["--persist-env-test"]),
+    ),
+    ("--smp", RunFlagScope::WithModes(&["--drift-test"])),
+    ("--panic-test", RunFlagScope::DefaultRunOnly),
+    ("--gui", RunFlagScope::DefaultRunOnly),
+    ("--gtk", RunFlagScope::DefaultRunOnly),
+    ("--gfx-test", RunFlagScope::DefaultRunOnly),
+    ("--kvm", RunFlagScope::DefaultRunOnly),
+    ("--no-limit", RunFlagScope::DefaultRunOnly),
+    ("--manual", RunFlagScope::DefaultRunOnly),
+    ("--key-probe", RunFlagScope::DefaultRunOnly),
+    ("--keep-disk", RunFlagScope::DefaultRunOnly),
+    ("--rebuild-disk", RunFlagScope::DefaultRunOnly),
 ];
 
-/// `cargo xtask run` の引数に、知らない旗か、どの旗の値でもない位置の引数か、読むモードの無いフラグが在れば、
-/// その名前を挙げる（純粋な論理。2026-10-03。モードの無いフラグは 2026-10-08）。**無ければ `None`。**
+/// `cargo xtask run` の引数に、知らない旗か、どの旗の値でもない位置の引数か、効く所の無いフラグ（[`RUN_FLAG_SCOPES`]）が
+/// 在れば、その名前を挙げる（純粋な論理。2026-10-03。効く所の無いフラグは 2026-10-08）。**無ければ `None`。**
 /// **それ以外の組み合わせの意味までは見ない**（それぞれの旗の処理が見る）。
 fn run_arguments_problem(rest: &[String]) -> Option<String> {
     let mut unknown: Vec<&str> = Vec::new();
@@ -2569,14 +2599,31 @@ fn run_arguments_problem(rest: &[String]) -> Option<String> {
             RunValue::Required | RunValue::Optional => {}
         }
     }
-    let without_mode: Vec<String> = RUN_FLAGS_WITH_MODES
+    let modes: Vec<&str> = given
         .iter()
-        .filter(|(flag, modes)| {
-            given.contains(flag) && !modes.iter().any(|mode| given.contains(mode))
-        })
-        .map(|(flag, modes)| format!("{flag} (use it with {})", modes.join(" | ")))
+        .copied()
+        .filter(|flag| !RUN_FLAG_SCOPES.iter().any(|(known, _)| known == flag))
         .collect();
-    if unknown.is_empty() && stray.is_empty() && without_mode.is_empty() {
+    let mut without_mode: Vec<String> = Vec::new();
+    let mut default_run_only: Vec<&str> = Vec::new();
+    for &(flag, scope) in RUN_FLAG_SCOPES {
+        if !given.contains(&flag) {
+            continue;
+        }
+        match scope {
+            RunFlagScope::WithModes(owners) if !owners.iter().any(|mode| given.contains(mode)) => {
+                without_mode.push(format!("{flag} (use it with {})", owners.join(" | ")));
+            }
+            RunFlagScope::WithModes(_) => {}
+            RunFlagScope::DefaultRunOnly if !modes.is_empty() => default_run_only.push(flag),
+            RunFlagScope::DefaultRunOnly => {}
+        }
+    }
+    if unknown.is_empty()
+        && stray.is_empty()
+        && without_mode.is_empty()
+        && default_run_only.is_empty()
+    {
         return None;
     }
     let mut parts = Vec::new();
@@ -2590,6 +2637,13 @@ fn run_arguments_problem(rest: &[String]) -> Option<String> {
         parts.push(format!(
             "option(s) that do nothing without their mode: {}",
             without_mode.join(", ")
+        ));
+    }
+    if !default_run_only.is_empty() {
+        parts.push(format!(
+            "option(s) that only the default run (no mode) reads, given with the mode {}: {}",
+            modes.join(" "),
+            default_run_only.join(", ")
         ));
     }
     Some(format!(
@@ -36361,20 +36415,60 @@ mod tests {
         }
     }
 
-    /// **`RUN_FLAGS_WITH_MODES` は、`run` の処理と合っている**（2026-10-08）。`run` の処理をソースから読み、
-    /// モードの分岐の中に出てくるフラグと、その分岐のモードの組を集めて、表と比べる。**分岐に足したフラグを表に
-    /// 足し忘れると、そのフラグはモード無しで黙って無視される形に戻るので、ここで落とす。**
+    /// **既定の起動だけが読むフラグを、モードと一緒に渡すと名前つきで断る**（2026-10-08）。**以前は黙って無視していた**
+    /// （`--shell-test --kvm` は KVM を使わずに走った）。断る文には、一緒に渡したモードと、既定の起動でだけ効くことが出る。
     #[test]
-    fn the_flags_with_modes_match_the_run_dispatch() {
+    fn run_refuses_a_default_run_flag_given_with_a_mode() {
+        let args = |list: &[&str]| -> Vec<String> { list.iter().map(|s| s.to_string()).collect() };
+        let problem = run_arguments_problem(&args(&["--shell-test", "--kvm"]))
+            .expect("--kvm does nothing for --shell-test");
+        assert!(
+            problem.contains(
+                "only the default run (no mode) reads, given with the mode --shell-test: --kvm"
+            ),
+            "{problem}"
+        );
+        // 値を取るモードでも、2 つあれば 2 つとも挙げる。
+        let problem =
+            run_arguments_problem(&args(&["--syscall-test", "kind", "--gui", "--keep-disk"]))
+                .unwrap();
+        assert!(
+            problem.contains("given with the mode --syscall-test: --gui, --keep-disk"),
+            "{problem}"
+        );
+        // モードの無い既定の起動なら通る。
+        for ok in [
+            &["--kvm"][..],
+            &["--gui", "--manual", "--keep-disk"],
+            &["--panic-test", "--no-limit"],
+            &["--gtk", "--gfx-test", "--key-probe", "--rebuild-disk"],
+        ] {
+            assert_eq!(run_arguments_problem(&args(ok)), None, "{ok:?}");
+        }
+    }
+
+    /// **`RUN_FLAG_SCOPES` は、`run` の処理と合っている**（2026-10-08）。`run` の処理をソースから読み、3 つを集めて表と比べる。
+    /// - モード: 上から順に見て、当たった所で終わる分岐を開くフラグ
+    /// - モードと一緒のときだけ効くフラグ: モードの分岐の中に出てくるフラグと、その分岐のモードの組
+    /// - 既定の起動だけが読むフラグ: 最初の分岐の前と、`cmd_run(&RunOptions {` の後に出てくるフラグ
+    ///
+    /// **`RUN_FLAGS` のフラグは、このどれか 1 つにちょうど入る。** 分岐やフラグを足して表に足し忘れると、そのフラグは黙って
+    /// 無視される形に戻るので、ここで落とす。**最初の分岐の前で読む変数を、後でモードの側でも使うようにしたら、この分け方は
+    /// 当たらなくなる**（変数の使い道までは読まない）。
+    #[test]
+    fn the_flag_scopes_match_the_run_dispatch() {
+        use std::collections::{BTreeMap, BTreeSet};
         let source = include_str!("main.rs");
         let start = source
             .find("        Some(\"run\") => {\n")
             .expect("the run dispatch");
         let body = &source[start..];
-        let body = &body[..body.find("            cmd_run(&RunOptions {").unwrap()];
-        let mut found: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
-            Default::default();
+        let body = &body[..body.find("        Some(\"check\") => {").unwrap()];
+        let mut with_modes: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let mut default_run: BTreeSet<String> = BTreeSet::new();
+        let mut modes: BTreeSet<String> = BTreeSet::new();
         let mut mode: Option<String> = None;
+        let mut in_default_run = false;
         for line in body.lines() {
             let quoted: Vec<&str> = line
                 .split('"')
@@ -36386,43 +36480,65 @@ mod tests {
                             .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
                 })
                 .collect();
+            if line.starts_with("            cmd_run(&RunOptions {") {
+                in_default_run = true;
+                continue;
+            }
             let opens_a_mode = line.starts_with("            if ")
                 && line.contains("rest.iter()")
                 && !line.starts_with("             ");
-            if opens_a_mode {
+            if opens_a_mode && !in_default_run {
                 mode = quoted.first().map(|q| q.to_string());
+                modes.extend(mode.clone());
                 continue;
             }
-            let Some(mode) = &mode else { continue };
-            for flag in quoted {
-                if flag != mode {
-                    found
-                        .entry(flag.to_string())
-                        .or_default()
-                        .insert(mode.clone());
+            match (&mode, in_default_run) {
+                (Some(mode), false) => {
+                    for flag in quoted {
+                        if flag != mode {
+                            with_modes
+                                .entry(flag.to_string())
+                                .or_default()
+                                .insert(mode.clone());
+                        }
+                    }
+                }
+                _ => default_run.extend(quoted.iter().map(|q| q.to_string())),
+            }
+        }
+        let mut table_with_modes: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+        let mut table_default_run: BTreeSet<String> = BTreeSet::new();
+        for (flag, scope) in RUN_FLAG_SCOPES {
+            match scope {
+                RunFlagScope::WithModes(owners) => {
+                    table_with_modes.insert(
+                        flag.to_string(),
+                        owners.iter().map(|m| m.to_string()).collect(),
+                    );
+                }
+                RunFlagScope::DefaultRunOnly => {
+                    table_default_run.insert(flag.to_string());
                 }
             }
         }
-        let table: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
-            RUN_FLAGS_WITH_MODES
-                .iter()
-                .map(|(flag, modes)| {
-                    (
-                        flag.to_string(),
-                        modes.iter().map(|m| m.to_string()).collect(),
-                    )
-                })
-                .collect();
-        assert_eq!(found, table);
-        // 表のフラグとモードは、どれも `RUN_FLAGS` に在る。
-        for (flag, modes) in RUN_FLAGS_WITH_MODES {
-            for name in std::iter::once(flag).chain(modes.iter()) {
-                assert!(
-                    RUN_FLAGS.iter().any(|(known, _)| known == name),
-                    "{name} is not in RUN_FLAGS"
-                );
-            }
-        }
+        assert_eq!(with_modes, table_with_modes);
+        assert_eq!(default_run, table_default_run);
+        // `RUN_FLAGS` のフラグは、モードか、表のどちらかに、ちょうど 1 回入る。
+        let in_table: BTreeSet<String> =
+            RUN_FLAG_SCOPES.iter().map(|(f, _)| f.to_string()).collect();
+        assert_eq!(
+            in_table.len(),
+            RUN_FLAG_SCOPES.len(),
+            "a flag is in RUN_FLAG_SCOPES twice"
+        );
+        assert!(
+            modes.is_disjoint(&in_table),
+            "{:?}",
+            modes.intersection(&in_table).collect::<Vec<_>>()
+        );
+        let classified: BTreeSet<String> = modes.union(&in_table).cloned().collect();
+        let known: BTreeSet<String> = RUN_FLAGS.iter().map(|(f, _)| f.to_string()).collect();
+        assert_eq!(classified, known);
     }
 
     /// **`USAGE` と docs の `cargo xtask run …` の行は、全部が受け付けられる**（2026-10-03。断られる行が 0）。
