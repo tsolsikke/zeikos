@@ -114,7 +114,10 @@ VERSION_ID="0.1"
 VERSION="0.1 (Cycle 1)"
 PRETTY_NAME="ZeikOS 0.1 (Cycle 1)"
 HOME_URL="https://github.com/tsolsikke/zeikos"
+DOCUMENTATION_URL="https://github.com/tsolsikke/zeikos/tree/main/docs"
 ```
+
+**置いたフィールドと、置かなかったフィールド**（2026-10-08。運用者の決定）。置いたのは、上の`NAME`・`ID`・`VERSION_ID`・`VERSION`・`PRETTY_NAME`・`HOME_URL`と、文書の入口の`DOCUMENTATION_URL`である。`BUILD_ID`は置かない——コミットのハッシュなどを入れると、コミットごとにディスクイメージのバイトが変わり、イメージの再現性（キャッシュがあってもなくても同じバイトになること）を壊す。`BUG_REPORT_URL`は、外から報告を受ける先を決めてから置く（課題はJiraで管理していて、GitHubのIssuesは使っていない）。`ANSI_COLOR`・`VERSION_CODENAME`・`SUPPORT_URL`・`LOGO`は、それを読んで使う側（色を付けて名前を出すシェル、Cycleの名前、サポートの窓口、デスクトップ）ができてから置く。
 
 **製品名を表示するときは、`/etc/os-release`から読む。** シェルや将来のデスクトップが製品名やバージョンを出すときは、`PRETTY_NAME`（無ければ`NAME`と`VERSION`）を読む。`uname`の`sysname`（`Linux`）を製品名として出さない。製品名とバージョンの置き場を1つにして、Cycleで上げるときに直す場所を1か所にするためである。
 

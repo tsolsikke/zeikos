@@ -236,7 +236,7 @@ Hello, ZeikOS!
 [INFO] virtio-blk: handshake: ACKNOWLEDGE -> DRIVER; capacity=65536 sector(s)
 [INFO] virtio-blk: request limit: 1048576 byte(s) in one data segment (the device declares size_max=None seg_max=Some(254); None means the device does not declare a limit; ours is 1048576)
 [INFO] virtio-blk: queue 0: size 256; ring at phys 0x39000..0x3d000 (4 page(s), 4096-aligned=true); zeroed 16384 byte(s) (0 were nonzero before)
-[INFO] virtio-blk: read sector 2: 512 byte(s) requested, status=0 (OK); checksum=0x0009e1c5 first bytes=[00, 04, 00, 00, 00, 20, 00, 00]
+[INFO] virtio-blk: read sector 2: 512 byte(s) requested, status=0 (OK); checksum=0x000a3276 first bytes=[00, 04, 00, 00, 00, 20, 00, 00]
 [INFO] smp: mapped per-CPU stacks for slot 1 at 0xffff81000003a000 (PML4[258], not [257] which a sabotage VA depends on): kernel top 0xffff81000005b000, IST1 top 0xffff810000060000, IST2 top 0xffff810000065000, IST3 top 0xffff81000006a000, IST4 top 0xffff81000006f000, IST5 top 0xffff810000074000; 55 frame(s) consumed (pages plus page tables), guards left unmapped
 [INFO] nx-probe: mapped a probe page at 0xffff828000000000 -> 0x74000 with the execute-disable bit (entry 0x8000000000074001, bit 63 set = true) [read back from the live table]
 [INFO] nx-probe: cpu 0 read the probe page: value=0x4e585f50524f4245 (expected 0x4e585f50524f4245), EFER.NXE=1 (expected 1)
@@ -349,7 +349,7 @@ task: cooperative switch verified
 [INFO] ext2: /data/direct-max inode=58 size=49152 blocks=12 single indirect=0 last byte=0xce (expected 0xce)
 [INFO] ext2: /data/indirect-first inode=59 size=49153 blocks=13 single indirect=383 last byte=0xcf (expected 0xcf)
 [INFO] fs-image-source: root_filesystem reads from virt 0xffff800001c00000 (phys 0x1c00000)
-[INFO] fs-image-copy: copied 33554432 byte(s) to phys 0x1c00000..0x3c00000 (8192 frame(s), 2MiB-aligned=true), checksum=0x8c21cc3c; the checksum covers the first 282624 byte(s) (the superblock through the inode table of group 0); the kernel image is 0x100000..0x3d51c8
+[INFO] fs-image-copy: copied 33554432 byte(s) to phys 0x1c00000..0x3c00000 (8192 frame(s), 2MiB-aligned=true), checksum=0x8c4d5b50; the checksum covers the first 282624 byte(s) (the superblock through the inode table of group 0); the kernel image is 0x100000..0x3d51c8
 [INFO] fs-sparse: /data/sparse-hole reads block 1 as a full block of zeros = true (the blocks around it have content: head=true tail=true); i_size=12288 i_blocks_512=16
 [INFO] fs-bitmap: allocated one block (number 485); free counts are now blocks=7706 group0=7706
 [INFO] fs-write: append 1 wrote 200 byte(s) to inode 64; free blocks are now 7706
