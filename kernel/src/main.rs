@@ -9466,6 +9466,8 @@ const SYSCALL_TEST_STATUS: &[(u64, &str)] = &[
     // 121・122: ユーザーの番地の上限（2026-10-07）。
     (121, "mmap(MAP_FIXED) at the user address limit, across it, at a non-canonical or kernel address was not refused with -ENOMEM, or under 64 KiB with -EPERM"),
     (122, "munmap beyond the user address limit did not return -EINVAL, or mprotect beyond it (or wrapping around) did not return -ENOMEM"),
+    // 123: 切り上げると 2^64 を越える長さ（2026-10-08）。
+    (123, "munmap with a length that wraps past 2^64 when rounded up to a page did not return -EINVAL, or mprotect with one did not return -ENOMEM"),
 ];
 
 /// `fault-test` が起こす #PF のエラーコード（S9-b-3-2a）。

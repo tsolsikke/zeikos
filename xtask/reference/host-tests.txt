@@ -669,6 +669,7 @@ kernel::mappings::tests::a_released_range_is_used_again_when_it_fits
 kernel::mappings::tests::an_inactive_map_hands_out_nothing_and_an_active_one_fills_from_the_base
 kernel::mappings::tests::changing_protection_splits_and_keeps_the_old_flags_for_the_caller
 kernel::mappings::tests::only_a_whole_mapping_is_released_and_an_empty_range_is_not_an_error
+kernel::mappings::tests::page_rounding_refuses_lengths_that_would_wrap
 kernel::mappings::tests::registration_refuses_overlaps_and_replacement_is_limited_to_anonymous_and_heap
 kernel::mappings::tests::releasing_part_of_a_mapping_splits_what_remains
 kernel::mappings::tests::the_heap_end_moves_and_survives_a_hole_in_the_middle

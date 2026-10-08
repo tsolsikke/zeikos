@@ -2457,7 +2457,11 @@ unsafe fn munmap_from_ring3(addr: u64, len: u64, direct_map: DirectMap) -> u64 {
     if len == 0 || !addr.is_multiple_of(PAGE_SIZE) {
         return (-EINVAL) as u64;
     }
-    let bytes = len.div_ceil(PAGE_SIZE) * PAGE_SIZE;
+    // **切り上げが 2^64 を越える長さは `-EINVAL`**（2026-10-08。Linux と同じ答え。あふれを見ずに掛けると、検査のビルドでは
+    // カーネルが止まっていた）。
+    let Some(bytes) = crate::mappings::page_rounded(len) else {
+        return (-EINVAL) as u64;
+    };
     // **上限を越える範囲は `-EINVAL`**（2026-10-07。Linux と同じ答え。表に無い範囲なので外すものは無いが、番地を見ずに通すと
     // 「成功」と答えることになる）。
     if exceeds_user_limit(addr, bytes) {
@@ -2499,7 +2503,10 @@ unsafe fn mprotect_from_ring3(addr: u64, len: u64, prot: u64, direct_map: Direct
     if prot & PROT_EXEC != 0 && !cfg!(feature = "mprotect-allows-exec-test") {
         return (-EPERM) as u64;
     }
-    let bytes = len.div_ceil(PAGE_SIZE) * PAGE_SIZE;
+    // **切り上げが 2^64 を越える長さは `-ENOMEM`**（2026-10-08。Linux は末尾があふれる範囲を同じ答えで断る）。
+    let Some(bytes) = crate::mappings::page_rounded(len) else {
+        return (-ENOMEM) as u64;
+    };
     // **上限を越える範囲は `-ENOMEM`**（2026-10-07。Linux は写像の無い範囲として同じ答えを返す）。
     if exceeds_user_limit(addr, bytes) {
         return (-ENOMEM) as u64;

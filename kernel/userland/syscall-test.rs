@@ -165,6 +165,8 @@
 //!   `MAP_FIXED_NOREPLACE`）が `-ENOMEM` を返さなかったか、64 KiB より下への `MAP_FIXED` が `-EPERM` を返さなかった（2026-10-07）
 //! - `122` 上限のページとカーネルの番地の `munmap` が `-EINVAL` を、上限のページと末尾があふれる範囲の `mprotect` が `-ENOMEM` を
 //!   返さなかった（2026-10-07）
+//! - `123` 切り上げると 2^64 を越える長さ（`u64::MAX` と 2^64 - 4096 + 1）の `munmap` が `-EINVAL` を、`mprotect` が `-ENOMEM` を
+//!   返さなかった（2026-10-08）
 //! - `69` 方向フラグを立てたまま打った `clock_gettime` が 0 を返さなかった（2026-09-24。
 //!   **判定の本体はカーネルの入口の監視である**——こちらは前提を作り、戻り値だけを見る）
 //! - `70` 読み込み先が読み取り専用のページ（このプログラムの `.rodata`）の `read` が `-EFAULT` を返さなかった
@@ -2080,6 +2082,38 @@ core::arch::global_asm!(
     "  mov edx, 1",
     "  int 0x80",
     "  mov edi, 122",
+    "  cmp rax, {minus_enomem}",
+    "  jne 7f",
+    // 123: 切り上げると 2^64 を越える長さ（u64::MAX と 2^64 - 4096 + 1）の munmap は -EINVAL、mprotect は -ENOMEM（2026-10-08。
+    //      直す前は、長さの切り上げがあふれてカーネルが止まった）。
+    "  mov eax, {sys_munmap}",
+    "  mov edi, 0x10000000",
+    "  mov rsi, -1",
+    "  int 0x80",
+    "  mov edi, 123",
+    "  cmp rax, {minus_einval}",
+    "  jne 7f",
+    "  mov eax, {sys_munmap}",
+    "  mov edi, 0x10000000",
+    "  mov rsi, -4095",
+    "  int 0x80",
+    "  mov edi, 123",
+    "  cmp rax, {minus_einval}",
+    "  jne 7f",
+    "  mov eax, {sys_mprotect}",
+    "  mov edi, 0x10000000",
+    "  mov rsi, -1",
+    "  mov edx, 1",
+    "  int 0x80",
+    "  mov edi, 123",
+    "  cmp rax, {minus_enomem}",
+    "  jne 7f",
+    "  mov eax, {sys_mprotect}",
+    "  mov edi, 0x10000000",
+    "  mov rsi, -4095",
+    "  mov edx, 1",
+    "  int 0x80",
+    "  mov edi, 123",
     "  cmp rax, {minus_enomem}",
     "  jne 7f",
     // 105: brk の見張りの流れ（musl の malloc と同じ）。X = brk(0) をページへ切り上げ、2 ページ伸ばし、先頭へ PROT_NONE を

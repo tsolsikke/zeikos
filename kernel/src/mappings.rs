@@ -28,6 +28,17 @@ pub const MAX_MAPPINGS: usize = 64;
 /// ページの大きさ。
 pub const PAGE_SIZE: u64 = 4096;
 
+/// 長さをページの境界へ切り上げる（2026-10-08）。**切り上げが 2^64 を越えるなら `None`。**
+///
+/// 利用者が渡す長さ（`munmap`・`mprotect`）は任意の値である。あふれを見ずに `len.div_ceil(PAGE_SIZE) * PAGE_SIZE` とすると、
+/// 長さが 2^64 - 4096 を越えたとき乗算があふれ、検査のビルド（overflow-checks が有効）ではカーネルが panic で止まっていた。
+pub const fn page_rounded(len: u64) -> Option<u64> {
+    match len.checked_add(PAGE_SIZE - 1) {
+        Some(sum) => Some(sum & !(PAGE_SIZE - 1)),
+        None => None,
+    }
+}
+
 /// 写像の種類。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MappingKind {
@@ -621,6 +632,21 @@ pub fn with_current<R>(body: impl FnOnce(&mut MemoryMap) -> R) -> R {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 長さの切り上げは、2^64 を越える長さで `None` を返し、あふれない（2026-10-08）。
+    #[test]
+    fn page_rounding_refuses_lengths_that_would_wrap() {
+        assert_eq!(page_rounded(0), Some(0));
+        assert_eq!(page_rounded(1), Some(PAGE_SIZE));
+        assert_eq!(page_rounded(PAGE_SIZE), Some(PAGE_SIZE));
+        assert_eq!(page_rounded(PAGE_SIZE + 1), Some(2 * PAGE_SIZE));
+        assert_eq!(
+            page_rounded(u64::MAX - (PAGE_SIZE - 1)),
+            Some(u64::MAX - (PAGE_SIZE - 1))
+        );
+        assert_eq!(page_rounded(u64::MAX - (PAGE_SIZE - 2)), None);
+        assert_eq!(page_rounded(u64::MAX), None);
+    }
 
     const BASE: u64 = 0x1000_0000;
     const LIMIT: u64 = 0x1001_0000;

@@ -2724,7 +2724,7 @@ cargoの置き場と写しの置き場は、その回の使い捨ての置き場
 
 ### 写像の表と`mprotect`（2026-10-06）
 
-**ユーザーの番地の範囲（2026-10-07）。** `mmap(MAP_FIXED・MAP_FIXED_NOREPLACE)`・`munmap`・`mprotect`は、範囲の末尾がユーザーの番地の上限（`0x7fff_ffff_f000`）を越えれば断る（`-ENOMEM`・`-EINVAL`・`-ENOMEM`）。64 KiBより下への`MAP_FIXED`は`-EPERM`。`syscall-test`の121（上限のページ・上限をまたぐ範囲・正準でない番地・カーネルの番地・64 KiBより下）と122（`munmap`・`mprotect`。末尾があふれる範囲も）で確かめる。直す前は、上限のページと上限をまたぐ範囲への`MAP_FIXED`が通って書け、写像の無いカーネルの番地にも「写した」と答えていた（実測。`ADR-0082`のAddendum）。破壊テストは下の表の`mmap-fixed-ignores-user-limit-test`。
+**ユーザーの番地の範囲（2026-10-07）。** `mmap(MAP_FIXED・MAP_FIXED_NOREPLACE)`・`munmap`・`mprotect`は、範囲の末尾がユーザーの番地の上限（`0x7fff_ffff_f000`）を越えれば断る（`-ENOMEM`・`-EINVAL`・`-ENOMEM`）。64 KiBより下への`MAP_FIXED`は`-EPERM`。`syscall-test`の121（上限のページ・上限をまたぐ範囲・正準でない番地・カーネルの番地・64 KiBより下）と122（`munmap`・`mprotect`。末尾があふれる範囲も）で確かめる。直す前は、上限のページと上限をまたぐ範囲への`MAP_FIXED`が通って書け、写像の無いカーネルの番地にも「写した」と答えていた（実測。`ADR-0082`のAddendum）。破壊テストは下の表の`mmap-fixed-ignores-user-limit-test`。**長さのあふれ（2026-10-08）。** `munmap`と`mprotect`は、長さをページへ切り上げると2^64を越えるとき`-EINVAL`と`-ENOMEM`を返す（Linuxと同じ答え）。`syscall-test`の123（長さ`u64::MAX`と2^64-4096+1）で確かめる。直す前は、切り上げの掛け算があふれ、検査のビルド（overflow-checksが有効）ではカーネルがpanicで止まった（実測）。`syscall.rs`のほかの、利用者の値を使う算術は、`checked`の形か、前の行で上限を確かめてから計算していることを読んで確かめた。破壊テストは足していない（あふれを見ない形へ戻すと、狙いの番号の前にカーネルが止まる。止まり方はpanicの行で、起動ログの突き合わせが捕まえる）。
 
 プロセスごとに写像の表（64欄）を置き、無名の`mmap`（`MAP_FIXED`・`MAP_FIXED_NOREPLACE`を含む）・範囲の一部を分ける`munmap`・`mprotect`を受けるようにした。設計と理由は`ADR-0082`に在る。
 
