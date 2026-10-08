@@ -8289,6 +8289,10 @@ fn verify_corrupt_fs_image_is_rejected(logger: &mut Logger<Serial>) {
              the \"{name}\" probe with {e:?}. The prefix does not hold everything the image \
              references; halting"
         )),
+        CorruptFsCheckError::TargetNotFound { target } => logger.error(format_args!(
+            "ext2-corrupt: could not find {target} in the image, so nothing was corrupted; the check \
+             itself failed (it did not detect anything); halting"
+        )),
         CorruptFsCheckError::PrefixDidNotParse { error: e } => logger.error(format_args!(
             "ext2-corrupt: the untouched prefix (the blocks the image uses) did not parse \
              ({e:?}); halting"
@@ -8406,6 +8410,9 @@ enum CorruptFsCheckError {
     },
     /// 壊し方の書き換えの数か幅が、控えの器に入らない。
     TooManyPatches { what: &'static str },
+    /// 壊す対象（ルートの `etc` の項など）を、イメージの中に見つけられなかった（2026-10-09）。**検査そのものの失敗である**
+    /// ——何も壊していないので、「拒まれた」とも「受理された」とも言えない。
+    TargetNotFound { target: &'static str },
     /// 作業領域のために、フレームのアロケータを借りられなかった。
     WorkspaceAllocatorMissing,
     /// 作業領域にする連続フレームを取れなかった。
@@ -8459,21 +8466,30 @@ struct CorruptFsMap {
 
 /// イメージを歩いて [`CorruptFsMap`] を作る（2026-09-03）。
 ///
-/// **見つからなければ `None` を返す。** **呼ぶ側は止める**——**歩けないイメージで
-/// 演習を続けると、当たらない位置を壊して「拒まれなかった」と出力することになる。**
-fn map_corrupt_fs(image: &[u8]) -> Option<CorruptFsMap> {
+/// **見つからなければ、見つからなかった対象の名前を `Err` で返す。** **呼ぶ側は、検査そのものの失敗として止める**
+/// ——**歩けないイメージで演習を続けると、当たらない位置を壊して「拒まれなかった」と出力することになる**（2026-10-09 に、
+/// 何が見つからなかったかを名指しする形にした。以前は `None` を、解析できなかったという別の失敗として出していた）。
+fn map_corrupt_fs(image: &[u8]) -> Result<CorruptFsMap, &'static str> {
     use common::ext2::Ext2;
 
-    let fs = Ext2::parse(image).ok()?;
-    let root = fs.lookup(b"/").ok()?;
-    let motd = fs.lookup(b"/etc/motd").ok()?;
-    let indirect = fs.lookup(b"/data/indirect-first").ok()?;
+    let fs = Ext2::parse(image).map_err(|_| "a parsable ext2 superblock")?;
+    let root = fs.lookup(b"/").map_err(|_| "the root directory")?;
+    let motd = fs.lookup(b"/etc/motd").map_err(|_| "/etc/motd")?;
+    let indirect = fs
+        .lookup(b"/data/indirect-first")
+        .map_err(|_| "/data/indirect-first")?;
 
     let root_dir_block = root.blocks[0] as usize;
     let motd_data_block = motd.blocks[0] as usize;
     let indirect_table_block = indirect.blocks[common::ext2::SINGLE_INDIRECT_SLOT] as usize;
-    if root_dir_block == 0 || motd_data_block == 0 || indirect_table_block == 0 {
-        return None;
+    if root_dir_block == 0 {
+        return Err("the root directory's first block");
+    }
+    if motd_data_block == 0 {
+        return Err("the first data block of /etc/motd");
+    }
+    if indirect_table_block == 0 {
+        return Err("the single indirect table of /data/indirect-first");
     }
 
     // **`etc` の項を、ルートのディレクトリブロックの中で探す。**
@@ -8481,7 +8497,9 @@ fn map_corrupt_fs(image: &[u8]) -> Option<CorruptFsMap> {
     // **位置を数えない**——**項の並びはイメージのビルドの仕方で変わる。**
     // **`rec_len` で歩き、名前で見つける**（`common::ext2` の走査と同じ形で、
     // 進む量が正であることを確かめる）。
-    let dir = image.get(root_dir_block * FS_BLOCK_SIZE..(root_dir_block + 1) * FS_BLOCK_SIZE)?;
+    let dir = image
+        .get(root_dir_block * FS_BLOCK_SIZE..(root_dir_block + 1) * FS_BLOCK_SIZE)
+        .ok_or("the root directory's first block inside the image")?;
     let mut at = 0usize;
     let mut root_etc_entry = None;
     while at + 8 <= dir.len() {
@@ -8501,19 +8519,25 @@ fn map_corrupt_fs(image: &[u8]) -> Option<CorruptFsMap> {
     //
     // **`FIRST_FREE_BLOCK`（`build.rs` が `dumpe2fs` へ訊いた値）の代わりである。**
     // **群記述子の先頭 4 バイトがビットマップのブロック番号である。**
-    let descriptor = image.get(FS_GROUP_DESCRIPTORS..FS_GROUP_DESCRIPTORS + 12)?;
+    let descriptor = image
+        .get(FS_GROUP_DESCRIPTORS..FS_GROUP_DESCRIPTORS + 12)
+        .ok_or("group 0's descriptor")?;
     let bitmap_block =
         u32::from_le_bytes([descriptor[0], descriptor[1], descriptor[2], descriptor[3]]) as usize;
     // **inode テーブルの先頭も、同じ記述子から読む**（`bg_inode_table` は 8 バイト目から）。
     let inode_table_at =
         u32::from_le_bytes([descriptor[8], descriptor[9], descriptor[10], descriptor[11]]) as usize
             * FS_BLOCK_SIZE;
-    let bitmap = image.get(bitmap_block * FS_BLOCK_SIZE..(bitmap_block + 1) * FS_BLOCK_SIZE)?;
+    let bitmap = image
+        .get(bitmap_block * FS_BLOCK_SIZE..(bitmap_block + 1) * FS_BLOCK_SIZE)
+        .ok_or("group 0's block bitmap")?;
     // **ビットマップの余りは 1 で埋まっている**（ext2 の作法。**イメージのブロック数を
     // 超える位置は「使用中」として置かれる**）。**実測で踏んだ**——**数えると
     // 32,767 ブロック目まで使用中に見え、器に入らないと出力して落ちた**
     // （2026-09-03）。**superblock の `s_blocks_count` で切る。**
-    let counts = image.get(FS_SUPERBLOCK + 4..FS_SUPERBLOCK + 8)?;
+    let counts = image
+        .get(FS_SUPERBLOCK + 4..FS_SUPERBLOCK + 8)
+        .ok_or("the superblock's s_blocks_count")?;
     let blocks_count = u32::from_le_bytes([counts[0], counts[1], counts[2], counts[3]]) as usize;
     let mut used_top = 0usize;
     for (index, byte) in bitmap.iter().enumerate() {
@@ -8531,9 +8555,10 @@ fn map_corrupt_fs(image: &[u8]) -> Option<CorruptFsMap> {
         }
     }
 
-    Some(CorruptFsMap {
+    Ok(CorruptFsMap {
         blocks: used_top,
-        root_etc_entry: root_etc_entry?,
+        root_etc_entry: root_etc_entry
+            .ok_or("the \"etc\" entry in the root directory's first block")?,
         inode_table_at,
         motd_inode_at: fs_inode_at(inode_table_at, motd.number as usize),
         motd_data_at: motd_data_block * FS_BLOCK_SIZE,
@@ -8544,16 +8569,11 @@ fn map_corrupt_fs(image: &[u8]) -> Option<CorruptFsMap> {
 fn try_verify_corrupt_fs_image_is_rejected(
     logger: &mut Logger<Serial>,
 ) -> Result<(), CorruptFsCheckError> {
-    use common::ext2::Ext2Error;
-
     // **壊す位置はイメージから求める（2026-09-03）。** **`build.rs` の定数は使わない**
     // ——[`map_corrupt_fs`] の doc。
     // **見るのは装置から読んだ複製である**（`build_truncated_fs_image` と同じ出所）。
-    let Some(map) = map_corrupt_fs(kernel::vfs::root_image()) else {
-        return Err(CorruptFsCheckError::PrefixDidNotParse {
-            error: Ext2Error::NotFound,
-        });
-    };
+    let map = map_corrupt_fs(kernel::vfs::root_image())
+        .map_err(|target| CorruptFsCheckError::TargetNotFound { target })?;
     // **作業領域は、像が使っているブロックの数だけ借りる**（[`CorruptFsWorkspace`]）。**検査が落ちたときは
     // 返さない**——呼んだ側が、そのまま止まる。
     let mut workspace = CorruptFsWorkspace::borrow(map.blocks)?;
@@ -8797,9 +8817,11 @@ fn run_corrupt_fs_cases(
             patches: &patch_3,
             truncate_to: 0,
             probe: fs_probe_root_walk,
+            // **残りのバイト数は、`etc` の項のブロックの中の位置から求める**（2026-10-09）。以前は 4,028（ブロックの先頭から
+            // 68 バイト目）を定数で持っていて、ルートに `etc` より前に並ぶ項目を 1 つ足しただけで、起動が止まった。
             expected: Ext2Error::DirEntryRecordPastBlock {
                 rec_len: 5_000,
-                remaining: 4_028,
+                remaining: (FS_BLOCK_SIZE - root_etc_entry % FS_BLOCK_SIZE) as u32,
             },
         },
         CorruptFsCase {
