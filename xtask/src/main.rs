@@ -1662,6 +1662,16 @@ const SYSCALL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
+    // **`munmap` と `MAP_FIXED` の置き換えが、`PROT_NONE` でフレームを持ったまま残した葉を外さない**（2026-10-08。直す前の形）。
+    // 同じ番地へ写し直すと `map_4kib` が断り、`syscall-test` が 124 番で止まる。
+    CriticalTest {
+        name: "munmap-skips-retained",
+        feature: "munmap-skips-retained-test",
+        expected_markers: &["user-run: syscall-test exited with status 124", "halting"],
+        forbidden_markers: &["user-run: syscall-test left Ring 3 (exited=true status=0"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
     // **`mmap(MAP_FIXED)`・`munmap`・`mprotect` がユーザーの番地の上限を見ない**（2026-10-07。直す前の形）。上限のページへの
     // `MAP_FIXED` が通ってしまい、`syscall-test` が 121 番で止まる。
     CriticalTest {
@@ -33148,7 +33158,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 64,
-    full: 509,
+    full: 510,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

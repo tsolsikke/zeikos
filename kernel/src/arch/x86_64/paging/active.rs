@@ -756,11 +756,13 @@ impl ActivePageTable {
         // SAFETY: 直前に得た有効な PD。
         let pt = unsafe { self.ensure_child(pd, entry::pd_index(virt), permissions, frames)? };
 
-        // 葉。既に present なら二重マップとして弾く（黙って上書きしない）。
+        // 葉。既に present なら二重マップとして弾く（黙って上書きしない）。**フレームを持ったまま写していない葉
+        // （`PTE_RETAINED`。`mprotect(PROT_NONE)` の後）も同じに弾く**（2026-10-08）——上書きすると、そのフレームを指す者が
+        // 居なくなり、空間の破棄も集められずに失われる。外すのは `unmap_4kib` の仕事である。
         let pt_index = entry::pt_index(virt);
         // SAFETY: pt は PD が指す有効な PT、添字は 512 未満。
         let existing = unsafe { self.read(pt, pt_index) };
-        if entry::is_present(existing) {
+        if entry::is_present(existing) || entry::is_retained(existing) {
             return Err(MapUpdateError::AlreadyMapped);
         }
 

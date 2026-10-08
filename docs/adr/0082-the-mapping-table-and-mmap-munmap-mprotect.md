@@ -73,3 +73,19 @@ Accepted（2026-10-06に運用者が設計案を承認し、同じ日に4つの�
 - **上の端**: 範囲の末尾がユーザーの番地の上限`0x0000_7fff_ffff_f000`（`ADR-0075`の決定5。Linuxの`TASK_SIZE_MAX`）を越える`mmap(MAP_FIXED・MAP_FIXED_NOREPLACE)`は`-ENOMEM`、`munmap`は`-EINVAL`、`mprotect`は`-ENOMEM`（Linuxと同じ答え）。足し算があふれる範囲も越えたと扱う（`kernel/src/syscall.rs`の`exceeds_user_limit`）。
 - **下の端**: 64 KiB（`0x1_0000`）より下への`MAP_FIXED`は`-EPERM`（Linuxの`mmap_min_addr`の既定と同じ。番地0の近くへ写させない）。`munmap`・`mprotect`は下の端を見ない——表に無い範囲なので、Linuxと同じく0と`-ENOMEM`になる。
 - `syscall-test`の121・122で確かめ、上限を見ない形の破壊テスト（`mmap-fixed-ignores-user-limit-test`）を足した。
+
+## Addendum（2026-10-08。`PROT_NONE`のページの`munmap`と`MAP_FIXED`の置き換え）
+
+決定4は「`munmap`と空間の破棄は、`PTE_RETAINED`の葉からもフレームを返す」と決めていたが、`munmap`と`MAP_FIXED`の置き換え（`release_range_and_unmap`）は、表の`present`が偽の断片を飛ばしていた。空間の破棄は印の葉を集めていたので、同じ番地へ写し直さなければ漏れなかったが、写し直すと`map_4kib`が`P`だけを見て印の葉を上書きし、そのフレームを指す者が居なくなった（バグ探しの実測。1回で2枚が戻らなかった）。
+
+- **2つの状態は、表に持たず、葉で分ける。** `present`が偽の断片には、範囲だけ取って写していないページ（葉が無い）と、フレームを持ったまま`P`を落としたページ（印の葉）がある。1つの断片の中でも混ざる（`mmap(PROT_NONE)`の一部だけを`mprotect`で読める形にして、もう1度全体を`PROT_NONE`にした場合）。表の欄に持つと、断片をページごとに分けることになる。葉はどちらかを既に知っている。
+- **`munmap`と`MAP_FIXED`の置き換えは、写していない断片も葉を見て外す。** `unmap_4kib`は、葉が無ければ`NotMapped`を返し、印の葉なら外してフレームを返す。`mprotect`で読める形へ戻す道（`set_leaf_access`）と空間の破棄（`AddressSpace::detach`）は、もともと印の葉を扱っている。
+- **`map_4kib`は、印の葉も「既に写してある」として断る。** 上書きはフレームを失う形なので、外すのは`unmap_4kib`に任せる。今は`munmap`が先に外すので起きないが、外し忘れが黙って漏れにならず、`-ENOMEM`として見える。
+- `syscall-test`の124で確かめ、`PROT_NONE`の断片を飛ばす形（直す前の形）の破壊テスト`munmap-skips-retained-test`を足した。
+
+採らなかった案。
+
+1. **表の欄に「フレームを持つか」を持つ**: 採らない。上の理由（1つの断片の中で混ざる）。
+2. **`mprotect(PROT_NONE)`でフレームを返し、戻すときに0のページを写す**: 採らない（却下した案3と同じ。中身が残る性質に頼るプログラムがある）。
+3. **`map_4kib`が印の葉を見つけたら、そのフレームを返してから上書きする**: 採らない。葉を写す関数がアロケータへ返す役を持つと、返す道が2つになる。外すのは`unmap_4kib`の1つに保つ。
+

@@ -2703,7 +2703,13 @@ unsafe fn release_range_and_unmap(
     let mut table = unsafe { ActivePageTable::current(direct_map) };
     let mut returned = 0usize;
     for piece in released.iter().take(count).flatten() {
-        if !piece.present {
+        // **写していない断片も、ページ表の葉を見て外す**（2026-10-08）。表の `present` が偽の断片には 2 通りある——
+        // `mmap(PROT_NONE)` で範囲だけ取って何も写していないページ（葉が無い。`unmap_4kib` は `NotMapped` を返す）と、
+        // `mprotect(PROT_NONE)` でフレームを持ったまま `P` を落としたページ（`PTE_RETAINED` の葉。`unmap_4kib` が外して
+        // フレームを返す）。どちらかは葉が知っているので、表には持たない（1 つの断片の中で混ざりうる）。
+        // 破壊テスト (2026-10-08, munmap-skips-retained-test): 写していない断片を飛ばす（直す前の形）。`PTE_RETAINED` の葉が
+        // 残り、同じ番地へ写し直すと `map_4kib` が断って、`syscall-test` が 124 番で止まる。
+        if !piece.present && cfg!(feature = "munmap-skips-retained-test") {
             continue;
         }
         let mut page = piece.start;

@@ -9468,6 +9468,8 @@ const SYSCALL_TEST_STATUS: &[(u64, &str)] = &[
     (122, "munmap beyond the user address limit did not return -EINVAL, or mprotect beyond it (or wrapping around) did not return -ENOMEM"),
     // 123: 切り上げると 2^64 を越える長さ（2026-10-08）。
     (123, "munmap with a length that wraps past 2^64 when rounded up to a page did not return -EINVAL, or mprotect with one did not return -ENOMEM"),
+    // 124: PROT_NONE のページの munmap と MAP_FIXED の置き換え（2026-10-08）。
+    (124, "a page made PROT_NONE and then unmapped, or replaced with MAP_FIXED, did not come back as a fresh zero page at the same address (a call failed or the old contents showed)"),
 ];
 
 /// `fault-test` が起こす #PF のエラーコード（S9-b-3-2a）。
@@ -13233,6 +13235,11 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "munmap-keeps-frames-test",
         cfg!(feature = "munmap-keeps-frames-test"),
         "munmap が外したフレームを返さない",
+    ),
+    (
+        "munmap-skips-retained-test",
+        cfg!(feature = "munmap-skips-retained-test"),
+        "munmap と MAP_FIXED の置き換えが、PROT_NONE で残した葉を外さない",
     ),
     (
         "mmap-fixed-ignores-user-limit-test",

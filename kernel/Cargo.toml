@@ -942,6 +942,10 @@ mprotect-none-discards-test = []
 # `munmap` が外したフレームをアロケータへ返さない（2026-10-06）。`munmap` を打つ最初のプロセスが終わった後の会計が
 # 釣り合わず、名指しして止まる。`--syscall-test munmap-keeps-frames`。
 munmap-keeps-frames-test = []
+# `munmap` と `MAP_FIXED` の置き換えが、写していない断片（`PROT_NONE`）を飛ばす（2026-10-08。直す前の形）。`mprotect(PROT_NONE)`
+# でフレームを持ったまま残した葉が外れず、同じ番地へ写し直すと `map_4kib` が断って、`syscall-test` が 124 番で止まる。
+# `--syscall-test munmap-skips-retained`。
+munmap-skips-retained-test = []
 # `mmap(MAP_FIXED)`・`munmap`・`mprotect` が、ユーザーの番地の上限（`0x7fff_ffff_f000`）を見ない（2026-10-07。直す前の形）。
 # 上限のページへの `MAP_FIXED` が通り、`syscall-test` が 121 番で止まる。`--syscall-test mmap-fixed-ignores-user-limit`。
 mmap-fixed-ignores-user-limit-test = []
