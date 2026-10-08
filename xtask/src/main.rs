@@ -2491,7 +2491,7 @@ enum RunFlagScope {
 /// モードではないフラグが、どこで効くかの一覧（2026-10-08）。**ここに無い `RUN_FLAGS` のフラグは、モードである**
 /// （`run` の処理が、上から順に見て当たった所で終わるフラグ）。**合わない組み合わせは、入口で名前つきで断る**
 /// （[`run_arguments_problem`]）——モードと一緒のときだけ効くフラグを、そのモードのどれも無しに渡したときと、既定の
-/// 起動だけが読むフラグを、モードと一緒に渡したときである。
+/// 起動だけが読むフラグを、モードと一緒に渡したときと、モードを 2 つ以上渡したとき（2026-10-09）である。
 ///
 /// **以前は、どちらも黙って無視していた。** モードが 1 つも無ければ既定の起動まで落ちるので、
 /// `cargo xtask run --update-reference` はリファレンスを書き換えずに普通の起動を走らせ、モードが在ればそこで終わるので、
@@ -2599,11 +2599,13 @@ fn run_arguments_problem(rest: &[String]) -> Option<String> {
             RunValue::Required | RunValue::Optional => {}
         }
     }
-    let modes: Vec<&str> = given
-        .iter()
-        .copied()
-        .filter(|flag| !RUN_FLAG_SCOPES.iter().any(|(known, _)| known == flag))
-        .collect();
+    // モードは、表（[`RUN_FLAG_SCOPES`]）に無い `RUN_FLAGS` のフラグである。同じモードを 2 回書いた形は 1 つと数える。
+    let mut modes: Vec<&str> = Vec::new();
+    for &flag in &given {
+        if !RUN_FLAG_SCOPES.iter().any(|(known, _)| *known == flag) && !modes.contains(&flag) {
+            modes.push(flag);
+        }
+    }
     let mut without_mode: Vec<String> = Vec::new();
     let mut default_run_only: Vec<&str> = Vec::new();
     for &(flag, scope) in RUN_FLAG_SCOPES {
@@ -2619,10 +2621,14 @@ fn run_arguments_problem(rest: &[String]) -> Option<String> {
             RunFlagScope::DefaultRunOnly => {}
         }
     }
+    // **モードは 1 つだけ**（2026-10-09）。`run` の処理は上から順に見て当たった所で終わるので、2 つ目からのモードは黙って
+    // 無視されていた（`--shell-test --zi-test` は `--shell-test` だけが走った）。
+    let several_modes = modes.len() > 1;
     if unknown.is_empty()
         && stray.is_empty()
         && without_mode.is_empty()
         && default_run_only.is_empty()
+        && !several_modes
     {
         return None;
     }
@@ -2632,6 +2638,13 @@ fn run_arguments_problem(rest: &[String]) -> Option<String> {
     }
     if !stray.is_empty() {
         parts.push(format!("argument(s) that belong to no option {stray:?}"));
+    }
+    if several_modes {
+        parts.push(format!(
+            "{} modes given ({}); run runs one mode at a time",
+            modes.len(),
+            modes.join(" ")
+        ));
     }
     if !without_mode.is_empty() {
         parts.push(format!(
@@ -36410,6 +36423,43 @@ mod tests {
             &["--fb-test", "--ending", "exit"],
             &["--machine-variant", "pc-epyc", "--media", "partial"],
             &["--persist-env-test", "--ignore-file"],
+        ] {
+            assert_eq!(run_arguments_problem(&args(ok)), None, "{ok:?}");
+        }
+    }
+
+    /// **モードを 2 つ以上渡すと、渡したモードを全部挙げて断る**（2026-10-09）。**以前は、`run` の処理で上にある分岐の
+    /// モードだけが走り、ほかは黙って無視されていた**（`--shell-test --zi-test` は `--shell-test` だけが走った）。
+    /// モードは、[`RUN_FLAG_SCOPES`] に無い `RUN_FLAGS` のフラグである（手書きの一覧を持たない）。
+    #[test]
+    fn run_refuses_more_than_one_mode() {
+        let args = |list: &[&str]| -> Vec<String> { list.iter().map(|s| s.to_string()).collect() };
+        let problem = run_arguments_problem(&args(&["--shell-test", "--zi-test"]))
+            .expect("two modes run only the first");
+        assert!(
+            problem.contains("2 modes given (--shell-test --zi-test); run runs one mode at a time"),
+            "{problem}"
+        );
+        // 値を取るモードと、モードと一緒に効くフラグが混ざっても、モードだけを数えて全部挙げる。
+        let problem = run_arguments_problem(&args(&[
+            "--syscall-test",
+            "kind",
+            "--zi-test",
+            "--sabotage",
+            "f",
+            "--boot-log-diff",
+        ]))
+        .unwrap();
+        assert!(
+            problem.contains("3 modes given (--syscall-test --zi-test --boot-log-diff)"),
+            "{problem}"
+        );
+        // モードが 1 つなら通る（同じモードを 2 回書いた形も 1 つと数える）。
+        for ok in [
+            &["--zi-test", "--sabotage", "f"][..],
+            &["--shell-test", "--shell-test"],
+            &["--drift-test", "5", "--smp", "2"],
+            &[],
         ] {
             assert_eq!(run_arguments_problem(&args(ok)), None, "{ok:?}");
         }

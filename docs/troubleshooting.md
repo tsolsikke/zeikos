@@ -1361,6 +1361,8 @@ checksumが1行と、`.rodata`が縮んだぶんのPT_LOADが4行**（`/bin/ls`�
 
 **同じ日に、逆向きも断るようにした。** 既定の起動だけが読むフラグ（`--panic-test`・`--gui`・`--gtk`・`--gfx-test`・`--kvm`・`--no-limit`・`--manual`・`--key-probe`・`--keep-disk`・`--rebuild-disk`の10個）をモードと一緒に渡すと、モードの側は読まないので、黙って無視されていた（`--kvm`を付けた検査が、KVMを使わずに走る）。同じ表に「既定の起動だけ」の印で持ち、モードと一緒なら、そのモードとフラグを挙げて断る（`option(s) that only the default run (no mode) reads, given with the mode --shell-test: --kvm`）。表に無い`run`のフラグはモードとして扱い、ホストのテストが、`run`のフラグが「モード・モードと一緒に効く・既定の起動だけ」のどれか1つにちょうど入ることを確かめる。
 
+**2026-10-09に、モードを2つ以上渡す形も断るようにした。** `run`の処理は上から順に見て当たった所で終わるので、`--shell-test`と`--zi-test`を一緒に渡すと`--shell-test`だけが走り、`--zi-test`は黙って無視されていた。同じ入口で、モード（表に無い`run`のフラグ）を数え、2つ以上なら全部挙げて断る（`2 modes given (--shell-test --zi-test); run runs one mode at a time`）。文書の`cargo xtask run`の行に、2つのモードを組み合わせたものは無かった。
+
 ## 2026-10-03: `brk`で伸ばしたまま終わるプログラムが、正常に終わったのに「cannot run」と表示された——空間ごとの会計が`brk`を数えていなかった
 
 **`/bin/ttfglyph`は`Exited(0)`で終わるのに、カーネルが`[ERROR] spawn: /bin/ttfglyph left the space short: the space took 13 frame(s) but the destroy collected 142`を出し、シェルが`zash: /bin/ttfglyph: cannot run`と表示した**（2026-10-02に見つけた。利用者から見える不具合なので、別の課題として直した）。差の129は、`brk`で伸ばしたまま返さなかったページの数と同じである（`user-heap: /bin/ttfglyph had brk take 135 frame(s) and give back 6`）。
