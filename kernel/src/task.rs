@@ -1617,6 +1617,12 @@ extern "sysv64" fn bsp_idle_main() -> ! {
             let _bkl = crate::bkl::acquire(crate::bkl::KernelEntry::SteadyLoop);
             crate::userland::release_retired_quarantines();
         }
+        // **参照が 0 になったのに、アロケータが借りられずに返せなかった共有メモリのフレームを返す**（2026-10-08。
+        // `crate::shm::detach`）。印が無ければ BKL を取らずに通る。
+        if crate::shm::release_pending_exists() {
+            let _bkl = crate::bkl::acquire(crate::bkl::KernelEntry::SteadyLoop);
+            crate::shm::release_pending();
+        }
         // **`/dev/fb0` の裏バッファを、間隔が過ぎていれば画面へ転送する**（2026-10-07。`ADR-0083`）。**割り込みの中では
         // 行わない**——アイドルは Ring 0 の定常ループで、BKL を取ってから転送し、放してから `hlt` する。前景のプロセスが
         // 眠っている間（`nanosleep`）は、ここしか走る者が居ない。開いていなければ、BKL を取らずに通る。

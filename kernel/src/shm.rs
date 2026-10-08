@@ -23,8 +23,13 @@
 //! アロケータを持たないので、`detach` は自分で `take`／`give_back` する。** **破棄の経路では
 //! `give_back` が `run_loaded_program` の前に済んでいて、破棄は隔離を使うので、`Drop` の時点で
 //! アロケータは空いている**（着手前に破棄の順序を実測した。`ADR-0065`）。
+//!
+//! **ただし、ほかのタスクが借りていることはある**（2026-10-08）。切り離して起動するスロットの読み込みは、アロケータを
+//! 持ったままティックで切り替わりうる。**借りられなければ、フレームを持ったまま「返す途中」の印を付けて残し、アイドルの
+//! 定常経路が返す**（[`release_pending`]）。以前は表から消した後で借りていて、借りられないとフレームを返さずに、会計
+//! （[`frames_held`]）だけを減らしていた。
 
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use common::addr::PhysAddr;
 use common::critical::Locked;
@@ -51,6 +56,9 @@ struct Shm {
     len: u64,
     /// この実体を指す fd の数。**0 でフレームを返す。**
     refs: u32,
+    /// 参照は 0 になったが、アロケータが借りられずにフレームをまだ返せていない（2026-10-08）。**使う側からは、在らない
+    /// ものとして見える**（[`Shm::live`]）。欄は空かないので、作り直しにも使われない。
+    releasing: bool,
 }
 
 impl Shm {
@@ -60,7 +68,13 @@ impl Shm {
         pages: 0,
         len: 0,
         refs: 0,
+        releasing: false,
     };
+
+    /// fd から使える実体か（在って、返す途中でない）。
+    fn live(&self) -> bool {
+        self.in_use && !self.releasing
+    }
 }
 
 static SHMS: Locked<[Shm; MAX_SHM]> = Locked::new([Shm::EMPTY; MAX_SHM]);
@@ -75,6 +89,9 @@ static FDS_RECEIVED: AtomicU64 = AtomicU64::new(0);
 /// **`spawn` の会計がウィンドウの差で読む**——**共有フレームはアロケータから出る（`consumed` に入る）
 /// が `AddressSpace::detach` が飛ばす（`quarantined` に入らない）ので、ウィンドウの間に増えた分を `consumed` から引く。**
 static SHARED_FRAMES_HELD: AtomicU64 = AtomicU64::new(0);
+
+/// 返す途中の実体が在るか（BKL を取らずに読める印。2026-10-08。アイドルの定常経路が見る）。
+static RELEASE_PENDING: AtomicBool = AtomicBool::new(false);
 
 macro_rules! gauge {
     ($name:ident, $static:ident) => {
@@ -140,7 +157,7 @@ pub fn pages_for(size: u64) -> usize {
 pub fn size_of(shm: u8) -> Option<u64> {
     let index = shm as usize;
     let shms = SHMS.lock();
-    (index < MAX_SHM && shms[index].in_use).then(|| shms[index].len)
+    (index < MAX_SHM && shms[index].live()).then(|| shms[index].len)
 }
 
 ///
@@ -153,7 +170,7 @@ pub fn set_size(
     let index = shm as usize;
     {
         let shms = SHMS.lock();
-        if index >= MAX_SHM || !shms[index].in_use {
+        if index >= MAX_SHM || !shms[index].live() {
             return TruncateOutcome::NoShm;
         }
         if shms[index].pages != 0 {
@@ -205,7 +222,7 @@ pub fn set_size(
 pub fn frames_of(shm: u8, out: &mut [PhysAddr; MAX_SHM_PAGES]) -> Option<(usize, u64)> {
     let index = shm as usize;
     let shms = SHMS.lock();
-    if index >= MAX_SHM || !shms[index].in_use || shms[index].pages == 0 {
+    if index >= MAX_SHM || !shms[index].live() || shms[index].pages == 0 {
         return None;
     }
     let pages = shms[index].pages;
@@ -217,7 +234,7 @@ pub fn frames_of(shm: u8, out: &mut [PhysAddr; MAX_SHM_PAGES]) -> Option<(usize,
 pub fn attach(shm: u8) -> bool {
     let index = shm as usize;
     let mut shms = SHMS.lock();
-    if index >= MAX_SHM || !shms[index].in_use {
+    if index >= MAX_SHM || !shms[index].live() {
         return false;
     }
     shms[index].refs = shms[index].refs.saturating_add(1);
@@ -231,34 +248,61 @@ pub fn attach(shm: u8) -> bool {
 /// 作った数と返した数が合わない。**
 pub fn detach(shm: u8) {
     let index = shm as usize;
-    let (frames, pages) = {
-        let mut shms = SHMS.lock();
-        if index >= MAX_SHM || !shms[index].in_use {
-            return;
-        }
-        #[cfg(not(feature = "shm-close-keeps-refs"))]
-        {
-            shms[index].refs = shms[index].refs.saturating_sub(1);
-        }
-        if shms[index].refs != 0 {
-            return;
-        }
-        let pages = shms[index].pages;
-        let frames = shms[index].frames;
-        shms[index] = Shm::EMPTY;
-        (frames, pages)
-    };
-    // **参照が 0 になった。** **フレームをアロケータへ返す。**
-    if pages > 0 {
-        if let Some(allocator) = crate::frame_allocator::take() {
-            for frame in frames.iter().take(pages) {
-                let _ = allocator.deallocate_frame(*frame);
-            }
-            crate::frame_allocator::give_back(allocator);
-        }
-        SHARED_FRAMES_HELD.fetch_sub(pages as u64, Ordering::Relaxed);
+    let mut shms = SHMS.lock();
+    if index >= MAX_SHM || !shms[index].live() {
+        return;
     }
+    #[cfg(not(feature = "shm-close-keeps-refs"))]
+    {
+        shms[index].refs = shms[index].refs.saturating_sub(1);
+    }
+    if shms[index].refs != 0 {
+        return;
+    }
+    // **参照が 0 になった。** **表を空ける前に、アロケータを借りる**（2026-10-08）。借りられなければ、フレームを持ったまま
+    // 返す途中の印を付けて残す（アイドルの定常経路が [`release_pending`] で返す）。
+    if shms[index].pages > 0 {
+        let Some(mut allocator) = crate::frame_allocator::Loan::take() else {
+            shms[index].releasing = true;
+            RELEASE_PENDING.store(true, Ordering::SeqCst);
+            return;
+        };
+        free_frames(&mut shms[index], &mut allocator);
+    } else {
+        shms[index] = Shm::EMPTY;
+        RELEASED.fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// 実体のフレームをアロケータへ返して、欄を空ける（2026-10-08。[`detach`] と [`release_pending`] の共通の本体）。
+fn free_frames(slot: &mut Shm, allocator: &mut crate::frame_allocator::FrameAllocator) {
+    for frame in slot.frames.iter().take(slot.pages) {
+        let _ = allocator.deallocate_frame(*frame);
+    }
+    SHARED_FRAMES_HELD.fetch_sub(slot.pages as u64, Ordering::Relaxed);
+    *slot = Shm::EMPTY;
     RELEASED.fetch_add(1, Ordering::Relaxed);
+}
+
+/// 返す途中の実体が在るか（2026-10-08。BKL を取らずに読める印）。
+pub fn release_pending_exists() -> bool {
+    RELEASE_PENDING.load(Ordering::SeqCst)
+}
+
+/// 返す途中の実体のフレームを返す（2026-10-08。アイドルの定常経路から、BKL を持って呼ぶ）。返した実体の数。**アロケータが
+/// 借りられなければ何もしない**（次の機会に返す）。
+pub fn release_pending() -> usize {
+    let Some(mut allocator) = crate::frame_allocator::Loan::take() else {
+        return 0;
+    };
+    let mut shms = SHMS.lock();
+    let mut released = 0;
+    for slot in shms.iter_mut().filter(|slot| slot.in_use && slot.releasing) {
+        free_frames(slot, &mut allocator);
+        released += 1;
+    }
+    RELEASE_PENDING.store(false, Ordering::SeqCst);
+    released
 }
 
 #[cfg(test)]
