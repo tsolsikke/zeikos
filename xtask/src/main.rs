@@ -2479,11 +2479,76 @@ const RUN_FLAGS: &[(&str, RunValue)] = &[
     ("--only-masked", RunValue::None),
 ];
 
-/// `cargo xtask run` の引数に、知らない旗か、どの旗の値でもない位置の引数が在れば、その名前を挙げる（純粋な論理。
-/// 2026-10-03）。**無ければ `None`。** **旗の組み合わせの意味までは見ない**（それぞれの旗の処理が見る）。
+/// モードと一緒のときだけ効くフラグと、そのフラグを読むモードの一覧（2026-10-08）。**ここに在るフラグを、
+/// 読むモードのどれも無しに渡すと、入口で名前つきで断る**（[`run_arguments_problem`]）。
+///
+/// **以前は黙って無視していた。** `run` の処理は、モードのフラグを上から順に見て、当たった所で終わる。モードが
+/// 1 つも無ければ既定の起動まで落ちるので、`cargo xtask run --update-reference` は、リファレンスを書き換えずに
+/// 普通の起動を走らせた。
+///
+/// **モードを足したり、モードが読むフラグを変えたりしたら、ここも直す。** 一覧が `run` の処理と合っていること
+/// は、ホストのテストがソースを読んで確かめる。
+const RUN_FLAGS_WITH_MODES: &[(&str, &[&str])] = &[
+    (
+        "--sabotage",
+        &[
+            "--ansi-test",
+            "--complete-test",
+            "--compose-test",
+            "--concurrent-test",
+            "--fb-test",
+            "--fp-test",
+            "--fs-extract",
+            "--history-test",
+            "--input-test",
+            "--keymap-test",
+            "--machine-variant",
+            "--page-permissions",
+            "--pci-test",
+            "--pipe-test",
+            "--poll-test",
+            "--profile-test",
+            "--screen-test",
+            "--serial-test",
+            "--shell-script-test",
+            "--shell-test",
+            "--socket-test",
+            "--ttf-test",
+            "--utf8-test",
+            "--view-test",
+            "--virtio-irq-test",
+            "--virtio-test",
+            "--zi-test",
+        ],
+    ),
+    (
+        "--update-reference",
+        &["--page-permissions", "--boot-log-diff"],
+    ),
+    ("--scene", &["--page-permissions"]),
+    ("--allow-shrink", &["--boot-log-diff"]),
+    ("--only-masked", &["--boot-log-diff"]),
+    ("--drop-arrows", &["--shell-test"]),
+    ("--drop-esc", &["--shell-test"]),
+    ("--reopen", &["--serial-test"]),
+    ("--ending", &["--fb-test"]),
+    ("--config", &["--machine-variant"]),
+    ("--media", &["--machine-variant"]),
+    (
+        "--rebuild-between",
+        &["--persist-test", "--persist-zi-test", "--persist-env-test"],
+    ),
+    ("--ignore-file", &["--persist-env-test"]),
+    ("--smp", &["--drift-test"]),
+];
+
+/// `cargo xtask run` の引数に、知らない旗か、どの旗の値でもない位置の引数か、読むモードの無いフラグが在れば、
+/// その名前を挙げる（純粋な論理。2026-10-03。モードの無いフラグは 2026-10-08）。**無ければ `None`。**
+/// **それ以外の組み合わせの意味までは見ない**（それぞれの旗の処理が見る）。
 fn run_arguments_problem(rest: &[String]) -> Option<String> {
     let mut unknown: Vec<&str> = Vec::new();
     let mut stray: Vec<&str> = Vec::new();
+    let mut given: Vec<&str> = Vec::new();
     let mut index = 0;
     while index < rest.len() {
         let arg = rest[index].as_str();
@@ -2496,6 +2561,7 @@ fn run_arguments_problem(rest: &[String]) -> Option<String> {
             unknown.push(arg);
             continue;
         };
+        given.push(arg);
         let next_is_a_value = rest.get(index).is_some_and(|next| !next.starts_with('-'));
         match takes {
             RunValue::None => {}
@@ -2503,7 +2569,14 @@ fn run_arguments_problem(rest: &[String]) -> Option<String> {
             RunValue::Required | RunValue::Optional => {}
         }
     }
-    if unknown.is_empty() && stray.is_empty() {
+    let without_mode: Vec<String> = RUN_FLAGS_WITH_MODES
+        .iter()
+        .filter(|(flag, modes)| {
+            given.contains(flag) && !modes.iter().any(|mode| given.contains(mode))
+        })
+        .map(|(flag, modes)| format!("{flag} (use it with {})", modes.join(" | ")))
+        .collect();
+    if unknown.is_empty() && stray.is_empty() && without_mode.is_empty() {
         return None;
     }
     let mut parts = Vec::new();
@@ -2512,6 +2585,12 @@ fn run_arguments_problem(rest: &[String]) -> Option<String> {
     }
     if !stray.is_empty() {
         parts.push(format!("argument(s) that belong to no option {stray:?}"));
+    }
+    if !without_mode.is_empty() {
+        parts.push(format!(
+            "option(s) that do nothing without their mode: {}",
+            without_mode.join(", ")
+        ));
     }
     Some(format!(
         "cargo xtask run: {} (run takes only the options listed below; nothing is run)",
@@ -36233,6 +36312,116 @@ mod tests {
             &[],
         ] {
             assert_eq!(run_arguments_problem(&args(ok)), None, "{ok:?}");
+        }
+    }
+
+    /// **モードと一緒のときだけ効くフラグを、モード無しで渡すと名前つきで断る**（2026-10-08）。**以前は黙って
+    /// 既定の起動に落ちていた**（`cargo xtask run --update-reference` が普通の起動を走らせた）。断る文には、
+    /// 一緒に使うモードが出る。
+    #[test]
+    fn run_refuses_a_flag_given_without_its_mode() {
+        let args = |list: &[&str]| -> Vec<String> { list.iter().map(|s| s.to_string()).collect() };
+        let problem = run_arguments_problem(&args(&["--update-reference"]))
+            .expect("--update-reference alone does nothing");
+        assert!(
+            problem.contains(
+                "do nothing without their mode: --update-reference (use it with --page-permissions | --boot-log-diff)"
+            ),
+            "{problem}"
+        );
+        // モードは在っても、そのフラグを読まないモードなら同じに断る。
+        let problem = run_arguments_problem(&args(&["--linux-c-test", "--sabotage", "x"])).unwrap();
+        assert!(
+            problem.contains("--sabotage (use it with --ansi-test"),
+            "{problem}"
+        );
+        // 2 つあれば、2 つとも挙げる。
+        let problem = run_arguments_problem(&args(&["--allow-shrink", "--smp", "2"])).unwrap();
+        assert!(
+            problem.contains("--allow-shrink (use it with --boot-log-diff)")
+                && problem.contains("--smp (use it with --drift-test)"),
+            "{problem}"
+        );
+        // 読むモードと一緒なら通る。
+        for ok in [
+            &[
+                "--boot-log-diff",
+                "--update-reference",
+                "--allow-shrink",
+                "--only-masked",
+            ][..],
+            &["--page-permissions", "--update-reference"],
+            &["--shell-test", "--drop-esc"],
+            &["--serial-test", "--reopen", "--sabotage", "f"],
+            &["--fb-test", "--ending", "exit"],
+            &["--machine-variant", "pc-epyc", "--media", "partial"],
+            &["--persist-env-test", "--ignore-file"],
+        ] {
+            assert_eq!(run_arguments_problem(&args(ok)), None, "{ok:?}");
+        }
+    }
+
+    /// **`RUN_FLAGS_WITH_MODES` は、`run` の処理と合っている**（2026-10-08）。`run` の処理をソースから読み、
+    /// モードの分岐の中に出てくるフラグと、その分岐のモードの組を集めて、表と比べる。**分岐に足したフラグを表に
+    /// 足し忘れると、そのフラグはモード無しで黙って無視される形に戻るので、ここで落とす。**
+    #[test]
+    fn the_flags_with_modes_match_the_run_dispatch() {
+        let source = include_str!("main.rs");
+        let start = source
+            .find("        Some(\"run\") => {\n")
+            .expect("the run dispatch");
+        let body = &source[start..];
+        let body = &body[..body.find("            cmd_run(&RunOptions {").unwrap()];
+        let mut found: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+            Default::default();
+        let mut mode: Option<String> = None;
+        for line in body.lines() {
+            let quoted: Vec<&str> = line
+                .split('"')
+                .skip(1)
+                .step_by(2)
+                .filter(|q| {
+                    q.starts_with("--")
+                        && q.chars()
+                            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+                })
+                .collect();
+            let opens_a_mode = line.starts_with("            if ")
+                && line.contains("rest.iter()")
+                && !line.starts_with("             ");
+            if opens_a_mode {
+                mode = quoted.first().map(|q| q.to_string());
+                continue;
+            }
+            let Some(mode) = &mode else { continue };
+            for flag in quoted {
+                if flag != mode {
+                    found
+                        .entry(flag.to_string())
+                        .or_default()
+                        .insert(mode.clone());
+                }
+            }
+        }
+        let table: std::collections::BTreeMap<String, std::collections::BTreeSet<String>> =
+            RUN_FLAGS_WITH_MODES
+                .iter()
+                .map(|(flag, modes)| {
+                    (
+                        flag.to_string(),
+                        modes.iter().map(|m| m.to_string()).collect(),
+                    )
+                })
+                .collect();
+        assert_eq!(found, table);
+        // 表のフラグとモードは、どれも `RUN_FLAGS` に在る。
+        for (flag, modes) in RUN_FLAGS_WITH_MODES {
+            for name in std::iter::once(flag).chain(modes.iter()) {
+                assert!(
+                    RUN_FLAGS.iter().any(|(known, _)| known == name),
+                    "{name} is not in RUN_FLAGS"
+                );
+            }
         }
     }
 

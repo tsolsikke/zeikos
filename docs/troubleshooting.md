@@ -1357,6 +1357,8 @@ checksumが1行と、`.rodata`が縮んだぶんのPT_LOADが4行**（`/bin/ls`�
 
 **限り。** 見るのは旗の名前と値の有無だけで、旗の組み合わせの意味（`--sabotage`をどの検査に付けたか、種別の名前が一覧に在るか）は、これまでどおりそれぞれの旗の処理が見る。`check`・`screenshot`・`run-set`の引数は、この表の外である（`run-set`は自分で読んで断る）。
 
+**2026-10-08 の追記: モードと一緒のときだけ効くフラグも、モード無しなら断るようにした。** `cargo xtask run`に`--update-reference`だけを付けて打つと、名前の分かるフラグなので断られず、リファレンスを書き換えないまま普通の起動が走っていた。`run`はモードのフラグを上から順に見て、当たらなければ既定の起動に落ちるので、モードの無い`--update-reference`は読まれない。同じ形のフラグは全部で14個あった（`--sabotage`・`--update-reference`・`--scene`・`--allow-shrink`・`--only-masked`・`--drop-arrows`・`--drop-esc`・`--reopen`・`--ending`・`--config`・`--media`・`--rebuild-between`・`--ignore-file`・`--smp`）。`xtask`の`RUN_FLAGS_WITH_MODES`にフラグと読むモードの組を持ち、読むモードがどれも無ければ、一緒に使うモードを挙げて断る（`option(s) that do nothing without their mode: --update-reference (use it with --page-permissions | --boot-log-diff)`）。表が`run`の処理と合っていることは、ホストのテストがソースを読んで確かめる。逆向き（既定の起動のフラグ、たとえば`--kvm`をモードと一緒に渡す形）は、まだ黙って無視される。
+
 ## 2026-10-03: `brk`で伸ばしたまま終わるプログラムが、正常に終わったのに「cannot run」と表示された——空間ごとの会計が`brk`を数えていなかった
 
 **`/bin/ttfglyph`は`Exited(0)`で終わるのに、カーネルが`[ERROR] spawn: /bin/ttfglyph left the space short: the space took 13 frame(s) but the destroy collected 142`を出し、シェルが`zash: /bin/ttfglyph: cannot run`と表示した**（2026-10-02に見つけた。利用者から見える不具合なので、別の課題として直した）。差の129は、`brk`で伸ばしたまま返さなかったページの数と同じである（`user-heap: /bin/ttfglyph had brk take 135 frame(s) and give back 6`）。
