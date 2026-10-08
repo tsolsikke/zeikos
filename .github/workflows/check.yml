@@ -55,6 +55,13 @@
 #
 # 古い成果物が混ざると、検査が緑のまま意味が変わりうる。遅くて困ってから足す。
 # 足すときは、キャッシュを消した回と同じ結果になることを一度確かめること。
+#
+# # ジョブの時間の上限（2026-10-08）
+#
+# どちらのジョブも `timeout-minutes: 30` で止める。普段は 2〜4 分で終わる。
+# 上限が無いと、GitHub の既定の 360 分まで待ち続ける——実際に、基底のジョブが
+# 「前提ソフトを入れる」の `apt-get` で 55 分止まり、検査の段まで進まなかった
+# （runner の側の止まりで、コードの問題ではない）。上限で止まったジョブは、走らせ直す。
 
 name: check
 
@@ -70,6 +77,7 @@ jobs:
   base:
     name: cargo xtask check（基底）
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         # 履歴を全部取る。コミットメッセージの文体の検査が全履歴を見る。
@@ -98,6 +106,7 @@ jobs:
   commit:
     name: cargo xtask check --commit（QEMU を 3 回）
     runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
         with:
