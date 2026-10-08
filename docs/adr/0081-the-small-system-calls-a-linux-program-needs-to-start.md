@@ -89,3 +89,36 @@ Linux向けのmuslの静的な像（`linux-programs/m1-rust`・`m1-c`。`ADR-007
 知らない番号（`-ENOSYS`を返した）の回数と最後の番号を数え、プロセスの終わりの行（`spawn: … ended`・`user-run: … left Ring 3`）に出すようにした。Linuxのプログラムが、知らない番号を1つも打たずに終わったことを、起動ログで見るためである。数えはスロットの記録で、`spawn`の前後で親のものを退避して戻す（ほかの記録と同じ）。
 
 実測（2026-10-06）: `m1-rust`はLinuxでもZeikOSでも39回のシステムコールで、同じ出力と終了の状態4。`m1-c`はLinuxで16回、ZeikOSで21回——ZeikOSではfd 1が端末なので`ioctl(TIOCGWINSZ)`が通り、muslのstdoutが行ごとの緩衝になって`writev`が増える（Linuxでも端末に出せば同じ）。
+
+## Addendum（2026-10-08。`uname`の方針と`/etc/os-release`）
+
+決定4（`uname`は`sysname`に`Linux`を返す）について、運用者の決定（2026-10-07）を、文言を変えずに記録する。
+
+> ZeikOSは独自カーネルであり、Linuxカーネルを使用しない。既存のLinuxユーザーランドとの互換性のため、unameのsysnameにはLinuxを返す。製品名と独自のバージョンはos-release等で示す。この応答自体は、Linuxの全機能への対応を保証しない。
+
+`uname`は、libcやプログラムが振る舞いを選ぶための答えなので、Linuxと同じ形を返す（決定4はそのままである）。製品としての名前とバージョンを示す役は、`/etc/os-release`に分ける。Linuxの上のディストリビューションと同じ分け方なので、os-releaseを読む既存のプログラムが、そのまま製品名を読める。
+
+決めたこと（運用者の決定。2026-10-08）。
+
+- **バージョンは`VERSION_ID="0.1"`、`VERSION="0.1 (Cycle 1)"`とする。** Cycleごとに0.1ずつ上げる。1.0は節目のために取っておく。
+- **`ID_LIKE`は置かない。** `ID_LIKE`は「このディストリビューションに近い」という意味で、ツールはそれを見て、そのディストリビューションのパッケージやパスの決まりを当てにする。ZeikOSには、パッケージの互換がある既存のディストリビューションが無い。
+- **今は`/etc/os-release`だけを置く。** freedesktop.orgの推奨は、本体を`/usr/lib/os-release`に置き、`/etc/os-release`をそこへのシンボリックリンクにする形である。ext2のシンボリックリンクにはまだ対応していないので、対応したらその形に移す（`docs/deferred-decisions.md`に行を置いた）。
+- **`HOME_URL`は公開リポジトリとする。**
+
+ファイルの中身は次のとおりである。フィールドの書き方はfreedesktop.orgのos-releaseの仕様に沿う。ディスクイメージのシード（`kernel/fsimage/seed/etc/os-release`）に置き、パーミッションはほかのシードのファイルと同じ0644である。
+
+```
+NAME="ZeikOS"
+ID=zeikos
+VERSION_ID="0.1"
+VERSION="0.1 (Cycle 1)"
+PRETTY_NAME="ZeikOS 0.1 (Cycle 1)"
+HOME_URL="https://github.com/tsolsikke/zeikos"
+```
+
+**製品名を表示するときは、`/etc/os-release`から読む。** シェルや将来のデスクトップが製品名やバージョンを出すときは、`PRETTY_NAME`（無ければ`NAME`と`VERSION`）を読む。`uname`の`sysname`（`Linux`）を製品名として出さない。製品名とバージョンの置き場を1つにして、Cycleで上げるときに直す場所を1か所にするためである。
+
+採らなかった案。
+
+1. **`uname`の`release`や`version`に製品のバージョンを入れて、そこを製品名の置き場にする**: 採らない。`release`はlibcがカーネルのバージョンとして読むので、製品のバージョンで動かすとlibcの振る舞いが変わる。
+2. **`ID_LIKE=debian`などを置く**: 採らない（上の理由。パッケージの互換が無いのに、あるように読まれる）。

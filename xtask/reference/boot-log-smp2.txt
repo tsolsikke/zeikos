@@ -236,7 +236,7 @@ Hello, ZeikOS!
 [INFO] virtio-blk: handshake: ACKNOWLEDGE -> DRIVER; capacity=65536 sector(s)
 [INFO] virtio-blk: request limit: 1048576 byte(s) in one data segment (the device declares size_max=None seg_max=Some(254); None means the device does not declare a limit; ours is 1048576)
 [INFO] virtio-blk: queue 0: size 256; ring at phys 0x39000..0x3d000 (4 page(s), 4096-aligned=true); zeroed 16384 byte(s) (0 were nonzero before)
-[INFO] virtio-blk: read sector 2: 512 byte(s) requested, status=0 (OK); checksum=0x000a2a3f first bytes=[00, 04, 00, 00, 00, 20, 00, 00]
+[INFO] virtio-blk: read sector 2: 512 byte(s) requested, status=0 (OK); checksum=0x0009e1c5 first bytes=[00, 04, 00, 00, 00, 20, 00, 00]
 [INFO] smp: mapped per-CPU stacks for slot 1 at 0xffff81000003a000 (PML4[258], not [257] which a sabotage VA depends on): kernel top 0xffff81000005b000, IST1 top 0xffff810000060000, IST2 top 0xffff810000065000, IST3 top 0xffff81000006a000, IST4 top 0xffff81000006f000, IST5 top 0xffff810000074000; 55 frame(s) consumed (pages plus page tables), guards left unmapped
 [INFO] nx-probe: mapped a probe page at 0xffff828000000000 -> 0x74000 with the execute-disable bit (entry 0x8000000000074001, bit 63 set = true) [read back from the live table]
 [INFO] nx-probe: cpu 0 read the probe page: value=0x4e585f50524f4245 (expected 0x4e585f50524f4245), EFER.NXE=1 (expected 1)
@@ -339,9 +339,9 @@ task: cooperative switch verified
 [INFO] ext2: image 33554432 byte(s) built by "mke2fs 1.47.0 (5-Feb-2023)" and "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0"
 [INFO] ext2: superblock rev=1 block_size=4096 inode_size=256 inodes=1024 blocks=8192 blocks_per_group=32768 inodes_per_group=1024 first_ino=11 groups=1
 [INFO] ext2: features compat=0x38 incompat=0x2 ro_compat=0x3 (only unknown incompat bits are refused; unknown ro_compat and compat are accepted for reading, as Linux does)
-[INFO] ext2: superblock free counts: blocks=7708 inodes=951
+[INFO] ext2: superblock free counts: blocks=7707 inodes=950
 [INFO] ext2: group 0: block bitmap at 3 inode bitmap at 4 inode table at 5
-[INFO] ext2: group 0 free counts: blocks=7708 inodes=951 dirs=9
+[INFO] ext2: group 0 free counts: blocks=7707 inodes=950 dirs=9
 [INFO] ext2: root inode 2: mode=040755 size=4096 links=9 i_block[0]=69 directory=true
 [INFO] ext2: root directory block 0 of 1: 4096 byte(s) via the direct blocks
 [INFO] ext2: root directory: 9 entr(y/ies): . .. lost+found bin data etc lib root tmp
@@ -349,22 +349,22 @@ task: cooperative switch verified
 [INFO] ext2: /data/direct-max inode=58 size=49152 blocks=12 single indirect=0 last byte=0xce (expected 0xce)
 [INFO] ext2: /data/indirect-first inode=59 size=49153 blocks=13 single indirect=383 last byte=0xcf (expected 0xcf)
 [INFO] fs-image-source: root_filesystem reads from virt 0xffff800001c00000 (phys 0x1c00000)
-[INFO] fs-image-copy: copied 33554432 byte(s) to phys 0x1c00000..0x3c00000 (8192 frame(s), 2MiB-aligned=true), checksum=0x8a9bfae8; the checksum covers the first 282624 byte(s) (the superblock through the inode table of group 0); the kernel image is 0x100000..0x3d2688
+[INFO] fs-image-copy: copied 33554432 byte(s) to phys 0x1c00000..0x3c00000 (8192 frame(s), 2MiB-aligned=true), checksum=0x8c21cc3c; the checksum covers the first 282624 byte(s) (the superblock through the inode table of group 0); the kernel image is 0x100000..0x3d2688
 [INFO] fs-sparse: /data/sparse-hole reads block 1 as a full block of zeros = true (the blocks around it have content: head=true tail=true); i_size=12288 i_blocks_512=16
-[INFO] fs-bitmap: allocated one block (number 484); free counts are now blocks=7707 group0=7707
-[INFO] fs-write: append 1 wrote 200 byte(s) to inode 64; free blocks are now 7707
-[INFO] fs-write: append 2 wrote 4000 byte(s) to inode 64; free blocks are now 7706
-[INFO] fs-truncate: shrank inode 64 to 8192 byte(s); free blocks 7704 -> 7706 (returned 2)
-[INFO] fs-truncate: shrank inode 64 to 4097 byte(s); free blocks 7706 -> 7706 (returned 0)
-[INFO] fs-truncate: shrank inode 64 to 4096 byte(s); free blocks 7706 -> 7707 (returned 1)
-[INFO] fs-truncate: shrank inode 64 to 4000 byte(s); free blocks 7707 -> 7707 (returned 0)
+[INFO] fs-bitmap: allocated one block (number 485); free counts are now blocks=7706 group0=7706
+[INFO] fs-write: append 1 wrote 200 byte(s) to inode 64; free blocks are now 7706
+[INFO] fs-write: append 2 wrote 4000 byte(s) to inode 64; free blocks are now 7705
+[INFO] fs-truncate: shrank inode 64 to 8192 byte(s); free blocks 7703 -> 7705 (returned 2)
+[INFO] fs-truncate: shrank inode 64 to 4097 byte(s); free blocks 7705 -> 7705 (returned 0)
+[INFO] fs-truncate: shrank inode 64 to 4096 byte(s); free blocks 7705 -> 7706 (returned 1)
+[INFO] fs-truncate: shrank inode 64 to 4000 byte(s); free blocks 7706 -> 7706 (returned 0)
 [INFO] fs-truncate: restored inode 64 to 100 byte(s)
-[INFO] fs-create: created inode 74 under inode 55 and wrote 300 byte(s); free blocks=7706 inodes=950, i_extra_isize=32
-[INFO] fs-create: unlinked inode 74; free blocks=7707 inodes=951
-[INFO] fs-mkdir: created directory inode 74 under inode 55; free blocks=7706 inodes=950 dirs=Ok(10)
+[INFO] fs-create: created inode 75 under inode 55 and wrote 300 byte(s); free blocks=7705 inodes=949, i_extra_isize=32
+[INFO] fs-create: unlinked inode 75; free blocks=7706 inodes=950
+[INFO] fs-mkdir: created directory inode 75 under inode 55; free blocks=7705 inodes=949 dirs=Ok(10)
 [INFO] fs-mkdir: rmdir on a directory that is not empty was refused = true
-[INFO] fs-mkdir: removed directory inode 74; free blocks=7707 inodes=951 dirs=Ok(9)
-[INFO] fs-bitmap: freed block 484; the image should be back to what was built
+[INFO] fs-mkdir: removed directory inode 75; free blocks=7706 inodes=950 dirs=Ok(9)
+[INFO] fs-bitmap: freed block 485; the image should be back to what was built
 [INFO] fs-image-flush: wrote 33554432 byte(s) back to the virtio disk
 [INFO] fs-image-ready: the image is in its final state for this run
 [INFO] keymap: the keyboard layout is jis (KEYMAP was not set)
@@ -374,7 +374,7 @@ task: cooperative switch verified
 [INFO] ext2-corrupt: s_rev_level set to 0 (no s_inode_size, no s_first_ino) -> UnsupportedRevision(0)
 [INFO] ext2-corrupt: an unknown INCOMPAT bit set alongside FILETYPE -> UnsupportedIncompatFeatures(64)
 [INFO] ext2-corrupt: s_log_block_size set to 31 (1024 << 31 overflows) -> BadBlockSizeShift(31)
-[INFO] ext2-corrupt: s_blocks_count claiming 65536 blocks (256 MiB) -> ImageTooSmall { needed: 268435456, actual: 1982464 }
+[INFO] ext2-corrupt: s_blocks_count claiming 65536 blocks (256 MiB) -> ImageTooSmall { needed: 268435456, actual: 1986560 }
 [INFO] ext2-corrupt: s_inodes_per_group zeroed (a divisor of zero) -> ZeroPerGroup
 [INFO] ext2-corrupt: group 0's bg_inode_table pointing past the filesystem -> BlockOutOfRange(65535)
 [INFO] ext2-corrupt: the inode table stretched past the end of the image -> InodeTableOutOfRange { inode: 600000, needed: 153620352 }
@@ -389,7 +389,7 @@ task: cooperative switch verified
 [INFO] ext2-corrupt: the single indirect table's first entry pointing past the filesystem -> BlockOutOfRange(65535)
 [INFO] ext2-corrupt: /etc/motd's i_size shrunk to 4 bytes -> read 4 byte(s) that differ from the seed
 [INFO] ext2-corrupt: the first byte of /etc/motd's contents zeroed -> read 18 byte(s) that differ from the seed
-[INFO] ext2-corrupt: all 20 corrupted image(s) were refused with the expected reason, and the kernel continued (the embedded image is untouched; one copy of the 484 block(s) the image uses, in as many frames borrowed from the frame allocator, is patched for each case and restored, and the untouched control passed again after every case)
+[INFO] ext2-corrupt: all 20 corrupted image(s) were refused with the expected reason, and the kernel continued (the embedded image is untouched; one copy of the 485 block(s) the image uses, in as many frames borrowed from the frame allocator, is patched for each case and restored, and the untouched control passed again after every case)
 [INFO] user-elf: embedded hello is 8576 byte(s), entry 0x400010, 3 program header(s)
 [INFO] user-elf: PT_LOAD vaddr=0x400000 filesz=0x42 memsz=0x42 flags=0x5 (r=true w=false x=true)
 [INFO] user-elf: PT_LOAD vaddr=0x401000 filesz=0x12 memsz=0x12 flags=0x4 (r=true w=false x=false)
