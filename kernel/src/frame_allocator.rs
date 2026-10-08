@@ -636,6 +636,44 @@ pub fn give_back(_allocator: &'static mut FrameAllocator) {
     ON_LOAN.store(false, Ordering::SeqCst);
 }
 
+/// 借りているアロケータ（2026-10-08）。**落ちるときに [`give_back`] する。**
+///
+/// 出口の多い関数（`mmap`・`munmap`・`mprotect`・`brk`）は、状態を変える前に借り、どの出口でも返す必要がある。
+/// 返し忘れると、以後の [`take`] がすべて `None` になる。**落ちるときに返す形にして、出口ごとの `give_back` を無くす。**
+pub struct Loan(Option<&'static mut FrameAllocator>);
+
+impl Loan {
+    /// [`take`] と同じ。**借りられなければ `None`。**
+    pub fn take() -> Option<Self> {
+        take().map(|allocator| Self(Some(allocator)))
+    }
+}
+
+impl core::ops::Deref for Loan {
+    type Target = FrameAllocator;
+    fn deref(&self) -> &FrameAllocator {
+        self.0
+            .as_deref()
+            .expect("a loan holds the allocator until it drops")
+    }
+}
+
+impl core::ops::DerefMut for Loan {
+    fn deref_mut(&mut self) -> &mut FrameAllocator {
+        self.0
+            .as_deref_mut()
+            .expect("a loan holds the allocator until it drops")
+    }
+}
+
+impl Drop for Loan {
+    fn drop(&mut self) {
+        if let Some(allocator) = self.0.take() {
+            give_back(allocator);
+        }
+    }
+}
+
 /// 貸し借りの回数と、今この場に在るか（S11-3）。**判定行に出す。**
 ///
 /// **取り出した回数と返した回数が一致していれば、その時点で返し忘れは無い。**

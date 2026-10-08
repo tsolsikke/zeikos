@@ -143,7 +143,13 @@ pub fn size_of(shm: u8) -> Option<u64> {
     (index < MAX_SHM && shms[index].in_use).then(|| shms[index].len)
 }
 
-pub fn set_size(shm: u8, size: u64) -> TruncateOutcome {
+///
+/// **アロケータは呼び手が借りて渡す**（2026-10-08。`ftruncate` は、借りられるまで待ってから呼ぶ）。
+pub fn set_size(
+    shm: u8,
+    size: u64,
+    allocator: &mut crate::frame_allocator::FrameAllocator,
+) -> TruncateOutcome {
     let index = shm as usize;
     {
         let shms = SHMS.lock();
@@ -161,9 +167,6 @@ pub fn set_size(shm: u8, size: u64) -> TruncateOutcome {
     #[cfg(feature = "shm-ftruncate-ignores-size")]
     let want = want.min(1);
     let direct_map = common::addr::direct_map();
-    let Some(allocator) = crate::frame_allocator::take() else {
-        return TruncateOutcome::NoRoom;
-    };
     let mut taken = [PhysAddr::new_const(0); MAX_SHM_PAGES];
     let mut got = 0usize;
     while got < want {
@@ -186,10 +189,8 @@ pub fn set_size(shm: u8, size: u64) -> TruncateOutcome {
         for frame in taken.iter().take(got) {
             let _ = allocator.deallocate_frame(*frame);
         }
-        crate::frame_allocator::give_back(allocator);
         return TruncateOutcome::NoRoom;
     }
-    crate::frame_allocator::give_back(allocator);
     {
         let mut shms = SHMS.lock();
         shms[index].frames[..want].copy_from_slice(&taken[..want]);

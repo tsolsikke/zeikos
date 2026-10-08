@@ -909,7 +909,7 @@ unsafe fn dispatch(
         SYS_BRK => {
             // SAFETY: 呼び出し元契約により direct_map は有効で、
             // 遠征の中なので CR3 はこのプロセスのものである。
-            unsafe { sys_brk(args[0], direct_map) }
+            unsafe { sys_brk(args[0], direct_map, bkl) }
         }
         SYS_LSEEK => sys_lseek(args[0], args[1], args[2]),
         SYS_ARCH_PRCTL => {
@@ -967,17 +967,13 @@ unsafe fn dispatch(
         // **共有メモリと fd の受け渡し（`ADR-0065`）。** **5 つとも `#[inline(never)]` で、
         // `spawn` の経路には載っていない**——**`mmap` は `brk` と同じ `map_4kib` を使う。**
         SYS_MEMFD_CREATE => memfd_create_from_ring3(),
-        SYS_FTRUNCATE => ftruncate_from_ring3(args[0], args[1]),
+        SYS_FTRUNCATE => ftruncate_from_ring3(args[0], args[1], bkl),
         // SAFETY: 呼び出し元契約により direct_map は有効で、遠征の中なので CR3 はこのプロセスのもの。
-        SYS_MMAP => unsafe {
-            mmap_from_ring3(
-                args[0], args[1], args[2], args[3], args[4], args[5], direct_map,
-            )
-        },
+        SYS_MMAP => unsafe { mmap_from_ring3(args, direct_map, bkl) },
         // SAFETY: 同上。
-        SYS_MUNMAP => unsafe { munmap_from_ring3(args[0], args[1], direct_map) },
+        SYS_MUNMAP => unsafe { munmap_from_ring3(args[0], args[1], direct_map, bkl) },
         // SAFETY: 同上。
-        SYS_MPROTECT => unsafe { mprotect_from_ring3(args[0], args[1], args[2], direct_map) },
+        SYS_MPROTECT => unsafe { mprotect_from_ring3(args[0], args[1], args[2], direct_map, bkl) },
         // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
         SYS_SENDMSG => unsafe {
             sendmsg_from_ring3(args[0], args[1], page_table_root, direct_map, bkl)
@@ -1699,10 +1695,16 @@ pub fn screen_pages_mapped() -> u64 {
 ///
 /// `direct_map` が有効であること（遠征の中で呼ぶ）。
 #[inline(never)]
-unsafe fn mmap_screen_from_ring3(len: u64, prot: u64, direct_map: DirectMap) -> u64 {
+unsafe fn mmap_screen_from_ring3(
+    len: u64,
+    prot: u64,
+    direct_map: DirectMap,
+    allocator: &mut crate::frame_allocator::FrameAllocator,
+) -> u64 {
     use crate::arch::x86_64::ActivePageTable;
     use crate::paging::permissions::PagePermissions;
 
+    // **アロケータは呼び手（`mmap_from_ring3`）が、fd の表を読む前に借りて渡す**（2026-10-08。[`borrow_allocator`]）。
     let Some(surface) = crate::console::graphics_surface() else {
         return (-ENODEV) as u64;
     };
@@ -1729,12 +1731,9 @@ unsafe fn mmap_screen_from_ring3(len: u64, prot: u64, direct_map: DirectMap) -> 
     let attributes = PagePermissions::user_shared(prot & PROT_WRITE != 0);
     // SAFETY: 遠征の中なので CR3 はこのプロセスの表である。
     let mut table = unsafe { ActivePageTable::current(direct_map) };
-    let Some(allocator) = crate::frame_allocator::take() else {
-        return (-ENOMEM) as u64;
-    };
     let free_before_map = allocator.free_frame_count();
-    // **借りたら必ず返す**（`sys_brk` と同じ。**どの出口でも `give_back` する**）。
     let mut outcome = base;
+    let mut mapped = 0u64;
     for page in 0..pages {
         let (Some(virt), Some(frame)) = (
             common::addr::VirtAddr::new(base + page * PAGE),
@@ -1750,9 +1749,13 @@ unsafe fn mmap_screen_from_ring3(len: u64, prot: u64, direct_map: DirectMap) -> 
             break;
         }
         SCREEN_PAGES_MAPPED.fetch_add(1, Ordering::Relaxed);
+        mapped += 1;
+    }
+    if outcome != base {
+        // SAFETY: いま写した裏バッファのページを、同じ稼働中の表から外す。
+        unsafe { undo_shared_mapping(&mut table, base, mapped, pages * PAGE) };
     }
     let tables_taken = free_before_map.saturating_sub(allocator.free_frame_count());
-    crate::frame_allocator::give_back(allocator);
     crate::userland::note_post_load_frames(tables_taken as usize);
     outcome
 }
@@ -2308,6 +2311,7 @@ unsafe fn mmap_anonymous_from_ring3(
     len: u64,
     prot: u64,
     direct_map: DirectMap,
+    bkl: &mut Option<crate::bkl::BklGuard>,
 ) -> u64 {
     use crate::arch::x86_64::ActivePageTable;
     use crate::mappings::{MappingKind, PAGE_SIZE};
@@ -2322,6 +2326,25 @@ unsafe fn mmap_anonymous_from_ring3(
     let bytes = len.div_ceil(PAGE_SIZE) * PAGE_SIZE;
     let writable = prot & PROT_WRITE != 0;
     let present = prot & (PROT_READ | PROT_WRITE) != 0;
+    if let Some((addr, _)) = fixed {
+        // **番地を指定する形**（2026-10-06）。ページの境界に在ること。**ユーザーの範囲に収まること**（2026-10-07。
+        // 下限より下は `-EPERM`、上限を越えれば `-ENOMEM`。Linux の `mmap_min_addr` と `TASK_SIZE_MAX` と同じ答え）。
+        if !addr.is_multiple_of(PAGE_SIZE) || addr == 0 {
+            return (-EINVAL) as u64;
+        }
+        if addr < USER_MAPPING_MIN {
+            return (-EPERM) as u64;
+        }
+        if exceeds_user_limit(addr, bytes) {
+            return (-ENOMEM) as u64;
+        }
+    }
+    // **引数だけの確かめの直後に借りる**（2026-10-08。[`borrow_allocator`]）。ここから下はマッピングテーブルを読むので、
+    // 借りて（眠ったなら起きて）から読む。`MAP_FIXED` の置き換えも、写すのも、この 1 回の貸し出しで行う。
+    let Some(mut loan) = borrow_allocator(bkl) else {
+        return (-ENOMEM) as u64;
+    };
+    let allocator: &mut crate::frame_allocator::FrameAllocator = &mut loan;
     let base = match fixed {
         None => match crate::mappings::with_current(|map| {
             map.reserve(bytes, MappingKind::Anonymous, writable, present)
@@ -2330,21 +2353,10 @@ unsafe fn mmap_anonymous_from_ring3(
             Err(error) => return errno_for_map(error),
         },
         Some((addr, how)) => {
-            // **番地を指定する形**（2026-10-06）。ページの境界に在ること。**ユーザーの範囲に収まること**（2026-10-07。
-            // 下限より下は `-EPERM`、上限を越えれば `-ENOMEM`。Linux の `mmap_min_addr` と `TASK_SIZE_MAX` と同じ答え）。
-            if !addr.is_multiple_of(PAGE_SIZE) || addr == 0 {
-                return (-EINVAL) as u64;
-            }
-            if addr < USER_MAPPING_MIN {
-                return (-EPERM) as u64;
-            }
-            if exceeds_user_limit(addr, bytes) {
-                return (-ENOMEM) as u64;
-            }
             let placed = match how {
                 // SAFETY: 呼び出し元契約をそのまま渡す。
                 FixedPlacement::Replace => unsafe {
-                    replace_range_for_fixed(addr, bytes, direct_map)
+                    replace_range_for_fixed(addr, bytes, direct_map, allocator)
                 },
                 FixedPlacement::OnlyIfFree => {
                     if crate::mappings::with_current(|map| map.overlaps_any(addr, bytes)) {
@@ -2374,10 +2386,6 @@ unsafe fn mmap_anonymous_from_ring3(
     if !present {
         return base;
     }
-    let Some(allocator) = crate::frame_allocator::take() else {
-        let _ = crate::mappings::with_current(|map| map.release_whole(base, bytes));
-        return (-ENOMEM) as u64;
-    };
     // SAFETY: 遠征の中なので CR3 はこのプロセスの表である。
     let mut table = unsafe { ActivePageTable::current(direct_map) };
     let attributes = PagePermissions::user_program(writable, false);
@@ -2427,7 +2435,6 @@ unsafe fn mmap_anonymous_from_ring3(
         let _ = crate::mappings::with_current(|map| map.release_whole(base, bytes));
     }
     let taken = free_before.saturating_sub(allocator.free_frame_count());
-    crate::frame_allocator::give_back(allocator);
     crate::userland::note_post_load_frames(taken as usize);
     if failed {
         (-ENOMEM) as u64
@@ -2451,7 +2458,12 @@ const ANONYMOUS_MMAP_MAX: u64 = 16 * 1024 * 1024;
 ///
 /// 呼び出し元契約により `direct_map` は有効で、遠征の中なので CR3 はこのプロセスのもの。
 #[inline(never)]
-unsafe fn munmap_from_ring3(addr: u64, len: u64, direct_map: DirectMap) -> u64 {
+unsafe fn munmap_from_ring3(
+    addr: u64,
+    len: u64,
+    direct_map: DirectMap,
+    bkl: &mut Option<crate::bkl::BklGuard>,
+) -> u64 {
     use crate::mappings::{MappingKind, PAGE_SIZE};
 
     if len == 0 || !addr.is_multiple_of(PAGE_SIZE) {
@@ -2467,8 +2479,20 @@ unsafe fn munmap_from_ring3(addr: u64, len: u64, direct_map: DirectMap) -> u64 {
     if exceeds_user_limit(addr, bytes) {
         return (-EINVAL) as u64;
     }
+    // **表を変える前に借りる**（2026-10-08。[`borrow_allocator`]）。
+    let Some(mut allocator) = borrow_allocator(bkl) else {
+        return (-ENOMEM) as u64;
+    };
     // SAFETY: 呼び出し元契約をそのまま渡す。
-    match unsafe { release_range_and_unmap(addr, bytes, MappingKind::can_unmap, direct_map) } {
+    match unsafe {
+        release_range_and_unmap(
+            addr,
+            bytes,
+            MappingKind::can_unmap,
+            direct_map,
+            &mut allocator,
+        )
+    } {
         Ok(()) => 0,
         Err(error) => errno_for_map(error),
     }
@@ -2491,7 +2515,13 @@ unsafe fn munmap_from_ring3(addr: u64, len: u64, direct_map: DirectMap) -> u64 {
 ///
 /// 呼び出し元契約により `direct_map` は有効で、遠征の中なので CR3 はこのプロセスのもの。
 #[inline(never)]
-unsafe fn mprotect_from_ring3(addr: u64, len: u64, prot: u64, direct_map: DirectMap) -> u64 {
+unsafe fn mprotect_from_ring3(
+    addr: u64,
+    len: u64,
+    prot: u64,
+    direct_map: DirectMap,
+    bkl: &mut Option<crate::bkl::BklGuard>,
+) -> u64 {
     use crate::arch::x86_64::ActivePageTable;
     use crate::mappings::{MappingKind, Released, PAGE_SIZE};
     use crate::paging::permissions::PagePermissions;
@@ -2513,6 +2543,13 @@ unsafe fn mprotect_from_ring3(addr: u64, len: u64, prot: u64, direct_map: Direct
     }
     let writable = prot & PROT_WRITE != 0;
     let present = prot & (PROT_READ | PROT_WRITE) != 0;
+    // **引数だけの確かめの直後に借りる**（2026-10-08。[`borrow_allocator`]）。ここから下は、ページテーブル（W^X の確かめ）と
+    // マッピングテーブルを読むので、借りて（眠ったなら起きて）から読む。以前は表を変えた後で借りていて、借りられないと、
+    // 表は新しい保護なのにページテーブルは古いまま失敗を返していた。
+    let Some(mut loan) = borrow_allocator(bkl) else {
+        return (-ENOMEM) as u64;
+    };
+    let allocator: &mut crate::frame_allocator::FrameAllocator = &mut loan;
     // SAFETY: 遠征の中なので CR3 はこのプロセスの表である。
     let mut table = unsafe { ActivePageTable::current(direct_map) };
     // 破壊テスト (2026-10-06, mprotect-writable-code-test): 実行できるページを書ける形にする求めを断らない。
@@ -2524,15 +2561,22 @@ unsafe fn mprotect_from_ring3(addr: u64, len: u64, prot: u64, direct_map: Direct
     {
         return (-EPERM) as u64;
     }
+    // **読める形にするとき、写していない無名のページに要るフレームが足りるかを、表を変える前に見る**（2026-10-08）。足りなければ
+    // 何も変えずに `-ENOMEM`。途中で尽きると、表は読める形なのに、ページが写っていない所が残る。借りている間は、ほかに
+    // 取る者が居ないので、数えた空きは減らない。
+    if present {
+        let needed = frames_for_unmapped_anonymous(&table, addr, bytes);
+        let tables = page_tables_for(addr, bytes, needed);
+        if needed > 0 && allocator.free_frame_count() < (needed + tables) as u64 {
+            return (-ENOMEM) as u64;
+        }
+    }
     let mut pieces: Released = [None; crate::mappings::MAX_MAPPINGS];
     let count = match crate::mappings::with_current(|map| {
         map.change_protection(addr, bytes, writable, present, &mut pieces)
     }) {
         Ok(count) => count,
         Err(error) => return errno_for_map(error),
-    };
-    let Some(allocator) = crate::frame_allocator::take() else {
-        return (-ENOMEM) as u64;
     };
     let free_before = allocator.free_frame_count();
     let mut outcome = 0u64;
@@ -2588,9 +2632,59 @@ unsafe fn mprotect_from_ring3(addr: u64, len: u64, prot: u64, direct_map: Direct
         }
     }
     let taken = free_before.saturating_sub(allocator.free_frame_count());
-    crate::frame_allocator::give_back(allocator);
     crate::userland::note_post_load_frames(taken as usize);
     outcome
+}
+
+/// `[addr, addr + bytes)` のうち、無名の写像の中で、ページテーブルの葉が写っていないページの数（2026-10-08）。`mprotect` が
+/// 読める形にするとき、ここで 0 のフレームを写す。**`PTE_RETAINED` の葉（`PROT_NONE` でフレームを持ったまま）も数える**
+/// ——翻訳では写っていない葉と区別が付かないので、多めに見積もる（足りるかを見るだけなので、多めでよい）。
+fn frames_for_unmapped_anonymous(
+    table: &crate::arch::x86_64::ActivePageTable,
+    addr: u64,
+    bytes: u64,
+) -> usize {
+    use crate::mappings::{MappingKind, PAGE_SIZE};
+
+    let mut count = 0;
+    let mut page = addr;
+    while page < addr.saturating_add(bytes) {
+        let anonymous = crate::mappings::with_current(|map| {
+            map.find(page)
+                .is_some_and(|m| m.kind == MappingKind::Anonymous)
+        });
+        if anonymous {
+            if let Some(virt) = common::addr::VirtAddr::new(page) {
+                if !matches!(table.translate(virt), Ok(Some(_))) {
+                    count += 1;
+                }
+            }
+        }
+        page = page.saturating_add(PAGE_SIZE);
+    }
+    count
+}
+
+/// `[addr, addr + bytes)` の中で `pages` 枚の葉を新しく写すときに、多くても要る中間テーブルの数（2026-10-08）。
+///
+/// **`mprotect` は、複数の写像にまたがる範囲を受ける**（範囲の全部が写像で覆われていればよい）。写像はマッピングテーブルの
+/// [`crate::mappings::MAX_MAPPINGS`]（64）欄までで、無名の写像は 1 つ [`ANONYMOUS_MMAP_MAX`]（16 MiB）までなので、写して
+/// いない無名のページを含む範囲は、最大で 64 × 16 MiB = 1 GiB になる。写していないページは、その中に散らばりうる
+/// （1 ページずつの写像が、別々の 2 MiB の区切りに 64 個並ぶ形）。ヒープ・イメージ・スタックの写像も範囲に入りうるので、
+/// 範囲そのものはもっと長くなりうる。
+///
+/// **見積もりの根拠。** `map_4kib` が新しい葉 1 枚のために取るのは、PT・PD・PDPT が 1 枚ずつまでである（PML4 は空間を
+/// 作るときに在る）。そして、新しく取る PT は範囲が触れる 2 MiB の区切りの数まで、PD は 1 GiB の区切りの数まで、PDPT は
+/// 512 GiB の区切りの数までである。段ごとに「葉の数」と「区切りの数」の小さい方を足すので、散らばった葉でも、長い範囲でも
+/// 足りる。**以前の見積もり（512 枚ごとに PT 1 枚と、両端で 6 枚）は、散らばった葉で足りなかった**（64 枚が別々の 2 MiB に
+/// 在れば、PT が 64 枚要る）。
+fn page_tables_for(addr: u64, bytes: u64, pages: usize) -> usize {
+    if bytes == 0 {
+        return 0;
+    }
+    let last = addr.saturating_add(bytes - 1);
+    let regions = |size: u64| (last / size - addr / size + 1) as usize;
+    pages.min(regions(1 << 21)) + pages.min(regions(1 << 30)) + pages.min(regions(1 << 39))
 }
 
 /// `[addr, addr + bytes)` に、実行できるページ（写してあって `NX` が 0）が 1 つでも在るか（2026-10-06。W^X）。
@@ -2659,6 +2753,7 @@ unsafe fn replace_range_for_fixed(
     addr: u64,
     bytes: u64,
     direct_map: DirectMap,
+    allocator: &mut crate::frame_allocator::FrameAllocator,
 ) -> Result<(), crate::mappings::MapError> {
     // SAFETY: 呼び出し元契約をそのまま渡す。
     unsafe {
@@ -2667,6 +2762,7 @@ unsafe fn replace_range_for_fixed(
             bytes,
             crate::mappings::MappingKind::can_be_replaced,
             direct_map,
+            allocator,
         )
     }
 }
@@ -2677,6 +2773,9 @@ unsafe fn replace_range_for_fixed(
 /// **ヒープのページを外したときは、`brk` の会計（`user-heap:` の行）には入れない**——あれは `brk` だけの会計である。
 /// 返したフレームは、空間の会計（`note_post_load_frames_returned`）から引く。
 ///
+/// **アロケータは呼び手が先に借りて渡す**（2026-10-08）。以前は表から外した後で借りていて、借りられないと、表からは消えたのに
+/// ページは写ったまま（フレームも持ったまま）で失敗を返していた。
+///
 /// # Safety
 ///
 /// 呼び出し元契約により `direct_map` は有効で、遠征の中なので CR3 はこのプロセスのもの。
@@ -2685,6 +2784,7 @@ unsafe fn release_range_and_unmap(
     bytes: u64,
     may_remove: impl Fn(crate::mappings::MappingKind) -> bool,
     direct_map: DirectMap,
+    allocator: &mut crate::frame_allocator::FrameAllocator,
 ) -> Result<(), crate::mappings::MapError> {
     use crate::arch::x86_64::ActivePageTable;
     use crate::mappings::{Released, PAGE_SIZE};
@@ -2696,9 +2796,6 @@ unsafe fn release_range_and_unmap(
     if count == 0 {
         return Ok(());
     }
-    let Some(allocator) = crate::frame_allocator::take() else {
-        return Err(crate::mappings::MapError::NoRoom);
-    };
     // SAFETY: 遠征の中なので CR3 はこのプロセスの表である。
     let mut table = unsafe { ActivePageTable::current(direct_map) };
     let mut returned = 0usize;
@@ -2734,7 +2831,6 @@ unsafe fn release_range_and_unmap(
             page += PAGE_SIZE;
         }
     }
-    crate::frame_allocator::give_back(allocator);
     crate::userland::note_post_load_frames_returned(returned);
     Ok(())
 }
@@ -2770,12 +2866,16 @@ fn memfd_create_from_ring3() -> u64 {
 
 /// [`SYS_FTRUNCATE`] の本体。**共有メモリの大きさを据える（ページを取る）。**
 #[inline(never)]
-fn ftruncate_from_ring3(fd: u64, size: u64) -> u64 {
+fn ftruncate_from_ring3(fd: u64, size: u64, bkl: &mut Option<crate::bkl::BklGuard>) -> u64 {
+    // **fd の表を読む前に借りる**（2026-10-08。[`borrow_allocator`]。借りられるまで待つ。引数だけの確かめは無い）。
+    let Some(mut allocator) = borrow_allocator(bkl) else {
+        return (-ENOMEM) as u64;
+    };
     let shm = match shm_of(fd) {
         Ok(shm) => shm,
         Err(errno) => return errno,
     };
-    match crate::shm::set_size(shm, size) {
+    match crate::shm::set_size(shm, size, &mut allocator) {
         crate::shm::TruncateOutcome::Pages(_) => 0,
         crate::shm::TruncateOutcome::TooLarge | crate::shm::TruncateOutcome::NoRoom => {
             (-ENOMEM) as u64
@@ -2796,16 +2896,15 @@ fn ftruncate_from_ring3(fd: u64, size: u64) -> u64 {
 /// 呼び出し元契約により `direct_map` は有効で、遠征の中なので CR3 はこのプロセスのもの。
 #[inline(never)]
 unsafe fn mmap_from_ring3(
-    addr: u64,
-    len: u64,
-    prot: u64,
-    flags: u64,
-    fd: u64,
-    offset: u64,
+    args: &[u64; 6],
     direct_map: DirectMap,
+    bkl: &mut Option<crate::bkl::BklGuard>,
 ) -> u64 {
     use crate::arch::x86_64::ActivePageTable;
     use crate::paging::permissions::PagePermissions;
+
+    // **6 つの引数は、レジスタの順のまま受ける**（2026-10-08。BKL を渡すようにして、引数が多すぎた）。
+    let [addr, len, prot, flags, fd, offset] = *args;
 
     // **番地を指定する形は、無名の写像だけ受ける**（2026-10-06。fd を指定の番地へ写す形は `docs/deferred-decisions.md`）。
     // 指定の無い `addr`（ただのヒント）は見ない——置き場はカーネルが決める。
@@ -2823,7 +2922,7 @@ unsafe fn mmap_from_ring3(
     if flags & MAP_ANONYMOUS != 0 {
         // SAFETY: 呼び出し元契約をそのまま渡す。
         return unsafe {
-            mmap_anonymous_from_ring3(fixed.map(|how| (addr, how)), len, prot, direct_map)
+            mmap_anonymous_from_ring3(fixed.map(|how| (addr, how)), len, prot, direct_map, bkl)
         };
     }
     if offset != 0 {
@@ -2837,11 +2936,18 @@ unsafe fn mmap_from_ring3(
     if prot & PROT_EXEC != 0 && !cfg!(feature = "mmap-allows-exec-test") {
         return (-EPERM) as u64;
     }
+    // **引数だけの確かめの直後に借りる**（2026-10-08。[`borrow_allocator`]）。ここから下は fd の表・共有メモリの表・
+    // マッピングテーブルを読むので、借りて（眠ったなら起きて）から読む。以前は番地を予約した後で借りていて、借りられないと
+    // 予約が残った（使われない範囲が表に残り、プロセスが終わるまで塞いだ）。
+    let Some(mut loan) = borrow_allocator(bkl) else {
+        return (-ENOMEM) as u64;
+    };
+    let allocator: &mut crate::frame_allocator::FrameAllocator = &mut loan;
     // **画面の fd なら裏バッファをマップする（`ADR-0066` の Y-c）。** **マップの仕方は共有メモリと同じ**
     // （`PTE_SHARED`）。
     if is_screen_fd(fd) {
         // SAFETY: 呼び出し元契約をそのまま渡す。
-        return unsafe { mmap_screen_from_ring3(len, prot, direct_map) };
+        return unsafe { mmap_screen_from_ring3(len, prot, direct_map, allocator) };
     }
     let shm = match shm_of(fd) {
         Ok(shm) => shm,
@@ -2876,15 +2982,12 @@ unsafe fn mmap_from_ring3(
     let attributes = PagePermissions::user_shared(prot & PROT_WRITE != 0);
     // SAFETY: 遠征の中なので CR3 はこのプロセスの表である。
     let mut table = unsafe { ActivePageTable::current(direct_map) };
-    let Some(allocator) = crate::frame_allocator::take() else {
-        return (-ENOMEM) as u64;
-    };
     // **載せた後に取った PT を数える（`ADR-0065` の (a)）。** **`map_4kib` が新しい領域へ
     // 中間表を取るので、その分を破棄の会計の `taken` に足す**——**葉は共有フレームで
     // アロケータに触らないので、差は表の分だけである。**
     let free_before_map = allocator.free_frame_count();
-    // **借りたら必ず返す**（`sys_brk` と同じ。**どの出口でも `give_back` する**）。
     let mut outcome = base;
+    let mut mapped = 0u64;
     for (page, frame) in frames.iter().enumerate().take(want_pages) {
         let Some(virt) = common::addr::VirtAddr::new(base + (page * crate::shm::PAGE_SIZE) as u64)
         else {
@@ -2900,16 +3003,52 @@ unsafe fn mmap_from_ring3(
                 break;
             }
             crate::shm::note_mapped_page();
+            mapped += 1;
         }
         #[cfg(feature = "shm-mmap-maps-nothing")]
         {
             let _ = (&mut table, *frame, attributes, virt);
         }
     }
+    if outcome != base {
+        // SAFETY: いま写した共有メモリのページを、同じ稼働中の表から外す。
+        unsafe {
+            undo_shared_mapping(
+                &mut table,
+                base,
+                mapped,
+                (want_pages * crate::shm::PAGE_SIZE) as u64,
+            )
+        };
+    }
     let tables_taken = free_before_map.saturating_sub(allocator.free_frame_count());
-    crate::frame_allocator::give_back(allocator);
     crate::userland::note_post_load_frames(tables_taken as usize);
     outcome
+}
+
+/// 共有のページ（共有メモリと画面の裏バッファ）を写す途中で失敗したとき、写した分を外し、表の予約を返す（2026-10-08）。
+///
+/// 以前は、予約と写した分を残したまま失敗を返していた——表とページテーブルには、返した番地を使う者の居ない写像が残った。
+/// **フレームは返さない**（共有メモリは参照数で、裏バッファはコンソールが持つ）。中間テーブルは残す（破棄が集め、空間の
+/// 会計にも足してある）。
+///
+/// # Safety
+///
+/// `table` が稼働中のこのプロセスの表で、`[base, base + mapped * 4096)` が、いま写した共有のページであること。
+unsafe fn undo_shared_mapping(
+    table: &mut crate::arch::x86_64::ActivePageTable,
+    base: u64,
+    mapped: u64,
+    reserved_bytes: u64,
+) {
+    const PAGE: u64 = crate::frame_allocator::FRAME_SIZE;
+    for page in 0..mapped {
+        if let Some(virt) = common::addr::VirtAddr::new(base + page * PAGE) {
+            // SAFETY: 呼び出し元契約（いま写した共有のページ）。外した葉のフレームは、持ち主が別に居るので返さない。
+            let _ = unsafe { table.unmap_4kib(virt) };
+        }
+    }
+    let _ = crate::mappings::with_current(|map| map.release_whole(base, reserved_bytes));
 }
 
 /// `msghdr` を読んで、iov の 1 本目と `SCM_RIGHTS` の fd 1 つを取り出す（`ADR-0065`）。
@@ -4284,26 +4423,41 @@ fn errno_for_alloc(error: common::ext2::AllocError) -> i64 {
 /// # Safety
 ///
 /// `direct_map` が有効で、遠征の中（CR3 がユーザーの表）から呼ばれること。
-unsafe fn sys_brk(requested: u64, direct_map: DirectMap) -> u64 {
+unsafe fn sys_brk(
+    requested: u64,
+    direct_map: DirectMap,
+    bkl: &mut Option<crate::bkl::BklGuard>,
+) -> u64 {
     use crate::arch::x86_64::ActivePageTable;
     use crate::paging::permissions::PagePermissions;
 
-    let (mapped, current, start, limit) = crate::userland::with_current_heap(|heap| {
-        (
-            heap.is_mapped(),
-            heap.break_at(),
-            heap.start(),
-            heap.limit(),
-        )
-    });
+    let read_heap = || {
+        crate::userland::with_current_heap(|heap| {
+            (
+                heap.is_mapped(),
+                heap.break_at(),
+                heap.start(),
+                heap.limit(),
+            )
+        })
+    };
+    // **0 は問い合わせである。** 借りずに答える（読んだらすぐ返すので、眠る前に読んだ値を後で使う形にならない）。
+    if requested == 0 {
+        let (mapped, current, _, _) = read_heap();
+        // **イメージを読む前には答えられない。** ここへ来るのは異常である。
+        return if mapped { current } else { (-ENOMEM) as u64 };
+    }
+    // **ヒープの状態を読む前に借りる**（2026-10-08。[`borrow_allocator`]）。借りられずに眠ると BKL を手放すので、ヒープと
+    // マッピングテーブルは、借りて（起きて）から読む。以前は表のヒープの欄を動かした後で借りていて、借りられないと、表の
+    // ヒープだけが伸び縮みしたまま失敗を返していた。
+    let Some(mut loan) = borrow_allocator(bkl) else {
+        return (-ENOMEM) as u64;
+    };
+    let allocator: &mut crate::frame_allocator::FrameAllocator = &mut loan;
+    let (mapped, current, start, limit) = read_heap();
     if !mapped {
         // **イメージを読む前には答えられない。** ここへ来るのは異常である。
         return (-ENOMEM) as u64;
-    }
-
-    // **0 は問い合わせである。**
-    if requested == 0 {
-        return current;
     }
     // **イメージの末尾より下げられない。** **下はイメージとスタックの外である。**
     if requested < start || requested > limit {
@@ -4318,15 +4472,11 @@ unsafe fn sys_brk(requested: u64, direct_map: DirectMap) -> u64 {
         return requested;
     }
 
-    // **写像の表のヒープの欄を、先に動かす**（2026-10-06。`crate::mappings`）。伸ばす先に無名の写像が在れば、ここで
+    // **写像の表のヒープの欄を、ページを写す前に動かす**（2026-10-06。`crate::mappings`）。伸ばす先に無名の写像が在れば、ここで
     // `-ENOMEM`（Linux も、`brk` の先が塞がっていれば伸ばせない）。
     if crate::mappings::with_current(|map| map.set_heap_end(start, want)).is_err() {
         return (-ENOMEM) as u64;
     }
-
-    let Some(allocator) = crate::frame_allocator::take() else {
-        return (-ENOMEM) as u64;
-    };
     // SAFETY: 遠征の中なので CR3 はこのプロセスの表である。
     let mut table = unsafe { ActivePageTable::current(direct_map) };
     let attributes = PagePermissions::user_data();
@@ -4384,6 +4534,9 @@ unsafe fn sys_brk(requested: u64, direct_map: DirectMap) -> u64 {
         let reached = if outcome == requested {
             requested
         } else {
+            // **表のヒープの欄も、写せた所まで戻す**（2026-10-08）。表だけが `want` まで伸びていると、写っていない範囲を
+            // ヒープとして塞ぎ続ける。縮める向きなので、ほかの写像とは重ならない。
+            let _ = crate::mappings::with_current(|map| map.set_heap_end(start, page.max(start)));
             page
         };
         crate::userland::with_current_heap(|heap| heap.set_break(reached));
@@ -4426,7 +4579,6 @@ unsafe fn sys_brk(requested: u64, direct_map: DirectMap) -> u64 {
         crate::userland::with_current_heap(|heap| heap.set_break(requested));
     }
 
-    crate::frame_allocator::give_back(allocator);
     outcome
 }
 
@@ -5728,6 +5880,57 @@ fn sleep_until_ticks(deadline: u64, bkl: &mut Option<crate::bkl::BklGuard>) {
     }
 }
 
+/// アロケータが借りられないときに待つ上限（タイマの刻み。2026-10-08）。100 Hz で 1 秒である。
+const ALLOCATOR_WAIT_LIMIT_TICKS: u64 = 100;
+
+/// [`borrow_allocator`] が、借りられずに刻み 1 つ眠った回数（2026-10-08）。
+static ALLOCATOR_WAITS: AtomicU64 = AtomicU64::new(0);
+/// [`borrow_allocator`] が、上限まで待っても借りられずに諦めた回数（2026-10-08）。
+static ALLOCATOR_GAVE_UP: AtomicU64 = AtomicU64::new(0);
+
+/// 借りられずに眠った回数と、諦めた回数（2026-10-08。プロセスの終わりの行に、増えた分を出す）。
+pub fn allocator_waits() -> (u64, u64) {
+    (
+        ALLOCATOR_WAITS.load(Ordering::Relaxed),
+        ALLOCATOR_GAVE_UP.load(Ordering::Relaxed),
+    )
+}
+
+/// システムコールが状態（マッピングテーブル・ページテーブル・共有メモリの表）を変える前に、アロケータを借りる（2026-10-08）。
+///
+/// 借りられなければ、刻み 1 つずつ眠って待つ（`nanosleep` と同じに、BKL を解いて譲る）。**上限
+/// （[`ALLOCATOR_WAIT_LIMIT_TICKS`]）まで待っても借りられなければ `None`**——呼び手は、何も変えずに失敗を返す。
+///
+/// **借りる前に、プロセスの状態（マッピングテーブル・ページテーブル・ヒープ・fd の表・共有メモリの表）を読まない。**
+/// 借りられずに眠ると BKL を手放すので、眠る前に読んだ値は、起きたときには古いかもしれない（今は 1 プロセス 1 スレッドで
+/// 害は無いが、スレッドが入ると、眠っている間に同じプロセスの別のスレッドがマッピングを変えうる）。**呼び手は、引数だけの
+/// 確かめ（長さ・アラインメント・上限）の直後に借り、状態を読む確かめは借りた後に行う。**
+///
+/// 借りられないのは、ほかのタスクがアロケータを持ったまま譲ったときである。切り離して起動するスロットの読み込みは、IF=1 の
+/// カーネルのタスクがアロケータを持ったまま進むので、ティックで前景のプロセスへ切り替わりうる（`crate::userland` の
+/// `load_user_program_from`）。**Linux は、この形では失敗せずに待つ。** 待つ間はまだ何も変えていないので、眠っても状態は
+/// 揃ったままである。
+fn borrow_allocator(
+    bkl: &mut Option<crate::bkl::BklGuard>,
+) -> Option<crate::frame_allocator::Loan> {
+    let mut waited = 0;
+    loop {
+        if let Some(loan) = crate::frame_allocator::Loan::take() {
+            return Some(loan);
+        }
+        if waited >= ALLOCATOR_WAIT_LIMIT_TICKS || bkl.is_none() {
+            ALLOCATOR_GAVE_UP.fetch_add(1, Ordering::Relaxed);
+            return None;
+        }
+        ALLOCATOR_WAITS.fetch_add(1, Ordering::Relaxed);
+        waited += 1;
+        sleep_until_ticks(
+            crate::arch::x86_64::monotonic_ticks().saturating_add(1),
+            bkl,
+        );
+    }
+}
+
 /// `clock_nanosleep` の `flags`——`req` を絶対の時刻として読む（`TIMER_ABSTIME`）。
 const TIMER_ABSTIME: u64 = 1;
 /// `CLOCK_REALTIME`。**このカーネルは壁の時計を持たない**ので、相対の眠りだけを受け、絶対の時刻は `-EINVAL`。
@@ -7022,6 +7225,25 @@ pub fn in_ring3_at_entry() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **`mprotect` の中間テーブルの見積もりは、散らばった葉でも、長い範囲でも足りる**（2026-10-08）。段ごとに、葉の数と
+    /// 範囲が触れる区切りの数の小さい方を数える。
+    #[test]
+    fn the_page_table_estimate_covers_scattered_leaves_and_long_ranges() {
+        const MIB: u64 = 1 << 20;
+        // 1 ページ: PT・PD・PDPT が 1 枚ずつまで。
+        assert_eq!(page_tables_for(0x40_0000, 4096, 1), 3);
+        // 64 MiB の中に散らばった 64 枚（別々の 2 MiB に 1 枚ずつ）: PT 32 枚（64 MiB が触れる 2 MiB の区切りの数）、PD・PDPT 1 枚ずつ。
+        assert_eq!(page_tables_for(0x4000_0000, 64 * MIB, 64), 32 + 1 + 1);
+        // 64 × 16 MiB（1 GiB）を 1 GiB の境をまたいで置き、全部の 262,144 枚を写す形: PT 512 枚、PD 2 枚、PDPT 1 枚。
+        assert_eq!(
+            page_tables_for(0x4000_0000 + 0x20_0000, 1024 * MIB, 262_144),
+            512 + 2 + 1
+        );
+        // 以前の見積もり（512 枚ごとに PT 1 枚と、両端で 6 枚）は、散らばった 64 枚で 6 枚しか見込まなかった。
+        assert!(page_tables_for(0x4000_0000, 64 * MIB, 64) > 64 / 512 + 6);
+        assert_eq!(page_tables_for(0x40_0000, 0, 0), 0);
+    }
 
     /// **終了処理された子の値は、中断の目印（[`SPAWN_INTERRUPTED_FLAG`]）と重ならず、`0x1FFF` を越えない**
     /// （2026-09-27。運用者の決定）。**奇数のベクタと、ベクタ 16（#MF）・19（#XM）で確かめる**——**以前の

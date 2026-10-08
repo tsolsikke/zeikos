@@ -2917,6 +2917,7 @@ pub fn spawn(
     // **会計のために借りて、すぐ返す**（`ADR-0030`）。**借りられなければ
     // 子も起動できない**ので、そのまま [`UserLoadError::AllocatorUnavailable`] へ落とす。
     let shared_before = crate::shm::frames_held();
+    let allocator_waits_before = crate::syscall::allocator_waits();
     let free_before = match crate::frame_allocator::take() {
         Some(allocator) => {
             let count = allocator.free_frame_count();
@@ -3168,6 +3169,17 @@ pub fn spawn(
         },
         global_difference_checks()
     ));
+    // **システムコールがアロケータを待った回数を出す**（2026-10-08。`crate::syscall` の `borrow_allocator`）。0 のときは
+    // 出さない（ほかのタスクが借りている間にだけ増える）。諦めた回のシステムコールは、何も変えずに `-ENOMEM` を返している。
+    let allocator_waits_after = crate::syscall::allocator_waits();
+    if allocator_waits_after != allocator_waits_before {
+        logger.warn(format_args!(
+            "spawn: while {name} ran, system calls waited {} tick(s) for the frame allocator (another task held it) \
+             and gave up {} time(s) without changing anything",
+            allocator_waits_after.0 - allocator_waits_before.0,
+            allocator_waits_after.1 - allocator_waits_before.1
+        ));
+    }
 
     // **ロードの失敗を 1 行で出す（ADR-0039）。**
     //
