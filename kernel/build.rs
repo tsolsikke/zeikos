@@ -688,7 +688,8 @@ fn build_c_programs(manifest_dir: &str, out_dir: &str, script: &str, cache: &Pro
 /// 当たれば 1 バイトも書かない。外れた分だけ、作ったものを 1 度写しへ入れる（プログラムは 10〜500 KiB）。置き場は育つが、
 /// 組み合わせは少ない（プログラム × cfg の違い）。**7 日触られていないものは全検査の始めに消す**（`xtask` の
 /// `prune_before_the_run`。当たるたびに触った時刻を進める）。`cargo clean` でも消える。
-/// **`ZEIKOS_USER_PROGRAM_CACHE=off` で止められる**（当たりと外れの中身が同じことを確かめるため）。
+/// **`ZEIKOS_USER_PROGRAM_CACHE=off` で止められる**（当たりと外れの中身が同じことを確かめるため）。置き場の場所は
+/// `ZEIKOS_USER_PROGRAM_CACHE_DIR` で差し替えられる。
 ///
 /// # ハードリンク越しに置き場を書き換えない
 ///
@@ -712,13 +713,21 @@ impl ProgramCache {
         let enabled = std::env::var("ZEIKOS_USER_PROGRAM_CACHE")
             .ok()
             .is_none_or(|value| value != "off");
-        // **cargo の `target/` は、`OUT_DIR`（`target/<標的>/debug/build/kernel-<hash>/out`）から上へ辿った、
-        // 最初の `target` という名前の置き場である。**
+        // **置き場は `ZEIKOS_USER_PROGRAM_CACHE_DIR` で差し替えられる**（2026-10-08。像のバイトが当たりと外れで同じことを
+        // 確かめる検査が、空の置き場で全部を外すために使う。本物の置き場は触らない）。
+        println!("cargo:rerun-if-env-changed=ZEIKOS_USER_PROGRAM_CACHE_DIR");
+        let chosen =
+            std::env::var_os("ZEIKOS_USER_PROGRAM_CACHE_DIR").map(std::path::PathBuf::from);
+        // **既定は、cargo の `target/`（`OUT_DIR` = `target/<標的>/debug/build/kernel-<hash>/out` から上へ辿った、
+        // 最初の `target` という名前の置き場）の下である。**
         let dir = if enabled {
-            std::path::Path::new(out_dir)
-                .ancestors()
-                .find(|ancestor| ancestor.file_name().is_some_and(|name| name == "target"))
-                .map(|target| target.join("user-program-cache"))
+            chosen
+                .or_else(|| {
+                    std::path::Path::new(out_dir)
+                        .ancestors()
+                        .find(|ancestor| ancestor.file_name().is_some_and(|name| name == "target"))
+                        .map(|target| target.join("user-program-cache"))
+                })
                 .filter(|dir| std::fs::create_dir_all(dir).is_ok())
         } else {
             None
@@ -1263,6 +1272,10 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
     std::fs::write(format!("{staging}/data/writable"), &writable[..])
         .expect("failed to write the writable target");
 
+    // **種の権限を、写した元によらず決める**（2026-10-08）。`fs::copy` は権限を写し、`mke2fs -d` はそれを inode へ入れる。
+    // 写しの置き場の当たりは読み取り専用の写しのハードリンクなので、決めないと、当たりと外れで像のバイトが変わる。
+    set_staging_modes(std::path::Path::new(&staging));
+
     // イメージの器を作る（ゼロ埋め）。
     let image = format!("{out_dir}/fs.img");
     let file = std::fs::File::create(&image).expect("failed to create the image file");
@@ -1633,6 +1646,40 @@ fn cc_version() -> String {
 
 /// 種のディレクトリを丸ごとコピーする。**シンボリックリンクは扱わない**
 /// （`roadmap.md` の S10 が symlink を範囲外と書いている）。
+/// 像の種の権限を決める（2026-10-08）。ディレクトリは 0755、`/bin` の下のファイルは 0755、ほかのファイルは 0644。
+///
+/// **像のバイトは、ホストのファイルの権限に依ってはならない。** `mke2fs -d` は種のファイルの権限をそのまま inode に入れる。
+/// 種へ置くファイルは、コンパイラの出力（0755）、写しの置き場の当たり（読み取り専用の写しへのハードリンク。0444）、
+/// 種のツリー（git が置いた権限）、`fs::write` で書いたもの（umask に依る）から来る。時刻と所有者は
+/// [`zero_image_build_traces`] が 0 にするので、残るのは権限だけである。値は、権限を決める前の像（写しの外れで作ったもの）
+/// と同じにした——起動ログの参照が覚えている像のバイトが変わらない。`lost+found` は `mke2fs` が作るので、ここでは触らない。
+fn set_staging_modes(root: &std::path::Path) {
+    set_modes_below(root, true, false);
+}
+
+/// [`set_staging_modes`] の本体。`at_root` は像の根か（`/bin` を根の直下だけで見分ける）、`under_bin` は `/bin` の下か。
+fn set_modes_below(dir: &std::path::Path, at_root: bool, under_bin: bool) {
+    std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755))
+        .unwrap_or_else(|e| panic!("failed to set the mode of {}: {e}", dir.display()));
+    let entries = std::fs::read_dir(dir).expect("failed to read a staging directory");
+    for entry in entries {
+        let entry = entry.expect("failed to read a staging entry");
+        let kind = entry.file_type().expect("failed to stat a staging entry");
+        let path = entry.path();
+        if kind.is_dir() {
+            set_modes_below(
+                &path,
+                false,
+                under_bin || (at_root && entry.file_name() == "bin"),
+            );
+        } else {
+            let mode = if under_bin { 0o755 } else { 0o644 };
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode))
+                .unwrap_or_else(|e| panic!("failed to set the mode of {}: {e}", path.display()));
+        }
+    }
+}
+
 fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
     std::fs::create_dir_all(to).expect("failed to create a staging directory");
     let entries = std::fs::read_dir(from).expect("failed to read the seed directory");

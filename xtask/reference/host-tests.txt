@@ -951,6 +951,7 @@ xtask::tests::every_stop_reason_names_a_kernel_feature
 xtask::tests::expectations_in_the_form_are_read_right_after_their_value
 xtask::tests::expectations_out_of_the_form_say_what_is_out_of_it
 xtask::tests::fixed_run_names_are_counted_outside_the_run_directory_only
+xtask::tests::image_determinism_names_the_difference
 xtask::tests::info_pci_output_is_parsed_and_subsystem_lines_are_ignored
 xtask::tests::items_are_counted_from_the_source_by_the_forms_it_knows
 xtask::tests::kernel_pci_lines_are_parsed_and_other_pci_lines_are_ignored
@@ -985,6 +986,7 @@ xtask::tests::smap_and_fsgsbase_instructions_are_found_but_symbol_names_are_not
 xtask::tests::strings_are_attributed_to_the_item_that_declares_them
 xtask::tests::the_agent_index_check_looks_both_ways
 xtask::tests::the_ap_heartbeat_line_is_not_read_as_a_bsp_row
+xtask::tests::the_cache_tally_is_read_from_its_lines
 xtask::tests::the_capture_stops_only_when_the_prompt_follows_ready
 xtask::tests::the_commit_message_rules_catch_each_shape
 xtask::tests::the_commit_message_rules_pass_the_shapes_that_are_allowed

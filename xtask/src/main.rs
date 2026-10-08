@@ -12179,6 +12179,147 @@ fn cmd_image(contents: MediaContents) -> Result<()> {
     Ok(())
 }
 
+/// 基本の検査の項目——**ext2 の像のバイトが、写しの置き場の当たり・外れ・使わないの 3 通りで同じこと**（2026-10-08）。
+///
+/// # なぜ在るのか
+///
+/// **像のバイトは起動ログの参照（巻の名前と、superblock のセクタの検査値）に出る。** 写しの置き場の当たりは読み取り専用の
+/// 写しへのハードリンクで、`fs::copy` が権限を写し、`mke2fs -d` がそれを inode へ入れていたので、当たりだけ `/bin` の
+/// プログラムが 0444 になり、参照と食い違った（`docs/troubleshooting.md` の 2026-10-08 の項）。いまは `build.rs` が種の
+/// 権限を決める。**この項目は、決め忘れや、権限のほかに写し元から混ざるものを、全検査を待たずに捕まえる。**
+///
+/// # 形
+///
+/// 既定の構成で `cargo check` を 3 回回す——写しの置き場を使わない回、空の置き場で全部が外れる回、同じ置き場で全部が
+/// 当たる回。`cargo` の置き場と写しの置き場はこの回の使い捨ての置き場（tmpfs）に置き、メインの `target/` と本物の
+/// 写しの置き場には触らない。`cargo check` でもビルドスクリプトは走るので、像は同じものができる（コード生成をしない分速い）。
+fn check_image_determinism(workspace_root: &Path) -> Result<String> {
+    let run = RunDir::create(workspace_root, "image-determinism")?;
+    let target = run.scratch_file("target");
+    let cache = run.scratch_file("program-cache");
+    let _ = fs::remove_dir_all(&cache);
+    let started = Instant::now();
+    let modes: [(&str, &[(&str, &std::ffi::OsStr)]); 3] = [
+        (
+            "off",
+            &[("ZEIKOS_USER_PROGRAM_CACHE", std::ffi::OsStr::new("off"))],
+        ),
+        (
+            "miss",
+            &[("ZEIKOS_USER_PROGRAM_CACHE_DIR", cache.as_os_str())],
+        ),
+        (
+            "hit",
+            &[
+                ("ZEIKOS_USER_PROGRAM_CACHE_DIR", cache.as_os_str()),
+                // **ビルドスクリプトを走らせ直す**（`rerun-if-env-changed`）。`off` でなければ置き場を使う。
+                ("ZEIKOS_USER_PROGRAM_CACHE", std::ffi::OsStr::new("hit")),
+            ],
+        ),
+    ];
+    let mut images: Vec<(&str, Vec<u8>, String)> = Vec::new();
+    for (label, envs) in modes {
+        let mut command = Command::new("cargo");
+        command
+            .current_dir(workspace_root)
+            .args(image_check_cargo_args())
+            .env("CARGO_TARGET_DIR", &target)
+            .env_remove("ZEIKOS_USER_PROGRAM_CACHE")
+            .env_remove("ZEIKOS_USER_PROGRAM_CACHE_DIR")
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        for (name, value) in envs {
+            command.env(name, value);
+        }
+        let output = command
+            .output()
+            .context("failed to invoke cargo for the image check")?;
+        if !output.status.success() {
+            bail!(
+                "cargo check failed for the {label} build ({}): {}",
+                output.status,
+                String::from_utf8_lossy(&output.stderr)
+                    .lines()
+                    .rev()
+                    .take(5)
+                    .collect::<Vec<_>>()
+                    .join(" / ")
+            );
+        }
+        let out_dir = kernel_out_dir_from_cargo_json(&String::from_utf8_lossy(&output.stdout))
+            .with_context(|| {
+                format!("cargo did not report the kernel's OUT_DIR for the {label} build")
+            })?;
+        let image = fs::read(out_dir.join(FS_IMAGE_NAME))
+            .with_context(|| format!("failed to read the image of the {label} build"))?;
+        let tally = fs::read_to_string(out_dir.join("user-program-cache.txt"))
+            .with_context(|| format!("failed to read the cache tally of the {label} build"))?;
+        images.push((label, image, tally));
+    }
+    let _ = fs::remove_dir_all(&cache);
+    image_determinism_problem(&images).map_or(Ok(()), |problem| Err(anyhow::anyhow!(problem)))?;
+    let (hits, misses) = cache_tally(&images[2].2).unwrap_or((0, 0));
+    Ok(format!(
+        "the off, miss and hit builds made the same {} byte(s); the hit build took {hits} program(s) from the cache \
+         and missed {misses}; {:.1}s",
+        images[0].1.len(),
+        started.elapsed().as_secs_f64()
+    ))
+}
+
+/// 像の確かめの `cargo check` の引数（既定の構成。全検査の裏の流れと同じく、増分の置き場を使わない）。
+fn image_check_cargo_args() -> Vec<String> {
+    let mut args = kernel_cargo_args(&[]);
+    args[0] = "check".to_string();
+    args
+}
+
+/// 写しの置き場の数の行（`hits: N` と `misses: N`）を読む（純粋な論理）。
+fn cache_tally(tally: &str) -> Option<(usize, usize)> {
+    let field = |name: &str| {
+        tally
+            .lines()
+            .find_map(|line| line.strip_prefix(name))
+            .and_then(|value| value.trim().parse().ok())
+    };
+    Some((field("hits:")?, field("misses:")?))
+}
+
+/// 3 通りの像の食い違い（純粋な論理）。**同じで、外れの回と当たりの回が本当にそうなっていれば `None`。**
+fn image_determinism_problem(images: &[(&str, Vec<u8>, String)]) -> Option<String> {
+    let [(_, off, off_tally), (_, miss, miss_tally), (_, hit, hit_tally)] = images else {
+        return Some(format!("expected 3 builds, got {}", images.len()));
+    };
+    if !off_tally.contains("cache: off") {
+        return Some(format!("the off build used a cache: {off_tally:?}"));
+    }
+    match (cache_tally(miss_tally), cache_tally(hit_tally)) {
+        (Some((0, missed)), Some((hits, 0))) if missed > 0 && hits == missed => {}
+        _ => {
+            return Some(format!(
+                "the builds did not miss and then hit every program: miss {miss_tally:?}, hit {hit_tally:?}"
+            ))
+        }
+    }
+    for (label, image) in [("miss", miss), ("hit", hit)] {
+        if image != off {
+            let at = off
+                .iter()
+                .zip(image.iter())
+                .position(|(a, b)| a != b)
+                .unwrap_or(off.len().min(image.len()));
+            return Some(format!(
+                "the {label} build made a different image from the off build ({} vs {} byte(s); the first \
+                 difference is at byte {at}, block {})",
+                image.len(),
+                off.len(),
+                at / 4096
+            ));
+        }
+    }
+    None
+}
+
 /// 基本の検査の項目——**起動媒体のイメージをビルドし、読み返し、外の道具と突き合わせる**（`ADR-0068` の HW-e）。
 ///
 /// # なぜ基本の検査に置くのか
@@ -29436,6 +29577,19 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
     total += 1;
     begin_item(
         Family::Base,
+        "the ext2 image is byte for byte the same with the program cache off, missing and hitting",
+    );
+    match check_image_determinism(&workspace_root) {
+        Ok(message) => println!("--- image determinism: OK ({message})"),
+        Err(error) => {
+            println!("--- image determinism: FAILED ({error:#})");
+            failed.push("image determinism".to_string());
+        }
+    }
+
+    total += 1;
+    begin_item(
+        Family::Base,
         "the VirtualBox tool refuses names without the zeikos- prefix",
     );
     match check_vbox_tool(&workspace_root) {
@@ -32993,8 +33147,8 @@ fn count_elements(text: &str) -> usize {
 
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
-    base: 63,
-    full: 508,
+    base: 64,
+    full: 509,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。
@@ -35796,6 +35950,46 @@ fn qemu_launch_args(opts: &QemuLaunchOptions) -> Vec<OsString> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 写しの置き場の数の行を読む（2026-10-08）。
+    #[test]
+    fn the_cache_tally_is_read_from_its_lines() {
+        assert_eq!(
+            cache_tally("cache: /x\nhits: 52\nmisses: 0\n"),
+            Some((52, 0))
+        );
+        assert_eq!(
+            cache_tally("cache: off\nhits: 0\nmisses: 52\n"),
+            Some((0, 52))
+        );
+        assert_eq!(cache_tally("cache: off\n"), None);
+    }
+
+    /// 像の 3 通りの比べ方は、同じなら通し、違うバイトと、外れ・当たりになっていない回を名指しで落とす（2026-10-08）。
+    #[test]
+    fn image_determinism_names_the_difference() {
+        let off = "cache: off\nhits: 0\nmisses: 3\n".to_string();
+        let miss = "cache: /c\nhits: 0\nmisses: 3\n".to_string();
+        let hit = "cache: /c\nhits: 3\nmisses: 0\n".to_string();
+        let same = vec![0u8; 8192];
+        let images = |hit_image: Vec<u8>, hit_tally: &str| {
+            vec![
+                ("off", same.clone(), off.clone()),
+                ("miss", same.clone(), miss.clone()),
+                ("hit", hit_image, hit_tally.to_string()),
+            ]
+        };
+        assert_eq!(image_determinism_problem(&images(same.clone(), &hit)), None);
+        let mut changed = same.clone();
+        changed[4100] = 1;
+        let problem = image_determinism_problem(&images(changed, &hit)).unwrap();
+        assert!(problem.contains("the hit build made a different image"));
+        assert!(problem.contains("byte 4100, block 1"));
+        // 当たりの回が外れていたら（置き場が効いていない）、比べたことにならない。
+        assert!(image_determinism_problem(&images(same.clone(), &miss))
+            .unwrap()
+            .contains("did not miss and then hit"));
+    }
 
     /// 像を穴の在るファイルとして写しても、**長さと中身は元と同じである**（2026-10-05）。0 だけのブロックが
     /// 参照を取り直してよいのは、場面の終わりまで届き、カーネルが止まっていない回だけである（2026-10-05）。
