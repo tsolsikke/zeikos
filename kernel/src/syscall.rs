@@ -2503,6 +2503,7 @@ unsafe fn munmap_from_ring3(
 /// - `addr` はページの境界（でなければ `-EINVAL`）。`len` が 0 なら、何も見ずに 0 を返す（2026-10-09。Linux の
 ///   `do_mprotect_pkey` と同じ順序で、整列の確かめの後、`prot` の確かめと範囲の確かめの前。以前は `-EINVAL` だった）。
 ///   `PROT_GROWSDOWN` と `PROT_GROWSUP` を両方立てた `prot` は、その前に `-EINVAL`（Linux と同じ）。
+/// - `prot` の知らないビットは、あふれの確かめの後で `-EINVAL`（2026-10-09。Linux の `arch_validate_prot`）。`PROT_SEM` は受ける。
 /// - `len` はページへ切り上げる。範囲の全部が写像で覆われていなければ `-ENOMEM`（Linux と同じ）。
 /// - `PROT_EXEC` は `-EPERM`——**書けるページを実行できるページにはしない**（W^X。`ADR-0071`。JIT は目指さない）。
 ///   **実行できるページ（`NX` が 0）を書ける形にする求めも `-EPERM`**——範囲の一部でもそのページが在れば、何も変えずに
@@ -2538,14 +2539,23 @@ unsafe fn mprotect_from_ring3(
     if len == 0 {
         return 0;
     }
-    // 破壊テスト (2026-10-06, mprotect-allows-exec-test): `PROT_EXEC` を断らない（W と X を同時に通す形）。
-    if prot & PROT_EXEC != 0 && !cfg!(feature = "mprotect-allows-exec-test") {
-        return (-EPERM) as u64;
-    }
     // **切り上げが 2^64 を越える長さは `-ENOMEM`**（2026-10-08。Linux は末尾があふれる範囲を同じ答えで断る）。
     let Some(bytes) = crate::mappings::page_rounded(len) else {
         return (-ENOMEM) as u64;
     };
+    // **知らないビットは `-EINVAL`**（2026-10-09。Linux の `arch_validate_prot`。x86 は汎用の形で、上下に伸びる印を外した
+    // 残りが `PROT_READ`・`PROT_WRITE`・`PROT_EXEC`・`PROT_SEM` のどれかであること。`PROT_SEM` は受けて、何もしない）。
+    // 長さ 0 の 0 と、あふれの `-ENOMEM` より後である（Linux と同じ順）。
+    if prot & !(PROT_GROWSDOWN | PROT_GROWSUP) & !(PROT_READ | PROT_WRITE | PROT_EXEC | PROT_SEM)
+        != 0
+    {
+        return (-EINVAL) as u64;
+    }
+    // 破壊テスト (2026-10-06, mprotect-allows-exec-test): `PROT_EXEC` を断らない（W と X を同時に通す形）。
+    // **知らないビットの後に見る**（2026-10-09）。Linux には無い答えで（W^X。`ADR-0071`）、Linux の順の確かめを先に済ませる。
+    if prot & PROT_EXEC != 0 && !cfg!(feature = "mprotect-allows-exec-test") {
+        return (-EPERM) as u64;
+    }
     // **上限を越える範囲は `-ENOMEM`**（2026-10-07。Linux は写像の無い範囲として同じ答えを返す）。
     if exceeds_user_limit(addr, bytes) {
         return (-ENOMEM) as u64;
@@ -5376,6 +5386,8 @@ fn sys_tkill(tid: u64, sig: u64) -> u64 {
 const PROT_GROWSDOWN: u64 = 0x0100_0000;
 /// `mprotect` の `prot` の、上へ伸びる印（Linux の `PROT_GROWSUP`。2026-10-09）。
 const PROT_GROWSUP: u64 = 0x0200_0000;
+/// `prot` の `PROT_SEM`（Linux の値 0x8。2026-10-09）。x86 の `mprotect` は受けて、何もしない。
+const PROT_SEM: u64 = 0x8;
 
 /// `readv`・`writev` の `iovcnt` の上限（Linux の `UIO_MAXIOV`）。越えれば `-EINVAL`。
 const UIO_MAXIOV: u64 = 1024;

@@ -17,7 +17,7 @@ Hello, ZeikOS!
 [INFO] cpu-state: EFER.NXE=1 (expected 1) on the BSP [read back]; it was already set when the kernel was entered, so the kernel did not write EFER: EFER 0xd00 -> 0xd00
 [INFO] fp: SSE is enabled on the bootstrap processor: CR0=0x80010033 (MP=true, EM=false),              CR4=0x668 (OSFXSR=true, OSXMMEXCPT=true), as intended = true [read back from the registers]
 [INFO] boot stack: 1152 of 16384 bytes used (high-water; 15232 bytes poison intact)
-[INFO] higher-half: arrived at high VA. RIP=0xffffffff80244438 in [0xffffffff80100000, 0xffffffff803de0a0)=true, RSP=0xffffffff803c9eb0 high=true, CR3=0x2ba000 == bootstrap PML4 0x2ba000 = true, identity alive (phys 0x100000 read via low==high) = true
+[INFO] higher-half: arrived at high VA. RIP=0xffffffff80244468 in [0xffffffff80100000, 0xffffffff803de0a0)=true, RSP=0xffffffff803c9eb0 high=true, CR3=0x2ba000 == bootstrap PML4 0x2ba000 = true, identity alive (phys 0x100000 read via low==high) = true
 [INFO] percpu: cpu_id() now derives the slot from GDTR: base=0xffffffff8033b538 first slot=0xffffffff8033b538 stride=64 offset=0 index=0 (reader installed: false -> true, cpu_id() 0 -> 0)
 [INFO] interrupts: RFLAGS.IF before cli = false (raw RFLAGS=0x2)
 [INFO] interrupts: RFLAGS.IF after cli = false (raw RFLAGS=0x2)
@@ -50,7 +50,7 @@ Hello, ZeikOS!
 [INFO] idt: NMI (vector 2) uses IST 3 (expected 3), where 0 means the gate has no IST, and the TSS holds the top 0xffffffff803a9000 (expected 0xffffffff803a9000) of the stack starting at 0xffffffff803a5000: on its own stack = true
 [INFO] idt: #MC (vector 18) uses IST 4 (expected 4), where 0 means the gate has no IST, and the TSS holds the top 0xffffffff803ae000 (expected 0xffffffff803ae000) of the stack starting at 0xffffffff803aa000: on its own stack = true
 [INFO] idt: the five IST stacks (#DF, #PF, NMI, #MC, #DB) are all different = true; the guards below the NMI, #MC and #DB stacks are intact = true
-[INFO] idt: stub table 0xffffffff801b79e0..0xffffffff801b89e0 size=4096 (expected 4096), stride=OK, entries=OK
+[INFO] idt: stub table 0xffffffff801b7a10..0xffffffff801b8a10 size=4096 (expected 4096), stride=OK, entries=OK
 [INFO] idt: dedicated stubs outside the exception table: 7 checked, every gate points at its own stub=true
 [INFO] idt: loaded (exceptions now reach our handlers; interrupts stay disabled until M4-d)
 [INFO] critical: IF before any guard = false
@@ -84,7 +84,7 @@ Hello, ZeikOS!
 [INFO] paging: required range [framebuffer] 0x80000000..0x803e8000: OK
 [INFO] paging: required range [new page tables (PML4)] 0x3000..0x4000: OK
 [INFO] paging: required range [current RSP] 0x3ca110..0x3ca111: OK
-[INFO] paging: required range [current RIP] 0x244438..0x244439: OK
+[INFO] paging: required range [current RIP] 0x244468..0x244469: OK
 [INFO] paging: all required ranges mapped. proceeding to CR3 switch (d-2).
 [INFO] paging: current CR3 = 0x2ba000
 [INFO] paging: CR3 switch instruction executed
@@ -120,7 +120,7 @@ Hello, ZeikOS!
 [INFO] console: 114 log line(s) were emitted before the console existed (serial only)
 [INFO] heap: arena 0x1780000..0x1880000 (256 frames, 1 MiB), mapped=true
 [INFO] heap: initialized (1048576 bytes free, 1 block(s))
-[INFO] granularity: executing code (RIP) 0xffffffff80244438 -> phys 0x244438, mapped by a 4KiB page at 0xffffffff80244000 (entry=0x244021)
+[INFO] granularity: executing code (RIP) 0xffffffff80244468 -> phys 0x244468, mapped by a 4KiB page at 0xffffffff80244000 (entry=0x244021)
 [INFO] granularity: kernel stack (RSP) 0xffffffff803c9b90 -> phys 0x3c9b90, mapped by a 4KiB page at 0xffffffff803c9000 (entry=0x80000000003c9063)
 [INFO] granularity: heap arena 0x1780000 -> phys 0x1780000, mapped by a 2MiB page at 0x1600000 (entry=0x8000000001600083)
 [INFO] granularity: framebuffer 0x80000000 -> phys 0x80000000, mapped by a 2MiB page at 0x80000000 (entry=0x80000000800000b3)
@@ -286,7 +286,7 @@ Hello, ZeikOS!
 [INFO] percpu: 2 usable CPU(s) enumerated, 2 per-CPU slot(s) available, every CPU has a slot=true (a CPU without a slot is not started, so no slot is indexed out of range)
 [INFO] identity-removal: begin. live PML4=0xf000, saved PML4[0]=0x10023
 [INFO] identity-removal: PML4[0] subtree table frames = 7 (28 KiB) become unreachable; intentional leak. subtree frames [256]=10 [511]=4. disjoint(0,256)=true disjoint(0,511)=true disjoint(256,511)=true
-[INFO] identity-removal: required [RIP] 0xffffffff80244438 -> phys 0x244438 (huge=false): OK
+[INFO] identity-removal: required [RIP] 0xffffffff80244468 -> phys 0x244468 (huge=false): OK
 [INFO] identity-removal: required [RSP] 0xffffffff803c99e0 -> phys 0x3c99e0 (huge=false): OK
 [INFO] identity-removal: required [direct map window] 0xffff80000000f000 -> phys 0xf000 (huge=false): OK
 [INFO] identity-removal: required [kernel image] 0xffffffff80100000 -> phys 0x100000 (huge=false): OK
@@ -417,7 +417,7 @@ task: cooperative switch verified
 [INFO] user-load-corrupt: p_flags of the first segment set to read, write and execute -> Layout(WritableAndExecutable { index: 0 }) (the space was destroyed: quarantined=1 leaked=0)
 [INFO] user-load-corrupt: all 7 corrupted images were refused by the loader and the kernel continued; 0 frame(s) left the allocator and 0 are still in quarantine (match=true)
 [INFO] frame-allocator: lent out 33 time(s), given back 33 time(s), balanced=true, present=true
-[INFO] syscall-entry: cpu 0: EFER=0xd01 with SCE=1 (expected 1) and NXE=1 (expected 1); STAR=0x1b000800000000 (expected 0x1b000800000000) LSTAR=0xffffffff801e7d70 (expected 0xffffffff801e7d70) CSTAR=0xffffffff801e7da0 (expected 0xffffffff801e7da0) SFMASK=0x47700 (expected 0x47700) SYSENTER_CS=0x0 (expected 0x0) [read back from the MSRs after the kernel wrote them]: as intended = true
+[INFO] syscall-entry: cpu 0: EFER=0xd01 with SCE=1 (expected 1) and NXE=1 (expected 1); STAR=0x1b000800000000 (expected 0x1b000800000000) LSTAR=0xffffffff801e7da0 (expected 0xffffffff801e7da0) CSTAR=0xffffffff801e7dd0 (expected 0xffffffff801e7dd0) SFMASK=0x47700 (expected 0x47700) SYSENTER_CS=0x0 (expected 0x0) [read back from the MSRs after the kernel wrote them]: as intended = true
 [INFO] cpu-state: the CPU vendor is AuthenticAMD (CPUID leaf 0), so CR0, CR4 and EFER are judged by the AMD table (APM Vol.2, 24593 Rev. 3.45)
 [INFO] cpu-state: CR0=0x80010033 CR4=0x668 EFER=0xd01; the inventory of user-changeable CPU state (ADR-0018 Addendum 9) rests on CR0.AM, CR4.SMAP, CR4.FSGSBASE, CR4.PKE, CR4.OSXSAVE and CR4.PVI being 0
 [INFO] cpu-state: the 24 bit(s) the kernel needs hold (CR0.PE, MP, NE, WP, PG set; EM, TS, NW, CD clear; CR4.PAE, MCE, OSFXSR, OSXMMEXCPT set; LA57, PCIDE, CET clear; EFER.SCE, LME, LMA, NXE set; LMSLE, FFXSR, TCE, UAIE clear)
@@ -518,7 +518,7 @@ hello from ring 3
 [INFO] user-run: fault-test left Ring 3 (exited=false status=0 folded=true vector=14 rip=0x400030 cs=0x2b cr2=0x400000 err=0x7), it made 0 syscall(s) (0 with a number the kernel does not know; the last such number was 0) and the kernel was entered from Ring 3 (false), write(fd=0, 0 byte(s)) said ""
 [INFO] direction flag: fault-test entered the kernel through the exception entry with DF=1 1 time(s), and the handler ran with DF=0 each time (the stub clears it; a handler that sees DF=1 halts)
 [INFO] user-load: fault-test ran as a process in its own address space, ended as expected, and the kernel continued after the process was gone; the space was destroyed (0 frame(s) left the allocator; 10 returned at once, 0 still quarantined (0 its own + 0 spawned), match=true leaked=0); the space took 10 frame(s) and the destroy collected 10 (match=true); the global difference was checked (checked 7 time(s) so far)
-[INFO] user-load: syscall-test mapped PT_LOAD 0x400000..0x40260a (filesz=0x260a memsz=0x260a w=false) pages 0x400000..0x402000
+[INFO] user-load: syscall-test mapped PT_LOAD 0x400000..0x4026c4 (filesz=0x26c4 memsz=0x26c4 w=false) pages 0x400000..0x402000
 [INFO] user-load: syscall-test mapped PT_LOAD 0x403000..0x4033e6 (filesz=0x3e6 memsz=0x3e6 w=false) pages 0x403000..0x403000
 [INFO] user-load: syscall-test PT_LOAD segments: declared=2 mapped=2 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
@@ -685,7 +685,7 @@ syscall-test wrote this
 [INFO] user-heap: syscall-test had brk take 4 frame(s) and give back 4 (equal means the shrink actually returned them; a program that only grows will not be equal, and that is not a failure)
 [INFO] user-mmap: syscall-test had its first mmap at 0x10000000 and would map next at 0x10001000 (every process starts at 0x10000000; a first address above it means the addresses were shared with another process); 1 mapping(s) still held, 0 anonymous page(s)
 [INFO] page-perms: user program syscall-test: 4 row(s), 0 unnamed, 0 mapped where nothing should be, 0 dropped, digest=e9c6e03dd2bb495f
-[INFO] user-run: syscall-test left Ring 3 (exited=true status=0 folded=false vector=0 rip=0x0 cs=0x0 cr2=0x0 err=0x0), it made 227 syscall(s) (1 with a number the kernel does not know; the last such number was 4351) and the kernel was entered from Ring 3 (true), write(fd=1, 24 byte(s)) said "syscall-test wrote this"
+[INFO] user-run: syscall-test left Ring 3 (exited=true status=0 folded=false vector=0 rip=0x0 cs=0x0 cr2=0x0 err=0x0), it made 232 syscall(s) (1 with a number the kernel does not know; the last such number was 4351) and the kernel was entered from Ring 3 (true), write(fd=1, 24 byte(s)) said "syscall-test wrote this"
 [INFO] user-abi: syscall-test issued the probe from user assembly and all 6 arguments arrived per ADR-0020 (arg4 came from R10, not RCX, which carried a sentinel); this checks the ABI contract itself, not the dispatcher — the boot-time probe assembles its arguments in Rust inside the kernel, this one assembles them in assembly, links, loads and enters Ring 3 like any program
 [INFO] direction flag: syscall-test entered the kernel through the syscall entry with DF=1 1 time(s), and the handler ran with DF=0 each time (the stub clears it; a handler that sees DF=1 halts)
 [INFO] user-load: syscall-test ran as a process in its own address space, ended as expected, and the kernel continued after the process was gone; the space was destroyed (0 frame(s) left the allocator; 14 returned at once, 0 still quarantined (0 its own + 0 spawned), match=true leaked=0); the space took 14 frame(s) and the destroy collected 14 (match=true); the global difference was checked (checked 18 time(s) so far)
@@ -750,8 +750,8 @@ hello from a position-independent program
 [INFO] page-perms: user program pie-hello: 4 row(s), 0 unnamed, 0 mapped where nothing should be, 0 dropped, digest=7d1c99669e45f90d
 [INFO] user-run: pie-hello left Ring 3 (exited=true status=0 folded=false vector=0 rip=0x0 cs=0x0 cr2=0x0 err=0x0), it made 2 syscall(s) (0 with a number the kernel does not know; the last such number was 0) and the kernel was entered from Ring 3 (true), write(fd=1, 42 byte(s)) said "hello from a position-independent program"
 [INFO] user-load: pie-hello ran as a process in its own address space, ended as expected, and the kernel continued after the process was gone; the space was destroyed (0 frame(s) left the allocator; 73 returned at once, 0 still quarantined (0 its own + 0 spawned), match=true leaked=0); the space took 73 frame(s) and the destroy collected 73 (match=true); the global difference was checked (checked 22 time(s) so far)
-[INFO] syscall-entry: so far 276 system call(s) came in through int 0x80, 13 through the syscall instruction, and 1 from compatibility mode (refused)
-[INFO] frame-allocator: after the user programs, lent out 229 time(s), given back 229 time(s), balanced=true, present=true
+[INFO] syscall-entry: so far 281 system call(s) came in through int 0x80, 13 through the syscall instruction, and 1 from compatibility mode (refused)
+[INFO] frame-allocator: after the user programs, lent out 232 time(s), given back 232 time(s), balanced=true, present=true
 [INFO] pit: channel 0 set to divisor=11932 for a requested 100 Hz; actual is 99.998 Hz (the divisor is an integer, so the period never matches exactly)
 [INFO] pit: IMR after configuring the PIT master=0xff slave=0xff (must still be 0xff/0xff; the PIT ports must not touch the IMR)
 [INFO] pic: IMR after unmasking IRQ0 master=0xfe slave=0xff (expected 0xfe/0xff) [read back from hardware]
@@ -766,7 +766,7 @@ hello from a position-independent program
 [INFO] ioapic: virtio IRQ 11 routed: vector=0x44 (expected 0x44), level=true active-low=false masked=false; matches the platform's declaration = true [read back from hardware]
 [INFO] sti-check 1: GDT base=0xffffffff8033b538 (expected 0xffffffff8033b538), CS=0x0008 (expected 0x0008), DS=0x0010 SS=0x0010 (expected 0x0010)
 [INFO] sti-check 2: TR=0x0030 (expected 0x0030), IST1 top=0xffffffff803d9000, #DF gate IST index=Some(1)
-[INFO] sti-check 3: IDT base=0xffffffff8033be11 limit=4095, first 32 gates ok=true, exception stub table ok=true, irq stub table ok=true (0xffffffff801b8a10..0xffffffff801b8c20, size=528 expected=528)
+[INFO] sti-check 3: IDT base=0xffffffff8033be11 limit=4095, first 32 gates ok=true, exception stub table ok=true, irq stub table ok=true (0xffffffff801b8a40..0xffffffff801b8c50, size=528 expected=528)
 [INFO] sti-check 3b: all 256 IDT gate(s) lead to one of the 3 common entries = true (exception 216, irq 39, syscall 1)
 [INFO] sti-check 5: PIC IMR master=0xfe slave=0xff (expected 0xfe/0xff) [read back from hardware]
 [INFO] sti-check 4: cannot be verified at this point; the timer still goes through the 8259 here (calibration needs PIT ticks, so the move to the local APIC timer happens after sti), and the 8259 ICW2 is write-only. Proceeding is safe only because check 5 holds: with every IRQ masked, a wrong offset delivers nothing. Proof arrives when the first timer IRQ shows up as vector 0x20. The other two paths are read back where they are set up: the I/O APIC redirection entry (IRQ1) and the LVT timer
@@ -789,7 +789,7 @@ hello from a position-independent program
 [INFO] lapic-timer: the timer now arrives as vector 0xfe, which the 8259 cannot produce
 task: starting preemptive demo with 2 busy-loop workers for 200 ticks
 [INFO] smp: the installed AP trampoline matches the template outside the patched fields: 4048 byte(s) compared, 48 excluded (gdtr base at 0xf22, far jump target at 0x3b, data block 0xf40..0xf68), mismatches=0
-[INFO] smp: AP trampoline installed at 0x1000 (4096 of 4096 bytes used, fits in one page=true), gdt at 0x1f00, 64-bit entry at 0x1100, cr3 0x2ba000, rust entry 0xffffffff801ab3b0
+[INFO] smp: AP trampoline installed at 0x1000 (4096 of 4096 bytes used, fits in one page=true), gdt at 0x1f00, 64-bit entry at 0x1100, cr3 0x2ba000, rust entry 0xffffffff801ab3e0
 [INFO] smp: starting application processor apic id 1 as slot 1 (trampoline at 0x1000, vector 0x01, stack top 0x3000 identity-mapped, cr3 0x2ba000 = the static boot page table)
 [INFO] smp: application processor 1 started (long mode reached, running on the static boot page table; no per-CPU GDT/TSS/IDT yet, so cpu_id() is not used here)
 [INFO] smp: ap 1 has EFER.NXE=1 (expected 1) before it loads the production page table (EFER=0xd00)
@@ -806,7 +806,7 @@ task: starting preemptive demo with 2 busy-loop workers for 200 ticks
 [INFO] cpu-state: ap 1: its TSS holds the top 0xffff81000006f000 for IST4 (#MC), the stack it was handed [read back by the AP, which halts on a mismatch]
 [INFO] cpu-state: ap 1: its TSS holds the top 0xffff810000074000 for IST5 (#DB), the stack it was handed [read back by the AP, which halts on a mismatch]
 [INFO] cpu-state: ap 1: the five IST stacks (#DF, #PF, NMI, #MC, #DB) are all different = true
-[INFO] cpu-state: ap 1 syscall-entry: EFER=0xd01 with SCE=1 (expected 1) and NXE=1 (expected 1); STAR=0x1b000800000000 (expected 0x1b000800000000) LSTAR=0xffffffff801e7dd0 (expected 0xffffffff801e7dd0) CSTAR=0xffffffff801e7e00 (expected 0xffffffff801e7e00) SFMASK=0x47700 (expected 0x47700) SYSENTER_CS=0x0 (expected 0x0) [read back from the MSRs after the kernel wrote them]: as intended = true [read by the AP]
+[INFO] cpu-state: ap 1 syscall-entry: EFER=0xd01 with SCE=1 (expected 1) and NXE=1 (expected 1); STAR=0x1b000800000000 (expected 0x1b000800000000) LSTAR=0xffffffff801e7e00 (expected 0xffffffff801e7e00) CSTAR=0xffffffff801e7e30 (expected 0xffffffff801e7e30) SFMASK=0x47700 (expected 0x47700) SYSENTER_CS=0x0 (expected 0x0) [read back from the MSRs after the kernel wrote them]: as intended = true [read by the AP]
 [INFO] cpu-state: ap 1 left the trampoline with EFER=0xd00, EFER.NXE=1 (expected 1) [read by the AP before it copied the BSP]
 [INFO] cpu-state: ap 1 CR0=0x80010033 CR4=0x668 EFER=0xd01 matches the BSP
 [INFO] cpu-state: 1 started AP(s) match the BSP's CR0, CR4 and EFER
