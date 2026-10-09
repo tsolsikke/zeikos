@@ -243,6 +243,7 @@ common::text::tests::the_first_nonblank_skips_spaces_and_tabs
 common::text::tests::the_line_end_is_the_last_character_not_the_last_byte
 common::text::tests::wide_characters_take_two_cells
 common::time::tests::a_partial_tick_rounds_up_so_the_sleep_is_never_short
+common::time::tests::durations_too_long_for_the_tick_count_are_clamped
 common::time::tests::out_of_range_values_are_refused
 common::time::tests::ticks_become_seconds_and_nanos
 common::time::tests::whole_seconds_become_exact_ticks

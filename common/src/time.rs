@@ -30,15 +30,21 @@ pub fn timespec_from_ticks(ticks: u64, hz: u64) -> (u64, u64) {
 /// # 範囲
 ///
 /// **秒が負、またはナノ秒が 0 未満か `NANOS_PER_SECOND` 以上なら範囲の外である**
-/// （Linux の `nanosleep(2)` が `EINVAL` を返す条件）。**掛け算が溢れる長さも範囲の外にする。**
+/// （Linux の `nanosleep(2)` が `EINVAL` を返す条件。`timespec64_valid`）。
+///
+/// # 大きすぎる長さは切り詰める
+///
+/// **ティック数が `u64` に収まらない長さは、`u64::MAX`（事実上いつまでも）に切り詰める**（2026-10-09）。Linux は、
+/// 範囲の内の大きすぎる秒を `KTIME_MAX` に切り詰めて眠る（`timespec64_to_ktime`）。**以前は掛け算があふれる長さを
+/// 範囲の外として `EINVAL` にしていた**——100 Hz では、秒が約 1.8 × 10^17 を越えると Linux と答えが違った。
 pub fn ticks_for_duration(seconds: i64, nanos: i64, hz: u64) -> Result<u64, InvalidTimespec> {
     if seconds < 0 || nanos < 0 || nanos as u64 >= NANOS_PER_SECOND {
         return Err(InvalidTimespec);
     }
     let nanos_per_tick = NANOS_PER_SECOND / hz;
-    let whole = (seconds as u64).checked_mul(hz).ok_or(InvalidTimespec)?;
+    let whole = (seconds as u64).saturating_mul(hz);
     let partial = (nanos as u64).div_ceil(nanos_per_tick);
-    whole.checked_add(partial).ok_or(InvalidTimespec)
+    Ok(whole.saturating_add(partial))
 }
 
 #[cfg(test)]
@@ -74,6 +80,24 @@ mod tests {
             ticks_for_duration(0, NANOS_PER_SECOND as i64, 100),
             Err(InvalidTimespec)
         );
-        assert_eq!(ticks_for_duration(i64::MAX, 0, 100), Err(InvalidTimespec));
+    }
+
+    /// **大きすぎる長さは `-EINVAL` にせず、`u64::MAX` に切り詰める**（2026-10-09。Linux の `KTIME_MAX`）。掛け算の
+    /// あふれと、足し算のあふれの両方。あふれない最大の秒は、そのまま換算する。
+    #[test]
+    fn durations_too_long_for_the_tick_count_are_clamped() {
+        assert_eq!(ticks_for_duration(i64::MAX, 0, 100), Ok(u64::MAX));
+        assert_eq!(ticks_for_duration(i64::MAX, 999_999_999, 100), Ok(u64::MAX));
+        let largest = (u64::MAX / 100) as i64;
+        assert_eq!(
+            ticks_for_duration(largest, 0, 100),
+            Ok(largest as u64 * 100)
+        );
+        assert_eq!(ticks_for_duration(largest + 1, 0, 100), Ok(u64::MAX));
+        // 掛け算はあふれず、端数の足し算であふれる形。
+        assert_eq!(ticks_for_duration(largest, 999_999_999, 100), Ok(u64::MAX));
+        // 負の秒と範囲の外のナノ秒は、大きさによらず `-EINVAL` のまま。
+        assert_eq!(ticks_for_duration(i64::MIN, 0, 100), Err(InvalidTimespec));
+        assert_eq!(ticks_for_duration(i64::MAX, -1, 100), Err(InvalidTimespec));
     }
 }
