@@ -120,6 +120,9 @@ pub enum MapError {
     Overlap,
     /// 範囲の全部が写像で覆われていない（`mprotect`。Linux は `-ENOMEM`）。
     NotMapped,
+    /// 上下に伸びる印（`mprotect` の `PROT_GROWSDOWN`・`PROT_GROWSUP`）を、そう伸びないマッピングへ求めた（[`MemoryMap::grown_start`]）。
+    /// `-EINVAL`。
+    NotGrowable,
 }
 
 /// [`MemoryMap::release_range`] が返す、外した断片の入れ物。
@@ -452,6 +455,45 @@ impl MemoryMap {
             }
         }
         Ok(changed)
+    }
+
+    /// `mprotect` に上下に伸びる印が付いたときの、範囲の始まり（2026-10-10。純粋な論理。Linux の `do_mprotect_pkey`）。
+    /// `[start, end)` に掛かるマッピングのうち、いちばん低いものを見る。**見張りのページは数えない**（Linux では、スタックの下の
+    /// 隙間はマッピングではない）。
+    ///
+    /// - 掛かるマッピングが無ければ `NotMapped`（`-ENOMEM`）。
+    /// - 下へ伸びる印（`grows_down`）: そのマッピングがスタックなら、その始まりを返す（範囲をマッピングの先頭まで広げる。Linux で
+    ///   `VM_GROWSDOWN` を持つのはメインのスタックで、ZeikOS ではスタックのマッピングがそれに当たる）。スタックでなければ
+    ///   `NotGrowable`（`-EINVAL`）。
+    /// - 上へ伸びる印: そのマッピングが `start` より上から始まれば `NotMapped`、そうでなければ `NotGrowable`。**上へ伸びるマッピングは
+    ///   無い**（x86 の Linux にも `VM_GROWSUP` のマッピングは無い）ので、`Ok` は返さない。
+    ///
+    /// マッピングを分けた後は、分けた断片の先頭までしか広げない（Linux も、分かれたマッピングのうち範囲に掛かる最初のものの先頭まで
+    /// である）。
+    pub fn grown_start(&self, start: u64, end: u64, grows_down: bool) -> Result<u64, MapError> {
+        if !self.active {
+            return Err(MapError::NotActive);
+        }
+        let Some(lowest) = self
+            .entries
+            .iter()
+            .flatten()
+            .filter(|m| m.kind != MappingKind::Guard && m.overlaps(start, end))
+            .min_by_key(|m| m.start)
+        else {
+            return Err(MapError::NotMapped);
+        };
+        if grows_down {
+            if lowest.kind == MappingKind::Stack {
+                Ok(lowest.start)
+            } else {
+                Err(MapError::NotGrowable)
+            }
+        } else if lowest.start > start {
+            Err(MapError::NotMapped)
+        } else {
+            Err(MapError::NotGrowable)
+        }
     }
 
     /// `start` から `bytes` の範囲に、写像が 1 つでも掛かっているか。
@@ -818,6 +860,64 @@ mod tests {
                 &mut out
             ),
             Ok(0)
+        );
+    }
+
+    /// `mprotect` の上下に伸びる印（2026-10-10）。下へ伸びる印は、範囲に掛かるいちばん低いマッピングがスタックなら、その先頭まで
+    /// 広げる。スタックでなければ断り、掛かるマッピングが無ければ `NotMapped`。上へ伸びる印は、いつも断る。見張りのページは数えない。
+    #[test]
+    fn growing_protection_extends_only_to_the_start_of_the_stack() {
+        let mut map = active();
+        let anonymous = map
+            .reserve(2 * PAGE_SIZE, MappingKind::Anonymous, true, true)
+            .unwrap();
+        let guard = BASE + 0x100000;
+        let stack = guard + PAGE_SIZE;
+        map.register(guard, stack, MappingKind::Guard, false, false)
+            .unwrap();
+        map.register(stack, stack + 4 * PAGE_SIZE, MappingKind::Stack, true, true)
+            .unwrap();
+        let top_page = stack + 3 * PAGE_SIZE;
+        // スタックの上のページから: スタックの先頭まで広がる。見張りのページから始まる範囲も、スタックの先頭からになる。
+        assert_eq!(
+            map.grown_start(top_page, top_page + PAGE_SIZE, true),
+            Ok(stack)
+        );
+        assert_eq!(map.grown_start(guard, stack + PAGE_SIZE, true), Ok(stack));
+        // スタックでないマッピングには、下へも上へも伸ばさない。
+        assert_eq!(
+            map.grown_start(anonymous + PAGE_SIZE, anonymous + 2 * PAGE_SIZE, true),
+            Err(MapError::NotGrowable)
+        );
+        assert_eq!(
+            map.grown_start(anonymous, anonymous + PAGE_SIZE, false),
+            Err(MapError::NotGrowable)
+        );
+        // 上へ伸びる印は、スタックにも断る。範囲の始まりにマッピングが無ければ NotMapped（Linux の順）。
+        assert_eq!(
+            map.grown_start(top_page, top_page + PAGE_SIZE, false),
+            Err(MapError::NotGrowable)
+        );
+        assert_eq!(
+            map.grown_start(guard, stack + PAGE_SIZE, false),
+            Err(MapError::NotMapped)
+        );
+        // 何も掛からない範囲は NotMapped。
+        assert_eq!(
+            map.grown_start(guard - PAGE_SIZE, guard, true),
+            Err(MapError::NotMapped)
+        );
+        // スタックを分けた後は、範囲に掛かる断片の先頭まで。
+        let mut out: Released = [None; MAX_MAPPINGS];
+        map.change_protection(stack, 2 * PAGE_SIZE, false, true, &mut out)
+            .unwrap();
+        assert_eq!(
+            map.grown_start(top_page, top_page + PAGE_SIZE, true),
+            Ok(stack + 2 * PAGE_SIZE)
+        );
+        assert_eq!(
+            map.grown_start(stack + PAGE_SIZE, stack + 2 * PAGE_SIZE, true),
+            Ok(stack)
         );
     }
 

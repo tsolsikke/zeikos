@@ -160,6 +160,9 @@
 //!   いない番地と、`PROT_GROWSDOWN|PROT_GROWSUP` で `-EINVAL` を返さなかった（2026-10-09。Linux と同じ順序）
 //! - `127` `prot` に知らないビット（0x10）を立てた `mprotect` が `-EINVAL` を返さなかったか、長さ 0 なら知らないビットでも
 //!   0、`PROT_SEM` を足した `PROT_READ|PROT_WRITE` は 0 を返さなかった（2026-10-09。Linux の `arch_validate_prot`）
+//! - `128` 無名のページへの `PROT_GROWSDOWN` と `PROT_GROWSUP` が `-EINVAL` を（外した後の `PROT_GROWSDOWN` は `-ENOMEM` を）
+//!   返さなかったか、スタックへの `PROT_GROWSDOWN` が範囲をスタックのマッピングの先頭まで広げなかったか、スタックへの
+//!   `PROT_READ|PROT_WRITE|PROT_GROWSDOWN` が 0 を返さなかった（2026-10-10。Linux の `do_mprotect_pkey`）
 //! - `116` `lseek` の `SEEK_END`・`SEEK_CUR` が期待の位置を返さなかったか、負の位置が `-EINVAL` を返さなかった
 //! - `117` `events` が 0 の `poll`（fd 0・1・2）が 0 を返さなかったか、閉じた fd で 1 と `POLLNVAL` を返さなかった
 //! - `118` `getpid`・`gettid` が 1 を返さなかったか、`madvise` が 0（境界の外は `-EINVAL`）を返さなかったか、`tkill` が
@@ -207,6 +210,9 @@
 
 /// 検証用 probe の番号（`ZEIKOS_PRIVATE_BASE`）。
 const PROBE_NUMBER: u32 = 0x1000;
+/// 範囲を読めるかだけを答える番号（`ZEIKOS_PRIVATE_BASE + 1`。`SYS_CHECK_PTR`）。読めれば 0、読めなければ `-EFAULT`。
+/// バイトは読まない。
+const SYS_CHECK_PTR: u32 = 0x1001;
 /// probe が返す既知の値。
 const PROBE_RETURN: u32 = 0x00C0_FFEE;
 /// probe へ渡す 6 引数。**レジスタごとに区別できる値である。**
@@ -2616,6 +2622,120 @@ core::arch::global_asm!(
     "  mov edi, 127",
     "  test rax, rax",
     "  jne 7f",
+    // 128: mprotect の上下に伸びる印（2026-10-10。Linux の do_mprotect_pkey）。無名の 1 ページへの PROT_READ|PROT_GROWSDOWN
+    //      と PROT_READ|PROT_GROWSUP は -EINVAL、外した後の PROT_READ|PROT_GROWSDOWN は -ENOMEM。スタックへの
+    //      PROT_GROWSDOWN は、範囲に掛かるマッピングの先頭まで広がる——いちばん下から 2 ページ目に PROT_GROWSDOWN だけ（PROT_NONE）を
+    //      打つと、いちばん下のページも読めなくなる。読み書きへ戻した後、rsp のページへの PROT_READ|PROT_WRITE|PROT_GROWSDOWN
+    //      は 0。**スタックへは書かない**（いちばん下を書くと、スタックの使用量の判定行が 100% になる）——いちばん下は、rsp の
+    //      ページから下へ、SYS_CHECK_PTR（読めるかだけを答え、バイトは読まない）が 0 を返す間たどって探す。PROT_NONE は
+    //      フレームを持ったままなので、戻せば中身も戻る。
+    //      r13 = スタックのいちばん下のページ、r14 = たどる回数の残り、r15 = rsp のページ。
+    "  mov eax, {sys_mmap}",
+    "  xor edi, edi",
+    "  mov esi, 4096",
+    "  mov edx, 3",
+    "  mov r10d, 0x22",
+    "  mov r8, -1",
+    "  xor r9d, r9d",
+    "  int 0x80",
+    "  mov edi, 128",
+    "  test rax, rax",
+    "  js 7f",
+    "  mov r12, rax",
+    "  mov eax, {sys_mprotect}",
+    "  mov rdi, r12",
+    "  mov esi, 4096",
+    "  mov edx, 0x01000001",
+    "  int 0x80",
+    "  mov edi, 128",
+    "  cmp rax, {minus_einval}",
+    "  jne 7f",
+    "  mov eax, {sys_mprotect}",
+    "  mov rdi, r12",
+    "  mov esi, 4096",
+    "  mov edx, 0x02000001",
+    "  int 0x80",
+    "  mov edi, 128",
+    "  cmp rax, {minus_einval}",
+    "  jne 7f",
+    "  mov eax, {sys_munmap}",
+    "  mov rdi, r12",
+    "  mov esi, 4096",
+    "  int 0x80",
+    "  mov edi, 128",
+    "  test rax, rax",
+    "  jne 7f",
+    "  mov eax, {sys_mprotect}",
+    "  mov rdi, r12",
+    "  mov esi, 4096",
+    "  mov edx, 0x01000001",
+    "  int 0x80",
+    "  mov edi, 128",
+    "  cmp rax, {minus_enomem}",
+    "  jne 7f",
+    "  mov r15, rsp",
+    "  and r15, -4096",
+    "  mov r13, r15",
+    "  mov r14d, 128",
+    "30:",
+    "  mov eax, {sys_check_ptr}",
+    "  lea rdi, [r13 - 4096]",
+    "  mov esi, 1",
+    "  int 0x80",
+    "  test rax, rax",
+    "  jne 31f",
+    "  sub r13, 4096",
+    "  dec r14d",
+    "  jnz 30b",
+    "  mov edi, 128",
+    "  jmp 7f",
+    "31:",
+    "  mov edi, 128",
+    "  cmp rax, {minus_efault}",
+    "  jne 7f",
+    // いちばん下の 2 ページは、rsp のページより下に在ること。
+    "  lea rax, [r13 + 8192]",
+    "  cmp rax, r15",
+    "  ja 7f",
+    "  mov eax, {sys_mprotect}",
+    "  lea rdi, [r13 + 4096]",
+    "  mov esi, 4096",
+    "  mov edx, 0x01000000",
+    "  int 0x80",
+    "  mov edi, 128",
+    "  test rax, rax",
+    "  jne 7f",
+    "  mov eax, {sys_check_ptr}",
+    "  mov rdi, r13",
+    "  mov esi, 1",
+    "  int 0x80",
+    "  mov edi, 128",
+    "  cmp rax, {minus_efault}",
+    "  jne 7f",
+    "  mov eax, {sys_mprotect}",
+    "  mov rdi, r13",
+    "  mov esi, 8192",
+    "  mov edx, 3",
+    "  int 0x80",
+    "  mov edi, 128",
+    "  test rax, rax",
+    "  jne 7f",
+    "  mov eax, {sys_check_ptr}",
+    "  mov rdi, r13",
+    "  mov esi, 8192",
+    "  int 0x80",
+    "  mov edi, 128",
+    "  test rax, rax",
+    "  jne 7f",
+    // rsp のページへの PROT_READ|PROT_WRITE|PROT_GROWSDOWN は 0（上の断片の先頭まで広がる。どのページも読み書きのまま）。
+    "  mov eax, {sys_mprotect}",
+    "  mov rdi, r15",
+    "  mov esi, 4096",
+    "  mov edx, 0x01000003",
+    "  int 0x80",
+    "  mov edi, 128",
+    "  test rax, rax",
+    "  jne 7f",
     // **もう一度 MESSAGE を送る。** カーネル側の判定行が突き合わせるのは最後の `write`（`writev` も通る）なので、
     // "ok\n" で上書きしたままにしない。
     "  mov eax, {sys_write}",
@@ -3132,6 +3252,7 @@ core::arch::global_asm!(
     sys_socket = const SYS_SOCKET,
     sys_connect = const SYS_CONNECT,
     sys_clock_gettime = const SYS_CLOCK_GETTIME,
+    sys_check_ptr = const SYS_CHECK_PTR,
     sys_clock_nanosleep = const 230u32,
     clock_monotonic = const CLOCK_MONOTONIC,
     af_unix = const 1,

@@ -9485,6 +9485,8 @@ const SYSCALL_TEST_STATUS: &[(u64, &str)] = &[
     (126, "mprotect with length 0 did not return 0 at an aligned address (unmapped, or with PROT_EXEC), or did not return -EINVAL at an unaligned address or with both PROT_GROWSDOWN and PROT_GROWSUP"),
     // 127: mprotect の prot の知らないビット（2026-10-09）。
     (127, "mprotect with an unknown prot bit did not return -EINVAL, or with length 0 did not return 0, or with PROT_SEM added did not return 0"),
+    // 128: mprotect の上下に伸びる印（2026-10-10）。
+    (128, "mprotect with PROT_GROWSDOWN or PROT_GROWSUP on an anonymous page did not return -EINVAL (or -ENOMEM once unmapped), or PROT_GROWSDOWN on the stack did not extend the range down to the start of the stack mapping, or PROT_READ|PROT_WRITE|PROT_GROWSDOWN on the stack did not return 0"),
     (116, "lseek with SEEK_END and SEEK_CUR did not return the expected positions, or a negative target did not return -EINVAL"),
     (117, "poll with events=0 on fds 0, 1 and 2 did not return 0, or on a closed fd did not return 1 with POLLNVAL"),
     (118, "getpid/gettid did not return 1, madvise did not return 0 (or -EINVAL off a page boundary), or tkill did not refuse another tid, accept signal 0, and ignore SIGCHLD and an ignored SIGUSR1"),

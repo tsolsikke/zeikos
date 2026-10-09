@@ -2287,7 +2287,10 @@ fn errno_for_map(error: crate::mappings::MapError) -> u64 {
     use crate::mappings::MapError;
     match error {
         MapError::NotActive | MapError::NoRoom | MapError::TableFull => (-ENOMEM) as u64,
-        MapError::BadRange | MapError::PartOfAMapping | MapError::NotRemovable => (-EINVAL) as u64,
+        MapError::BadRange
+        | MapError::PartOfAMapping
+        | MapError::NotRemovable
+        | MapError::NotGrowable => (-EINVAL) as u64,
         MapError::Overlap => (-EEXIST) as u64,
         // Linux の `mprotect` は、範囲に写していない所が在れば `-ENOMEM` を返す。
         MapError::NotMapped => (-ENOMEM) as u64,
@@ -2505,6 +2508,10 @@ unsafe fn munmap_from_ring3(
 ///   `PROT_GROWSDOWN` と `PROT_GROWSUP` を両方立てた `prot` は、その前に `-EINVAL`（Linux と同じ）。
 /// - `prot` の知らないビットは、あふれの確かめの後で `-EINVAL`（2026-10-09。Linux の `arch_validate_prot`）。`PROT_SEM` は受ける。
 /// - `len` はページへ切り上げる。範囲の全部が写像で覆われていなければ `-ENOMEM`（Linux と同じ）。
+/// - `PROT_GROWSDOWN`（2026-10-10。Linux の `do_mprotect_pkey`）: 範囲に掛かるいちばん低いマッピングがスタックなら、範囲の始まりを
+///   そのマッピングの先頭まで広げる（Linux のメインのスタックは `VM_GROWSDOWN` で、glibc は実行できるスタックを作るときにこの形で
+///   呼ぶ）。スタックでないマッピングなら `-EINVAL`、掛かるマッピングが無ければ `-ENOMEM`。`PROT_GROWSUP` は、範囲の始まりにマッピングが
+///   在れば `-EINVAL`、無ければ `-ENOMEM`（上へ伸びるマッピングは無い。x86 の Linux も同じ）。
 /// - `PROT_EXEC` は `-EPERM`——**書けるページを実行できるページにはしない**（W^X。`ADR-0071`。JIT は目指さない）。
 ///   **実行できるページ（`NX` が 0）を書ける形にする求めも `-EPERM`**——範囲の一部でもそのページが在れば、何も変えずに
 ///   断る。`PROT_EXEC` を付けない `mprotect` は、ページを実行できない形にする（Linux と同じ。実行を外す向きだけを許す）。
@@ -2569,6 +2576,19 @@ unsafe fn mprotect_from_ring3(
         return (-ENOMEM) as u64;
     };
     let allocator: &mut crate::frame_allocator::FrameAllocator = &mut loan;
+    // **上下に伸びる印**（2026-10-10。Linux の `do_mprotect_pkey`）。マッピングテーブルを読むので、借りた後に見る。権限を
+    // 変える確かめ（W^X）より前である（Linux も、マッピングを探して範囲を広げてから、マッピングごとの権限を見る）。上限の確かめを
+    // 通っているので、末尾の足し算はあふれない。広げても末尾は変わらない。
+    let (addr, bytes) = if prot & (PROT_GROWSDOWN | PROT_GROWSUP) != 0 {
+        let end = addr + bytes;
+        let grows_down = prot & PROT_GROWSDOWN != 0;
+        match crate::mappings::with_current(|map| map.grown_start(addr, end, grows_down)) {
+            Ok(start) => (start, end - start),
+            Err(error) => return errno_for_map(error),
+        }
+    } else {
+        (addr, bytes)
+    };
     // SAFETY: 遠征の中なので CR3 はこのプロセスの表である。
     let mut table = unsafe { ActivePageTable::current(direct_map) };
     // 破壊テスト (2026-10-06, mprotect-writable-code-test): 実行できるページを書ける形にする求めを断らない。
