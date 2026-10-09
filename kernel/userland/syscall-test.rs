@@ -71,7 +71,7 @@
 //! - `63` `brk` で 2 ページ伸ばせなかった
 //! - `64` 伸ばした 1 ページ目の末尾が読み書きできなかった
 //! - `65` 伸ばした 2 ページ目の末尾が読み書きできなかった
-//! - `66` 上限を越える要求が `-ENOMEM` で断られなかった
+//! - `66` 上限を越える要求に、今の上端（動かない）が返らなかったか、その後の `brk(0)` が動いていた（2026-10-09 から。Linux の生の `brk` の形。以前は `-ENOMEM` を待っていた）
 //! - `67` `brk` で元へ縮められなかった
 //! - `68` `spawn(path, argv, NULL)` が `-EFAULT` を返さなかった（f-2）
 //! - `35` `auxv` の終端（`AT_NULL`）が無かった
@@ -549,11 +549,20 @@ core::arch::global_asm!(
     "  cmp dword ptr [r12 + {brk_last}], {brk_pattern}",
     "  mov edi, 65",
     "  jne 9f",
-    // **上限を越える要求が `-ENOMEM` で断られること。**
+    // **上限を越える要求は断られ、今の上端が返ること**（2026-10-09。Linux の生の `brk` は、失敗すると `-errno` ではなく
+    // 今の上端を返す）。**その後の問い合わせでも、上端が動いていないこと。**
     "  mov edi, {brk_too_far}",
     "  mov eax, {brk}",
     "  int 0x80",
-    "  cmp eax, {minus_enomem}",
+    "  lea rdx, [r12 + {brk_growth}]",
+    "  cmp rax, rdx",
+    "  mov edi, 66",
+    "  jne 9f",
+    "  xor edi, edi",
+    "  mov eax, {brk}",
+    "  int 0x80",
+    "  lea rdx, [r12 + {brk_growth}]",
+    "  cmp rax, rdx",
     "  mov edi, 66",
     "  jne 9f",
     // **元へ縮められること。** **返ったかどうかはカーネルが数える**

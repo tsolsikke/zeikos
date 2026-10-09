@@ -9403,7 +9403,7 @@ const SYSCALL_TEST_STATUS: &[(u64, &str)] = &[
     (63, "brk could not grow the heap by two pages"),
     (64, "the end of the first new page was not writable"),
     (65, "the end of the second new page was not writable"),
-    (66, "a request past the limit was not refused with -ENOMEM"),
+    (66, "a brk past the limit did not return the current, unmoved break"),
     (67, "brk could not shrink the heap back"),
     // **68 は 2 つの検算が使っている**（`spawn` の `envp` と、共有メモリでない fd の `mmap`）。
     (

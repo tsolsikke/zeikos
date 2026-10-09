@@ -469,7 +469,7 @@ impl MemoryMap {
     /// `brk` のヒープの終わりを動かす（純粋な論理）。
     ///
     /// ヒープの欄（[`MappingKind::Heap`]）のうち、いちばん高い終わりを `end` へ動かす。伸ばす先にほかの写像が在れば
-    /// `Overlap`（`brk` は `-ENOMEM` にする）。縮めて欄が空になれば消す。欄が無ければ `[start, end)` を作る（`start == end`
+    /// `Overlap`（`brk` は伸ばさずに今の上端を返す）。縮めて欄が空になれば消す。欄が無ければ `[start, end)` を作る（`start == end`
     /// なら作らない）。**ヒープの途中が `MAP_FIXED` で置き換えられていても動く**——残った断片のうち、いちばん高いものを
     /// 伸び縮みさせる。
     pub fn set_heap_end(&mut self, start: u64, end: u64) -> Result<(), MapError> {

@@ -48,7 +48,7 @@ core::arch::global_asm!(
     "  mov eax, {sys_brk}",
     "  mov rdi, {new_break}",
     "  int 0x80",
-    // 断られた（`-errno`）なら、ここで止まる。
+    // 断られた（今の上端が返る。Linux の生の `brk` の形）なら、ここで止まる。
     "  cmp rax, {new_break}",
     "  jne 2f",
     // 跳ぶ先は、伸ばした範囲の最後のページの先頭。実行できてしまったときの受け皿を、跳ぶ先に書く（`brk` のページは書ける）。

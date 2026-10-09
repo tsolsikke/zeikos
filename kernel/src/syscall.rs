@@ -4399,11 +4399,12 @@ fn errno_for_alloc(error: common::ext2::AllocError) -> i64 {
 /// **Linux と同じ形にする**——**0 を渡すと、いまの上端が返る。**
 /// **別の番号を用意しない**（`sbrk` は libc の側の話である）。
 ///
-/// # 返すのは新しい上端である
+/// # 返すのは上端である。失敗しても `-errno` は返さない
 ///
-/// **失敗しても `-errno` を返す**（**Linux は失敗すると古い上端を返す**が、
-/// **こちらは `-errno` にする**——**「動かなかった」と「そこまでしか
-/// 伸びなかった」を、呼ぶ側が区別できる形にする**）。
+/// **成功すれば新しい上端を、失敗すれば今の（動かなかった）上端を返す**（2026-10-09。Linux の生の `brk` の syscall と同じ。
+/// `brk(2)` の man page の「C library/kernel differences」と、`mm/mmap.c` の `brk` が失敗の道で `mm->brk` を返すこと）。
+/// 呼ぶ側は、求めた値と違うことで失敗を知る（musl も、この ZeikOS の libc と `userlib` も、その形で見る）。
+/// **以前は `-ENOMEM` を返していた。**
 ///
 /// # 上げればマップする。下げれば外して返す
 ///
@@ -4412,7 +4413,7 @@ fn errno_for_alloc(error: common::ext2::AllocError) -> i64 {
 ///
 /// # 上限で断る
 ///
-/// **ヒープの上端（配置ごとに違う。`crate::userland::ProcessLayout` の `heap_limit`）を越えたら `-ENOMEM`。**
+/// **ヒープの上端（配置ごとに違う。`crate::userland::ProcessLayout` の `heap_limit`）を越えたら、動かさずに今の上端を返す。**
 /// **ガードページは置かない**——**スタックの下端そのものが境界なので、
 /// 越えなければ衝突しない**（ADR-0044 の決定 4）。
 ///
@@ -4423,11 +4424,12 @@ fn errno_for_alloc(error: common::ext2::AllocError) -> i64 {
 /// **したがって [`crate::arch::x86_64::ActivePageTable::current`] が
 /// 指すのはユーザーの表である。** **新しい経路を作らない**（ADR-0044）。
 ///
-/// # 途中で足りなくなったら、そこまでで止める
+/// # 途中で足りなくなったら、全部を巻き戻す
 ///
-/// **マップできた分は残す。** **`-ENOMEM` を返すが、上端はそこまで進んでいる**
-/// ——**巻き戻すと、巻き戻しの途中で失敗したときに何も言えなくなる。**
-/// **呼ぶ側は `brk(0)` で確かめられる。**
+/// **この呼び出しでマップした分を外してフレームを返し、マッピングテーブルのヒープの欄も元へ戻して、今の上端を返す**
+/// （2026-10-09。Linux の `brk` は全部か何もしないかである）。巻き戻しは外して返すだけで、新しく取らないので、途中で
+/// 失敗しない（中間テーブルは残す。破棄が集め、空間の会計にも足してある）。**以前は、マップできた所まで上端を進めて
+/// `-ENOMEM` を返していた。**
 ///
 /// # Safety
 ///
@@ -4451,26 +4453,28 @@ unsafe fn sys_brk(
         })
     };
     // **0 は問い合わせである。** 借りずに答える（読んだらすぐ返すので、眠る前に読んだ値を後で使う形にならない）。
+    // **イメージを読む前（ヒープが無い）は、上端は 0 である**——ここへ来るのは異常だが、Linux と同じに `-errno` は返さない。
     if requested == 0 {
         let (mapped, current, _, _) = read_heap();
-        // **イメージを読む前には答えられない。** ここへ来るのは異常である。
-        return if mapped { current } else { (-ENOMEM) as u64 };
+        return if mapped { current } else { 0 };
     }
     // **ヒープの状態を読む前に借りる**（2026-10-08。[`borrow_allocator`]）。借りられずに眠ると BKL を手放すので、ヒープと
     // マッピングテーブルは、借りて（起きて）から読む。以前は表のヒープの欄を動かした後で借りていて、借りられないと、表の
     // ヒープだけが伸び縮みしたまま失敗を返していた。
+    // 借りられずに諦めたときも、今の上端を返す（何も変えていない。読んだらすぐ返す）。
     let Some(mut loan) = borrow_allocator(bkl) else {
-        return (-ENOMEM) as u64;
+        let (mapped, current, _, _) = read_heap();
+        return if mapped { current } else { 0 };
     };
     let allocator: &mut crate::frame_allocator::FrameAllocator = &mut loan;
     let (mapped, current, start, limit) = read_heap();
     if !mapped {
-        // **イメージを読む前には答えられない。** ここへ来るのは異常である。
-        return (-ENOMEM) as u64;
+        // **イメージを読む前には、上端は 0 である。** ここへ来るのは異常である。
+        return 0;
     }
-    // **イメージの末尾より下げられない。** **下はイメージとスタックの外である。**
+    // **イメージの末尾より下げられない。** **下はイメージとスタックの外である。** 動かさずに今の上端を返す。
     if requested < start || requested > limit {
-        return (-ENOMEM) as u64;
+        return current;
     }
 
     const PAGE_SIZE: u64 = 4096;
@@ -4482,15 +4486,15 @@ unsafe fn sys_brk(
     }
 
     // **写像の表のヒープの欄を、ページを写す前に動かす**（2026-10-06。`crate::mappings`）。伸ばす先に無名の写像が在れば、ここで
-    // `-ENOMEM`（Linux も、`brk` の先が塞がっていれば伸ばせない）。
+    // 断って今の上端を返す（Linux も、`brk` の先が塞がっていれば伸ばせない）。
     if crate::mappings::with_current(|map| map.set_heap_end(start, want)).is_err() {
-        return (-ENOMEM) as u64;
+        return current;
     }
     // SAFETY: 遠征の中なので CR3 はこのプロセスの表である。
     let mut table = unsafe { ActivePageTable::current(direct_map) };
     let attributes = PagePermissions::user_data();
 
-    let mut outcome = requested;
+    let mut grown = true;
     if want > have {
         // **伸ばす。** 1 ページずつマップする。
         // **取ったフレームを空間ごとの会計へ足す**（2026-10-03）。**葉と、境を越えて新しく取った中間表の両方を、
@@ -4499,11 +4503,17 @@ unsafe fn sys_brk(
         // `note_post_load_frames` の doc）。
         let free_before = allocator.free_frame_count();
         let mut page = have;
+        // この呼び出しで最初に写したページ。巻き戻しは、ここから上だけを外す（2026-10-09）。
+        let mut first_mapped: Option<u64> = None;
         while page < want {
             // 破壊テスト (brk-skip-shrink-test): 縮めたときに外さなかった葉の上を、伸ばすときは飛ばす。**壊すのは
             // 「上端だけ下がり、フレームは返らない」の形であって、伸ばし直せないことではない**——縮めて伸ばし直す
             // 検算（`syscall-test` の 67 と 105）を通し、`zi` の「返した数が釣り合う」判定まで届かせる（2026-10-06）。
+            // **飛ばすのは、この呼び出しで写し始める前の、`have` から続く前の部分だけ**（2026-10-09）。外さなかった葉は、
+            // 縮める前の上端までの続いた範囲で、前の部分に在る。写し始めた後の写っているページは飛ばさず、`map_4kib` が
+            // 断って巻き戻す——巻き戻しが、この呼び出しより前から在ったページを外さないためである。
             if cfg!(feature = "brk-skip-shrink-test")
+                && first_mapped.is_none()
                 && common::addr::VirtAddr::new(page)
                     .is_some_and(|virt| matches!(table.translate(virt), Ok(Some(_))))
             {
@@ -4511,12 +4521,12 @@ unsafe fn sys_brk(
                 continue;
             }
             let Some(frame) = allocator.allocate_frame() else {
-                outcome = (-ENOMEM) as u64;
+                grown = false;
                 break;
             };
             let Some(virt) = common::addr::VirtAddr::new(page) else {
                 let _ = allocator.deallocate_frame(frame);
-                outcome = (-ENOMEM) as u64;
+                grown = false;
                 break;
             };
             // **中身を 0 にしてからマップする。** **前の住人の中身をユーザーへ渡さない。**
@@ -4531,24 +4541,39 @@ unsafe fn sys_brk(
             // SAFETY: 稼働中の表へ、ユーザーの範囲をマップする。
             if unsafe { table.map_4kib(virt, frame, attributes, allocator) }.is_err() {
                 let _ = allocator.deallocate_frame(frame);
-                outcome = (-ENOMEM) as u64;
+                grown = false;
                 break;
             }
             crate::userland::with_current_heap(|heap| heap.note_taken());
+            first_mapped.get_or_insert(page);
             page += PAGE_SIZE;
         }
+        if !grown {
+            // **全部を巻き戻す**（2026-10-09。doc の「途中で足りなくなったら、全部を巻き戻す」）。この呼び出しでマップした
+            // `[first_mapped, page)` を外してフレームを返し（`brk` の会計の返した数にも足す）、表のヒープの欄を元の終わりへ
+            // 戻す。`first_mapped` より下は、この呼び出しより前から在ったページ（上の破壊テストが飛ばした前の部分）で、
+            // 外さない。縮める向きなので、表の欄はほかの写像と重ならない。
+            let from = first_mapped.unwrap_or(page);
+            let mut back = page;
+            while back > from {
+                back -= PAGE_SIZE;
+                if let Some(virt) = common::addr::VirtAddr::new(back) {
+                    // SAFETY: いまこの呼び出しで写したページを、稼働中の表から外し、フレームを返す。
+                    if let Ok(unmapped) = unsafe { table.unmap_4kib(virt) } {
+                        let _ = allocator.deallocate_frame(unmapped.frame);
+                        crate::userland::with_current_heap(|heap| heap.note_given());
+                    }
+                }
+            }
+            let _ = crate::mappings::with_current(|map| map.set_heap_end(start, have.max(start)));
+        }
+        // 空間の会計へ足すのは、巻き戻した後の差（中間テーブルの分だけが残る）。
         let taken = free_before.saturating_sub(allocator.free_frame_count());
         crate::userland::note_post_load_frames(taken as usize);
-        // **マップできた分までを上端にする**（doc の「そこまでで止める」）。
-        let reached = if outcome == requested {
-            requested
-        } else {
-            // **表のヒープの欄も、写せた所まで戻す**（2026-10-08）。表だけが `want` まで伸びていると、写っていない範囲を
-            // ヒープとして塞ぎ続ける。縮める向きなので、ほかの写像とは重ならない。
-            let _ = crate::mappings::with_current(|map| map.set_heap_end(start, page.max(start)));
-            page
-        };
-        crate::userland::with_current_heap(|heap| heap.set_break(reached));
+        if !grown {
+            return current;
+        }
+        crate::userland::with_current_heap(|heap| heap.set_break(requested));
     } else {
         // 破壊テスト (H-a, brk-skip-shrink-test): 下げる要求で外さない。
         // **上端だけ下がり、フレームは返らない。** **`brk(0)` は下がった値を
@@ -4588,7 +4613,7 @@ unsafe fn sys_brk(
         crate::userland::with_current_heap(|heap| heap.set_break(requested));
     }
 
-    outcome
+    requested
 }
 
 /// `lseek(fd, offset, whence)` の本体（DIR-1b）。
