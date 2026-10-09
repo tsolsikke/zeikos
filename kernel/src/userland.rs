@@ -91,7 +91,9 @@ pub struct ProcessLayout {
     pub heap_limit: u64,
     /// `mmap` が配る番地の始まり。
     pub mmap_base: u64,
-    /// `mmap` が配る番地の終わり（ここより上は配らない）。
+    /// `mmap` が配る番地の終わり。**範囲の終端で、この値そのものは含まない**（配る範囲の末尾がこの値に等しいのはよく、
+    /// 越えるのは断る。`crate::mappings::MemoryMap::reserve` の `end > limit`）。[`crate::arch::x86_64::USER_ADDRESS_LIMIT`] と
+    /// 同じ意味の値で、それを越えない（2026-10-09 に揃えた）。
     pub mmap_limit: u64,
 }
 
@@ -106,7 +108,10 @@ impl ProcessLayout {
         stack_guard: true,
         heap_limit: HEAP_LIMIT,
         mmap_base: crate::syscall::MMAP_BASE,
-        mmap_limit: 1 << 47,
+        // **ユーザーの番地の上限と同じ値**（どちらも範囲の終端で、その値を含まない）。以前は `1 << 47` で、上限より 1 ページ
+        // 上だった——最後のページ（`0x7fff_ffff_f000` から）を配りうる形だった（今の上限の大きさの要求では届かない）。
+        // `USER_ADDRESS_LIMIT - 4096` にすると、逆向きに 1 ページ狭くなる（意味を揃えずに値だけを合わせた形）。
+        mmap_limit: crate::arch::x86_64::USER_ADDRESS_LIMIT,
     };
 
     /// 位置独立の像（`ET_DYN`。静的 PIE）をずらす量。**決まった値である**（番地を毎回変えることは、していない）。
@@ -3504,5 +3509,42 @@ mod tests {
         // スタックの上端は、ユーザーの番地の上限より下で、ページの境界に在る。
         assert!(layout.stack_top <= 0x0000_7fff_ffff_f000);
         assert_eq!(layout.stack_top % 4096, 0);
+    }
+
+    /// **`mmap` の終わりは、どちらの配置でもユーザーの番地の上限を越えない**（2026-10-09）。上限と `mmap_limit` は、どちらも
+    /// 範囲の終端で、その値を含まない。上端に置いた小さな表で、末尾が上限ちょうどの範囲は配られ、1 ページでも越える範囲は
+    /// 配られないことを見る（大きな領域は取らない）。
+    #[test]
+    fn mmap_hands_out_ranges_up_to_the_user_address_limit_and_no_further() {
+        use crate::arch::x86_64::USER_ADDRESS_LIMIT;
+        use crate::mappings::{MapError, MappingKind, MemoryMap};
+        const PAGE: u64 = 4096;
+        let executable = super::ProcessLayout::for_kind(common::elf::ElfKind::Executable);
+        let pie = super::ProcessLayout::for_kind(common::elf::ElfKind::PositionIndependent);
+        assert_eq!(executable.mmap_limit, USER_ADDRESS_LIMIT);
+        assert!(pie.mmap_limit < USER_ADDRESS_LIMIT);
+        // 上限の 3 ページ下から配る表。2 ページ、1 ページで、末尾が上限ちょうどになる。
+        let mut map = MemoryMap::INACTIVE;
+        map.activate(executable.mmap_limit - 3 * PAGE, executable.mmap_limit);
+        assert_eq!(
+            map.reserve(2 * PAGE, MappingKind::Anonymous, true, true),
+            Ok(USER_ADDRESS_LIMIT - 3 * PAGE)
+        );
+        assert_eq!(
+            map.reserve(PAGE, MappingKind::Anonymous, true, true),
+            Ok(USER_ADDRESS_LIMIT - PAGE)
+        );
+        // 上限を越える 1 ページは配らない。
+        assert_eq!(
+            map.reserve(PAGE, MappingKind::Anonymous, true, true),
+            Err(MapError::NoRoom)
+        );
+        // 以前の値（`1 << 47`）なら、最後のページ（上限より上）を配っていた。
+        let mut old = MemoryMap::INACTIVE;
+        old.activate(USER_ADDRESS_LIMIT, 1 << 47);
+        assert_eq!(
+            old.reserve(PAGE, MappingKind::Anonymous, true, true),
+            Ok(USER_ADDRESS_LIMIT)
+        );
     }
 }

@@ -774,6 +774,7 @@ kernel::task::tests::the_state_array_stays_small_enough_for_the_switch_frame
 kernel::task::tests::uninitialized_slots_are_never_chosen
 kernel::task::tests::workers_come_before_the_ring3_task
 kernel::task::tests::workers_rotate
+kernel::userland::tests::mmap_hands_out_ranges_up_to_the_user_address_limit_and_no_further
 kernel::userland::tests::the_default_environment_carries_home
 kernel::userland::tests::the_executable_layout_has_a_four_page_stack_above_a_guard
 kernel::userland::tests::the_position_independent_layout_keeps_its_regions_apart

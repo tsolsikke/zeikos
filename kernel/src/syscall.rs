@@ -2730,6 +2730,8 @@ const USER_MAPPING_MIN: u64 = 0x1_0000;
 /// 命令の戻り先の確かめと同じ値）を越えるか（2026-10-07。`ADR-0082` の Addendum）。**`mmap(MAP_FIXED)`・`munmap`・
 /// `mprotect` の入口で見る**——実測で、`MAP_FIXED` が上限のページと上限をまたぐ範囲を写して書かせ、写像の無いカーネルの
 /// 番地にも「写した」と答えていた（写像の表は番地を見ず、ページテーブルの操作は上半分へも届く）。足し算があふれる形（末尾が 2^64 を越える）も越えたと扱う。
+/// **上限は範囲の終端で、その値を含まない**——末尾が上限ちょうどの範囲は越えていない（2026-10-09 に、`mmap` が配る範囲の
+/// 終わりと意味を揃えた。`USER_ADDRESS_LIMIT` の doc）。
 fn exceeds_user_limit(addr: u64, bytes: u64) -> bool {
     use crate::arch::x86_64::USER_ADDRESS_LIMIT;
     // 破壊テスト (2026-10-07, mmap-fixed-ignores-user-limit-test): 上限を見ない（直す前の形）。`syscall-test` が 121 番で止まる。
