@@ -5339,13 +5339,36 @@ fn sys_tkill(tid: u64, sig: u64) -> u64 {
 /// `readv`・`writev` の `iovcnt` の上限（Linux の `UIO_MAXIOV`）。越えれば `-EINVAL`。
 const UIO_MAXIOV: u64 = 1024;
 
+/// 1 回の `readv`・`writev` で動かすバイトの上限（Linux の `MAX_RW_COUNT` = `INT_MAX & PAGE_MASK`）。合計がこれを越える
+/// 分は、Linux と同じに切り詰める（`-EINVAL` にはしない）。
+const MAX_RW_COUNT: u64 = 0x7fff_f000;
+
+/// `readv`・`writev` が、I/O の前に取り込んだ `struct iovec` の写し（`iov_base`・`iov_len`。2026-10-09）。**スロットごとに
+/// 1 つ**——1 つのスロットで同時に走る `readv`・`writev` は 1 本だけである（入れ子の `spawn` の親は `spawn` の中で待つ）。
+/// 遠征スタックに置かないのは、1,024 本で 16 KiB になり、ガードページ 1 枚の前提（スタック上の 1 つの物は 4,096 バイト
+/// 以下）を越えるためである。
+/// `Locked` は割り込みを禁止するので、ユーザーの番地を読む間は持たない（1 本ずつ取って置く）。
+static IOV_COPIES: [common::critical::Locked<[(u64, u64); UIO_MAXIOV as usize]>;
+    crate::arch::x86_64::USER_TASK_SLOTS] =
+    [const { common::critical::Locked::new([(0, 0); UIO_MAXIOV as usize]) };
+        crate::arch::x86_64::USER_TASK_SLOTS];
+
 /// `readv(fd, iov, iovcnt)`・`writev(fd, iov, iovcnt)` の本体（2026-10-06。musl の stdio が打つ）。
 ///
-/// **`struct iovec`（`iov_base`・`iov_len`。16 バイト）を 1 本ずつユーザーの番地から読み、`read`・`write` を 1 本ずつ
-/// 呼ぶ**（控えの配列を遠征スタックに置かない。`iov_len` が 0 の本は飛ばす——musl は `writev` の 2 本目に `NULL`/0 を
-/// 渡すことが在る）。返すのは、動いたバイトの合計。**途中の本で失敗したら、それまでに動いた分が在ればその数を、
-/// 無ければその失敗を返す**（Linux と同じ）。**`readv` は、1 本が短く終わったら（要らない分を待たないため）、または
-/// 0（終わり）なら、そこで止める。**
+/// **I/O の前に、`struct iovec`（`iov_base`・`iov_len`。16 バイト）の配列を全部カーネルへ取り込み、確かめを済ませる**
+/// （2026-10-09。Linux の `import_iovec` と同じ順序）。
+/// 1. 1 本ずつ読み（読めなければ `-EFAULT`）、`iov_len` を符号つきで見て負なら（`SSIZE_MAX` を越えるなら）`-EINVAL`。
+///    Linux の `copy_iovec_from_user`。
+/// 2. 1 本ずつ、範囲がユーザーの番地に収まるかを見て（`access_ok`）、収まらなければ `-EFAULT`。合計が [`MAX_RW_COUNT`] を
+///    越える分は切り詰める（足し算はあふれない）。Linux の `__import_iovec`。
+/// 3. 取り込んだ写しで、`read`・`write` を 1 本ずつ呼ぶ（`iov_len` が 0 の本は飛ばす——musl は `writev` の 2 本目に
+///    `NULL`/0 を渡すことが在る）。
+///
+/// **1 と 2 で断るときは、何も動かしていない**——先頭が正しく 2 本目が不正な形でも、先頭を書かずに断る。**以前は 1 本ずつ
+/// 読んでは動かしていて、`SSIZE_MAX` を越える `iov_len` も断らず、不正な本の前の本を書いてから止まっていた。**
+/// 返すのは、動いたバイトの合計。**3 の途中の本で失敗したら（写っていないページへの `-EFAULT` など）、それまでに動いた分が
+/// 在ればその数を、無ければその失敗を返す**（Linux と同じ部分的な転送）。**`readv` は、1 本が短く終わったら（要らない分を
+/// 待たないため）、または 0（終わり）なら、そこで止める。**
 ///
 /// # Safety
 ///
@@ -5363,18 +5386,32 @@ unsafe fn vectored_from_ring3(
     if iovcnt > UIO_MAXIOV {
         return (-EINVAL) as u64;
     }
-    let mut total = 0u64;
-    for index in 0..iovcnt {
-        let Some(address) = iov.checked_add(index * 16) else {
+    let count = iovcnt as usize;
+    let copies = &IOV_COPIES[crate::arch::x86_64::current_excursion_slot()];
+    // 1. 取り込む。読めなければ `-EFAULT`、負の長さは `-EINVAL`（前から順に、最初に当たったもの）。
+    for index in 0..count {
+        let Some(address) = iov.checked_add(index as u64 * 16) else {
             return (-EFAULT) as u64;
         };
         // SAFETY: 呼び出し元契約をそのまま渡す。
         let Some(bytes) = (unsafe { read_user_fixed::<16>(page_table_root, direct_map, address) })
         else {
-            return if total > 0 { total } else { (-EFAULT) as u64 };
+            return (-EFAULT) as u64;
         };
         let base = u64::from_le_bytes(bytes[0..8].try_into().expect("8 bytes"));
         let len = u64::from_le_bytes(bytes[8..16].try_into().expect("8 bytes"));
+        if (len as i64) < 0 {
+            return (-EINVAL) as u64;
+        }
+        copies.lock()[index] = (base, len);
+    }
+    // 2. 範囲を見て、合計を切り詰める（純粋な論理で、ユーザーの番地は読まない）。
+    if let Err(errno) = check_iovecs(&mut copies.lock()[..count]) {
+        return (-errno) as u64;
+    }
+    let mut total = 0u64;
+    for index in 0..count {
+        let (base, len) = copies.lock()[index];
         if len == 0 {
             continue;
         }
@@ -5395,6 +5432,28 @@ unsafe fn vectored_from_ring3(
         }
     }
     total
+}
+
+/// 取り込んだ `iovec`（`(iov_base, iov_len)`。長さは負でないことを確かめ済み）の範囲を見て、合計を切り詰める（2026-10-09。
+/// 純粋な論理。Linux の `__import_iovec` の 2 つ目の回）。**範囲がユーザーの番地に収まらない本が在れば `Err(EFAULT)`**
+/// （長さ 0 でも番地は見る。Linux の `access_ok` と同じ）。合計が [`MAX_RW_COUNT`] を越える分は、その本の長さを縮め、
+/// 後ろの本は 0 にする。足し算はあふれない（合計は上限を越えない）。
+fn check_iovecs(iovecs: &mut [(u64, u64)]) -> Result<(), i64> {
+    let mut total = 0u64;
+    for (base, len) in iovecs.iter_mut() {
+        if base
+            .checked_add(*len)
+            .is_none_or(|end| end > crate::arch::x86_64::USER_ADDRESS_LIMIT)
+        {
+            return Err(EFAULT);
+        }
+        let room = MAX_RW_COUNT - total;
+        if *len > room {
+            *len = room;
+        }
+        total += *len;
+    }
+    Ok(())
 }
 
 /// `set_tid_address(tidptr)`（2026-10-06）。**番地を控えて、スレッドの番号を返す。** スレッドが終わるときにそこへ 0 を
@@ -7225,6 +7284,30 @@ pub fn in_ring3_at_entry() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **`readv`・`writev` の範囲の確かめと、合計の切り詰め**（2026-10-09。Linux の `__import_iovec`）。
+    #[test]
+    fn iovecs_out_of_the_user_range_are_refused_and_the_total_is_clamped() {
+        let limit = crate::arch::x86_64::USER_ADDRESS_LIMIT;
+        // 収まる 2 本はそのまま。
+        let mut ok = [(0x40_0000, 4), (0x40_1000, 8)];
+        assert_eq!(check_iovecs(&mut ok), Ok(()));
+        assert_eq!(ok, [(0x40_0000, 4), (0x40_1000, 8)]);
+        // 先頭が正しく、2 本目が上限を越える（`SSIZE_MAX` の長さ）: `-EFAULT`。
+        let mut far = [(0x40_0000, 4), (0x40_1000, i64::MAX as u64)];
+        assert_eq!(check_iovecs(&mut far), Err(EFAULT));
+        // 終わりが上限ちょうどは収まり、1 バイト越えると断る。長さ 0 でも番地は見る。
+        assert_eq!(check_iovecs(&mut [(limit - 4, 4)]), Ok(()));
+        assert_eq!(check_iovecs(&mut [(limit - 4, 5)]), Err(EFAULT));
+        assert_eq!(check_iovecs(&mut [(limit + 1, 0)]), Err(EFAULT));
+        // 合計が `MAX_RW_COUNT` を越える分は切り詰め、後ろの本は 0 にする（`-EINVAL` にはしない）。
+        let big = 0x6000_0000;
+        let mut clamped = [(0x1000_0000, big), (0x8000_0000, big), (0x1_0000_0000, 16)];
+        assert_eq!(check_iovecs(&mut clamped), Ok(()));
+        assert_eq!(clamped[0].1, big);
+        assert_eq!(clamped[1].1, MAX_RW_COUNT - big);
+        assert_eq!(clamped[2].1, 0);
+    }
 
     /// **`mprotect` の中間テーブルの見積もりは、散らばった葉でも、長い範囲でも足りる**（2026-10-08）。段ごとに、葉の数と
     /// 範囲が触れる区切りの数の小さい方を数える。

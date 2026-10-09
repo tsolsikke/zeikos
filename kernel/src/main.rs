@@ -9479,6 +9479,8 @@ const SYSCALL_TEST_STATUS: &[(u64, &str)] = &[
     // 114 から 119: writev・readv・lseek・poll・getpid・gettid・madvise・tkill（2026-10-06）。
     (114, "writev(1, two iovecs, 2) did not return the total length, or with a zero-length iovec and an over-long count did not behave"),
     (115, "readv on /etc/motd with two iovecs did not return the file's length with the first bytes in the first iovec"),
+    // 125: 不正な iov_len を I/O の前に断る（2026-10-09）。
+    (125, "writev with a valid first iovec and an invalid second iov_len did not return -EINVAL (-1, 1<<63) or -EFAULT (SSIZE_MAX), or wrote the first iovec before refusing"),
     (116, "lseek with SEEK_END and SEEK_CUR did not return the expected positions, or a negative target did not return -EINVAL"),
     (117, "poll with events=0 on fds 0, 1 and 2 did not return 0, or on a closed fd did not return 1 with POLLNVAL"),
     (118, "getpid/gettid did not return 1, madvise did not return 0 (or -EINVAL off a page boundary), or tkill did not refuse another tid, accept signal 0, and ignore SIGCHLD and an ignored SIGUSR1"),
