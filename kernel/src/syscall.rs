@@ -2500,8 +2500,10 @@ unsafe fn munmap_from_ring3(
 
 /// `mprotect(addr, len, prot)`（2026-10-06。`ADR-0082`）。**範囲に掛かる写像の、書けるか・写してあるかを変える。**
 ///
-/// - `addr` はページの境界、`len` は 0 でなく、ページへ切り上げる。範囲の全部が写像で覆われていなければ `-ENOMEM`
-///   （Linux と同じ）。
+/// - `addr` はページの境界（でなければ `-EINVAL`）。`len` が 0 なら、何も見ずに 0 を返す（2026-10-09。Linux の
+///   `do_mprotect_pkey` と同じ順序で、整列の確かめの後、`prot` の確かめと範囲の確かめの前。以前は `-EINVAL` だった）。
+///   `PROT_GROWSDOWN` と `PROT_GROWSUP` を両方立てた `prot` は、その前に `-EINVAL`（Linux と同じ）。
+/// - `len` はページへ切り上げる。範囲の全部が写像で覆われていなければ `-ENOMEM`（Linux と同じ）。
 /// - `PROT_EXEC` は `-EPERM`——**書けるページを実行できるページにはしない**（W^X。`ADR-0071`。JIT は目指さない）。
 ///   **実行できるページ（`NX` が 0）を書ける形にする求めも `-EPERM`**——範囲の一部でもそのページが在れば、何も変えずに
 ///   断る。`PROT_EXEC` を付けない `mprotect` は、ページを実行できない形にする（Linux と同じ。実行を外す向きだけを許す）。
@@ -2526,8 +2528,15 @@ unsafe fn mprotect_from_ring3(
     use crate::mappings::{MappingKind, Released, PAGE_SIZE};
     use crate::paging::permissions::PagePermissions;
 
-    if len == 0 || !addr.is_multiple_of(PAGE_SIZE) {
+    // **Linux の `do_mprotect_pkey` と同じ順に見る**（2026-10-09）: 上下に伸びる印の両立 → 整列 → 長さ 0。
+    if prot & (PROT_GROWSDOWN | PROT_GROWSUP) == PROT_GROWSDOWN | PROT_GROWSUP {
         return (-EINVAL) as u64;
+    }
+    if !addr.is_multiple_of(PAGE_SIZE) {
+        return (-EINVAL) as u64;
+    }
+    if len == 0 {
+        return 0;
     }
     // 破壊テスト (2026-10-06, mprotect-allows-exec-test): `PROT_EXEC` を断らない（W と X を同時に通す形）。
     if prot & PROT_EXEC != 0 && !cfg!(feature = "mprotect-allows-exec-test") {
@@ -5335,6 +5344,11 @@ fn sys_tkill(tid: u64, sig: u64) -> u64 {
     state().process_exited.store(true, Ordering::SeqCst);
     0
 }
+
+/// `mprotect` の `prot` の、下へ伸びる印（Linux の `PROT_GROWSDOWN`。2026-10-09）。`PROT_GROWSUP` と両立しない。
+const PROT_GROWSDOWN: u64 = 0x0100_0000;
+/// `mprotect` の `prot` の、上へ伸びる印（Linux の `PROT_GROWSUP`。2026-10-09）。
+const PROT_GROWSUP: u64 = 0x0200_0000;
 
 /// `readv`・`writev` の `iovcnt` の上限（Linux の `UIO_MAXIOV`）。越えれば `-EINVAL`。
 const UIO_MAXIOV: u64 = 1024;

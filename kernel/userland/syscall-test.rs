@@ -156,6 +156,8 @@
 //! - `115` `/etc/motd` への `readv`（2 本）が、ファイルの長さを返して先頭の本に先頭のバイトを置かなかった
 //! - `125` 先頭は正しく 2 本目の `iov_len` が不正な `writev` が、-1 と 1<<63 で `-EINVAL` を、`SSIZE_MAX` で `-EFAULT` を
 //!   返さなかったか、`-EINVAL` で断られたのに先頭の本を書いていた（2026-10-09。I/O の前に全部を確かめる）
+//! - `126` 長さ 0 の `mprotect` が、整列した番地で（何も写っていなくても、`PROT_EXEC` でも）0 を返さなかったか、整列して
+//!   いない番地と、`PROT_GROWSDOWN|PROT_GROWSUP` で `-EINVAL` を返さなかった（2026-10-09。Linux と同じ順序）
 //! - `116` `lseek` の `SEEK_END`・`SEEK_CUR` が期待の位置を返さなかったか、負の位置が `-EINVAL` を返さなかった
 //! - `117` `events` が 0 の `poll`（fd 0・1・2）が 0 を返さなかったか、閉じた fd で 1 と `POLLNVAL` を返さなかった
 //! - `118` `getpid`・`gettid` が 1 を返さなかったか、`madvise` が 0（境界の外は `-EINVAL`）を返さなかったか、`tkill` が
@@ -2513,6 +2515,41 @@ core::arch::global_asm!(
     "  mov eax, {sys_close}",
     "  mov rdi, r12",
     "  int 0x80",
+    // 126: mprotect の長さ 0（2026-10-09。Linux の do_mprotect_pkey と同じ順序）。整列した番地なら、何も写っていなくても、
+    //      PROT_EXEC でも 0（長さ 0 は prot と範囲の確かめより前）。整列していない番地は長さ 0 でも -EINVAL。
+    //      PROT_GROWSDOWN|PROT_GROWSUP は整列の確かめより前に -EINVAL。
+    "  mov eax, {sys_mprotect}",
+    "  mov edi, 0x10000",
+    "  xor esi, esi",
+    "  mov edx, 1",
+    "  int 0x80",
+    "  mov edi, 126",
+    "  test rax, rax",
+    "  jne 7f",
+    "  mov eax, {sys_mprotect}",
+    "  mov edi, 0x10000",
+    "  xor esi, esi",
+    "  mov edx, 4",
+    "  int 0x80",
+    "  mov edi, 126",
+    "  test rax, rax",
+    "  jne 7f",
+    "  mov eax, {sys_mprotect}",
+    "  mov edi, 0x10001",
+    "  xor esi, esi",
+    "  mov edx, 1",
+    "  int 0x80",
+    "  mov edi, 126",
+    "  cmp rax, {minus_einval}",
+    "  jne 7f",
+    "  mov eax, {sys_mprotect}",
+    "  mov edi, 0x10000",
+    "  xor esi, esi",
+    "  mov edx, 0x03000001",
+    "  int 0x80",
+    "  mov edi, 126",
+    "  cmp rax, {minus_einval}",
+    "  jne 7f",
     // **もう一度 MESSAGE を送る。** カーネル側の判定行が突き合わせるのは最後の `write`（`writev` も通る）なので、
     // "ok\n" で上書きしたままにしない。
     "  mov eax, {sys_write}",
