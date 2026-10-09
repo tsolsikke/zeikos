@@ -1672,6 +1672,16 @@ const SYSCALL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
+    // **`syscall-test` へ渡すルートの項目の数を、1 つ多くする**（2026-10-09）。`getdents64` で数えた数と合わず、
+    // `syscall-test` が 25 番で止まる。ビルドスクリプトが数を求めて渡す形が、検算に届いていることを見る。
+    CriticalTest {
+        name: "root-entries-off-by-one",
+        feature: "root-entries-off-by-one-test",
+        expected_markers: &["user-run: syscall-test exited with status 25", "halting"],
+        forbidden_markers: &["user-run: syscall-test left Ring 3 (exited=true status=0"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
     // **`mmap(MAP_FIXED)`・`munmap`・`mprotect` がユーザーの番地の上限を見ない**（2026-10-07。直す前の形）。上限のページへの
     // `MAP_FIXED` が通ってしまい、`syscall-test` が 121 番で止まる。
     CriticalTest {
@@ -33304,7 +33314,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 64,
-    full: 510,
+    full: 511,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

@@ -83,6 +83,69 @@ fn main() {
     println!("cargo:rustc-link-arg=-T{manifest_dir}/link.ld");
 }
 
+/// イメージのルート直下に、ビルドスクリプトが作るディレクトリ（2026-10-09）。シード（`fsimage/seed`）のルートに在る項目と
+/// 合わせたものが、イメージのルートの項目になる——[`expected_root_entries`] がそれを数え、イメージを作る所が、作った
+/// ルートと一致することを確かめる（[`check_staging_root`]）。**ルートへディレクトリを足したら、ここにも足す。**
+const ROOT_DIRS_MADE_BY_BUILD: &[&str] = &["bin", "data", "lib", "root", "tmp"];
+
+/// `syscall-test` の 25 番が `getdents64` で数えるルートの項目の数（2026-10-09）。**イメージではなく、シードの名前と
+/// [`ROOT_DIRS_MADE_BY_BUILD`] から求める**——`syscall-test` はイメージの `/bin` に入るので、ビルドしたイメージから
+/// 数えると、プログラムを作る前にイメージが要る形（循環）になる。
+///
+/// シードとイメージの差は 3 つで、ここで足す: `getdents64` が返す `.` と `..`、`mke2fs` が作る `lost+found`。
+/// sabotage test（`root-entries-off-by-one-test`）は、1 つ多く渡す。
+fn expected_root_entries(manifest_dir: &str) -> usize {
+    let mut names: Vec<String> = std::fs::read_dir(format!("{manifest_dir}/fsimage/seed"))
+        .expect("failed to read the seed directory")
+        .map(|entry| {
+            entry
+                .expect("failed to read a seed entry")
+                .file_name()
+                .into_string()
+                .expect("a seed name is not UTF-8")
+        })
+        .collect();
+    names.extend(ROOT_DIRS_MADE_BY_BUILD.iter().map(|name| name.to_string()));
+    names.sort();
+    names.dedup();
+    let count = names.len() + 3;
+    if std::env::var("CARGO_FEATURE_ROOT_ENTRIES_OFF_BY_ONE_TEST").is_ok() {
+        count + 1
+    } else {
+        count
+    }
+}
+
+/// イメージを作る前のルート（`staging`）が、シードのルートと [`ROOT_DIRS_MADE_BY_BUILD`] を合わせたものと一致するかを
+/// 確かめる（2026-10-09）。**一致しなければビルドを止める**——[`expected_root_entries`] が数えた数と、イメージの中身が
+/// 食い違ったまま `syscall-test` へ渡らないようにする。
+fn check_staging_root(manifest_dir: &str, staging: &str) {
+    let names_in = |dir: &str| -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap_or_else(|error| panic!("failed to read {dir}: {error}"))
+            .map(|entry| {
+                entry
+                    .expect("failed to read an entry")
+                    .file_name()
+                    .into_string()
+                    .expect("a name is not UTF-8")
+            })
+            .collect();
+        names.sort();
+        names
+    };
+    let mut expected = names_in(&format!("{manifest_dir}/fsimage/seed"));
+    expected.extend(ROOT_DIRS_MADE_BY_BUILD.iter().map(|name| name.to_string()));
+    expected.sort();
+    expected.dedup();
+    let actual = names_in(staging);
+    assert_eq!(
+        actual, expected,
+        "the image root ({staging}) is not the seed root plus ROOT_DIRS_MADE_BY_BUILD; \
+         update ROOT_DIRS_MADE_BY_BUILD in kernel/build.rs"
+    );
+}
+
 /// 埋め込むユーザープログラムを `rustc` で直接ビルドし、`OUT_DIR` へ置く（S9-b-1）。
 ///
 /// # なぜ cargo を入れ子にしないか
@@ -359,6 +422,8 @@ fn build_user_programs(manifest_dir: &str, out_dir: &str) {
 
     // **写しの置き場**（[`ProgramCache`]）。
     let cache = ProgramCache::open(out_dir);
+    // ルートの項目の数（[`expected_root_entries`]）。名前を出すプログラム（`syscall-test`）にだけ、環境変数で渡す。
+    let root_entries = expected_root_entries(manifest_dir).to_string();
 
     for name in PROGRAMS {
         let source = format!("{manifest_dir}/userland/{name}.rs");
@@ -373,6 +438,9 @@ fn build_user_programs(manifest_dir: &str, out_dir: &str) {
             if inputs.mentions(cfg) {
                 command.args(["--cfg", cfg]);
             }
+        }
+        if inputs.mentions("ZEIKOS_ROOT_ENTRIES") {
+            command.env("ZEIKOS_ROOT_ENTRIES", &root_entries);
         }
         command.args([
             "--edition",
@@ -721,7 +789,8 @@ impl ProgramCache {
     }
 
     /// 写しが在ればそれを置き、無ければ `command` で作ってから写しへ入れる。`inputs` は鍵に入れる中身（原本と取り込む
-    /// ファイル）。`command` の引数も鍵に入れる（`output` だけは除く——`OUT_DIR` は組ごとに違う）。
+    /// ファイル）。`command` の引数も鍵に入れる（`output` だけは除く——`OUT_DIR` は組ごとに違う）。`command` に置いた
+    /// 環境変数も鍵に入れる（2026-10-09。`env!` で読む値が変われば、出力も変わる）。
     fn build(
         &self,
         what: &str,
@@ -744,6 +813,10 @@ impl ProgramCache {
                 } else {
                     feed(arg.as_encoded_bytes());
                 }
+            }
+            for (key, value) in command.get_envs() {
+                feed(key.as_encoded_bytes());
+                feed(value.map_or(&b"<removed>"[..], |value| value.as_encoded_bytes()));
             }
             for input in inputs {
                 feed(input);
@@ -1398,6 +1471,9 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
     let writable: Vec<u8> = (0..WRITABLE_SEED_BYTES).map(|i| (i % 251) as u8).collect();
     std::fs::write(format!("{staging}/data/writable"), &writable[..])
         .expect("failed to write the writable target");
+
+    // **ルートが、`syscall-test` へ渡した数と同じ中身であること**（2026-10-09。[`check_staging_root`]）。
+    check_staging_root(manifest_dir, &staging);
 
     // **種の権限を、写した元によらず決める**（2026-10-08）。`fs::copy` は権限を写し、`mke2fs -d` はそれを inode へ入れる。
     // 写しの置き場の当たりは読み取り専用の写しのハードリンクなので、決めないと、当たりと外れで像のバイトが変わる。

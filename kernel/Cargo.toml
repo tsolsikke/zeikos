@@ -946,6 +946,9 @@ munmap-keeps-frames-test = []
 # でフレームを持ったまま残した葉が外れず、同じ番地へ写し直すと `map_4kib` が断って、`syscall-test` が 124 番で止まる。
 # `--syscall-test munmap-skips-retained`。
 munmap-skips-retained-test = []
+# `syscall-test` へ渡すルートの項目の数を、1 つ多くする（2026-10-09）。イメージの中身から求めた数と、`getdents64` で
+# 数えた数が合わず、`syscall-test` が 25 番で止まる。`--syscall-test root-entries-off-by-one`。
+root-entries-off-by-one-test = []
 # `mmap(MAP_FIXED)`・`munmap`・`mprotect` が、ユーザーの番地の上限（`0x7fff_ffff_f000`）を見ない（2026-10-07。直す前の形）。
 # 上限のページへの `MAP_FIXED` が通り、`syscall-test` が 121 番で止まる。`--syscall-test mmap-fixed-ignores-user-limit`。
 mmap-fixed-ignores-user-limit-test = []

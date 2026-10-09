@@ -56,7 +56,7 @@
 //! - `22` `/etc` の `st_mode` がディレクトリを表していなかった
 //! - `23` `stat("/nope")` が `-ENOENT` を返さなかった
 //! - `24` `getdents64` がバッファを埋めなかった
-//! - `25` ルートの一覧が 6 エントリでなかった
+//! - `25` ルートの一覧のエントリ数が、ビルドスクリプトの渡した数（`ZEIKOS_ROOT_ENTRIES`）でなかった
 //! - `26` `d_reclen` が 8 の倍数でなかった
 //! - `27` `d_type` が通常ファイルとディレクトリを分けなかった
 //! - `28` 末尾での `getdents64` が 0 を返さなかった
@@ -340,20 +340,28 @@ const MODE_DIRECTORY: u32 = 0x4000;
 const MOTD_BLOCKS: u32 = 8;
 /// `getdents64` の番号（Linux と同じ 217）。
 const SYS_GETDENTS64: u32 = 217;
-/// ルートディレクトリのエントリ数（`. .. lost+found bin data etc tmp`）。
+/// ルートディレクトリのエントリ数（`.` と `..` を含む。2026-10-09 から、ビルドスクリプトが渡す）。
 ///
-/// **DIR-1c で 6 から 7 になった**——**`/tmp` をイメージに足したためである。**
-/// **f-1 で 8 になった**——**`/root` を足したためである**（`ADR-0052`）。
-/// **B-d で 9 になった**——**`/lib` を足したためである**（`ADR-0042` の
-/// Addendum。**既定のフォントの置き場である**）。
-///
-/// **この数はイメージの中身に寄りかかっている。** **置き場所を足したら、
-/// ここも数え直すこと**（実測。**2 度とも、足した日にこの検算が起動を
-/// 止めた**——**止まるので気づける。**）。
-///
-/// **数え方**——**ルート直下の項を数えた。** **`.` と `..` を含む**
-/// （いまは `. .. lost+found bin data etc lib root tmp` の 9 つである）。
-const ROOT_ENTRIES: u32 = 9;
+/// **数はビルドスクリプトが、シードのルートの名前と、ビルドスクリプトが作るディレクトリから求めて、環境変数
+/// `ZEIKOS_ROOT_ENTRIES` で渡す**（`kernel/build.rs` の `expected_root_entries`）。以前は 9 を定数で持っていて、
+/// ルートに項目を 1 つ足しただけで、この検算が起動を止めた。「知っている項目が全部在る」形にしないのは、余計な項目が
+/// 紛れ込んでも見えなくなるためである——数で見れば、足りなくても多すぎても止まる。
+const ROOT_ENTRIES: u32 = decimal(env!("ZEIKOS_ROOT_ENTRIES"));
+
+/// 10 進の数字だけの文字列を `u32` にする（ビルドのときに評価する）。数字でない文字が在れば、ビルドが止まる。
+const fn decimal(text: &str) -> u32 {
+    let bytes = text.as_bytes();
+    assert!(!bytes.is_empty(), "ZEIKOS_ROOT_ENTRIES is empty");
+    let mut value = 0u32;
+    let mut index = 0;
+    while index < bytes.len() {
+        let digit = bytes[index];
+        assert!(digit.is_ascii_digit(), "ZEIKOS_ROOT_ENTRIES is not a decimal number");
+        value = value * 10 + (digit - b'0') as u32;
+        index += 1;
+    }
+    value
+}
 /// `linux_dirent64` の `d_reclen` の位置。
 const DIRENT_RECLEN_OFFSET: u32 = 16;
 /// `linux_dirent64` の `d_type` の位置。

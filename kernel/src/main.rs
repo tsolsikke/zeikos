@@ -9316,7 +9316,7 @@ const SYSCALL_TEST_STATUS: &[(u64, &str)] = &[
     (22, "st_mode for /etc did not say directory"),
     (23, "stat(\"/nope\") did not return -ENOENT"),
     (24, "getdents64 on / did not fill the buffer"),
-    (25, "the root listing did not have 8 entries"),
+    (25, "the root listing did not have the number of entries the build script counted from the seed (ZEIKOS_ROOT_ENTRIES)"),
     (26, "a d_reclen was not a multiple of 8"),
     (
         27,
@@ -13266,6 +13266,11 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "munmap-skips-retained-test",
         cfg!(feature = "munmap-skips-retained-test"),
         "munmap と MAP_FIXED の置き換えが、PROT_NONE で残した葉を外さない",
+    ),
+    (
+        "root-entries-off-by-one-test",
+        cfg!(feature = "root-entries-off-by-one-test"),
+        "syscall-test へ渡すルートの項目の数を 1 つ多くする",
     ),
     (
         "mmap-fixed-ignores-user-limit-test",
