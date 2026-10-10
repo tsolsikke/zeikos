@@ -99,3 +99,13 @@ Linuxは違う。`mm/mprotect.c`の`do_mprotect_pkey`は、範囲に掛かるマ
 - 差が出るのは、失敗する呼び出しだけである。成功する呼び出しの結果は、Linuxと同じである。
 - 揃える必要が出たら（途中まで変わった状態に頼るプログラムが見つかったら）、`crate::mappings::MemoryMap::change_protection`の1度目の確かめを、穴の手前で止める形にする。
 
+## Addendum（2026-10-10。`mprotect`の`PROT_GROWSDOWN`と`PROT_GROWSUP`）
+
+`mprotect`は、`PROT_GROWSDOWN`を単独で渡されると、何もせずに受けていた。Linuxは、下へ伸びないマッピングには`-EINVAL`を返す。
+
+- **`PROT_GROWSDOWN`は、範囲に掛かるいちばん低いマッピングがスタックのときだけ受け、範囲の始まりをそのマッピングの先頭まで広げる。** スタック以外のマッピングなら`-EINVAL`、範囲に掛かるマッピングが無ければ`-ENOMEM`。見張りのページは数えない（Linuxでは、スタックの下の隙間はマッピングではない）。広げた範囲は、ほかの`mprotect`と同じ確かめ（W^X、覆われていること、変えてよい種類）を通る。
+- **`PROT_GROWSUP`は、いつも断る。** 上へ伸びるマッピングは無い。範囲の始まりにマッピングが在れば`-EINVAL`、無ければ`-ENOMEM`。
+- **理由は、Linuxの`do_mprotect_pkey`と同じ形にすることである。** x86のLinuxでは、メインのスタックが`VM_GROWSDOWN`を持ち、glibcは実行できるスタックを作るときに`mprotect(PROT_GROWSDOWN)`を呼ぶ。全部を`-EINVAL`にすると、動的リンクを扱う段で互換が崩れうる。ZeikOSでは、スタックのマッピング（`crate::mappings::MappingKind::Stack`）を、Linuxのメインのスタックに当たるものとして扱う。マッピングテーブルとページテーブルの扱いは変えていない。
+- **Linuxとの差**: ZeikOSは、隣り合う同じ権限のマッピングをくっつけない。`mprotect`でスタックを分けた後は、範囲に掛かる断片の先頭までしか広がらない。Linuxは、権限を戻した断片をくっつけるので、ふつうはスタックの全体まで広がる。
+- `syscall-test`の128で確かめた（無名のページへの2つの印と、スタックのいちばん下まで広がること）。
+
