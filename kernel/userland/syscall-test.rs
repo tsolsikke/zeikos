@@ -42,23 +42,25 @@
 //! - `8` `open("/etc/motd", O_WRONLY)` が `-EROFS` を返さなかった
 //! - `9` `close` の 2 度目が `-EBADF` を返さなかった
 //! - `10` `open(NULL)` が `-EFAULT` を返さなかった
-//! - `11` `/etc/motd` の全長 `read` が 18 を返さなかった
+//! - `11` `/etc/motd` の全長 `read` が、シードの長さ（ビルドスクリプトが渡す）を返さなかった
 //! - `12` 読めたバイト列が既知の中身と食い違った
 //! - `13` 末尾での `read` が 0 を返さなかった
 //! - `14` 5 バイトの短い `read` が 5 を返さなかった、または中身が食い違った
-//! - `15` 続きの `read` が残りの 13 を返さなかった、または中身が食い違った
+//! - `15` 続きの `read` が残り（長さ - 5）を返さなかった、または中身が食い違った
 //! - `16` ディレクトリの `read` が `-EISDIR` を返さなかった
 //! - `17` 閉じた fd の `read` が `-EBADF` を返さなかった
 //! - `18` `stat("/etc/motd")` が 0 を返さなかった
-//! - `19` `st_size` が 18 でなかった
+//! - `19` `st_size` がシードの長さでなかった
 //! - `20` `st_mode` が通常ファイルを表していなかった
-//! - `21` `st_blocks` が 8 でなかった（**512 バイト単位**）
+//! - `21` `st_blocks` が、ビルドスクリプトがシードの長さとブロックの大きさから求めた数でなかった（**512 バイト単位**）
 //! - `22` `/etc` の `st_mode` がディレクトリを表していなかった
 //! - `23` `stat("/nope")` が `-ENOENT` を返さなかった
 //! - `24` `getdents64` がバッファを埋めなかった
 //! - `25` ルートの一覧のエントリ数が、ビルドスクリプトの渡した数（`ZEIKOS_ROOT_ENTRIES`）でなかった
 //! - `26` `d_reclen` が 8 の倍数でなかった
-//! - `27` `d_type` が通常ファイルとディレクトリを分けなかった
+//! - `27` ルートの一覧のディレクトリと通常のファイルの数が、ビルドスクリプトの渡した数でなかったか、`/data` の一覧が
+//!   `.`・`..` と、ビルドスクリプトが作った数以上の通常のファイルでなかった（`d_type` が通常ファイルとディレクトリを
+//!   分けなかった）
 //! - `28` 末尾での `getdents64` が 0 を返さなかった
 //! - `29` 1 レコードも収まらないバッファで `-EINVAL` を返さなかった
 //! - `30` `argc` が 2 でなかった
@@ -262,8 +264,10 @@ const PROT_RX: u32 = 5;
 const MINUS_EPERM: i32 = -1;
 /// `-ESRCH`（2026-10-06。自分以外の tid への `tkill` が返す）。
 const MINUS_ESRCH: i32 = -3;
-/// `/etc/motd` の先頭の 4 バイト "welc"（リトルエンディアンの 32 ビット。2026-10-06。`readv` の 1 本目に来る）。
-const WELC: u32 = u32::from_le_bytes(*b"welc");
+/// `/etc/motd` の先頭の 4 バイト（リトルエンディアンの 32 ビット。2026-10-06。`readv` の 1 本目に来る）。2026-10-10 から、
+/// シードの中身（[`MOTD`]）から求める。
+const MOTD_FIRST_DWORD: u32 =
+    u32::from_le_bytes([MOTD[0], MOTD[1], MOTD[2], MOTD[3]]);
 
 /// 検算 111（自分のコードのページを書ける形にする求め）の期待。**既定のビルドでは `-EPERM`。**
 ///
@@ -322,12 +326,26 @@ const MINUS_EFAULT: i32 = -14;
 const SYS_READ: u32 = 0;
 /// `-EISDIR`（ディレクトリに対して許されない操作）。
 const MINUS_EISDIR: i32 = -21;
-/// `/etc/motd` の長さ。**種のファイルと同じでなければ検算が落ちる。**
-const MOTD_LEN: u32 = 18;
-/// 短い `read` で読む長さ。
+/// `/etc/motd` の中身（2026-10-10 から、ビルドスクリプトがシードから読み、16 進で `ZEIKOS_MOTD_HEX` に渡す。
+/// `kernel/build.rs` の `image_expectations`）。以前は中身と長さ（18）を定数で持っていて、シードの `/etc/motd` を
+/// 変えると検算が起動を止めた。
+const MOTD: [u8; MOTD_LEN as usize] = hex_bytes(env!("ZEIKOS_MOTD_HEX"));
+/// [`MOTD`] を、アセンブリから名前で指せる形で置いたもの。**書き換えない `static` なので `.rodata` に入る**——70 番は、
+/// ここを書けない読み込み先として使う。
+#[no_mangle]
+static MOTD_BYTES: [u8; MOTD_LEN as usize] = MOTD;
+/// `/etc/motd` の長さ。
+const MOTD_LEN: u32 = (env!("ZEIKOS_MOTD_HEX").len() / 2) as u32;
+/// 短い `read` で読む長さ（検査のパラメータで、中身には依らない）。
 const MOTD_HEAD: u32 = 5;
 /// その続きに残る長さ。
-const MOTD_TAIL: u32 = 13;
+const MOTD_TAIL: u32 = MOTD_LEN - MOTD_HEAD;
+// **長さの前提**——読み込み先はスタックの 64 バイトで（11・14・15 番）、先頭の 4 バイトを `readv` の 1 本目で見る
+// （115 番）。`lseek` は末尾から 3 バイト戻る（116 番）。短い `read` の後に、残りが在ること（15 番）。
+const _: () = assert!(
+    MOTD_HEAD < MOTD_LEN && MOTD_LEN >= 4 && MOTD_LEN <= 64,
+    "the seed /etc/motd must be 6 to 64 bytes long for syscall-test"
+);
 /// 末尾を越えて要求する長さ。**`i_size` で切られるはずである。**
 const OVER_READ: u32 = 100;
 /// `stat` の番号（Linux と同じ 4）。
@@ -344,8 +362,9 @@ const MODE_FORMAT_MASK: u32 = 0xF000;
 const MODE_REGULAR: u32 = 0x8000;
 /// 種別: ディレクトリ。
 const MODE_DIRECTORY: u32 = 0x4000;
-/// `/etc/motd` が占める 512 バイト単位のブロック数。**4096 の 1 ブロック分である。**
-const MOTD_BLOCKS: u32 = 8;
+/// `/etc/motd` が占める 512 バイト単位のブロック数（2026-10-10 から、ビルドスクリプトが渡す）。中身の長さとファイル
+/// システムのブロックの大きさで決まる（`kernel/build.rs` の `image_expectations` と `FS_BLOCK_BYTES`）。
+const MOTD_BLOCKS: u32 = decimal(env!("ZEIKOS_MOTD_BLOCKS"));
 /// `getdents64` の番号（Linux と同じ 217）。
 const SYS_GETDENTS64: u32 = 217;
 /// ルートディレクトリのエントリ数（`.` と `..` を含む。2026-10-09 から、ビルドスクリプトが渡す）。
@@ -355,20 +374,51 @@ const SYS_GETDENTS64: u32 = 217;
 /// ルートに項目を 1 つ足しただけで、この検算が起動を止めた。「知っている項目が全部在る」形にしないのは、余計な項目が
 /// 紛れ込んでも見えなくなるためである——数で見れば、足りなくても多すぎても止まる。
 const ROOT_ENTRIES: u32 = decimal(env!("ZEIKOS_ROOT_ENTRIES"));
+/// ルートの項目のうち、ディレクトリの数と通常のファイルの数（2026-10-10 から、ビルドスクリプトがシードから求めて渡す。
+/// 27 番）。以前は「ルートは全部ディレクトリ」を前提にしていて、ルートに通常のファイルを足すと起動を止めた。
+const ROOT_DIRECTORIES: u32 = decimal(env!("ZEIKOS_ROOT_DIRECTORIES"));
+const ROOT_FILES: u32 = decimal(env!("ZEIKOS_ROOT_FILES"));
+/// `/data` に、ビルドスクリプトが作る通常のファイルの数（2026-10-10 から、ビルドスクリプトが渡す。27 番）。**27 番は
+/// 「これ以上」と見る**——`/data` は書ける場所で、ディスクを持ち越した起動では、前の起動のプログラムが作ったファイルが
+/// 残る（`persist-zi-test` の 2 回目の起動）。
+const DATA_FILES: u32 = decimal(env!("ZEIKOS_DATA_FILES"));
+/// `/data` のディレクトリの数（`.` と `..`）。ビルドスクリプトは `/data` にディレクトリを作らない（`kernel/build.rs` の
+/// `check_staging_data` が確かめる）。
+const DATA_DIRECTORIES: u32 = 2;
 
 /// 10 進の数字だけの文字列を `u32` にする（ビルドのときに評価する）。数字でない文字が在れば、ビルドが止まる。
 const fn decimal(text: &str) -> u32 {
     let bytes = text.as_bytes();
-    assert!(!bytes.is_empty(), "ZEIKOS_ROOT_ENTRIES is empty");
+    assert!(!bytes.is_empty(), "a number passed by the build script is empty");
     let mut value = 0u32;
     let mut index = 0;
     while index < bytes.len() {
         let digit = bytes[index];
-        assert!(digit.is_ascii_digit(), "ZEIKOS_ROOT_ENTRIES is not a decimal number");
+        assert!(digit.is_ascii_digit(), "a number passed by the build script is not decimal");
         value = value * 10 + (digit - b'0') as u32;
         index += 1;
     }
     value
+}
+
+/// 16 進の文字列をバイト列にする（ビルドのときに評価する）。長さが合わないか、16 進でない文字が在れば、ビルドが止まる。
+const fn hex_bytes<const N: usize>(text: &str) -> [u8; N] {
+    const fn nibble(digit: u8) -> u8 {
+        match digit {
+            b'0'..=b'9' => digit - b'0',
+            b'a'..=b'f' => digit - b'a' + 10,
+            _ => panic!("ZEIKOS_MOTD_HEX is not lowercase hex"),
+        }
+    }
+    let text = text.as_bytes();
+    assert!(text.len() == 2 * N, "ZEIKOS_MOTD_HEX has the wrong length");
+    let mut out = [0u8; N];
+    let mut index = 0;
+    while index < N {
+        out[index] = nibble(text[2 * index]) << 4 | nibble(text[2 * index + 1]);
+        index += 1;
+    }
+    out
 }
 /// `linux_dirent64` の `d_reclen` の位置。
 const DIRENT_RECLEN_OFFSET: u32 = 16;
@@ -787,7 +837,7 @@ core::arch::global_asm!(
     "  jne 9f",
     "  cld",
     "  mov rsi, rsp",
-    "  lea rdi, [rip + MOTD_REST]",
+    "  lea rdi, [rip + MOTD_BYTES + {motd_head}]",
     "  mov ecx, {motd_tail}",
     "  repe cmpsb",
     "  mov edi, 15",
@@ -892,7 +942,8 @@ core::arch::global_asm!(
     "  mov r13, rsp",
     "  xor r15, r15",          // 歩いた位置
     "  xor ebx, ebx",          // 数えたエントリ
-    "  xor ebp, ebp",          // 見た d_type の論理和
+    "  xor ebp, ebp",          // ディレクトリの数
+    "  xor edx, edx",          // 通常のファイルの数
     "20:",
     "  cmp r15, r14",
     "  jae 21f",
@@ -905,9 +956,16 @@ core::arch::global_asm!(
     "  test eax, eax",
     "  mov edi, 26",
     "  je 9f",
-    // d_type を集める。
+    // d_type を種類ごとに数える。
     "  movzx ecx, byte ptr [r13 + r15 + {type_off}]",
-    "  or ebp, ecx",
+    "  cmp ecx, {dt_dir}",
+    "  jne 24f",
+    "  inc ebp",
+    "24:",
+    "  cmp ecx, {dt_reg}",
+    "  jne 25f",
+    "  inc edx",
+    "25:",
     "  inc ebx",
     "  add r15, rax",
     "  jmp 20b",
@@ -915,13 +973,16 @@ core::arch::global_asm!(
     "  cmp ebx, {root_entries}",
     "  mov edi, 25",
     "  jne 9f",
-    // **ルートは全部ディレクトリである**（`. .. lost+found bin data etc`）。
-    "  cmp ebp, {dt_dir}",
+    // **ルートのディレクトリと通常のファイルの数**（2026-10-10 から、ビルドスクリプトがシードから求めて渡す。以前は
+    // 「全部ディレクトリ」を前提にしていた）。
+    "  cmp ebp, {root_directories}",
     "  mov edi, 27",
     "  jne 9f",
+    "  cmp edx, {root_files}",
+    "  jne 9f",
 
-    // --- 27 の本命。**/data は `. ..` と通常ファイル 2 本なので、
-    // `d_type` が DT_DIR と DT_REG の両方になる。** ルートだけでは分かれない。
+    // --- 27 の続き。**/data は `. ..` と、ビルドスクリプトが作る通常のファイルなので、`d_type` が DT_DIR と DT_REG
+    // に分かれる**（数はビルドスクリプトが渡す）。通常のファイルは「渡した数以上」で見る（前の起動が作ったものが残りうる）。
     "  mov eax, {sys_close}",
     "  mov rdi, r12",
     "  int 0x80",
@@ -939,7 +1000,9 @@ core::arch::global_asm!(
     "  mov r14, rax",
     "  mov r13, rsp",
     "  xor r15, r15",
+    "  xor ebx, ebx",
     "  xor ebp, ebp",
+    "  xor edx, edx",
     "22:",
     "  cmp r15, r14",
     "  jae 23f",
@@ -948,12 +1011,26 @@ core::arch::global_asm!(
     "  mov edi, 26",
     "  je 9f",
     "  movzx ecx, byte ptr [r13 + r15 + {type_off}]",
-    "  or ebp, ecx",
+    "  cmp ecx, {dt_dir}",
+    "  jne 26f",
+    "  inc ebp",
+    "26:",
+    "  cmp ecx, {dt_reg}",
+    "  jne 27f",
+    "  inc edx",
+    "27:",
+    "  inc ebx",
     "  add r15, rax",
     "  jmp 22b",
     "23:",
-    "  cmp ebp, {dt_both}",
     "  mov edi, 27",
+    "  cmp ebp, {data_directories}",
+    "  jne 9f",
+    "  cmp edx, {data_files}",
+    "  jb 9f",
+    // ディレクトリと通常のファイルのほかの種類は無いこと。
+    "  lea eax, [ebp + edx]",
+    "  cmp ebx, eax",
     "  jne 9f",
 
     // --- 28. 末尾での getdents64。**0 が返るはず** ---
@@ -1312,7 +1389,7 @@ core::arch::global_asm!(
     "  mov eax, {sys_close}",
     "  mov rdi, r12",
     "  int 0x80",
-    // 60: カナリア。**他のファイルへ書いていない**——/etc/motd の先頭 5 バイトが
+    // 60: カナリア。**他のファイルへ書いていない**——/etc/motd の先頭 5 バイト（MOTD_HEAD）が
     // 変わっていないこと（wrong-inode の種類の否定側）。
     "  mov eax, {sys_open}",
     "  lea rdi, [rip + MOTD_PATH]",
@@ -1323,15 +1400,15 @@ core::arch::global_asm!(
     "  mov eax, {sys_read}",
     "  mov rdi, r12",
     "  mov rsi, rsp",
-    "  mov edx, 5",
+    "  mov edx, {motd_head}",
     "  int 0x80",
-    "  cmp rax, 5",
+    "  cmp rax, {motd_head}",
     "  mov edi, 60",
     "  jne 9f",
     "  cld",
     "  mov rsi, rsp",
     "  lea rdi, [rip + MOTD_BYTES]",
-    "  mov ecx, 5",
+    "  mov ecx, {motd_head}",
     "  repe cmpsb",
     "  mov edi, 60",
     "  jne 9f",
@@ -2746,7 +2823,7 @@ core::arch::global_asm!(
     "  mov edi, 114",
     "  cmp rax, {msg_len}",
     "  jne 7f",
-    // 115: open("/etc/motd") → readv(fd, [(buf, 4), (buf+8, 100)], 2) は 18（motd の長さ）。先頭の本に "welc"。
+    // 115: open("/etc/motd") → readv(fd, [(buf, 4), (buf+8, 100)], 2) は motd の長さ。先頭の本に先頭の 4 バイト。
     //      読む先は rsp+200（4 バイト）と rsp+208（100 バイト。rsp+308 まで）。
     "  mov eax, {sys_open}",
     "  lea rdi, [rip + MOTD_PATH]",
@@ -2770,9 +2847,9 @@ core::arch::global_asm!(
     "  mov edi, 115",
     "  cmp rax, {motd_len}",
     "  jne 7f",
-    "  cmp dword ptr [rsp + 200], {welc}",
+    "  cmp dword ptr [rsp + 200], {motd_first_dword}",
     "  jne 7f",
-    // 116: lseek(fd, 0, SEEK_END) は 18。lseek(fd, -3, SEEK_END) は 15。lseek(fd, 2, SEEK_CUR) は 17。
+    // 116: lseek(fd, 0, SEEK_END) は motd の長さ。lseek(fd, -3, SEEK_END) は長さ - 3。lseek(fd, 2, SEEK_CUR) は長さ - 1。
     //      lseek(fd, -100, SEEK_CUR) は -EINVAL。lseek(fd, 0, 7) は -EINVAL。
     "  mov eax, {sys_lseek}",
     "  mov rdi, r12",
@@ -3132,11 +3209,6 @@ core::arch::global_asm!(
     "  .asciz \"syscall-test\"",
     "ARGV1_TEXT:",
     "  .asciz \"alpha\"",
-    // **`/etc/motd` の中身の写し。** 種のファイルと食い違えば 12 番が落ちる。
-    "MOTD_BYTES:",
-    "  .ascii \"welco\"",
-    "MOTD_REST:",
-    "  .ascii \"me to ZeikOS\\n\"",
     // **64 バイトを越える 1 本。** 記録用の緩衝より長いことが主張である。
     "LONG_MESSAGE:",
     "  .ascii \"syscall-test is writing a line that does not fit the 64-byte record\\n\"",
@@ -3177,7 +3249,7 @@ core::arch::global_asm!(
     sys_madvise = const 28u32,
     sys_tkill = const 200u32,
     minus_esrch = const MINUS_ESRCH,
-    welc = const WELC,
+    motd_first_dword = const MOTD_FIRST_DWORD,
     minus_eexist = const MINUS_EEXIST,
     sys_open = const SYS_OPEN,
     sys_close = const SYS_CLOSE,
@@ -3212,7 +3284,11 @@ core::arch::global_asm!(
     reclen_off = const DIRENT_RECLEN_OFFSET,
     type_off = const DIRENT_TYPE_OFFSET,
     dt_dir = const DT_DIR,
-    dt_both = const DT_DIR | DT_REG,
+    dt_reg = const DT_REG,
+    root_directories = const ROOT_DIRECTORIES,
+    root_files = const ROOT_FILES,
+    data_directories = const DATA_DIRECTORIES,
+    data_files = const DATA_FILES,
     tiny = const TINY_BUFFER,
     minus_einval = const MINUS_EINVAL,
     argc = const EXPECTED_ARGC,

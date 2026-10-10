@@ -1682,6 +1682,17 @@ const SYSCALL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
+    // **`syscall-test` へ渡すルートのディレクトリの数を、1 つ多くする**（2026-10-10）。`getdents64` で種類ごとに数えた数と
+    // 合わず、`syscall-test` が 27 番で止まる。ビルドスクリプトがシードから種類ごとの数を求めて渡す形が、検算に届いている
+    // ことを見る。
+    CriticalTest {
+        name: "root-directories-off-by-one",
+        feature: "root-directories-off-by-one-test",
+        expected_markers: &["user-run: syscall-test exited with status 27", "halting"],
+        forbidden_markers: &["user-run: syscall-test left Ring 3 (exited=true status=0"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
     // **`mmap(MAP_FIXED)`・`munmap`・`mprotect` がユーザーの番地の上限を見ない**（2026-10-07。直す前の形）。上限のページへの
     // `MAP_FIXED` が通ってしまい、`syscall-test` が 121 番で止まる。
     CriticalTest {
@@ -1879,7 +1890,7 @@ const SYSCALL_TESTS: &[CriticalTest] = &[
         feature: "syscall-test-stat-blocks-in-bytes",
         expected_markers: &[
             "user-run: syscall-test exited with status 21",
-            "st_blocks was not 8 (512-byte units)",
+            "st_blocks was not what the build script computed from the seed's length and the block size (512-byte units)",
         ],
         forbidden_markers: &["user-load: syscall-test ran as a process"],
         wait_for_full_timeout: false,
@@ -17275,6 +17286,18 @@ fn cmd_shell_test_with_disk(mode: ShellTestMode, previous: Option<&Path>) -> Res
 /// **分けた理由は、同じ判定を台本で駆動した起動へも当てるためである**（`--full` の余裕。
 /// **打鍵を見ない破壊テストを台本のグループへ移す**——`ADR-0063` の決定 4）。**この関数そのものは
 /// 振る舞いを変えていない**——**中身は `cmd_shell_test` の後半をそのまま切り出したものである。**
+/// シードの `/etc/motd`（イメージへ入る原本）の、空でない最初の行（前後の空白を除く。2026-10-10）。シェルの検査が、
+/// `cat /etc/motd` の出力を探すのに使う。**シードが変われば、期待も一緒に変わる。**
+fn seed_motd_first_line() -> Result<String> {
+    let path = format!("{IMAGE_TEXT_ROOT}/etc/motd");
+    let text = fs::read_to_string(&path).with_context(|| format!("failed to read {path}"))?;
+    text.lines()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(str::to_string)
+        .with_context(|| format!("{path} has no line to look for in the shell output"))
+}
+
 fn judge_shell_session(
     mode: ShellTestMode,
     serial: &str,
@@ -17349,7 +17372,9 @@ fn judge_shell_session(
     let echoed = after_shell_plain.contains("zeikos$ /bin/ls");
     // **到達条件の 3 つ。** 出力そのものがシリアルに現れる。
     let ran_ls = after_shell.contains("lost+found");
-    let ran_cat = after_shell.contains("welcome to ZeikOS");
+    // **`cat` が出す中身は、シードの `/etc/motd` から読む**（2026-10-10。以前は "welcome to ZeikOS" を定数で持っていた）。
+    let motd = seed_motd_first_line()?;
+    let ran_cat = after_shell.contains(motd.as_str());
     let ran_hello = after_shell.contains("hello from ring 3");
     // **C で書いたプログラムが走ったこと（C-a。`ADR-0057`）。**
     //
@@ -33314,7 +33339,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 64,
-    full: 511,
+    full: 512,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

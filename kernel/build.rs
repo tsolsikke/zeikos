@@ -88,6 +88,102 @@ fn main() {
 /// ルートと一致することを確かめる（[`check_staging_root`]）。**ルートへディレクトリを足したら、ここにも足す。**
 const ROOT_DIRS_MADE_BY_BUILD: &[&str] = &["bin", "data", "lib", "root", "tmp"];
 
+/// ビルドスクリプトが `/data` に作る通常のファイル（2026-10-10）。`syscall-test` の 27 番は、`/data` の通常のファイルが
+/// これより少なくないことを見る（[`image_expectations`]）。イメージを作る所が、作った `/data` と一致することを確かめる
+/// （[`check_staging_data`]）。**`/data` へファイルを足したら、ここにも足す。**
+const DATA_FILES_MADE_BY_BUILD: &[&str] = &[
+    "badutf8",
+    "big",
+    "direct-max",
+    "indirect-first",
+    "lines",
+    "sparse-hole",
+    "utf8",
+    "vimops",
+    "writable",
+];
+
+/// イメージのブロックの大きさ（2026-10-10）。**`mke2fs` には渡しておらず、`mke2fs` の既定が選ぶ値である**（32 MiB の
+/// イメージで 4096。`e2fsck` の行のブロック数で測った）。`syscall-test` の 21 番が見る `/etc/motd` の `st_blocks` を、
+/// シードの長さとこの値から求める（[`image_expectations`]）。イメージを作った後に superblock の値と比べ、食い違えば
+/// ビルドを止める（別の版の `mke2fs` が既定を変えたときに、黙って食い違わない）。
+const FS_BLOCK_BYTES: usize = 4096;
+
+/// `syscall-test` へ環境変数で渡す、イメージの中身から決まる期待（2026-10-10）。**イメージではなく、シードとビルド
+/// スクリプトの一覧から求める**（[`expected_root_entries`] と同じ理由。イメージから求めると循環する）。
+///
+/// - `ZEIKOS_ROOT_ENTRIES`: ルートの項目の数（[`expected_root_entries`]）
+/// - `ZEIKOS_ROOT_DIRECTORIES`・`ZEIKOS_ROOT_FILES`: ルートの項目のうち、ディレクトリと通常のファイルの数。ディレクトリは、
+///   シードのディレクトリ、[`ROOT_DIRS_MADE_BY_BUILD`]、`.`・`..`・`lost+found` である。シードのルートにそれ以外の種類
+///   （シンボリックリンクなど）が在れば、ビルドを止める（27 番は 2 つの種類しか数えない）
+/// - `ZEIKOS_DATA_FILES`: `/data` の通常のファイルの数（[`DATA_FILES_MADE_BY_BUILD`]）。**`syscall-test` は「これ以上」と
+///   見る**——`/data` は書ける場所で、ディスクを持ち越した起動では、前の起動のプログラムが作ったファイルが残る（実測。
+///   `persist-zi-test` の 2 回目の起動に、1 回目の `zi` が作った `/data/fresh` が在り、ちょうどの数と比べた形が止まった）
+/// - `ZEIKOS_MOTD_HEX`: シードの `/etc/motd` の中身（16 進。バイト列をそのまま渡せる形にする）
+/// - sabotage test（`root-directories-off-by-one-test`）は、`ZEIKOS_ROOT_DIRECTORIES` を 1 つ多く渡す
+/// - `ZEIKOS_MOTD_BLOCKS`: `/etc/motd` の `st_blocks`（512 バイト単位）。中身の長さを [`FS_BLOCK_BYTES`] のブロックへ
+///   切り上げた数から求める。直接ブロック（12 個）に収まる長さだけを扱う（越えると間接ブロックの分が足される）
+fn image_expectations(manifest_dir: &str) -> Vec<(&'static str, String)> {
+    let seed = format!("{manifest_dir}/fsimage/seed");
+    let mut root_directories = 3; // `.`・`..`・`lost+found`
+    let mut root_files = 0;
+    let mut seed_names = Vec::new();
+    for entry in std::fs::read_dir(&seed).expect("failed to read the seed directory") {
+        let entry = entry.expect("failed to read a seed entry");
+        let name = entry
+            .file_name()
+            .into_string()
+            .expect("a seed name is not UTF-8");
+        let kind = entry
+            .file_type()
+            .expect("failed to read a seed entry's type");
+        if kind.is_dir() {
+            root_directories += 1;
+        } else if kind.is_file() {
+            assert!(
+                !ROOT_DIRS_MADE_BY_BUILD.contains(&name.as_str()),
+                "the seed root has a file named {name}, which the build script makes as a directory"
+            );
+            root_files += 1;
+        } else {
+            panic!(
+                "the seed root has {name}, which is neither a directory nor a regular file;                  syscall-test 27 counts only those two kinds"
+            );
+        }
+        seed_names.push(name);
+    }
+    root_directories += ROOT_DIRS_MADE_BY_BUILD
+        .iter()
+        .filter(|name| !seed_names.iter().any(|seed_name| seed_name == *name))
+        .count();
+    let motd =
+        std::fs::read(format!("{seed}/etc/motd")).expect("failed to read the seed /etc/motd");
+    assert!(
+        motd.len() <= 12 * FS_BLOCK_BYTES,
+        "the seed /etc/motd needs an indirect block; ZEIKOS_MOTD_BLOCKS counts direct blocks only"
+    );
+    let motd_blocks = motd.len().div_ceil(FS_BLOCK_BYTES) * (FS_BLOCK_BYTES / 512);
+    // sabotage test（`root-directories-off-by-one-test`）は、ディレクトリの数を 1 つ多く渡す。
+    if std::env::var("CARGO_FEATURE_ROOT_DIRECTORIES_OFF_BY_ONE_TEST").is_ok() {
+        root_directories += 1;
+    }
+    let motd_hex: String = motd.iter().map(|byte| format!("{byte:02x}")).collect();
+    vec![
+        (
+            "ZEIKOS_ROOT_ENTRIES",
+            expected_root_entries(manifest_dir).to_string(),
+        ),
+        ("ZEIKOS_ROOT_DIRECTORIES", root_directories.to_string()),
+        ("ZEIKOS_ROOT_FILES", root_files.to_string()),
+        (
+            "ZEIKOS_DATA_FILES",
+            DATA_FILES_MADE_BY_BUILD.len().to_string(),
+        ),
+        ("ZEIKOS_MOTD_HEX", motd_hex),
+        ("ZEIKOS_MOTD_BLOCKS", motd_blocks.to_string()),
+    ]
+}
+
 /// `syscall-test` の 25 番が `getdents64` で数えるルートの項目の数（2026-10-09）。**イメージではなく、シードの名前と
 /// [`ROOT_DIRS_MADE_BY_BUILD`] から求める**——`syscall-test` はイメージの `/bin` に入るので、ビルドしたイメージから
 /// 数えると、プログラムを作る前にイメージが要る形（循環）になる。
@@ -143,6 +239,35 @@ fn check_staging_root(manifest_dir: &str, staging: &str) {
         actual, expected,
         "the image root ({staging}) is not the seed root plus ROOT_DIRS_MADE_BY_BUILD; \
          update ROOT_DIRS_MADE_BY_BUILD in kernel/build.rs"
+    );
+}
+
+/// イメージを作る前の `/data`（`staging`）が、[`DATA_FILES_MADE_BY_BUILD`] の通常のファイルだけであるかを確かめる
+/// （2026-10-10）。**一致しなければビルドを止める**——[`image_expectations`] が数えた数と、イメージの中身が食い違った
+/// まま `syscall-test` へ渡らないようにする（[`check_staging_root`] と同じ形）。
+fn check_staging_data(staging: &str) {
+    let dir = format!("{staging}/data");
+    let mut names: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|error| panic!("failed to read {dir}: {error}"))
+        .map(|entry| {
+            let entry = entry.expect("failed to read an entry");
+            let name = entry.file_name().into_string().expect("a name is not UTF-8");
+            assert!(
+                entry.file_type().expect("failed to read an entry's type").is_file(),
+                "{dir}/{name} is not a regular file; syscall-test 27 expects only regular files there"
+            );
+            name
+        })
+        .collect();
+    names.sort();
+    let mut expected: Vec<String> = DATA_FILES_MADE_BY_BUILD
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+    expected.sort();
+    assert_eq!(
+        names, expected,
+        "the image /data ({dir}) is not DATA_FILES_MADE_BY_BUILD; update DATA_FILES_MADE_BY_BUILD in kernel/build.rs"
     );
 }
 
@@ -422,8 +547,8 @@ fn build_user_programs(manifest_dir: &str, out_dir: &str) {
 
     // **写しの置き場**（[`ProgramCache`]）。
     let cache = ProgramCache::open(out_dir);
-    // ルートの項目の数（[`expected_root_entries`]）。名前を出すプログラム（`syscall-test`）にだけ、環境変数で渡す。
-    let root_entries = expected_root_entries(manifest_dir).to_string();
+    // イメージの中身から決まる期待（[`image_expectations`]）。名前を出すプログラム（`syscall-test`）にだけ、環境変数で渡す。
+    let expectations = image_expectations(manifest_dir);
 
     for name in PROGRAMS {
         let source = format!("{manifest_dir}/userland/{name}.rs");
@@ -439,8 +564,10 @@ fn build_user_programs(manifest_dir: &str, out_dir: &str) {
                 command.args(["--cfg", cfg]);
             }
         }
-        if inputs.mentions("ZEIKOS_ROOT_ENTRIES") {
-            command.env("ZEIKOS_ROOT_ENTRIES", &root_entries);
+        for (variable, value) in &expectations {
+            if inputs.mentions(variable) {
+                command.env(variable, value);
+            }
         }
         command.args([
             "--edition",
@@ -1474,6 +1601,7 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
 
     // **ルートが、`syscall-test` へ渡した数と同じ中身であること**（2026-10-09。[`check_staging_root`]）。
     check_staging_root(manifest_dir, &staging);
+    check_staging_data(&staging);
 
     // **種の権限を、写した元によらず決める**（2026-10-08）。`fs::copy` は権限を写し、`mke2fs -d` はそれを inode へ入れる。
     // 写しの置き場の当たりは読み取り専用の写しのハードリンクなので、決めないと、当たりと外れで像のバイトが変わる。
@@ -1600,6 +1728,10 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
         ]) as usize
     };
     let block_size = 1024usize << le32(1024 + 24);
+    assert_eq!(
+        block_size, FS_BLOCK_BYTES,
+        "mke2fs chose a block size other than FS_BLOCK_BYTES; syscall-test 21 expects st_blocks for that size"
+    );
     let inodes_per_group = le32(1024 + 40);
     let inode_size = u16::from_le_bytes([image_bytes[1024 + 88], image_bytes[1024 + 89]]) as usize;
     let first_data_block = le32(1024 + 20);
