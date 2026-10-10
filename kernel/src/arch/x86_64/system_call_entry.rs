@@ -91,7 +91,8 @@ const STUB_SWITCHES_STACK: usize = if cfg!(feature = "syscall-stub-keeps-user-st
 
 /// ユーザーの番地の上限（これより下だけがユーザーの番地である）。**範囲の終端で、この値そのものは含まない**——範囲の末尾が
 /// この値に等しいのはよく、越えるのは断る（`crate::syscall` の `exceeds_user_limit`）。`mmap` が配る範囲の終わり
-/// （`crate::userland::ProcessLayout` の `mmap_limit`）も同じ意味で、この値を越えない（2026-10-09）。
+/// （`crate::userland::ProcessLayout` の `mmap_limit`）も同じ意味で、この値を越えない（2026-10-09）。位置を決めたイメージの
+/// セグメントを置いてよいウィンドウの終わり（`ProcessLayout::load_policy`）も同じである（2026-10-10）。
 ///
 /// **正準な番地の下半分の、最後の 1 ページを使わせない。** 最後のページの末尾に `syscall` 命令を置くと、戻り先
 /// （命令の次の番地）が `0x0000_8000_0000_0000` になり、正準でなくなる。Linux も同じ値を上限にしている。

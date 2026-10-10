@@ -156,13 +156,18 @@ impl ProcessLayout {
     /// 像を置いてよい範囲と上限（`common::elf::ElfHeaders::plan` に渡す）。
     ///
     /// - `ET_EXEC`——**今までと同じに、範囲では断らない**（ユーザーの番地の全体を範囲にし、大きさの上限も付けない）。
-    ///   スタックやほかの区画と重なる像は、今までどおり、写す所が断る。
+    ///   スタックやほかの区画と重なる像は、今までどおり、写す所が断る。ウィンドウの終わりは
+    ///   [`crate::arch::x86_64::USER_ADDRESS_LIMIT`] で、**範囲の終端で、この値そのものは含まない**（セグメントの末尾が
+    ///   この値に等しいのはよく、越えるのは断る。`common::elf::ElfHeaders::plan` の `end > window.1`）。
     /// - `ET_DYN`——ずらした後の像が、ずらす量からヒープの上端までに収まり、端から端までが上限以下であること。
     pub const fn load_policy(&self, kind: common::elf::ElfKind) -> common::elf::LoadPolicy {
         match kind {
             common::elf::ElfKind::Executable => common::elf::LoadPolicy {
                 position_independent_base: 0,
-                window: (0, 1 << 47),
+                // **ユーザーのアドレスの上限と同じ値**（どちらも範囲の終端で、その値を含まない）。以前は `1 << 47` で、上限より
+                // 1 ページ上だった——セグメントを最後のページ（`0x7fff_ffff_f000` から）に置くイメージを受けうる形だった
+                // （`mmap_limit` と同じ形。`USER_ADDRESS_LIMIT - 4096` にすると、逆向きに 1 ページ狭くなる）。
+                window: (0, crate::arch::x86_64::USER_ADDRESS_LIMIT),
                 max_span: u64::MAX,
             },
             common::elf::ElfKind::PositionIndependent => common::elf::LoadPolicy {
@@ -3482,7 +3487,7 @@ mod tests {
         // 範囲では断らない（今までどおり、写す所が断る）。
         let policy = layout.load_policy(common::elf::ElfKind::Executable);
         assert_eq!(policy.position_independent_base, 0);
-        assert_eq!(policy.window, (0, 1 << 47));
+        assert_eq!(policy.window, (0, crate::arch::x86_64::USER_ADDRESS_LIMIT));
         assert_eq!(policy.max_span, u64::MAX);
     }
 
@@ -3545,6 +3550,63 @@ mod tests {
         assert_eq!(
             old.reserve(PAGE, MappingKind::Anonymous, true, true),
             Ok(USER_ADDRESS_LIMIT)
+        );
+    }
+
+    /// **位置を決めたイメージのセグメントも、ユーザーのアドレスの上限まで受け、1 ページでも越えれば断る**（2026-10-10）。
+    /// `load_policy` のウィンドウの終わりは、上限と同じ意味（範囲の終端で、その値を含まない）である。ヘッダとプログラム
+    /// ヘッダ 1 つだけの、セグメントの中身を持たないイメージで、計画（`plan`）の答えを見る。
+    #[test]
+    fn executable_segments_may_end_at_the_user_address_limit_and_no_further() {
+        use crate::arch::x86_64::USER_ADDRESS_LIMIT;
+        use common::elf::{ElfHeaders, PlacementError, PF_R, PT_LOAD};
+        const PAGE: u64 = 4096;
+        // `ET_EXEC` のヘッダ（64 バイト）と、`PT_LOAD` を 1 つ（56 バイト）。ファイルからは読まない（`p_filesz` は 0）。
+        fn head(vaddr: u64, memsz: u64) -> [u8; 120] {
+            let mut buf = [0u8; 120];
+            buf[0..4].copy_from_slice(&[0x7f, b'E', b'L', b'F']);
+            buf[4] = 2; // 64 ビット
+            buf[5] = 1; // リトルエンディアン
+            buf[16..18].copy_from_slice(&2u16.to_le_bytes()); // ET_EXEC
+            buf[18..20].copy_from_slice(&62u16.to_le_bytes()); // x86_64
+            buf[24..32].copy_from_slice(&vaddr.to_le_bytes()); // 入口
+            buf[32..40].copy_from_slice(&64u64.to_le_bytes()); // プログラムヘッダの表の位置
+            buf[54..56].copy_from_slice(&56u16.to_le_bytes());
+            buf[56..58].copy_from_slice(&1u16.to_le_bytes());
+            buf[64..68].copy_from_slice(&PT_LOAD.to_le_bytes());
+            buf[68..72].copy_from_slice(&PF_R.to_le_bytes());
+            buf[80..88].copy_from_slice(&vaddr.to_le_bytes());
+            buf[88..96].copy_from_slice(&vaddr.to_le_bytes());
+            buf[104..112].copy_from_slice(&memsz.to_le_bytes());
+            buf[112..120].copy_from_slice(&PAGE.to_le_bytes());
+            buf
+        }
+        let layout = super::ProcessLayout::for_kind(common::elf::ElfKind::Executable);
+        let policy = layout.load_policy(common::elf::ElfKind::Executable);
+        let plan = |vaddr: u64, memsz: u64| {
+            let bytes = head(vaddr, memsz);
+            let headers = ElfHeaders::parse(&bytes, bytes.len() as u64).expect("the head is valid");
+            headers.plan(&policy)
+        };
+        // 末尾が上限ちょうどのセグメントは受ける。
+        let at_the_limit = plan(USER_ADDRESS_LIMIT - PAGE, PAGE).expect("it ends at the limit");
+        assert_eq!(at_the_limit.end, USER_ADDRESS_LIMIT);
+        // 上限を 1 ページ越えるセグメント（上限の 1 ページ下から 2 ページ）と、上限から始まるセグメントは断る。
+        assert_eq!(
+            plan(USER_ADDRESS_LIMIT - PAGE, 2 * PAGE),
+            Err(PlacementError::OutsideWindow {
+                index: 0,
+                start: USER_ADDRESS_LIMIT - PAGE,
+                end: USER_ADDRESS_LIMIT + PAGE,
+            })
+        );
+        assert_eq!(
+            plan(USER_ADDRESS_LIMIT, PAGE),
+            Err(PlacementError::OutsideWindow {
+                index: 0,
+                start: USER_ADDRESS_LIMIT,
+                end: USER_ADDRESS_LIMIT + PAGE,
+            })
         );
     }
 }
