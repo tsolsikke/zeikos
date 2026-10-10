@@ -1936,6 +1936,14 @@ fn load_segments_and_stack(
                 continue;
             }
 
+            // **アドレスの確かめは、フレームを取る前に行う**（2026-10-09）。以前はフレームを取った後で確かめ、正準でなければ
+            // そのフレームを返さずに失敗していた。**ここへは来ない**——上の計画（`plan`）が、どのセグメントも配置のウィンドウ
+            // （位置を決めたイメージは `USER_ADDRESS_LIMIT` まで、位置独立のイメージはヒープの上端まで。`ProcessLayout::load_policy`）
+            // に収めているので、ページは正準である。
+            // 守りとして残し、来ても何も持っていない形にする。
+            let Some(virt) = common::addr::VirtAddr::new(page) else {
+                return Err(UserLoadError::NotCanonical(page));
+            };
             let Some(frame) = allocator.allocate_frame() else {
                 return Err(UserLoadError::OutOfFrames);
             };
@@ -1971,9 +1979,6 @@ fn load_segments_and_stack(
                 }
             }
 
-            let Some(virt) = common::addr::VirtAddr::new(page) else {
-                return Err(UserLoadError::NotCanonical(page));
-            };
             // 破壊テスト (S9-b-1, user-run-writable-text): 区画の権限を無視して書けるように
             // マップする。**読み取り専用のはずの葉が W=1 になり、下の読み戻しが検出する。**
             // **書けるようにするのは、実行しない区画だけである**（2026-10-03）——実行する区画を書けるようにすると、
