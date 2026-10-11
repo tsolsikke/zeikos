@@ -581,6 +581,8 @@ socket のパス長で相手側が先に落ちたからで、規則が守られ�
 - **止めたか続けたかと、その理由を、報告に書く。** 10 分ごとの見込みと、実際に終わった時刻も書く
   （記録は `target/full-check/watch-history.tsv` に残る）。
 
+**まとめて実行する範囲と、揺れる項目だけが fail したときの push の例外は、`docs/coding-standards.md` の「full checkをまとめて実行する範囲と、揺れる項目だけがfailしたときのpush」にある。**
+
 ### 14.3 一時的な破壊・変更の手順
 
 本体は `docs/coding-standards.md` の「一時的な破壊・変更の手順」にある
