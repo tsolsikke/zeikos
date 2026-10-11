@@ -13297,6 +13297,16 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "空間を壊すとき、どの空間も隔離の道を通す",
     ),
     (
+        "quarantine-keeps-earlier-frames-test",
+        cfg!(feature = "quarantine-keeps-earlier-frames-test"),
+        "破棄の始めに、前の破棄のフレームで退いたものを返さない（先行する破棄と重なる形を作る確かめ）",
+    ),
+    (
+        "quarantine-counts-others-as-own-test",
+        cfg!(feature = "quarantine-counts-others-as-own-test"),
+        "待った後に返した本数を、前の破棄の分も含めて自分の分に数える（直す前の形）",
+    ),
+    (
         "quarantine-overflow-leaks-test",
         cfg!(feature = "quarantine-overflow-leaks-test"),
         "隔離が一杯になっても待たず、漏らす",

@@ -98,14 +98,19 @@ pub struct Retired {
     pub returned: usize,
     /// 隔離へ入れた本数（[`Retire::ThroughQuarantine`]）。
     pub quarantined: usize,
-    /// 隔離へ入れた後、同じ破棄の中で世代が退いて返した本数（一杯になって待った分）。
+    /// 隔離へ入れた後、同じ破棄の中で世代が退いて返した、**この破棄のフレームの**本数（一杯になって待った分）。
     pub released_meanwhile: usize,
-    /// 隔離に残っていた、前の破棄のフレームのうち、この破棄の始めに返した本数（会計の補正に使う）。
+    /// 隔離に残っていた、前の破棄のフレームのうち、この破棄の中で返した本数（会計の補正に使う）。**破棄の始めに返した分と、
+    /// 一杯になって待った後に一緒に返した分の両方を数える**（2026-10-11。待った後の分は、以前は
+    /// [`Self::released_meanwhile`] に混ざっていた）。
     pub released_others: usize,
     /// 漏らした本数（隔離が一杯で、待てなかった分）。
     pub leaked: usize,
     /// 一杯になって待った回数。
     pub waits: usize,
+    /// この破棄のフレームのうち、破棄の終わりに隔離に残っていた本数を、**隔離から数え直したもの**（2026-10-11）。
+    /// [`Self::still_quarantined`] は差し引きで求めるので、2 つが食い違えば会計の誤りである（破棄する側が名指しする）。
+    pub own_held: usize,
     /// 壊すのに掛かったサイクル（`rdtsc`。揺れる値。判定に使わない）。
     pub cycles: u64,
 }
@@ -118,6 +123,7 @@ impl Retired {
         released_others: 0,
         leaked: 0,
         waits: 0,
+        own_held: 0,
         cycles: 0,
     };
 
@@ -126,7 +132,7 @@ impl Retired {
         self.returned + self.quarantined + self.leaked
     }
 
-    /// この破棄のフレームのうち、まだ隔離に残っている本数。
+    /// この破棄のフレームのうち、まだ隔離に残っている本数（差し引きで求める。[`Self::own_held`] と突き合わせる）。
     pub fn still_quarantined(&self) -> usize {
         self.quarantined.saturating_sub(self.released_meanwhile)
     }
@@ -206,15 +212,17 @@ impl Drop for Lease<'_> {
     }
 }
 
-/// 退いた分を返す（借りられるまで、BKL を放して少し待つのを繰り返す。上限 100 回）。返した本数。借りられなければ `None`。
+/// 退いた分を返す（借りられるまで、BKL を放して少し待つのを繰り返す。上限 100 回）。返した本数を、世代 `own` の分と
+/// それ以外（前の破棄の分）に分けて返す（2026-10-11）。借りられなければ `None`。
 fn release_retired_when_borrowable(
     quarantine: &mut Quarantine,
     frames: &mut Frames<'_>,
     bkl: &mut Option<crate::bkl::BklGuard>,
-) -> Option<usize> {
+    own: u64,
+) -> Option<Released> {
     for _ in 0..100 {
         if let Some(released) = frames.with(|allocator| {
-            quarantine.release_retired(allocator, crate::bkl::generation_is_retired)
+            quarantine.release_retired_split(allocator, crate::bkl::generation_is_retired, own)
         }) {
             return Some(released);
         }
@@ -279,9 +287,16 @@ pub unsafe fn retire_address_space(
     let started = common::arch::x86_64::read_timestamp_counter();
     let mut result = Retired::ZERO;
     // **前の破棄のフレームで、退いたものを先に返す**（隔離に空きを作る。会計のために数を控える）。借りられなければ、次の機会に。
-    result.released_others = frames
-        .with(|allocator| quarantine.release_retired(allocator, crate::bkl::generation_is_retired))
-        .unwrap_or(0);
+    //
+    // 確かめ (2026-10-11, quarantine-keeps-earlier-frames-test): 先に返さない。前の破棄のフレームが隔離に残ったまま、
+    // 一杯になって待った後に自分のフレームと一緒に返る形（先行する破棄と重なる形）を、起動の中で必ず作る。
+    if !cfg!(feature = "quarantine-keeps-earlier-frames-test") {
+        result.released_others = frames
+            .with(|allocator| {
+                quarantine.release_retired(allocator, crate::bkl::generation_is_retired)
+            })
+            .unwrap_or(0);
+    }
     let mut how = how;
     if how == Retire::Directly {
         // **先に借りる。借りられなければ隔離の道へ倒す**（`space` はまだ壊していない）。
@@ -320,9 +335,19 @@ pub unsafe fn retire_address_space(
                 }
                 result.waits += 1;
                 if wait_until_retired(generation, bkl) {
-                    if let Some(released) = release_retired_when_borrowable(quarantine, frames, bkl)
+                    if let Some(released) =
+                        release_retired_when_borrowable(quarantine, frames, bkl, generation)
                     {
-                        result.released_meanwhile += released;
+                        // **自分の分と、前の破棄の分を分けて数える**（2026-10-11）。待っている間に前の破棄の世代も退くので、
+                        // 一緒に返る。以前は全部を自分の分に数え、自分の残り（`still_quarantined`）を少なく見積もった。
+                        //
+                        // 破壊テスト (2026-10-11, quarantine-counts-others-as-own-test): 全部を自分の分に数える（直す前の形）。
+                        if cfg!(feature = "quarantine-counts-others-as-own-test") {
+                            result.released_meanwhile += released.own + released.others;
+                        } else {
+                            result.released_meanwhile += released.own;
+                            result.released_others += released.others;
+                        }
                     }
                     if quarantine.push(frame, generation) {
                         result.quarantined += 1;
@@ -332,6 +357,9 @@ pub unsafe fn retire_address_space(
                 result.leaked += 1;
             })
         };
+        // **自分の残りを、隔離から数え直す**（2026-10-11）。この世代で入れたのはこの破棄だけである——世代は破棄ごとに
+        // 上げ（`note_mapping_changed`）、隔離はスロットごとで、破棄は入れ子にならない。
+        result.own_held = quarantine.held_with_generation(generation);
     }
     finish(result, started)
 }
@@ -340,6 +368,15 @@ pub unsafe fn retire_address_space(
 fn finish(mut result: Retired, started: u64) -> Retired {
     result.cycles = common::arch::x86_64::read_timestamp_counter().wrapping_sub(started);
     result
+}
+
+/// 隔離から返した本数を、ある世代の分とそれ以外に分けたもの（2026-10-11。[`Quarantine::release_retired_split`]）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Released {
+    /// 指定した世代で入れた分（破棄する側から見て、自分のフレーム）。
+    pub own: usize,
+    /// それ以外（前の破棄のフレーム）。
+    pub others: usize,
 }
 
 /// 隔離中の 1 件。
@@ -400,7 +437,20 @@ impl Quarantine {
         allocator: &mut FrameAllocator,
         retired: impl Fn(u64) -> bool,
     ) -> usize {
-        let mut released = 0;
+        let released = self.release_retired_split(allocator, retired, None);
+        released.own + released.others
+    }
+
+    /// [`Self::release_retired`] と同じく返し、**世代 `own` で入れた分とそれ以外を分けて数える**（2026-10-11）。
+    /// `own` が `None` なら、全部をそれ以外に数える。**どれを返すかは変わらない**（世代が退いたものだけ）。
+    pub fn release_retired_split(
+        &mut self,
+        allocator: &mut FrameAllocator,
+        retired: impl Fn(u64) -> bool,
+        own: impl Into<Option<u64>>,
+    ) -> Released {
+        let own = own.into();
+        let mut released = Released { own: 0, others: 0 };
         for slot in self.held.iter_mut() {
             let Some(entry) = *slot else {
                 continue;
@@ -415,10 +465,22 @@ impl Quarantine {
             // フレームができる。
             if allocator.deallocate_frame(frame).is_ok() {
                 *slot = None;
-                released += 1;
+                if own == Some(entry.generation) {
+                    released.own += 1;
+                } else {
+                    released.others += 1;
+                }
             }
         }
         released
+    }
+
+    /// 世代 `generation` で入れて、まだ隔離に残っている本数（2026-10-11）。
+    pub fn held_with_generation(&self, generation: u64) -> usize {
+        self.held
+            .iter()
+            .filter(|slot| slot.is_some_and(|entry| entry.generation == generation))
+            .count()
     }
 
     /// 中身を空にする（B-d）。
@@ -508,6 +570,50 @@ mod tests {
         assert_eq!(released, 1);
         assert_eq!(quarantine.held_count(), 1);
         assert_eq!(allocator.free_frame_count(), 2);
+    }
+
+    /// **待った後の返却で、自分の世代の分と前の破棄の分を分けて数える**（2026-10-11）。どちらも退いていれば両方返るが、
+    /// 自分の残りの見積もりに効くのは自分の分だけである。
+    #[test]
+    fn a_release_counts_its_own_generation_apart_from_earlier_destroys() {
+        let mut allocator = allocator_with(1000, 1);
+        let mut quarantine = Quarantine::new();
+        // 前の破棄（世代 3）が 2 本、自分（世代 9）が 3 本を入れた。
+        assert!(quarantine.push(frame(2000), 3));
+        assert!(quarantine.push(frame(2001), 3));
+        assert!(quarantine.push(frame(2002), 9));
+        assert!(quarantine.push(frame(2003), 9));
+        assert!(quarantine.push(frame(2004), 9));
+
+        let released =
+            quarantine.release_retired_split(&mut allocator, |generation| generation < 10, 9);
+
+        assert_eq!(released, Released { own: 3, others: 2 });
+        assert_eq!(quarantine.held_count(), 0);
+        assert_eq!(quarantine.held_with_generation(9), 0);
+    }
+
+    /// **退いていない分は返さず、世代ごとに数え直せる**（2026-10-11）。
+    #[test]
+    fn what_is_still_held_can_be_counted_per_generation() {
+        let mut allocator = allocator_with(1000, 1);
+        let mut quarantine = Quarantine::new();
+        assert!(quarantine.push(frame(2000), 3));
+        assert!(quarantine.push(frame(2001), 9));
+        assert!(quarantine.push(frame(2002), 9));
+
+        // 世代 5 まで退いた。**前の破棄の 1 本だけが返り、自分の 2 本は残る。**
+        let released =
+            quarantine.release_retired_split(&mut allocator, |generation| generation < 5, 9);
+
+        assert_eq!(released, Released { own: 0, others: 1 });
+        assert_eq!(quarantine.held_with_generation(9), 2);
+        assert_eq!(quarantine.held_with_generation(3), 0);
+        assert_eq!(
+            quarantine.release_retired_split(&mut allocator, |_| true, None),
+            Released { own: 0, others: 2 },
+            "世代を渡さなければ、全部をそれ以外に数える"
+        );
     }
 
     #[test]

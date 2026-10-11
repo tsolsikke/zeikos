@@ -899,15 +899,23 @@ static SPAWN_QUARANTINED: core::sync::atomic::AtomicUsize = core::sync::atomic::
 ///
 /// # 同時に 2 つ走らない
 ///
-/// **触るのは BKL の内側だけである。** **破棄は入れ子にならない**——
-/// **子の破棄は、親の破棄が始まる前に終わっている**（`spawn` は同期である）。
-/// **使う前に [`crate::quarantine::Quarantine::reset`] で空にする。**
+/// **破棄は入れ子にならない**——**子の破棄は、親の破棄が始まる前に終わっている**（`spawn` は同期である）。
+/// **触るのは BKL の内側である。** ただし隔離の道の破棄は、一杯になると BKL を放して待つ（`crate::quarantine` の
+/// `retire_address_space`）。その間、アイドルの [`release_retired_quarantines`] は、破棄の途中（`DESTROYS_IN_PROGRESS`）を
+/// 見て触らない。
+///
+/// # 空にせず、残りを次へ持ち越す（2026-10-07）
+///
+/// **破棄のたびには空にしない**（[`crate::quarantine::Quarantine::reset`] は呼ばない）。前の破棄のフレームは、世代が退くまで
+/// 残り、次の破棄の始めか、一杯になって待った後か、アイドルの定常経路が返す。**どの破棄が入れたかは、入れたときの世代で
+/// 分かる**——世代は破棄ごとに上げ、このスロットの隔離へ入れるのは、このスロットの破棄だけである。
 ///
 /// # スロットごとに持つ（W1-c-3）
 ///
-/// **同時に走る 2 本は、それぞれ自分の破棄を持つ。** **1 つだけだと、片方の `reset` が
-/// もう片方の途中の破棄を空にする。** **今のタスクのスロットで引く。** **既定の起動では必ずスロット 0
-/// である**（W1-c-4 の `concurrent-test` では、足した 1 本がスロット 1 を使う）。
+/// **同時に走る 2 本は、それぞれ自分の破棄を持つ。** **1 つだけだと、片方の破棄が返す分に、一杯になって待っている
+/// もう片方の破棄のフレームが混ざり、もう片方の自分の残りの数え直し（`own_held`）が差し引きと合わなくなる。**
+/// **今のタスクのスロットで引く。** **既定の起動では必ずスロット 0 である**（W1-c-4 の `concurrent-test` では、
+/// 足した 1 本がスロット 1 を使う）。
 static mut SPAWN_QUARANTINE: [crate::quarantine::Quarantine; crate::arch::x86_64::USER_TASK_SLOTS] =
     [const { crate::quarantine::Quarantine::new() }; crate::arch::x86_64::USER_TASK_SLOTS];
 
@@ -968,10 +976,15 @@ fn destroy_route(ran_on: u64) -> crate::quarantine::Retire {
     }
 }
 
-fn note_destroy(slot: usize, retired: crate::quarantine::Retired) {
+/// 破棄の結果を控え、隔離にフレームが残っていれば印を立てる（2026-10-11 に、印を隔離の中身で決める形にした）。
+///
+/// **`held` は、破棄の後にこのスロットの隔離に残っている本数**（自分の分と前の破棄の分の両方）である。以前は差し引きで求めた
+/// 自分の残り（`Retired::still_quarantined`）で決めていて、待った後に前の破棄の分まで差し引くと 0 に見え、残っているのに
+/// 印が立たなかった。印が立たないと、アイドルの定常経路が返す道に乗らず、次の破棄まで残る。
+fn note_destroy(slot: usize, retired: crate::quarantine::Retired, held: usize) {
     // SAFETY: BKL の内側で、自分のスロットの欄だけを書く。
     unsafe { (*core::ptr::addr_of_mut!(LAST_DESTROY))[slot] = retired };
-    if retired.still_quarantined() > 0 {
+    if held > 0 {
         QUARANTINE_HOLDS.store(true, core::sync::atomic::Ordering::SeqCst);
     }
 }
@@ -1008,8 +1021,25 @@ pub fn release_retired_quarantines() -> usize {
     crate::frame_allocator::give_back(allocator);
     if remaining == 0 {
         QUARANTINE_HOLDS.store(false, core::sync::atomic::Ordering::SeqCst);
+        #[cfg(feature = "destroy-through-quarantine-test")]
+        if released > 0 {
+            IDLE_EMPTIED_QUARANTINES.fetch_add(released, core::sync::atomic::Ordering::SeqCst);
+        }
     }
     released
+}
+
+/// アイドルの定常経路が隔離を空にしたときに返した本数の、まだ出していない分（2026-10-11）。**確かめの構成で、アイドルが
+/// 1 行にして出す**（`crate::task` の `report_idle_emptied_quarantines`）。**確かめの構成でだけ在る**——ふつうのビルドでは
+/// 数えない。
+#[cfg(feature = "destroy-through-quarantine-test")]
+static IDLE_EMPTIED_QUARANTINES: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(0);
+
+/// アイドルの定常経路が隔離を空にしたときに返した本数を受け取り、0 に戻す（2026-10-11）。0 なら、まだ空にしていない。
+#[cfg(feature = "destroy-through-quarantine-test")]
+pub fn take_idle_emptied_quarantines() -> usize {
+    IDLE_EMPTIED_QUARANTINES.swap(0, core::sync::atomic::Ordering::SeqCst)
 }
 
 /// `spawn` が受け取った `argv` を置く場所（S11-7）。
@@ -1411,8 +1441,23 @@ pub fn load_user_program_from(
             )
         };
         DESTROYS_IN_PROGRESS.fetch_sub(1, core::sync::atomic::Ordering::SeqCst);
-        note_destroy(slot, retired);
+        note_destroy(slot, retired, quarantine.held_count());
         drop(bkl);
+        // **自分の残りを 2 通りで数えて突き合わせる**（2026-10-11）。差し引き（`still_quarantined`）と、隔離から数え直した数
+        // （`own_held`）である。食い違えば、前の破棄の分を自分の分として差し引いている。
+        if retired.own_held != retired.still_quarantined() {
+            logger.error(format_args!(
+                "quarantine: the destroy of {} counts {} of its own frame(s) as still quarantined, but \
+                 the quarantine holds {} with its generation ({} quarantined, {} released meanwhile, \
+                 {} released from earlier destroys)",
+                process.name,
+                retired.still_quarantined(),
+                retired.own_held,
+                retired.quarantined,
+                retired.released_meanwhile,
+                retired.released_others
+            ));
+        }
         // **大きな空間の破棄は、道と掛かった時間を出す**（1,024 本以上。既定の起動には出ない）。揺れる値なので判定には使わない。
         if retired.collected() >= 1024 {
             logger.info(format_args!(

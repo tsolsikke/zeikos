@@ -964,6 +964,13 @@ destroy-through-quarantine-test = []
 # 隔離が一杯になっても待たず、漏らす（2026-10-07。直す前の形）。容量を越える空間の破棄で、会計が釣り合わず名指しして止まる。
 # `--ring3-test quarantine-overflow-leaks`。
 quarantine-overflow-leaks-test = []
+# 破棄の始めに、前の破棄のフレームで退いたものを返さない（2026-10-11。確かめ）。前の破棄のフレームが隔離に残ったまま、
+# 一杯になって待った後に自分のフレームと一緒に返る形（先行する破棄と重なる形）を、起動の中で作る。
+# `--ring3-test frame-hog-overlapping-quarantine`。
+quarantine-keeps-earlier-frames-test = []
+# 一杯になって待った後に返した本数を、前の破棄の分も含めて全部自分の分に数える（2026-10-11。直す前の形）。自分の残りを
+# 少なく見積もり、隔離から数え直した数と食い違って名指しされる。`--ring3-test quarantine-counts-others-as-own`。
+quarantine-counts-others-as-own-test = []
 # 隔離の容量（256）より多いフレームを持つプログラム（`/bin/frame-hog`。16 MiB の無名の `mmap` を 2 つ）を起動時に起こし、
 # 漏れが 0 であることを見る（2026-10-07。確かめ）。`--ring3-test frame-hog`。
 frame-hog-test = []

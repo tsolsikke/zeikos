@@ -1588,6 +1588,36 @@ const RING3_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
+    // **先行する破棄と重なる形で、自分の残りを正しく数え、最後の破棄の後にアイドルだけで隔離が空になる**（2026-10-11）。
+    // `quarantine-keeps-earlier-frames-test` で、破棄の始めに前の破棄の分を返さない。前の破棄のフレームは、一杯になって
+    // 待った後に自分のフレームと一緒に返る。**自分の残りを 2 通りで数えて食い違えば名指しの行が出る**（下の禁止）。
+    // `/bin/frame-hog` の破棄は起動の中の最後の破棄で、その後はシェルのアイドルだけが隔離を返す。空にしたらアイドルが
+    // 1 行出す（確かめの構成だけ）。
+    CriticalTest {
+        name: "frame-hog-overlapping-quarantine",
+        feature: "frame-hog-test,destroy-through-quarantine-test,quarantine-keeps-earlier-frames-test",
+        expected_markers: &[
+            "frame-hog-check: /bin/frame-hog ended Ok(Exited(0))",
+            "quarantine: the BSP idle loop returned",
+        ],
+        forbidden_markers: &[
+            "left the allocator short",
+            "left the space short",
+            "of its own frame(s) as still quarantined, but",
+        ],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // **待った後に返した本数を、前の破棄の分も含めて自分の分に数える**（2026-10-11。直す前の形）。自分の残りを少なく
+    // 見積もり、隔離から数え直した数と食い違って名指しされる。
+    CriticalTest {
+        name: "quarantine-counts-others-as-own",
+        feature: "frame-hog-test,destroy-through-quarantine-test,quarantine-keeps-earlier-frames-test,quarantine-counts-others-as-own-test",
+        expected_markers: &["of its own frame(s) as still quarantined, but"],
+        forbidden_markers: &[],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
     // **隔離が一杯になっても待たず、漏らす**（2026-10-07。直す前の形）。容量を越える分が漏れ、`spawn` の会計が釣り合わずに
     // 名指しして止まる。
     CriticalTest {
@@ -33366,7 +33396,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 64,
-    full: 514,
+    full: 516,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

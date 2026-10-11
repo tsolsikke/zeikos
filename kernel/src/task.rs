@@ -1616,6 +1616,9 @@ extern "sysv64" fn bsp_idle_main() -> ! {
         if crate::userland::quarantine_holds_frames() {
             let _bkl = crate::bkl::acquire(crate::bkl::KernelEntry::SteadyLoop);
             crate::userland::release_retired_quarantines();
+            // 確かめ (2026-10-12, destroy-through-quarantine-test): 隔離を空にしたら 1 行出す。
+            #[cfg(feature = "destroy-through-quarantine-test")]
+            report_idle_emptied_quarantines();
         }
         // **参照が 0 になったのに、アロケータが借りられずに返せなかった共有メモリのフレームを返す**（2026-10-08。
         // `crate::shm::detach`）。印が無ければ BKL を取らずに通る。
@@ -1644,6 +1647,21 @@ extern "sysv64" fn bsp_idle_main() -> ! {
         // SAFETY: 割り込みを許して眠るだけである。ロックは 1 つも持っていない。
         // ハンドラは登録済みで、このタスクのスタックはガードページ付きである。
         unsafe { common::arch::x86_64::enable_interrupts_and_wait() };
+    }
+}
+
+/// アイドルの定常経路が隔離を空にしたことを、1 行出す（2026-10-12。確かめの構成 `destroy-through-quarantine-test` だけ）。
+///
+/// **最後の破棄の後に、アイドルだけで隔離が空になったことを、検査が読む**（`--ring3-test frame-hog-overlapping-quarantine`）。
+/// **アイドルはロガーを持たないので、スケジューラの観測行の出口（[`serial_line`]）から出す。** BKL の内側で呼ぶ。
+#[cfg(feature = "destroy-through-quarantine-test")]
+fn report_idle_emptied_quarantines() {
+    let emptied = crate::userland::take_idle_emptied_quarantines();
+    if emptied > 0 {
+        serial_line(format_args!(
+            "[INFO] quarantine: the BSP idle loop returned {emptied} quarantined frame(s) and the \
+             quarantines are empty"
+        ));
     }
 }
 
