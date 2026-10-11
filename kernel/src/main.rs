@@ -12432,6 +12432,11 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "PM タイマの周波数の定数を 2 倍にする（ADR-0068 の HW-c）",
     ),
     (
+        "pit-calibration-ticks-queued",
+        cfg!(feature = "pit-calibration-ticks-queued"),
+        "PIT のティックで取った較正の標本だけを 13 分の 1 にする（ADR-0068 の Addendum）",
+    ),
+    (
         "fs-ram-image-ignored",
         cfg!(feature = "fs-ram-image-ignored"),
         "ブートローダが渡した RAM ディスクの像を見ない（ADR-0068 の HW-d）",

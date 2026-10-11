@@ -744,10 +744,11 @@ pub unsafe fn run_timer_loop(
         // ここより前に済んでいる必要がある。
         // **PIT が刻まなかった回は、ICW2 の事後証明が取れない**（HW-c。`ADR-0068`）——
         // **PIC の割り込みが 1 本も届かないので、`first_pic_vector` は `None` のままである。**
-        // **較正の基準を見て決める**（`None` を一色に扱うと、ICW2 の誤りと PIT の不在が混ざる）。
+        // **較正が PIT のティックを見たかで決める**（`None` を一色に扱うと、ICW2 の誤りと PIT の不在が混ざる）。
+        // 2026-10-10 までは較正の基準で決めていたが、PM タイマが既定の基準になったので、基準からは決まらない。
         boot_timer_never_ticked = calibration
             .as_ref()
-            .is_some_and(|value| !value.reference().boot_timer_ticked());
+            .is_some_and(|value| !value.boot_timer_ticked());
         if let Some(calibration) = calibration {
             // SAFETY: ここは起動の途中に BSP が 1 回だけ通る（`run_timer_loop` を呼ぶのは `main.rs` の `start_timer` だけで、
             // `start_timer` は戻らない）。ベクタ LAPIC_TIMER_VECTOR には専用スタブのゲートが入っており（`idt::init`）、

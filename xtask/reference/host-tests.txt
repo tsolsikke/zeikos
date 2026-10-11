@@ -614,12 +614,13 @@ kernel::machine::pc::acpi::sdt::tests::xsdt_entries_are_read_as_64_bit_values
 kernel::machine::pc::ap_start::tests::a_start_address_above_1_mib_is_refused
 kernel::machine::pc::ap_start::tests::a_start_address_is_the_page_number_below_1_mib
 kernel::machine::pc::ap_start::tests::a_start_address_off_a_page_boundary_is_refused
+kernel::machine::pc::apic::tests::a_read_pair_is_re_read_only_when_far_longer_than_the_shortest
 kernel::machine::pc::apic::tests::a_zero_id_register_with_a_plausible_version_still_decodes
 kernel::machine::pc::apic::tests::all_zeros_and_all_ones_are_undecoded
 kernel::machine::pc::apic::tests::coverage_counts_from_the_gsi_base
-kernel::machine::pc::apic::tests::only_a_pit_calibration_says_the_boot_timer_ticked
 kernel::machine::pc::apic::tests::qemu_matches_its_madt
 kernel::machine::pc::apic::tests::the_id_comes_from_bits_27_to_24
+kernel::machine::pc::apic::tests::the_pit_cross_check_flags_queued_and_lost_ticks_but_not_jitter
 kernel::machine::pc::i8042::tests::a_config_without_the_keyboard_interrupt_is_not_ready
 kernel::machine::pc::i8042::tests::a_config_without_translation_is_not_ready
 kernel::machine::pc::i8042::tests::already_correct_config_is_left_alone
@@ -661,9 +662,11 @@ kernel::machine::pc::irq::tests::the_vector_and_irq_mappings_are_inverses
 kernel::machine::pc::irq::tests::vectors_outside_the_managed_range_have_no_irq
 kernel::machine::pc::pci::tests::a_register_window_admits_only_positions_inside_it
 kernel::machine::pc::pci::tests::a_register_window_is_made_only_inside_the_io_space
+kernel::machine::pc::pmtimer::tests::a_decrease_counts_as_a_wrap_only_below_the_threshold
 kernel::machine::pc::pmtimer::tests::bits_above_the_width_do_not_reach_the_difference
 kernel::machine::pc::pmtimer::tests::the_difference_wraps_at_the_declared_width
 kernel::machine::pc::pmtimer::tests::the_frequency_comes_from_the_observed_window
+kernel::machine::pc::pmtimer::tests::three_reads_must_not_go_out_of_order
 kernel::mappings::tests::a_fixed_mapping_below_the_base_counts_but_does_not_move_the_addresses
 kernel::mappings::tests::a_full_table_refuses_and_the_summary_counts_what_is_there
 kernel::mappings::tests::a_released_range_is_used_again_when_it_fits

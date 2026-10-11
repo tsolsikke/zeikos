@@ -1671,30 +1671,25 @@ const FIRST_EDGE_TIMEOUT_CYCLES: u64 = 1_000_000_000;
 
 /// 較正の基準（HW-c。`ADR-0068`）。**どちらで測ったかを、戻り値と行に載せる。**
 ///
-/// **PIT を既定にする。** **PM タイマへ倒すのは、PIT のティックが 1 本も来なかったときだけである**
-/// ——**倒す条件を「較正が失敗した」に広げない**（PIT が刻んでいるのにウィンドウが閉じなかった回は、
-/// 今までどおり較正を諦めて PIT のまま進む）。
+/// **FADT が PM タイマを示せば、PM タイマを既定にする**（2026-10-11。`ADR-0068` の Addendum）。**PIT のティックで
+/// 数える方式は、PM タイマが無いとき（または読みが確かめを通らないとき）の代わりである。** PIT のティックは、
+/// PM タイマがあっても同じ数の標本を取り、突き合わせに使う。
+///
+/// **2026-10-10 までは逆だった**——PIT が既定で、PM タイマへ倒すのは PIT のティックが 1 本も来なかったときだけだった。
+/// KVM の中の PIT は、受け取られていないティックを溜めて `sti` の直後にまとめて入れる（`lost_tick_policy=delay`）ので、
+/// 10 ティックを 100ms とみなすと約 13 分の 1 に出ることがあった（測定は ADR の Addendum にある）。
 ///
 /// # 契約（境界の型。2026-09-30）
 ///
-/// - 較正の基準で、[`calibrate_local_timer`] の結果に載る。共通の側は、起動のタイマが刻んだかを
-///   [`CalibrationReference::boot_timer_ticked`] で決めるだけである（PM タイマで測った回は、PIT のティックが
-///   1 本も来なかった回である）。変種の名前は機械の時計の名前なので、共通の側は書かない。
+/// - 較正の基準で、[`calibrate_local_timer`] の結果に載る。**起動のタイマが刻んだかは、基準では決まらない**
+///   （2026-10-11 から。PM タイマで測った回も、PIT が刻んでいれば突き合わせの標本を取っている）——
+///   共通の側は [`TimerCalibration::boot_timer_ticked`] で決める。変種の名前は機械の時計の名前なので、共通の側は書かない。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CalibrationReference {
-    /// PIT の IRQ0 のティック（既定）。
+    /// PIT の IRQ0 のティック（PM タイマが使えないとき）。
     Pit,
     /// ACPI の PM タイマ（`crate::machine::pc::pmtimer`）。**割り込みを要らず、ポートを読むだけである。**
     PmTimer,
-}
-
-impl CalibrationReference {
-    /// 起動のタイマ（PC では PIT）のティックで測ったか（2026-09-30）。**機械の時計で測ったのは、起動のタイマの
-    /// ティックが 1 本も来なかった回だけである**（[`calibrate_local_timer`]）。共通の側は、ICW2 の事後証明が取れるかを
-    /// これで決める。
-    pub const fn boot_timer_ticked(self) -> bool {
-        matches!(self, Self::Pit)
-    }
 }
 
 impl core::fmt::Display for CalibrationReference {
@@ -1751,9 +1746,66 @@ const _: () = assert!(
     "the PM timer calibration window must stay far below the 24-bit wrap (about 4.7 s)"
 );
 
+/// PIT のティックと PM タイマの較正が、これより食い違えば名前付きの行で出す（ppm。2026-10-11）。
+///
+/// **2% にする。** 2 つの基準がふつうに合う幅より十分広く、ティックを溜めたときのずれより十分狭い。
+///
+/// - **ふつうに合う幅は 0.03%**（約 310 ppm。HW-c の実測。`ADR-0068`）で、KVM でティックを捨てる設定にした回の
+///   PIT の標本も、負荷の無い回は 0.2% の中に入った。
+/// - **溜めたティックが入った回は、約 13 分の 1**（-92%）だった（2026-10-11 の実測）。
+/// - **捨てる設定で CPU を奪い合わせた回は、奪い合いの強さで変わる**（2026-10-11 の実測）。回り続けるシェル 1 本と
+///   奪い合わせた回は -2.9〜+2.1% で、2% を越えるかは回による。本数を増やすと 1.6〜6 倍に出た。
+/// - LAPIC タイマの実効周波数を確かめる許容（±0.5%）より広いのは、ここが「どちらの基準が狂ったか」を言う行だからである。
+///   使うのはいつも PM タイマの値なので、この閾値は較正の結果を変えない。
+const PIT_DISAGREEMENT_PPM: u64 = 20_000;
+
+/// PIT の標本と PM タイマの標本の隔たり（ppm。純粋ロジック）。**PM タイマを分母にする。**
+const fn cross_check_gap_ppm(pm_timer_hz: u64, pit_hz: u64) -> u64 {
+    if pm_timer_hz == 0 {
+        return u64::MAX;
+    }
+    pm_timer_hz.abs_diff(pit_hz) * 1_000_000 / pm_timer_hz
+}
+
+/// PM タイマの読みと LAPIC のカウントの読みを 1 組にしたものの、長さの上限の倍率（2026-10-11）。
+///
+/// **組の 2 つの読みの間で vCPU が止められると、その間に LAPIC だけが数え下がり、標本がずれる。** ずれは
+/// 「組にかかった時間 ÷ ウィンドウ（100ms）」である。**組を TSC で挟み、いちばん短い組の 4 倍か
+/// [`PAIR_FLOOR_CYCLES`] の大きいほうを越えたら、読み直す。** TSC の周波数は分からないが、組どうしの比べには要らない。
+const PAIR_SLACK_FACTOR: u64 = 4;
+
+/// 組の長さが、これ以下なら倍率に関わらず通す（TSC サイクル。2026-10-11）。
+///
+/// **20,000 サイクルは、TSC が 1GHz でも 20µs で、100ms のウィンドウの 0.02% である**——突き合わせの閾値（2%）と、
+/// 実効周波数の許容（±0.5%）より 1 桁以上小さい。いちばん短い組がごく短い機械で、ふつうの揺れを読み直さないための床である。
+const PAIR_FLOOR_CYCLES: u64 = 20_000;
+
+/// 組を読み直す上限（1 組あたり）。**上限に達したら、いちばん短かった組を使い、そのことを名前付きの行で出す。**
+const PAIR_REREAD_LIMIT: u32 = 16;
+
+/// 標本を取る前に、いちばん短い組の長さを掴むために読む組の数。
+const PAIR_BASELINE_READS: u32 = 8;
+
+/// 組の長さが、読み直さなくてよい範囲か（純粋ロジック）。
+const fn pair_is_tight(cycles: u64, shortest: u64) -> bool {
+    let limit = shortest.saturating_mul(PAIR_SLACK_FACTOR);
+    let limit = if limit > PAIR_FLOOR_CYCLES {
+        limit
+    } else {
+        PAIR_FLOOR_CYCLES
+    };
+    cycles <= limit
+}
+
+/// PIT の標本を人工的に小さくするときの割る数。破壊テスト専用である（2026-10-11）。
+///
+/// **13 は、KVM が溜めたティックを入れた回に出た比である**（62.5MHz に対して約 4.8MHz）。
+#[cfg(feature = "pit-calibration-ticks-queued")]
+const PIT_SABOTAGE_DIVISOR: u64 = 13;
+
 /// 較正の結果。
 pub struct TimerCalibration {
-    /// 標本ごとの周波数（Hz）。
+    /// 標本ごとの周波数（Hz）。基準（[`Self::reference`]）で取った標本である。
     samples: [u64; CALIBRATION_SAMPLES],
     /// 何を基準に測ったか（HW-c）。
     reference: CalibrationReference,
@@ -1761,6 +1813,8 @@ pub struct TimerCalibration {
     median_hz: u64,
     /// 最小と最大の差。
     spread_hz: u64,
+    /// 起動のタイマ（PIT）のティックが、較正の間に 1 本でも来たか（2026-10-11）。
+    boot_timer_ticked: bool,
     /// 較正中に Divide Configuration レジスタへ書いた値。
     ///
     /// # 周波数と同じ構造体で運ぶ。片方だけを持ち出せない形にする
@@ -1787,6 +1841,14 @@ impl TimerCalibration {
     /// 標本のばらつき。許容幅を決める入力である。
     pub const fn spread_hz(&self) -> u64 {
         self.spread_hz
+    }
+
+    /// 起動のタイマ（PC では PIT）のティックが、較正の間に 1 本でも来たか（2026-10-11）。
+    ///
+    /// **来なかった回だけ、ICW2 の事後証明が取れない**（PIC の割り込みが 1 本も届かない）。共通の側はこれで決める。
+    /// 2026-10-10 までは基準（PIT か PM タイマか）で決めていたが、PM タイマが既定になったので、基準からは決まらない。
+    pub const fn boot_timer_ticked(&self) -> bool {
+        self.boot_timer_ticked
     }
 
     /// [`Self::median_hz`] が成り立つ前提となる分周設定。
@@ -1841,9 +1903,10 @@ fn wait_for_tick_edge_within(deadline_cycles: u64) -> Option<(u64, u64)> {
 
 /// PIT 基準の標本取りの結果（HW-c）。**「1 本も来ない」と「窓が閉じない」を分ける。**
 ///
-/// **分ける理由は、倒す先が違うことである。** **1 本も来ないのは「PIT が刻んでいない」機械で、
-/// PM タイマへ倒す。** **窓が閉じないのは「刻んでいるが取りこぼした」回で、較正を諦めて PIT のまま
-/// 進む**（直す前の振る舞い）。
+/// **分ける理由は、起動のタイマが刻んだかが違うことである。** **1 本も来ないのは「PIT が刻んでいない」機械で、
+/// ICW2 の事後証明が取れない。** **窓が閉じないのは「刻んでいるが取りこぼした」回である。** どちらも、PM タイマが
+/// 使えれば較正は PM タイマで決まる。PM タイマが使えなければ、前者は止まり、後者は較正を諦めて PIT のまま進む
+/// （直す前の振る舞い）。
 enum PitSampling {
     Done {
         samples: [u64; CALIBRATION_SAMPLES],
@@ -1852,16 +1915,46 @@ enum PitSampling {
     /// 最初のエッジが来なかった。**PIT が刻んでいない。**
     NoTickAtAll,
     /// エッジは来たが、ウィンドウが締切までに閉じなかった。
-    WindowIncomplete,
+    WindowIncomplete(PitIncomplete),
+}
+
+/// PIT の標本取りが途中で止まった理由（行に出す）。
+#[derive(Debug, Clone, Copy)]
+enum PitIncomplete {
+    /// 2 本目以降の標本の始まりのエッジが来なかった。
+    NoEdge { index: usize },
+    /// ウィンドウの終わりのエッジが来なかった。
+    WindowNotClosed,
+}
+
+impl core::fmt::Display for PitIncomplete {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::NoEdge { index } => write!(
+                f,
+                "no timer tick arrived within the calibration deadline (sample {index} of \
+                 {CALIBRATION_SAMPLES})"
+            ),
+            Self::WindowNotClosed => {
+                write!(
+                    f,
+                    "the calibration window did not close within the deadline"
+                )
+            }
+        }
+    }
 }
 
 /// PIT のティックを基準に標本を取る（S2-c の本体を関数へ出したもの）。
+///
+/// **2026-10-11 から、PM タイマがあるときは突き合わせの側である。** 行は呼び出し側が出す（同じ止まり方でも、
+/// PM タイマがあれば警告、無ければ誤りなので）。
 ///
 /// # Safety
 ///
 /// `lapic` が、マッピングを確かめた Local APIC のページの仮想番地であること（2026-09-30 に、番地を受ける
 /// 安全な関数から unsafe fn にした）。
-unsafe fn sample_with_pit(logger: &mut Logger<Serial>, lapic: u64) -> PitSampling {
+unsafe fn sample_with_pit(lapic: u64) -> PitSampling {
     let mut samples = [0u64; CALIBRATION_SAMPLES];
     // 較正自身が取りこぼしを見る。`interrupts::max_tick_jump()` はこの時点では
     // 使えない。あれを更新するのは `run_timer_loop` の定常ループで、較正はその
@@ -1879,18 +1972,11 @@ unsafe fn sample_with_pit(logger: &mut Logger<Serial>, lapic: u64) -> PitSamplin
         };
         let Some((begin_tick, _)) = wait_for_tick_edge_within(deadline) else {
             // **1 本目で来なかったときだけ「刻んでいない」と言える。** **2 本目以降で
-            // 来なくなったのは、刻んでいたものが止まった形で、基準を替える話ではない。**
-            //
-            // **1 本目の沈黙をここで `[ERROR]` にしない**（HW-c）——**PM タイマへ倒せる機械では
-            // 異常ではない。** **声を出すのは呼び出し側で、倒せなかったときだけ `[ERROR]` になる。**
+            // 来なくなったのは、刻んでいたものが止まった形である。**
             if index == 0 {
                 return PitSampling::NoTickAtAll;
             }
-            logger.error(format_args!(
-                "apic: no timer tick arrived within the calibration deadline (sample {index} of \
-                 {CALIBRATION_SAMPLES}); the local APIC timer was NOT calibrated"
-            ));
-            return PitSampling::WindowIncomplete;
+            return PitSampling::WindowIncomplete(PitIncomplete::NoEdge { index });
         };
         // SAFETY: 呼び出し元の契約（この関数の # Safety）で、マッピングを確認したページの中を読む。読み取りのみ。
         let count_begin = unsafe { read_lapic(lapic, LAPIC_REGISTER_TIMER_CURRENT_COUNT) };
@@ -1900,21 +1986,24 @@ unsafe fn sample_with_pit(logger: &mut Logger<Serial>, lapic: u64) -> PitSamplin
         let elapsed_ticks;
         loop {
             let Some((now, advance)) = wait_for_tick_edge() else {
-                logger.error(format_args!(
-                    "apic: the calibration window did not close within the deadline; the local \
-                     APIC timer was NOT calibrated"
-                ));
-                return PitSampling::WindowIncomplete;
+                return PitSampling::WindowIncomplete(PitIncomplete::WindowNotClosed);
             };
             // SAFETY: 上と同じ。読み取りのみ。
             let observed = unsafe { read_lapic(lapic, LAPIC_REGISTER_TIMER_CURRENT_COUNT) };
             widest_edge_advance = widest_edge_advance.max(advance);
             if now.wrapping_sub(begin_tick) >= CALIBRATION_WINDOW_TICKS {
                 count_end = observed;
-                // 名目の N ではなく、実際に進んだティック数で割る。
-                // 取りこぼして N を飛び越えた場合、ウィンドウの実時間は N×10ms より長い。
-                // 名目で割ると較正結果が過大になる。実測で割れば、飛び越えても
-                // 結果は正しいままである（系統誤差が構造的に消える）。
+                // 名目の N ではなく、実際に数えたティック数で割る。
+                // ポーリングの間に 2 本以上進んで N を飛び越えた場合、ウィンドウの実時間は N×10ms より長い。
+                // 名目で割ると較正結果が過大になるので、数えた数で割る。
+                //
+                // **ただし、これで消えるのは「割り込みは来たが、ポーリングが見逃した」形だけである**（2026-10-11）。
+                // **ティックそのものが実時間からずれる形は、ここでは消えない**——KVM の中の PIT は、受け取られて
+                // いないティックを溜めて、EOI のたびに続けて入れる（`lost_tick_policy=delay`。`sti` の直後に
+                // 10 ティックが約 7.7ms で届き、約 13 分の 1 に出た）。捨てる設定（`discard`）では、vCPU が止められて
+                // いた間のティックが 8259 の IRR にまとまって 1 本になり、CPU の奪い合いが強いと何倍にも過大に出た。どちらも 1 本ずつの
+                // 割り込みとして届くので、下の `widest_edge_advance` にも出ない。**だから PM タイマを基準にし、
+                // PIT はその突き合わせに回した**（`ADR-0068` の Addendum）。
                 elapsed_ticks = now.wrapping_sub(begin_tick);
                 break;
             }
@@ -1926,6 +2015,12 @@ unsafe fn sample_with_pit(logger: &mut Logger<Serial>, lapic: u64) -> PitSamplin
         // PIT の周波数もリテラルで持たない。境界の問いから取る。
         let reference_hz = u64::from(crate::machine::pc::irq::timer_frequency_hz());
         *slot = elapsed_counts * reference_hz / elapsed_ticks;
+        // 破壊テスト (2026-10-11, pit-calibration-ticks-queued): PIT の標本だけを、溜めたティックが
+        // 入った回の形（約 13 分の 1）にする。**突き合わせが食い違いを名指しし、PM タイマの値が使われること**を確かめる。
+        #[cfg(feature = "pit-calibration-ticks-queued")]
+        {
+            *slot /= PIT_SABOTAGE_DIVISOR;
+        }
     }
     PitSampling::Done {
         samples,
@@ -1933,12 +2028,104 @@ unsafe fn sample_with_pit(logger: &mut Logger<Serial>, lapic: u64) -> PitSamplin
     }
 }
 
-/// ACPI の PM タイマを基準に標本を取る（HW-c。`ADR-0068`）。
+/// PM タイマの読みと LAPIC のカウントの読みの 1 組（2026-10-11）。
+#[derive(Debug, Clone, Copy)]
+struct ReadPair {
+    /// PM タイマの値（幅で切ったもの）。
+    pm: u32,
+    /// LAPIC タイマの Current Count。
+    count: u32,
+    /// 組の前後で読んだ TSC の差。
+    cycles: u64,
+}
+
+/// 組の読みの記録（行に出す）。
+#[derive(Debug, Clone, Copy)]
+struct PairStats {
+    /// いちばん短かった組（TSC サイクル）。
+    shortest_cycles: u64,
+    /// 長すぎて読み直した回数。
+    rereads: u32,
+    /// 上限まで読み直しても長いままで、いちばん短かった組を使った数。
+    slow_pairs_kept: u32,
+    /// PM タイマの 3 回の読みの並びが崩れて、読み直した回数（[`crate::machine::pc::pmtimer::PmTimer::read_verified`]）。
+    verify_retries: u32,
+}
+
+/// PM タイマ基準の標本取りの結果。
+enum PmSampling {
+    Done {
+        samples: [u64; CALIBRATION_SAMPLES],
+        stats: PairStats,
+    },
+    /// 3 回の読みの並びが、上限まで崩れたままだった。
+    Unordered,
+    /// ウィンドウが締切までに閉じなかった（PM タイマが進まない）。
+    NoAdvance,
+}
+
+/// PM タイマと LAPIC のカウントを、TSC で挟んで 1 組読む（2026-10-11）。
 ///
-/// **割り込みを使わない。** **ポートを読んでウィンドウを測るだけで、PIT が刻まなくても進む。**
-/// **進まなければ `None` を返す**（上限は TSC で掛ける。**上限のない待機を書かない**）。
+/// # Safety
+///
+/// `lapic` が、マッピングを確かめた Local APIC のページの仮想番地であること。
+unsafe fn read_pair(
+    lapic: u64,
+    pm_timer: crate::machine::pc::pmtimer::PmTimer,
+    stats: &mut PairStats,
+) -> Option<ReadPair> {
+    let before = cpu::read_timestamp_counter();
+    let (pm, retries) = pm_timer.read_verified()?;
+    // SAFETY: 呼び出し元の契約（この関数の # Safety）で、マッピングを確認したページの中を読む。読み取りのみ。
+    let count = unsafe { read_lapic(lapic, LAPIC_REGISTER_TIMER_CURRENT_COUNT) };
+    let after = cpu::read_timestamp_counter();
+    stats.verify_retries += retries;
+    Some(ReadPair {
+        pm,
+        count,
+        cycles: after.wrapping_sub(before),
+    })
+}
+
+/// 組を、短いものが取れるまで読み直す（上限 [`PAIR_REREAD_LIMIT`]）。上限に達したら、いちばん短かった組を返す。
+///
+/// # Safety
+///
+/// [`read_pair`] と同じ。
+unsafe fn read_tight_pair(
+    lapic: u64,
+    pm_timer: crate::machine::pc::pmtimer::PmTimer,
+    stats: &mut PairStats,
+) -> Option<ReadPair> {
+    let mut best: Option<ReadPair> = None;
+    for attempt in 0..=PAIR_REREAD_LIMIT {
+        // SAFETY: 呼び出し元の契約をそのまま渡す。
+        let pair = unsafe { read_pair(lapic, pm_timer, stats) }?;
+        stats.shortest_cycles = stats.shortest_cycles.min(pair.cycles);
+        if pair_is_tight(pair.cycles, stats.shortest_cycles) {
+            return Some(pair);
+        }
+        if best.is_none_or(|kept| pair.cycles < kept.cycles) {
+            best = Some(pair);
+        }
+        if attempt < PAIR_REREAD_LIMIT {
+            stats.rereads += 1;
+        }
+    }
+    stats.slow_pairs_kept += 1;
+    best
+}
+
+/// ACPI の PM タイマを基準に標本を取る（HW-c。`ADR-0068`。2026-10-11 に組の読みを足した）。
+///
+/// **割り込みを使わない。** **ポートを読んでウィンドウを測るだけで、PIT が刻まなくても、ティックが溜まっても
+/// 影響を受けない。** **進まなければ `NoAdvance` を返す**（上限は TSC で掛ける。**上限のない待機を書かない**）。
 ///
 /// **式は PIT 基準と同じ形である**——**ウィンドウの実時間（PM タイマの刻み）で割る。**
+///
+/// **残る誤差は、組の 2 つの読みの間で vCPU が止められることである。** 組を TSC で挟んで、長すぎる組は読み直す
+/// （[`PAIR_SLACK_FACTOR`]）。ウィンドウの途中で止められても、両端の組が短ければ標本はずれない（PM タイマも LAPIC
+/// タイマも実時間で進む）。
 ///
 /// # Safety
 ///
@@ -1947,40 +2134,85 @@ unsafe fn sample_with_pit(logger: &mut Logger<Serial>, lapic: u64) -> PitSamplin
 unsafe fn sample_with_pm_timer(
     lapic: u64,
     pm_timer: crate::machine::pc::pmtimer::PmTimer,
-) -> Option<[u64; CALIBRATION_SAMPLES]> {
+) -> PmSampling {
     let mut samples = [0u64; CALIBRATION_SAMPLES];
+    let mut stats = PairStats {
+        shortest_cycles: u64::MAX,
+        rereads: 0,
+        slow_pairs_kept: 0,
+        verify_retries: 0,
+    };
+    // 先に何組か読んで、いちばん短い組の長さを掴む。
+    for _ in 0..PAIR_BASELINE_READS {
+        // SAFETY: 呼び出し元の契約（この関数の # Safety）をそのまま渡す。以下の `read_tight_pair` も同じ。
+        let Some(pair) = (unsafe { read_pair(lapic, pm_timer, &mut stats) }) else {
+            return PmSampling::Unordered;
+        };
+        stats.shortest_cycles = stats.shortest_cycles.min(pair.cycles);
+    }
     for slot in samples.iter_mut() {
-        let begin_pm = pm_timer.read();
-        // SAFETY: 呼び出し元の契約（この関数の # Safety）で、マッピングを確認したページの中を読む。読み取りのみ。
-        let count_begin = unsafe { read_lapic(lapic, LAPIC_REGISTER_TIMER_CURRENT_COUNT) };
+        // SAFETY: 上と同じ。
+        let Some(begin) = (unsafe { read_tight_pair(lapic, pm_timer, &mut stats) }) else {
+            return PmSampling::Unordered;
+        };
         let deadline_base = cpu::read_timestamp_counter();
-        let elapsed_pm;
-        let count_end;
         loop {
-            let now_pm = pm_timer.read();
-            let elapsed = pm_timer.elapsed(begin_pm, now_pm);
-            if elapsed >= PM_CALIBRATION_WINDOW_TICKS {
-                // SAFETY: 上と同じ。読み取りのみ。
-                count_end = unsafe { read_lapic(lapic, LAPIC_REGISTER_TIMER_CURRENT_COUNT) };
-                elapsed_pm = elapsed;
+            let Some((now_pm, _)) = pm_timer.read_verified() else {
+                return PmSampling::Unordered;
+            };
+            if pm_timer.elapsed(begin.pm, now_pm) >= PM_CALIBRATION_WINDOW_TICKS {
                 break;
             }
             if cpu::read_timestamp_counter().wrapping_sub(deadline_base)
                 > CALIBRATION_EDGE_TIMEOUT_CYCLES
             {
-                return None;
+                return PmSampling::NoAdvance;
             }
             core::hint::spin_loop();
         }
-        // 数え下がりなので begin > end。
-        let elapsed_counts = u64::from(count_begin.wrapping_sub(count_end));
+        // SAFETY: 上と同じ。
+        let Some(end) = (unsafe { read_tight_pair(lapic, pm_timer, &mut stats) }) else {
+            return PmSampling::Unordered;
+        };
+        // 数え下がりなので begin > end。ウィンドウは、両端の組の PM タイマの値の差である。
+        let elapsed_counts = u64::from(begin.count.wrapping_sub(end.count));
+        let elapsed_pm = pm_timer.elapsed(begin.pm, end.pm);
         *slot =
             crate::machine::pc::pmtimer::lapic_hz_from_ticks(elapsed_counts, u64::from(elapsed_pm));
     }
-    Some(samples)
+    PmSampling::Done { samples, stats }
 }
 
-/// Local APIC タイマの周波数を PIT 基準で測る（S2-c）。
+/// PM タイマの標本（2026-10-11）。
+struct PmSampled {
+    timer: crate::machine::pc::pmtimer::PmTimer,
+    samples: [u64; CALIBRATION_SAMPLES],
+    stats: PairStats,
+}
+
+/// PM タイマを基準にできなかった理由（2026-10-11）。PIT のティックだけで測る枝は、この理由だけを受け取る。
+enum PmUnavailable {
+    /// FADT が PM タイマを示さない（または、無いものとして渡された）。
+    Absent,
+    /// 値が前へ進むことの確かめ（[`crate::machine::pc::pmtimer::PmTimer::check_consistency`]）を通らなかった。
+    Inconsistent(
+        crate::machine::pc::pmtimer::PmTimer,
+        crate::machine::pc::pmtimer::ConsistencyFailure,
+    ),
+    /// 3 回の読みの並びが崩れたままだった。
+    Unordered(crate::machine::pc::pmtimer::PmTimer),
+    /// ウィンドウが締切までに閉じなかった。
+    NoAdvance(crate::machine::pc::pmtimer::PmTimer),
+}
+
+/// 標本の中央値（ソート後の真ん中）。
+fn median_of(samples: &[u64; CALIBRATION_SAMPLES]) -> u64 {
+    let mut sorted = *samples;
+    sorted.sort_unstable();
+    sorted[CALIBRATION_SAMPLES / 2]
+}
+
+/// Local APIC タイマの周波数を測る（S2-c。2026-10-11 から、FADT が示せば PM タイマを基準にする）。
 ///
 /// # 何に触るか
 ///
@@ -1992,6 +2224,12 @@ unsafe fn sample_with_pm_timer(
 /// 割り込みは 1 本も発生しない。ウィンドウ（100ms）はカウンタの一周（数十秒規模）より
 /// 遥かに短いので、periodic のままでもウィンドウの途中で再装填されない。
 ///
+/// # 順
+///
+/// 先に PIT のティックで 5 つの標本を取り、次に PM タイマで 5 つ取る。**PM タイマの標本が取れたら、そちらを使い、
+/// PIT の標本は突き合わせにだけ使う**（`PIT_DISAGREEMENT_PPM` を越えて食い違えば名前付きの行を出す）。PM タイマが
+/// 使えなければ、PIT の標本を使い、そのことを名前付きの行で出す。
+///
 /// # 呼ぶ位置
 ///
 /// `sti` の後でなければならない。基準に使う `TIMER_TICKS` は IRQ0 が
@@ -1999,13 +2237,14 @@ unsafe fn sample_with_pm_timer(
 /// 直後、定常ループへ入る前に呼ぶ。この位置は APIC 関連の他の処理（`kmain` の
 /// 前半）から離れている。離れている理由はこれである。
 ///
-/// # 契約（境界の関数。2026-09-30）
+/// # 契約（境界の関数。2026-09-30。2026-10-11 に基準の順を変えた）
 ///
 /// - 呼ぶのは BSP が、`sti` の後（PIT のティックが進む）、定常ループへ入る前に 1 回である。
 /// - 書くのはこの CPU の Local APIC の Divide Configuration と Initial Count だけである。
 ///   LVT Timer・LINT0・SVR は前後で読み戻して、触っていないことを確かめる。
 /// - 待ちには上限があり、測れなければ `None` を返して止まらない（タイマは PIT のまま進む）。
-///   PIT のティックが 1 本も来なければ、機械の時計で測る（[`CalibrationClock`] に PM タイマがあるとき）。
+///   基準が 1 つも無ければ（PIT が刻まず、PM タイマも使えない）、理由を出して止まる。
+/// - 起動のタイマが刻んだかは、戻り値の [`TimerCalibration::boot_timer_ticked`] で答える。
 pub fn calibrate_local_timer(
     logger: &mut Logger<Serial>,
     mapped: &MappedInterruptController,
@@ -2049,69 +2288,190 @@ pub fn calibrate_local_timer(
         write_lapic(lapic, LAPIC_REGISTER_TIMER_INITIAL_COUNT, u32::MAX);
     }
 
-    // **標本を取る。** **PIT のティックを基準にするのが既定である**（S2-c）。
-    // **ティックが 1 本も来なければ、ACPI の PM タイマへ倒す**（HW-c。`ADR-0068`）。
+    // **1. PIT のティックで標本を取る**（S2-c。2026-10-11 からは、PM タイマがあれば突き合わせの側）。
     // SAFETY: `lapic` は `mapped` の Local APIC のページを direct map で写した番地で、`map_and_probe` がマッピングを
     // 確かめた（下の PM タイマの側も同じ）。
-    let (samples, reference) = match unsafe { sample_with_pit(logger, lapic) } {
-        PitSampling::Done {
+    let pit = unsafe { sample_with_pit(lapic) };
+    if let PitSampling::Done {
+        widest_edge_advance,
+        ..
+    } = pit
+    {
+        // ポーリングが見逃したティックの幅は、それ自体が観測に値するので出す。1 なら 1 ティックずつ捉えている。
+        // **ここに出ないずれがある**——溜めたティックをまとめて入れる形と、捨てる形である（`sample_with_pit` の
+        // 割る所のコメント）。それは下の PM タイマとの突き合わせが見る。
+        logger.info(format_args!(
+            "apic: widest tick advance seen inside the calibration windows = \
+             {widest_edge_advance} (1 means every edge was caught; the PIT frequency divides by \
+             the observed tick count, so a larger value would not inflate it; ticks the \
+             hypervisor queued or dropped do not show here, the PM timer cross-check sees them)"
+        ));
+    }
+    #[cfg(feature = "pit-calibration-ticks-queued")]
+    logger.warn(format_args!(
+        "apic: SABOTAGE applied - the PIT samples are divided by {PIT_SABOTAGE_DIVISOR} \
+         before the cross-check (the shape of PIT ticks the hypervisor queued)"
+    ));
+
+    // **2. PM タイマで標本を取る**（2026-10-11 から、FADT が示せば既定の基準）。
+    // 破壊テスト (HW-c, pm-timer-double-frequency): PM タイマの周波数の定数を 2 倍にする。
+    // **カーネル内の比は自己無矛盾のまま、実時間との比が半分になる**（`lapic-timer-test`
+    // の `scaled-calibration` と同じ検出経路）。**当たったことを出す**——**出ていなければ
+    // 空振りなので、判定の側が落とす。**
+    #[cfg(feature = "pm-timer-double-frequency")]
+    if pm_timer.is_some() {
+        logger.warn(format_args!(
+            "apic: SABOTAGE applied - the PM timer frequency constant is doubled \
+             ({} Hz instead of the specification's 3579545 Hz)",
+            crate::machine::pc::pmtimer::HZ
+        ));
+    }
+    let pm = match pm_timer {
+        None => Err(PmUnavailable::Absent),
+        Some(timer) => match timer.check_consistency() {
+            Err(failure) => Err(PmUnavailable::Inconsistent(timer, failure)),
+            // SAFETY: 上の `sample_with_pit` と同じ番地である。
+            Ok(()) => match unsafe { sample_with_pm_timer(lapic, timer) } {
+                PmSampling::Done { samples, stats } => Ok(PmSampled {
+                    timer,
+                    samples,
+                    stats,
+                }),
+                PmSampling::Unordered => Err(PmUnavailable::Unordered(timer)),
+                PmSampling::NoAdvance => Err(PmUnavailable::NoAdvance(timer)),
+            },
+        },
+    };
+
+    let boot_timer_ticked = !matches!(pit, PitSampling::NoTickAtAll);
+    let (samples, reference) = match pm {
+        // **PM タイマの標本が取れた。** **使うのはいつもこちらで、PIT は突き合わせにだけ使う。**
+        Ok(PmSampled {
+            timer,
             samples,
-            widest_edge_advance,
-        } => {
-            // 取りこぼしは較正を過大評価させる。ウィンドウの実時間が名目より長くなり、
-            // そのぶん減少量が増えるためである。上の計算は実測ティック数で割っている
-            // ので系統誤差は構造的に消えているが、取りこぼしが起きたかどうかは
-            // それ自体が観測に値するので出す。1 なら 1 ティックずつ捉えている。
+            stats,
+        }) => {
             logger.info(format_args!(
-                "apic: widest tick advance seen inside the calibration windows = \
-                 {widest_edge_advance} (1 means every edge was caught; the frequency above divides by \
-                 the observed tick count, not the nominal one, so a larger value would not inflate it)"
+                "apic: LAPIC timer calibration read pairs: shortest {} TSC cycle(s), re-read {} \
+                 time(s) because a pair took more than {PAIR_SLACK_FACTOR}x the shortest \
+                 (or {PAIR_FLOOR_CYCLES} cycles), {} out-of-order PM timer read(s) retried",
+                stats.shortest_cycles, stats.rereads, stats.verify_retries
             ));
-            (samples, CalibrationReference::Pit)
+            if stats.slow_pairs_kept > 0 {
+                logger.warn(format_args!(
+                    "apic: LAPIC timer calibration: {} read pair(s) stayed slow after \
+                     {PAIR_REREAD_LIMIT} re-read(s) and used their shortest attempt; the vCPU was \
+                     likely descheduled between the PM timer read and the LAPIC read, so the \
+                     result may be off",
+                    stats.slow_pairs_kept
+                ));
+            }
+            let pm_median = median_of(&samples);
+            match pit {
+                PitSampling::Done {
+                    samples: pit_samples,
+                    ..
+                } => {
+                    let pit_median = median_of(&pit_samples);
+                    let gap = cross_check_gap_ppm(pm_median, pit_median);
+                    logger.info(format_args!(
+                        "apic: LAPIC timer calibration cross-check against the PIT: \
+                         median={pit_median} Hz, {gap} ppm from the ACPI PM timer (a gap above \
+                         {PIT_DISAGREEMENT_PPM} ppm is reported), samples {pit_samples:?} Hz"
+                    ));
+                    if gap > PIT_DISAGREEMENT_PPM {
+                        logger.warn(format_args!(
+                            "apic: LAPIC timer calibration: the PIT ticks disagree with the ACPI \
+                             PM timer by {}.{:02}% (PIT median {pit_median} Hz, PM timer median \
+                             {pm_median} Hz); PIT ticks were queued or lost, so the PM timer \
+                             value is used",
+                            gap / 10_000,
+                            gap % 10_000 / 100
+                        ));
+                    }
+                }
+                PitSampling::NoTickAtAll => logger.warn(format_args!(
+                    "apic: no PIT tick arrived within the calibration deadline, so there is no \
+                     PIT cross-check; the ACPI PM timer at port {:#06x} ({}-bit) is the only \
+                     reference",
+                    timer.port(),
+                    timer.bits()
+                )),
+                PitSampling::WindowIncomplete(reason) => logger.warn(format_args!(
+                    "apic: LAPIC timer calibration: the PIT cross-check did not finish \
+                     ({reason}); the ACPI PM timer value is used without it"
+                )),
+            }
+            (samples, CalibrationReference::PmTimer)
         }
-        // **PIT は刻んでいるがウィンドウが閉じなかった回**——**今までどおり較正を諦める。**
-        // **PM タイマへ倒さない**（刻んでいるのに基準を替えると、替えた理由が消える）。
-        PitSampling::WindowIncomplete => return None,
-        PitSampling::NoTickAtAll => {
-            let Some(pm_timer) = pm_timer else {
+        // **PM タイマが使えない。** **PIT のティックだけで測る**（2026-10-10 までの既定の形）。
+        Err(not_sampled) => {
+            let pit_samples = match pit {
+                PitSampling::Done { samples, .. } => samples,
+                // **PIT は刻んでいるがウィンドウが閉じなかった回**——**今までどおり較正を諦める。**
+                PitSampling::WindowIncomplete(reason) => {
+                    logger.error(format_args!(
+                        "apic: {reason}; the local APIC timer was NOT calibrated"
+                    ));
+                    return None;
+                }
                 // **両方無い。** **理由を出して止まる**（運用者の決定。2026-09-22）——
                 // **この先はティックを待つ所で黙るので、黙るより止まるほうが多くを示す。**
-                logger.error(format_args!(
-                    "apic: the PIT did not tick and the FADT names no PM timer, so there is no \
-                     time reference to calibrate the local APIC timer against; halting"
-                ));
-                cpu::halt_forever();
-            };
-            logger.warn(format_args!(
-                "apic: no PIT tick arrived within the calibration deadline; calibrating against \
-                 the ACPI PM timer at port {:#06x} ({}-bit) instead",
-                pm_timer.port(),
-                pm_timer.bits()
-            ));
-            // 破壊テスト (HW-c, pm-timer-double-frequency): PM タイマの周波数の定数を 2 倍にする。
-            // **カーネル内の比は自己無矛盾のまま、実時間との比が半分になる**（`lapic-timer-test`
-            // の `scaled-calibration` と同じ検出経路）。**当たったことを出す**——**出ていなければ
-            // 空振りなので、判定の側が落とす。**
-            #[cfg(feature = "pm-timer-double-frequency")]
-            logger.warn(format_args!(
-                "apic: SABOTAGE applied - the PM timer frequency constant is doubled \
-                 ({} Hz instead of the specification's 3579545 Hz)",
-                crate::machine::pc::pmtimer::HZ
-            ));
-            // SAFETY: 上の `sample_with_pit` と同じ番地である。
-            match unsafe { sample_with_pm_timer(lapic, pm_timer) } {
-                Some(samples) => (samples, CalibrationReference::PmTimer),
-                None => {
-                    // **PM タイマが在ると FADT が示したのに進まない。** **止まる**（同上）。
-                    logger.error(format_args!(
-                        "apic: the PIT did not tick and the PM timer at port {:#06x} did not \
-                         advance within the deadline either; there is no time reference to \
-                         calibrate the local APIC timer against; halting",
-                        pm_timer.port()
-                    ));
+                PitSampling::NoTickAtAll => {
+                    match not_sampled {
+                        PmUnavailable::Absent => logger.error(format_args!(
+                            "apic: the PIT did not tick and the FADT names no PM timer, so there \
+                             is no time reference to calibrate the local APIC timer against; \
+                             halting"
+                        )),
+                        PmUnavailable::Inconsistent(timer, failure) => logger.error(format_args!(
+                            "apic: the PIT did not tick and the PM timer at port {:#06x} failed \
+                             the consistency check ({failure}); there is no time reference to \
+                             calibrate the local APIC timer against; halting",
+                            timer.port()
+                        )),
+                        PmUnavailable::Unordered(timer) => logger.error(format_args!(
+                            "apic: the PIT did not tick and the PM timer at port {:#06x} kept \
+                             returning out-of-order reads; there is no time reference to \
+                             calibrate the local APIC timer against; halting",
+                            timer.port()
+                        )),
+                        PmUnavailable::NoAdvance(timer) => logger.error(format_args!(
+                            "apic: the PIT did not tick and the PM timer at port {:#06x} did \
+                             not advance within the deadline either; there is no time \
+                             reference to calibrate the local APIC timer against; halting",
+                            timer.port()
+                        )),
+                    }
                     cpu::halt_forever();
                 }
+            };
+            match not_sampled {
+                PmUnavailable::Absent => logger.warn(format_args!(
+                    "apic: LAPIC timer calibration: the FADT names no PM timer, so the LAPIC \
+                     timer is calibrated against the PIT ticks alone; PIT ticks the hypervisor \
+                     queued or lost cannot be detected"
+                )),
+                PmUnavailable::Inconsistent(timer, failure) => logger.warn(format_args!(
+                    "apic: LAPIC timer calibration: the ACPI PM timer at port {:#06x} failed the \
+                     consistency check ({failure}), so the LAPIC timer is calibrated against the \
+                     PIT ticks alone; PIT ticks the hypervisor queued or lost cannot be detected",
+                    timer.port()
+                )),
+                PmUnavailable::Unordered(timer) => logger.warn(format_args!(
+                    "apic: LAPIC timer calibration: the ACPI PM timer at port {:#06x} kept \
+                     returning out-of-order reads, so the LAPIC timer is calibrated against the \
+                     PIT ticks alone; PIT ticks the hypervisor queued or lost cannot be detected",
+                    timer.port()
+                )),
+                PmUnavailable::NoAdvance(timer) => logger.warn(format_args!(
+                    "apic: LAPIC timer calibration: the ACPI PM timer at port {:#06x} did not \
+                     advance within the deadline, so the LAPIC timer is calibrated against the \
+                     PIT ticks alone; PIT ticks the hypervisor queued or lost cannot be detected",
+                    timer.port()
+                )),
             }
+            (pit_samples, CalibrationReference::Pit)
         }
     };
 
@@ -2180,6 +2540,7 @@ pub fn calibrate_local_timer(
         reference,
         median_hz,
         spread_hz,
+        boot_timer_ticked,
         // 上の `write_lapic` で実際に書いた値をそのまま返す。定数を
         // 再掲すると、片方だけを変えたときに食い違う。
         divide_configuration: divide,
@@ -2201,12 +2562,40 @@ unsafe fn write_lapic(base_virt: u64, offset: u64, value: u32) {
 mod tests {
     use super::*;
 
-    /// **起動のタイマが刻んだと答えるのは、PIT で測った回だけである**（2026-09-30）。共通の側は、これで ICW2 の
-    /// 事後証明が取れるかを決める。
+    /// **PIT の隔たりは PM タイマを分母にする。** 2% を境に、溜めたティック（約 13 分の 1）と、強い奪い合いの下で
+    /// 捨てたティック（何倍か）は越え、ふつうの揺れ（0.03%）は越えない（2026-10-11）。
     #[test]
-    fn only_a_pit_calibration_says_the_boot_timer_ticked() {
-        assert!(CalibrationReference::Pit.boot_timer_ticked());
-        assert!(!CalibrationReference::PmTimer.boot_timer_ticked());
+    fn the_pit_cross_check_flags_queued_and_lost_ticks_but_not_jitter() {
+        assert_eq!(cross_check_gap_ppm(62_500_000, 62_500_000), 0);
+        assert!(cross_check_gap_ppm(62_500_000, 62_519_000) <= PIT_DISAGREEMENT_PPM);
+        assert!(cross_check_gap_ppm(62_500_000, 4_807_380) > PIT_DISAGREEMENT_PPM);
+        assert!(cross_check_gap_ppm(62_500_000, 122_481_610) > PIT_DISAGREEMENT_PPM);
+        assert_eq!(
+            cross_check_gap_ppm(62_500_000, 63_750_000),
+            20_000,
+            "ちょうど 2% は出さない側"
+        );
+        assert_eq!(
+            cross_check_gap_ppm(0, 1),
+            u64::MAX,
+            "分母が 0 なら必ず食い違い"
+        );
+    }
+
+    /// **組の長さは、いちばん短い組の 4 倍か床の大きいほうまで通す。**
+    #[test]
+    fn a_read_pair_is_re_read_only_when_far_longer_than_the_shortest() {
+        assert!(
+            pair_is_tight(PAIR_FLOOR_CYCLES, 10),
+            "床までは倍率に関わらず通す"
+        );
+        assert!(!pair_is_tight(PAIR_FLOOR_CYCLES + 1, 10));
+        assert!(pair_is_tight(40_000, 10_000));
+        assert!(!pair_is_tight(40_001, 10_000));
+        assert!(
+            pair_is_tight(u64::MAX, u64::MAX),
+            "掛け算があふれても止まらない"
+        );
     }
 
     /// **VirtualBox の読み**（実測。版 0x00170020・ID レジスタ 0・MADT の ID 1）——**マップされていて、

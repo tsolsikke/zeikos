@@ -11513,7 +11513,7 @@ fn machine_variant(name: &str) -> Result<MachineVariant> {
 /// - `q35-no-i8042`（HW-b）——**FADT（リビジョン 3）が「8042 は無い」と示す。探らずに続く行を見る。**
 /// - `pc-no-i8042`（HW-b）——**FADT（リビジョン 1）は何も示さない。探って答えが無く、続く行を見る。**
 ///   **`q35` だけでは探る側の道を通らない**（FADT が先に答える）ので、2 つ用意する。
-/// - `q35-no-pit`（HW-c）——**PIT が刻まない。** **ACPI の PM タイマで較正して進む行を見る。**
+/// - `q35-no-pit`（HW-c）——**PIT が刻まない。** **PIT のティックが 1 本も来ず、ACPI の PM タイマだけで較正して進む行を見る。**
 /// - `pc-no-virtio`（HW-d）——**virtio-blk が無い。** **ESP の `\zeikos\fs.img` を RAM ディスクとして
 ///   使って進む行を見る**（VirtualBox と実機に virtio-blk は無い）。
 const MACHINE_VARIANT_CHECKS: &[(&str, VariantExpect)] = &[
@@ -11528,7 +11528,9 @@ const MACHINE_VARIANT_CHECKS: &[(&str, VariantExpect)] = &[
     ),
     (
         "q35-no-pit",
-        VariantExpect::PromptAndLine("apic: LAPIC timer calibration against the ACPI PM timer"),
+        // **2026-10-11 から、PM タイマで較正した行は PIT のある機械でも出る**（`ADR-0068` の Addendum）。
+        // **PIT が 1 本も刻まなかった道を通ったことは、この行で見る。**
+        VariantExpect::PromptAndLine("apic: no PIT tick arrived within the calibration deadline"),
     ),
     (
         "pc-no-virtio",
@@ -11646,6 +11648,18 @@ const MACHINE_VARIANT_SABOTAGES: &[(&str, &str, bool, VariantExpect)] = &[
         "pm-timer-treated-as-absent",
         false,
         VariantExpect::StopsWith("apic: the PIT did not tick and the FADT names no PM timer"),
+    ),
+    // **PM タイマを無いものとして扱い、PIT が刻む機械で起こす**（2026-10-11。`ADR-0068` の Addendum）——**PIT のティック
+    // だけで較正したと名指しする行が出て、プロンプトまで進む。** FADT が PM タイマを示さない機械（VirtualBox と実機では
+    // まだ確かめていない形）の道を、消さずに通しておく。
+    (
+        "q35",
+        "pm-timer-treated-as-absent",
+        false,
+        VariantExpect::PromptAndLine(
+            "apic: LAPIC timer calibration: the FADT names no PM timer, so the LAPIC timer is \
+             calibrated against the PIT ticks alone",
+        ),
     ),
     // **RAM ディスクのイメージを見ない**——**装置も像も無い形になり、読むソースが 1 つも無いと出力して止まる。**
     // **RAM ディスクの道が実際に使われていることの裏返しの証明である**（見ていなければ、
@@ -18823,7 +18837,7 @@ struct LapicTimerTest {
     ///
     /// **破壊テストの実行では、破壊テストのフックを踏んだ痕跡である**——**踏まれなければ、破壊テストのビルドは
     /// 正常に見えてすべて通る。** **正常の回では、その道を通った痕跡である**
-    /// （`rate-on-pm-timer` は「PM タイマで較正した」の行。`ADR-0068` の HW-c）。
+    /// （`rate-on-pm-timer` は「PIT のティックが 1 本も来ず、PM タイマだけで較正した」の行。`ADR-0068` の HW-c）。
     required_marker: &'static str,
     /// 空でなければ、**カーネルがこの行を出して停止することを期待する。**
     /// 速さの比ではなく、名指しで検出される破壊テストに使う。
@@ -18892,7 +18906,8 @@ const LAPIC_TIMER_TESTS: &[LapicTimerTest] = &[
         name: "rate-on-pm-timer",
         features: &["keep-steady-loop"],
         expect_within_tolerance: true,
-        required_marker: "apic: LAPIC timer calibration against the ACPI PM timer",
+        // **2026-10-11 から、PM タイマで較正した行は既定の機械でも出る**——PIT が刻まない道を通った行で見る。
+        required_marker: "apic: no PIT tick arrived within the calibration deadline",
         expect_halt_marker: "",
         machine_variant: "q35-no-pit",
     },
@@ -18906,6 +18921,18 @@ const LAPIC_TIMER_TESTS: &[LapicTimerTest] = &[
         required_marker: "apic: SABOTAGE applied - the PM timer frequency constant is doubled",
         expect_halt_marker: "",
         machine_variant: "q35-no-pit",
+    },
+    // **PIT のティックで取った標本だけを 13 分の 1 にする**（2026-10-11。`ADR-0068` の Addendum）。KVM が溜めた
+    // ティックを入れた回の形である。**突き合わせが食い違いを名指しし（下の行）、PM タイマの値が使われるので、
+    // 速さは許容に入る。** PIT の値が使われたら、タイマは約 13 倍の速さで刻み、速さの判定が落ちる。
+    LapicTimerTest {
+        name: "pit-ticks-queued",
+        features: &["keep-steady-loop", "pit-calibration-ticks-queued"],
+        expect_within_tolerance: true,
+        required_marker:
+            "apic: LAPIC timer calibration: the PIT ticks disagree with the ACPI PM timer",
+        expect_halt_marker: "",
+        machine_variant: "",
     },
 ];
 
@@ -33339,7 +33366,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 64,
-    full: 512,
+    full: 514,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。
@@ -34798,6 +34825,11 @@ const NOT_CONCURRENT: &[(&str, &str, &str)] = &[
     (
         "LAPIC_TIMER_TESTS",
         "pm-timer-double-frequency",
+        "ホストの時間と比べる（ティックの速さの比）",
+    ),
+    (
+        "LAPIC_TIMER_TESTS",
+        "pit-ticks-queued",
         "ホストの時間と比べる（ティックの速さの比）",
     ),
     (
