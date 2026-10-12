@@ -3900,8 +3900,12 @@ pub(crate) unsafe extern "sysv64" fn syscall_entry(
         // （空間を破棄する側）が、同じコアの再取得として検出する。
         #[cfg(not(feature = "user-exit-keep-bkl"))]
         drop(bkl.take());
-        // SAFETY: Ring 3 から `int 0x80` で入った文脈で、RECOVERY は
-        // `ring3::run_excursion` が保存済みである。BKL は上で解いてある。
+        // SAFETY: Ring 3 からシステムコールで入った文脈で、RECOVERY は `ring3::run_excursion` が保存済みである。
+        // BKL は上で解いてある。**入口は 2 つあるが、どちらでもここは同じ形である**（2026-10-12 に `syscall` 命令の側を
+        // 書き足した）——`int 0x80` は CPU が TSS の RSP0 へ切り替えて IF=0 で入り、`syscall` 命令はスタブが同じ RSP0 を
+        // 読んで切り替え、SFMASK で IF=0 にして入る（`crate::arch::x86_64::system_call_entry`）。どちらも `swapgs` を
+        // 使わず、同じ共通の経路（`zeikos_syscall_common`）からここへ来るので、`leave_user_mode` が捨てるスタックの中身も、
+        // 戻る先の状態も、入口に依らない。
         unsafe { crate::arch::x86_64::leave_user_mode() }
     }
 

@@ -149,10 +149,6 @@ pub fn pages_for(size: u64) -> usize {
     size.div_ceil(PAGE_SIZE as u64) as usize
 }
 
-/// 大きさを据え、アロケータからフレームを取る。**中身は 0 にする。** **自分でアロケータを借りる。**
-///
-/// 破壊テスト (`ADR-0065`, shm-ftruncate-ignores-size): 何ページ要っても 1 ページしか取らない。
-/// **模様の後ろが欠け、往復のバイト比べが落ちる。**
 /// 据えた大きさ（バイト。`fstat` が答える。2026-10-06）。**無い共有メモリなら `None`。**
 pub fn size_of(shm: u8) -> Option<u64> {
     let index = shm as usize;
@@ -160,8 +156,12 @@ pub fn size_of(shm: u8) -> Option<u64> {
     (index < MAX_SHM && shms[index].live()).then(|| shms[index].len)
 }
 
+/// 大きさを据え、アロケータからフレームを取る。**中身は 0 にする。**
 ///
-/// **アロケータは呼び手が借りて渡す**（2026-10-08。`ftruncate` は、借りられるまで待ってから呼ぶ）。
+/// **アロケータは呼び手が借りて渡す**（2026-10-08。`ftruncate` は、借りられるまで待ってから呼ぶ。以前は自分で借りていた）。
+///
+/// 破壊テスト (`ADR-0065`, shm-ftruncate-ignores-size): 何ページ要っても 1 ページしか取らない。
+/// **模様の後ろが欠け、往復のバイト比べが落ちる。**
 pub fn set_size(
     shm: u8,
     size: u64,

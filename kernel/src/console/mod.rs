@@ -444,6 +444,24 @@ pub fn present_deferred_if_due(now_ticks: u64, interval_ticks: u64) -> bool {
 
 /// 裏バッファの全体を画面へ転送し、回数とサイクルを数える（[`present_deferred_if_due`] と [`close_screen_fd`] から）。
 /// **`FBIOZPRESENT` の回数（`GRAPHICS_PRESENTS`）には足さない**——利用者が打った数と、カーネルが写した数を分けて見る。
+///
+/// # 呼ぶ側が BKL を持つとは限らない（2026-10-12）
+///
+/// [`present_deferred_if_due`] から来るときは BKL を持つ。[`close_screen_fd`] から来るときは、持たないことがある——
+/// fd を閉じずに終わったプロセスの表は、破棄の後に BKL の外で落ちる（`crate::userland` の `load_user_program_with` の
+/// 終わり。`crate::vfs::FileTable` の `Drop`）。切り離したスロットのタスクなら IF=1 で、途中でティックに割り込まれうる。
+/// そのときに、転送が 2 つ重ならないことを守っているのは、次の 3 つである。
+///
+/// - **同じ CPU の上でしか走らない。** ユーザーのタスクも切り離したスロットのタスクも、担当は BSP である（タスクの欄の
+///   `owner` の既定は BSP で、AP の担当に書き換えるのは `crate::task` の `init_ap_idle_task` だけである）。BKL を持って転送する側
+///   （システムコールの戻りと BSP のアイドル）は IF=0 で走るので、転送の途中で割り込まれない。
+/// - **閉じる側は、印を先に落とす。** [`close_screen_fd`] は `FB0_OPEN` を落としてから転送する。その後で割り込まれて
+///   ほかのタスクへ移っても、[`present_deferred_if_due`] は `FB0_OPEN` を見て転送しない。
+/// - **図形モードを抜けるまで、次の持ち主は来ない。** 転送の間も `GRAPHICS_ACTIVE` は立ったままなので、ほかのプロセスの
+///   open（[`enter_graphics`]）は `Busy` で断られる。画面の fd を持つのは閉じている当のプロセスだけなので、
+///   `FBIOZPRESENT`（[`present_graphics`]）も来ない。
+///
+/// **M3a でユーザーのタスクがほかの CPU でも走るようになったら、1 つ目が成り立たなくなる。** その段で見直す。
 fn present_fb0_whole() {
     let Some(surface) = graphics_surface() else {
         return;
@@ -454,8 +472,9 @@ fn present_fb0_whole() {
     }
     let started = common::arch::x86_64::read_timestamp_counter();
     // SAFETY: 非 null なら [`install_foreground`] のガードが生きており、据えた側は `&mut Console` を預けている
-    // （[`FOREGROUND`] の doc）。呼ぶ側は BKL を持ち、ほかの書き手（Ring 3 の `write`・`FBIOZPRESENT`）とは BKL で
-    // 直列になる。
+    // （[`FOREGROUND`] の doc）。ほかの書き手（Ring 3 の `write`・`FBIOZPRESENT`・間隔ごとの転送）と重ならないことは、
+    // BKL だけでなく、この関数の doc の「呼ぶ側が BKL を持つとは限らない」の 3 つが守る（閉じる経路は BKL を持たない
+    // ことがある）。
     let console = unsafe { &mut *console };
     console.present(0, 0, surface.width, surface.height);
     let elapsed = common::arch::x86_64::read_timestamp_counter().wrapping_sub(started);
