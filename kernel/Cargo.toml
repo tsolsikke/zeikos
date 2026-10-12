@@ -635,9 +635,16 @@ pipe-read-empty-returns-zero = ["pipe-test"]
 pipe-write-ignores-full = ["pipe-test"]
 # 読み手を予約しない（ADR-0063 の (b3)）。右が起きる前の書きが -EPIPE になる。
 pipe-reader-not-reserved = ["pipe-test"]
-# 起こしっぱなしの口が入場を待たずに 1 度譲って戻り、左の読み込みが貸し出しを持つ間に
-# 2 ティック回る（ADR-0063 の (b3)）。貸し出しが重なり、右が AllocatorUnavailable で起こせない。
+# 確かめ（ADR-0063 の (b3)。2026-10-12 に破壊テストから移した。ADR-0084）: 起こしっぱなしの口が入場を待たずに 1 度譲って
+# 戻り、左の読み込みが貸し出しを持つ間に 2 ティック回る。貸し出しが重なり、右の spawn が借りられずに待ってから起動する。
+# 以前は待たずに AllocatorUnavailable で断られ、右を起こせなかった。`pipe-test spawn-detached-returns-early`。
 spawn-detached-returns-early = ["pipe-test"]
+# 確かめ（2026-10-12。ADR-0084）: 上の形で、最初の 1 回だけ左が貸し出しを 200 ティック持つ（待つ上限の 100 ティックを
+# 越える）。最初の `|` の右が上限まで待って -EAGAIN になり、stdin の予約は残らない。`pipe-test allocator-held-past-the-wait-limit`。
+allocator-held-past-the-wait-limit-test = ["spawn-detached-returns-early"]
+# 破壊（2026-10-12。ADR-0084）: spawn の入口と切り離したスロットの読み込みが、アロケータを待たずに 1 度だけ試す（直す前の
+# 形）。spawn-detached-returns-early の重なりで、右が -EAGAIN で起こせない。
+spawn-refuses-without-waiting-test = ["spawn-detached-returns-early"]
 # 待つ口が使われなかった予約を消さない（ADR-0063 の (b3)）。次の `|` が通らない。
 wait-child-keeps-reservation = ["pipe-test"]
 # accept が待たずに -EAGAIN を返す（ADR-0064）。sockd が accept failed で終わる。

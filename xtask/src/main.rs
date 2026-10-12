@@ -2517,6 +2517,7 @@ const RUN_FLAGS: &[(&str, RunValue)] = &[
     ("--virtio-test", RunValue::None),
     ("--virtio-irq-test", RunValue::None),
     ("--sabotage", RunValue::Optional),
+    ("--with", RunValue::Required),
     ("--boot-marker-sabotage", RunValue::Required),
     ("--page-permissions", RunValue::None),
     ("--scene", RunValue::Required),
@@ -2597,6 +2598,7 @@ const RUN_FLAG_SCOPES: &[(&str, RunFlagScope)] = &[
         RunFlagScope::WithModes(&["--boot-log-diff"]),
     ),
     ("--drop-arrows", RunFlagScope::WithModes(&["--shell-test"])),
+    ("--with", RunFlagScope::WithModes(&["--pipe-test"])),
     ("--drop-esc", RunFlagScope::WithModes(&["--shell-test"])),
     ("--reopen", RunFlagScope::WithModes(&["--serial-test"])),
     ("--ending", RunFlagScope::WithModes(&["--fb-test"])),
@@ -3229,6 +3231,22 @@ fn main() -> Result<()> {
             }
             // **シェルの `|` の判定（`ADR-0063` の (b3)）。台本のグループである。**
             if rest.iter().any(|a| a == "--pipe-test") {
+                // **確かめの feature（[`PIPE_TEST_CHECKS`]）は `--with` で足し、通ることを見る**（2026-10-12）。
+                if let Some(check) = rest
+                    .iter()
+                    .position(|a| a == "--with")
+                    .and_then(|at| rest.get(at + 1))
+                {
+                    let Some(&check) = PIPE_TEST_CHECKS
+                        .iter()
+                        .find(|name| **name == check.as_str())
+                    else {
+                        bail!(
+                            "pipe test: --with takes one of {PIPE_TEST_CHECKS:?} (got {check:?})"
+                        );
+                    };
+                    return cmd_pipe_test(&[check], true);
+                }
                 let sabotage: Vec<&str> = rest
                     .iter()
                     .enumerate()
@@ -5645,15 +5663,33 @@ const HISTORY_TEST_SABOTAGES: &[&str] = &[
 ///
 /// **それぞれ固有の判定で落とす**——**起こさない／閉じても数を減らさない（黙って止まる形）、
 /// 空を EOF と誤る（読み手が待たない）、満杯に上書き（中身が食い違う）、予約しない（`hello` が
-/// 届かない）、入場を待たない（貸し出しが重なる）、予約を消さない（次の `|` が通らない）。**
+/// 届かない）、アロケータを待たずに断る（貸し出しが重なると右を起こせない）、予約を消さない（次の `|` が通らない）。**
+///
+/// **`spawn-detached-returns-early`（入場を待たない）は、2026-10-12 に確かめへ移した**（[`PIPE_TEST_CHECKS`]。`ADR-0084`）。
+/// spawn がアロケータを待つようになり、貸し出しが重なっても右が待って起動するので、落ちる判定が無くなった。
+/// 直す前の形（待たずに断る）は `spawn-refuses-without-waiting-test` で、同じ重なりの上で落とす。
 const PIPE_TEST_SABOTAGES: &[&str] = &[
     "pipe-write-does-not-wake-reader",
     "pipe-close-keeps-writer-count",
     "pipe-read-empty-returns-zero",
     "pipe-write-ignores-full",
     "pipe-reader-not-reserved",
-    "spawn-detached-returns-early",
+    "spawn-refuses-without-waiting-test",
     "wait-child-keeps-reservation",
+];
+
+/// `pipe-test` を「通ること」で実行する確かめ（2026-10-12。`ADR-0084`）。
+///
+/// - **`spawn-detached-returns-early`**——左の読み込みが貸し出しを 2 ティック持つ間に右が `spawn` する。**右は待ってから
+///   起動する**（spawn の入口が待った刻みが 1 以上で、諦めた回数が 0。起こせなかった右は `/bin/nonexist` だけ）。
+///
+/// **どちらも、中身のバイト一致は求めない**——入場を待たずに戻るので、左のカーネルの行が右の出力の途中に割り込む
+/// （`cmd_pipe_test` の判定のコメント）。
+/// - **`allocator-held-past-the-wait-limit-test`**——最初の `|` の左だけが 200 ティック持つ（待つ上限は 100）。**最初の右
+///   （`/bin/cat`）だけが上限まで待って `-EAGAIN` になり、stdin の予約は残らない**（予約を消した数が 2 で、後の `|` が通る）。
+const PIPE_TEST_CHECKS: &[&str] = &[
+    "spawn-detached-returns-early",
+    "allocator-held-past-the-wait-limit-test",
 ];
 
 const PROFILE_TEST_SABOTAGES: &[&str] = &[
@@ -7797,7 +7833,7 @@ const SABOTAGE_JUDGEMENTS: &[NamedJudgement] = &[
     },
     NamedJudgement {
         check: "pipe test",
-        key: "spawn-detached-returns-early",
+        key: "spawn-refuses-without-waiting-test",
         signs: &["every right side started except the missing one = false"],
         note: "",
         reached: true,
@@ -9472,6 +9508,15 @@ fn cmd_pipe_test(features: &[&str], expect_pass: bool) -> Result<()> {
     let detached_starts = g("detached starts ");
     let entry_wait_ticks = g("waited at most ");
     let terminal_writes = g("wrote to the terminal ");
+    // **spawn の入口がアロケータを待った刻みと、諦めた回数**（2026-10-12。`ADR-0084`）。
+    let spawn_wait_ticks = g("spawn entries waited ");
+    let spawn_gave_up = gauge.and_then(|line| {
+        let rest = &line[line.find("spawn entries waited ")?..];
+        number_after(rest, "gave up ")
+    });
+    // 確かめ（[`PIPE_TEST_CHECKS`]）の構成か。
+    let overlaps = features.contains(&"spawn-detached-returns-early");
+    let past_the_limit = features.contains(&"allocator-held-past-the-wait-limit-test");
 
     // **判定 1**——中身がパイプを通る。
     let hello_once = count_line("hello") == 1;
@@ -9599,16 +9644,75 @@ fn cmd_pipe_test(features: &[&str], expect_pass: bool) -> Result<()> {
         waited.as_secs_f64()
     );
 
-    let passed = content_went_through
-        && reader_waited_first
-        && writer_waited
-        && big_went_through
-        && writer_saw_epipe
-        && right_missing_did_not_hang
+    // **確かめの構成の判定**（2026-10-12。`ADR-0084`）。
+    //
+    // - 重なる形（`spawn-detached-returns-early`）: 右は待って起動する。**待った刻みが 1 以上で、諦めた回数が 0。**
+    // - 上限を越える形（`allocator-held-past-the-wait-limit-test`）: **最初の右（`/bin/cat`）だけが起動できず、諦めた
+    //   回数が 1。** **使われなかった予約は消え（消した数が `nonexist` の分と合わせて 2）、後の `|` は通る**（`one two` と
+    //   `again`）。最初の `|` の中身（`hello`）は出ない。
+    //
+    // **どちらの構成も、中身のバイト一致（`/data/big`）は求めない。** 入場を待たずに戻るので左と右が同時に走り、左の
+    // カーネルの行が右の出力の行の途中に割り込む（実測。`big-lin[INFO] user-stack: ...`）。主張は「右が待って起動したか、
+    // 上限で断られて予約が残らないか」で、中身の判定は既定の `pipe-test` が持つ。
+    let spawn_waited_and_started =
+        spawn_wait_ticks.is_some_and(|n| n >= 1) && spawn_gave_up == Some(0);
+    let refused_once_and_left_no_reservation = cannot_run.len() == 2
+        && cannot_run
+            .iter()
+            .any(|line| line.contains("zash: /bin/nonexist: cannot run"))
+        && cannot_run
+            .iter()
+            .any(|line| line.contains("zash: /bin/cat: cannot run"))
+        && spawn_gave_up == Some(1)
+        && reservations_dropped == Some(2)
+        && count_line("hello") == 0
+        && one_two_once
+        && again_once
         && reached_the_end
-        && all_left_sides_started
-        && every_right_side_started
-        && no_error;
+        && all_left_sides_started;
+    if overlaps && !past_the_limit {
+        println!(
+            "{context}: the right side waited for the frame allocator and started = \
+             {spawn_waited_and_started} (spawn entries waited {spawn_wait_ticks:?} tick(s), gave up \
+             {spawn_gave_up:?} time(s))"
+        );
+    }
+    if past_the_limit {
+        println!(
+            "{context}: only the first right side gave up after the wait limit and its stdin \
+             reservation was dropped = {refused_once_and_left_no_reservation} (could not run: \
+             {cannot_run:?}, spawn entries gave up {spawn_gave_up:?} time(s), reservations dropped \
+             {reservations_dropped:?}, hello {} time(s), one two once = {one_two_once}, again once \
+             = {again_once})",
+            count_line("hello")
+        );
+    }
+    println!(
+        "{context}: (info) spawn entries waited {spawn_wait_ticks:?} tick(s) for the frame allocator \
+         and gave up {spawn_gave_up:?} time(s)"
+    );
+
+    let passed = if past_the_limit {
+        refused_once_and_left_no_reservation && no_error
+    } else if overlaps {
+        spawn_waited_and_started
+            && every_right_side_started
+            && right_missing_did_not_hang
+            && all_left_sides_started
+            && reached_the_end
+            && no_error
+    } else {
+        content_went_through
+            && reader_waited_first
+            && writer_waited
+            && big_went_through
+            && writer_saw_epipe
+            && right_missing_did_not_hang
+            && reached_the_end
+            && all_left_sides_started
+            && every_right_side_started
+            && no_error
+    };
     if passed {
         println!("{context}: PASS");
         if expect_pass {
@@ -23210,8 +23314,8 @@ const DIRECT_SERIAL_PORT_ALLOWLIST: &[DirectSerialPortSite] = &[
     },
     DirectSerialPortSite {
         file: "kernel/src/userland.rs",
-        item: "spawn",
-        reason: "spawn の判定行。BKL を解いた区間で走る（ADR-0023 §1）ので、ロガーを渡す道が無い",
+        item: "spawn_with_loan",
+        reason: "spawn の判定行（2026-10-12 に本体を spawn_with_loan へ分けた）。BKL を解いた区間で走る（ADR-0023 §1）ので、ロガーを渡す道が無い",
     },
     DirectSerialPortSite {
         file: "kernel/src/userland.rs",
@@ -30393,6 +30497,26 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
                 failed.push("pipe test".to_string());
             }
         }
+        // **確かめの 2 項目**（2026-10-12。[`PIPE_TEST_CHECKS`]。`ADR-0084`）。**通ることを見る。**
+        let mut batch = Batch::new("PIPE_TEST_CHECKS");
+        for check in PIPE_TEST_CHECKS {
+            total += 1;
+            batch.add(check, move |failed, _retries| {
+                let label = format!("pipe-test {check}");
+                begin_item(Family::Ipc, &label);
+                match cmd_pipe_test(&[check], true) {
+                    Ok(()) => println!("--- {label}: OK"),
+                    Err(error) => {
+                        println!(
+                            "--- {label}: FAILED [{}] ({error})",
+                            failure_category(&error)
+                        );
+                        failed.push(label.to_string());
+                    }
+                }
+            });
+        }
+        batch.run(&mut failed);
         let mut batch = Batch::new("PIPE_TEST_SABOTAGES");
         for sabotage in PIPE_TEST_SABOTAGES {
             total += 1;
@@ -33038,6 +33162,7 @@ const ITEM_TABLES: &[(&str, usize)] = &[
     ("PROFILE_TEST_SABOTAGES", PROFILE_TEST_SABOTAGES.len()),
     ("HISTORY_TEST_SABOTAGES", HISTORY_TEST_SABOTAGES.len()),
     ("PIPE_TEST_SABOTAGES", PIPE_TEST_SABOTAGES.len()),
+    ("PIPE_TEST_CHECKS", PIPE_TEST_CHECKS.len()),
     ("SOCKET_TEST_SABOTAGES", SOCKET_TEST_SABOTAGES.len()),
     ("INPUT_TEST_SABOTAGES", INPUT_TEST_SABOTAGES.len()),
     ("POLL_TEST_SABOTAGES", POLL_TEST_SABOTAGES.len()),
@@ -33396,7 +33521,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 64,
-    full: 516,
+    full: 518,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

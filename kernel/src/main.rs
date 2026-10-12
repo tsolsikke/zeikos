@@ -2689,7 +2689,8 @@ fn run_init(logger: &mut Logger<Serial>, console: Option<&mut Console>) -> ! {
                      time(s), writers waited {} time(s), writes without a reader {}, \
                      reservations dropped {}; two tasks were waiting at once {} time(s); \
                      detached starts {} waited at most {} tick(s) for the child to enter Ring 3; \
-                     the detached slot wrote to the terminal {} time(s)",
+                     the detached slot wrote to the terminal {} time(s); spawn entries waited {} \
+                     tick(s) for the frame allocator and gave up {} time(s)",
                     kernel::pipe::created(),
                     kernel::pipe::reader_waits(),
                     kernel::pipe::readers_woken_by_write(),
@@ -2699,7 +2700,9 @@ fn run_init(logger: &mut Logger<Serial>, console: Option<&mut Console>) -> ! {
                     kernel::task::waiting_together(),
                     kernel::syscall::detached_starts(),
                     kernel::syscall::detached_entry_wait_ticks_max(),
-                    kernel::syscall::terminal_writes_from_detached()
+                    kernel::syscall::terminal_writes_from_detached(),
+                    kernel::syscall::spawn_allocator_waits().0,
+                    kernel::syscall::spawn_allocator_waits().1
                 ));
                 // **ソケットの計測（`ADR-0064`）。** **台本のグループ（`socket-test`）が読む。**
                 //
@@ -12519,7 +12522,17 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "spawn-detached-returns-early",
         cfg!(feature = "spawn-detached-returns-early"),
-        "起こしっぱなしの口が入場を待たずに譲り、左の読み込みが貸し出しを持つ間に回る",
+        "起こしっぱなしの口が入場を待たずに譲り、左の読み込みが貸し出しを持つ間に回る（確かめ）",
+    ),
+    (
+        "allocator-held-past-the-wait-limit-test",
+        cfg!(feature = "allocator-held-past-the-wait-limit-test"),
+        "左の読み込みが、最初の 1 回だけ貸し出しを待つ上限より長く持つ（確かめ）",
+    ),
+    (
+        "spawn-refuses-without-waiting-test",
+        cfg!(feature = "spawn-refuses-without-waiting-test"),
+        "spawn の入口と切り離したスロットの読み込みが、アロケータを待たずに断る（直す前の形）",
     ),
     (
         "wait-child-keeps-reservation",

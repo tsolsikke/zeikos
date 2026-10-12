@@ -647,6 +647,16 @@ impl Loan {
     pub fn take() -> Option<Self> {
         take().map(|allocator| Self(Some(allocator)))
     }
+
+    /// 借りたまま、`&'static mut` として渡す（2026-10-12）。**返すのは受け取った側である**（[`give_back`]）。
+    ///
+    /// `spawn` は入口で借りた貸し出しを、返さずに読み込み（`crate::userland` の `load_user_program_with`）へ渡す。読み込みは
+    /// 出口ごとに [`give_back`] する形で書かれているので、そこへは素の借りとして渡す。
+    pub fn into_allocator(mut self) -> &'static mut FrameAllocator {
+        self.0
+            .take()
+            .expect("a loan holds the allocator until it drops")
+    }
 }
 
 impl core::ops::Deref for Loan {

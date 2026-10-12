@@ -3451,6 +3451,16 @@ unsafe fn spawn_detached_from_ring3(
     {
         drop(bkl.take());
         crate::task::yield_now();
+        // 確かめ (2026-10-12, allocator-held-past-the-wait-limit-test): **左の読み込みが貸し出しを取るまで譲ってから戻る**
+        // （上限 1,000 回）。1 度譲るだけでは、右の `spawn` が左より先に借りることがあり、左が長く持つ間に右が借りに来る
+        // 形にならなかった（実測）。
+        #[cfg(feature = "allocator-held-past-the-wait-limit-test")]
+        for _ in 0..1_000 {
+            if !crate::frame_allocator::lending_counts().2 {
+                break;
+            }
+            crate::task::yield_now();
+        }
         *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
     }
     #[cfg(not(feature = "spawn-detached-returns-early"))]
@@ -3471,6 +3481,10 @@ unsafe fn spawn_detached_from_ring3(
 ///
 /// **予約の消費は探した後である**——**`PATH` の輪が `-ENOENT` で次へ進む間、予約は残る。**
 ///
+/// **予約を見るのは、アロケータを借りた後である**（2026-10-12。`ADR-0084`）。借りられずに眠ると BKL を手放すので、眠る前に
+/// 読んだ予約は、起きたときには古いかもしれない（[`borrow_allocator`] の決まり）。以前は予約を最初に見ていた。**上限まで待って
+/// 借りられなければ `-EAGAIN` を返し、予約は消費しない**——使われなかった予約は、シェルの `wait_child` が消す。
+///
 /// # 安全性
 ///
 /// 呼び出し元契約により `page_table_root` / `direct_map` は有効。
@@ -3483,9 +3497,6 @@ unsafe fn spawn_with_piped_stdin_from_ring3(
     bkl: &mut Option<crate::bkl::BklGuard>,
 ) -> u64 {
     let slot = crate::arch::x86_64::current_excursion_slot();
-    let Some(pipe) = crate::userland::peek_pending_stdin(slot) else {
-        return (-EINVAL) as u64;
-    };
     let mut buf = [0u8; PATH_MAX];
     // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
     let len = match unsafe { copy_user_path(&mut buf, path, page_table_root, direct_map) } {
@@ -3524,6 +3535,15 @@ unsafe fn spawn_with_piped_stdin_from_ring3(
         Err(errno) => return (-errno) as u64,
     };
 
+    // **引数だけの確かめが済んだので、アロケータを借りる**（2026-10-12。`ADR-0084`）。借りられなければ 1 ティックずつ眠って
+    // 待つ。**予約と記録は、まだ読んでいない。**
+    let Some(loan) = borrow_allocator_for_spawn(bkl) else {
+        return (-EAGAIN) as u64;
+    };
+    let Some(pipe) = crate::userland::peek_pending_stdin(slot) else {
+        return (-EINVAL) as u64;
+    };
+
     // **ここで予約を消費する。** **探した後なので、`-ENOENT` の輪では消費されない。**
     let _ = crate::userland::take_pending_stdin(slot);
     if !crate::pipe::claim_reserved_reader(pipe) {
@@ -3532,11 +3552,12 @@ unsafe fn spawn_with_piped_stdin_from_ring3(
     crate::userland::set_inherit_stdin(slot, pipe);
 
     drop(bkl.take());
-    let result = crate::userland::spawn(
+    let result = crate::userland::spawn_with_loan(
         &buf[..len],
         &argv_bytes[..argv_used],
         argv_count,
         Some((&envp_bytes[..envp_used], envp_count)),
+        loan,
     );
     *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
 
@@ -3672,13 +3693,20 @@ unsafe fn spawn_from_ring3(
         Err(errno) => return (-errno) as u64,
     };
 
+    // **引数だけの確かめが済んだので、アロケータを借りる**（2026-10-12。`ADR-0084`）。借りられなければ 1 ティックずつ眠って
+    // 待ち、上限まで待っても借りられなければ `-EAGAIN`。**借りたまま `spawn` → 読み込みへ渡す。**
+    let Some(loan) = borrow_allocator_for_spawn(bkl) else {
+        return (-EAGAIN) as u64;
+    };
+
     // **ここで解く。** 取り直すのは子が終わってからである。
     drop(bkl.take());
-    let result = crate::userland::spawn(
+    let result = crate::userland::spawn_with_loan(
         &buf[..len],
         &argv_bytes[..argv_used],
         argv_count,
         Some((&envp_bytes[..envp_used], envp_count)),
+        loan,
     );
     *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
 
@@ -6045,14 +6073,21 @@ pub fn allocator_waits() -> (u64, u64) {
 fn borrow_allocator(
     bkl: &mut Option<crate::bkl::BklGuard>,
 ) -> Option<crate::frame_allocator::Loan> {
+    borrow_allocator_counting(bkl).0
+}
+
+/// [`borrow_allocator`] の本体。**借りたもの（借りられなければ `None`）と、眠った刻みの数**を返す（2026-10-12）。
+fn borrow_allocator_counting(
+    bkl: &mut Option<crate::bkl::BklGuard>,
+) -> (Option<crate::frame_allocator::Loan>, u64) {
     let mut waited = 0;
     loop {
         if let Some(loan) = crate::frame_allocator::Loan::take() {
-            return Some(loan);
+            return (Some(loan), waited);
         }
         if waited >= ALLOCATOR_WAIT_LIMIT_TICKS || bkl.is_none() {
             ALLOCATOR_GAVE_UP.fetch_add(1, Ordering::Relaxed);
-            return None;
+            return (None, waited);
         }
         ALLOCATOR_WAITS.fetch_add(1, Ordering::Relaxed);
         waited += 1;
@@ -6061,6 +6096,44 @@ fn borrow_allocator(
             bkl,
         );
     }
+}
+
+/// `spawn` の入口が、アロケータを借りる（2026-10-12。`ADR-0084`）。**[`borrow_allocator`] と同じ形で待つ**（1 ティックずつ
+/// 眠る。上限 [`ALLOCATOR_WAIT_LIMIT_TICKS`]）。**呼び手は、引数だけの確かめ（長さ・上限・コピー）の直後に呼び、stdin の
+/// 予約と記録は、借りた後に読む。**
+///
+/// spawn の入口で待った刻みと諦めた回数は、別にも数える（[`spawn_allocator_waits`]。`pipe-test` が読む）。
+///
+/// 破壊テスト (2026-10-12, spawn-refuses-without-waiting-test): 待たずに 1 度だけ試す（直す前の形）。
+fn borrow_allocator_for_spawn(
+    bkl: &mut Option<crate::bkl::BklGuard>,
+) -> Option<crate::frame_allocator::Loan> {
+    if cfg!(feature = "spawn-refuses-without-waiting-test") {
+        let loan = crate::frame_allocator::Loan::take();
+        if loan.is_none() {
+            SPAWN_ALLOCATOR_GAVE_UP.fetch_add(1, Ordering::Relaxed);
+        }
+        return loan;
+    }
+    let (loan, waited) = borrow_allocator_counting(bkl);
+    SPAWN_ALLOCATOR_WAIT_TICKS.fetch_add(waited, Ordering::Relaxed);
+    if loan.is_none() {
+        SPAWN_ALLOCATOR_GAVE_UP.fetch_add(1, Ordering::Relaxed);
+    }
+    loan
+}
+
+/// `spawn` の入口が、アロケータを待って眠った刻みの合計（2026-10-12）。
+static SPAWN_ALLOCATOR_WAIT_TICKS: AtomicU64 = AtomicU64::new(0);
+/// `spawn` の入口が、上限まで待っても借りられずに `-EAGAIN` を返した回数（2026-10-12）。
+static SPAWN_ALLOCATOR_GAVE_UP: AtomicU64 = AtomicU64::new(0);
+
+/// `spawn` の入口が、アロケータを待って眠った刻みの合計と、諦めた回数（2026-10-12。パイプの計測の行に出す）。
+pub fn spawn_allocator_waits() -> (u64, u64) {
+    (
+        SPAWN_ALLOCATOR_WAIT_TICKS.load(Ordering::Relaxed),
+        SPAWN_ALLOCATOR_GAVE_UP.load(Ordering::Relaxed),
+    )
 }
 
 /// `clock_nanosleep` の `flags`——`req` を絶対の時刻として読む（`TIMER_ABSTIME`）。

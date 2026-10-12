@@ -1238,6 +1238,10 @@ pub fn load_user_program(
     )
 }
 
+/// 確かめ `allocator-held-past-the-wait-limit-test` で、長く持つのを最初の 1 回にするための印（2026-10-12）。
+#[cfg(feature = "spawn-detached-returns-early")]
+static LONG_HOLD_DONE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// [`load_user_program`] の本体（2026-10-05）。**像は「範囲を読む口」で受ける**（`common::image_source`）。
 ///
 /// **実行ファイルの全体を、1 本のバイト列として持たない。** 読むのは、先頭の部分（ELF のヘッダとプログラムヘッダ）と、
@@ -1251,26 +1255,55 @@ pub fn load_user_program_from(
     argv: &[&[u8]],
     envp: Option<&[&[u8]]>,
 ) -> (Result<u64, UserLoadError>, usize, usize, usize) {
+    // **アロケータを借りる（S11-3。`ADR-0030`）。** マッピングの間だけ持ち、
+    // **Ring 3 へ落ちる前に返す。** 借りられなければ待たずに断る（起動の直線と、起動時の確かめから呼ばれる）。
+    // **`spawn` は入口で待って借り、借りたまま [`load_user_program_with`] へ渡す**（2026-10-12）。
+    let Some(allocator) = crate::frame_allocator::take() else {
+        return (Err(UserLoadError::AllocatorUnavailable), 0, 0, 0);
+    };
+    load_user_program_with(logger, image, run, name, argv, envp, allocator)
+}
+
+/// [`load_user_program_from`] の本体（2026-10-12 に、借りる所を外へ出した）。**`allocator` は借りたものを受け取り、
+/// Ring 3 へ落ちる前か、失敗の出口で返す**（[`crate::frame_allocator::give_back`]）。
+///
+/// **読み込みの経路で、アロケータを借り直してはいけない**（`ADR-0084`）。受け取った 1 本だけを使う。借り直すと、自分が持つ
+/// 貸し出しを自分で待つことになる。今の像はメモリの上に在り（`crate::vfs` の `root_image`）、読むのはスライスを写すだけで
+/// ある。**将来、ディスクから直に読む形（ページキャッシュ）にするなら、ここで借りたものを渡すか、別の置き場から取る。**
+pub fn load_user_program_with(
+    logger: &mut Logger<Serial>,
+    image: &dyn common::image_source::ImageSource,
+    run: bool,
+    name: &'static str,
+    argv: &[&[u8]],
+    envp: Option<&[&[u8]]>,
+    allocator: &'static mut crate::frame_allocator::FrameAllocator,
+) -> (Result<u64, UserLoadError>, usize, usize, usize) {
     use crate::arch::x86_64::AddressSpace;
 
     let direct_map = common::addr::direct_map();
 
-    // **アロケータを借りる（S11-3。`ADR-0030`）。** マッピングの間だけ持ち、
-    // **Ring 3 へ落ちる前に返す。**
-    let Some(allocator) = crate::frame_allocator::take() else {
-        return (Err(UserLoadError::AllocatorUnavailable), 0, 0, 0);
-    };
-
-    // 破壊テスト (`ADR-0063` の (b3), spawn-detached-returns-early): **切り離して起動するスロット（左）の
+    // 確かめ (`ADR-0063` の (b3), spawn-detached-returns-early): **切り離して起動するスロット（左）の
     // 読み込みが、貸し出しを持ったまま 2 ティック空回りする。** **起動する入口が入場を待たずに譲る形と
     // 組で、貸し出しが重なる機会を作る**——**このタスクはカーネルのタスクで IF=1 なので、
-    // ティックでシェルへ切り替わり、シェルが右を `spawn` して `AllocatorUnavailable` に当たる。**
+    // ティックでシェルへ切り替わり、シェルが右を `spawn` して、借りられずに待つ**（2026-10-12 から。以前は待たずに
+    // `AllocatorUnavailable` で断られ、破壊テストだった。`ADR-0084`）。
     // **右（スロット 0。システムコールの中）に置くと IF=0 で永久に空回りする**（実測）。
     // **`wait-window-is-wide` と同じ「機会を作る」形である。**
+    //
+    // 確かめ (2026-10-12, allocator-held-past-the-wait-limit-test): 最初の 1 回だけ、待つ上限（100 ティック）を越えて
+    // 200 ティック持つ。**右の `spawn` は上限まで待って `-EAGAIN` になり、stdin の予約は残らない**（`pipe-test` が読む）。
     #[cfg(feature = "spawn-detached-returns-early")]
     if crate::arch::x86_64::current_excursion_slot() == crate::task::detached_slot() {
+        let hold = if cfg!(feature = "allocator-held-past-the-wait-limit-test")
+            && !LONG_HOLD_DONE.swap(true, core::sync::atomic::Ordering::SeqCst)
+        {
+            200
+        } else {
+            2
+        };
         let opened = crate::arch::x86_64::monotonic_ticks();
-        while crate::arch::x86_64::monotonic_ticks().saturating_sub(opened) < 2 {
+        while crate::arch::x86_64::monotonic_ticks().saturating_sub(opened) < hold {
             core::hint::spin_loop();
         }
     }
@@ -2840,6 +2873,24 @@ pub fn spawn(
     argv_count: usize,
     envp: Option<(&[u8], usize)>,
 ) -> Result<SpawnOutcome, SpawnError> {
+    // **借りられなければ待たずに断る**（起動の直線と、起動時の確かめから呼ばれる。ほかに借りる者が居ない）。
+    // **システムコールの入口と、切り離したスロットの読み込みは、待って借りてから [`spawn_with_loan`] を呼ぶ**（2026-10-12）。
+    let Some(loan) = crate::frame_allocator::Loan::take() else {
+        return Err(SpawnError::Load(UserLoadError::AllocatorUnavailable));
+    };
+    spawn_with_loan(path, argv_bytes, argv_count, envp, loan)
+}
+
+/// [`spawn`] の本体（2026-10-12 に、借りる所を外へ出した）。**`loan` は呼び手が借りたアロケータで、返さずに読み込み
+/// （[`load_user_program_with`]）へ渡す。** 「借りてすぐ返し、後でもう 1 度借りる」形にしない——間に別のタスクが入ると、
+/// 2 度目で借りられない（`ADR-0084`）。読み込みの前に断る出口では、`loan` が落ちるときに返る。
+pub fn spawn_with_loan(
+    path: &[u8],
+    argv_bytes: &[u8],
+    argv_count: usize,
+    envp: Option<(&[u8], usize)>,
+    loan: crate::frame_allocator::Loan,
+) -> Result<SpawnOutcome, SpawnError> {
     // **深さの上限。入る前に断る。**
     let depth = crate::arch::x86_64::excursion_depth();
     if depth >= MAX_EXCURSION_DEPTH {
@@ -2974,22 +3025,11 @@ pub fn spawn(
     let saved_records = crate::syscall::save_records();
     let saved_fold = crate::arch::x86_64::save_fold_record();
 
-    // **会計のために借りて、すぐ返す**（`ADR-0030`）。**借りられなければ
-    // 子も起動できない**ので、そのまま [`UserLoadError::AllocatorUnavailable`] へ落とす。
+    // **会計の始めの数を控える**（`ADR-0030`）。空きフレームの数は、入口で借りた貸し出しのまま数える（下）。
     let shared_before = crate::shm::frames_held();
     let allocator_waits_before = crate::syscall::allocator_waits();
-    let free_before = match crate::frame_allocator::take() {
-        Some(allocator) => {
-            let count = allocator.free_frame_count();
-            crate::frame_allocator::give_back(allocator);
-            count
-        }
-        None => {
-            crate::syscall::restore_records(saved_records);
-            crate::arch::x86_64::restore_fold_record(saved_fold);
-            return Err(SpawnError::Load(UserLoadError::AllocatorUnavailable));
-        }
-    };
+    // **入口で借りた貸し出しのまま数える**（2026-10-12）。返さずに読み込みへ渡すので、数えた後に別のタスクが取る隙が無い。
+    let free_before = loan.free_frame_count();
 
     // **`argv` を控えて、`&'static [u8]` の並びへ切り分ける（S11-7）。**
     //
@@ -3094,8 +3134,15 @@ pub fn spawn(
         area
     };
 
-    let (outcome, held, leaked, taken) =
-        load_user_program_from(&mut logger, &image, true, name, argv, envp);
+    let (outcome, held, leaked, taken) = load_user_program_with(
+        &mut logger,
+        &image,
+        true,
+        name,
+        argv,
+        envp,
+        loan.into_allocator(),
+    );
 
     // **親の FP の状態を戻す。** **子が XMM に残したものを消す**ので、
     // 情報の漏れも同時に塞がる（決定 4 と同じ向きである）。
@@ -3455,6 +3502,10 @@ pub fn wait_for_ring3_task(handle: u64) -> ChildStatus {
 
 /// 足した 1 本のタスクが、渡された依頼を走らせる（W1-c-4）。**そのタスクの本体だけが呼ぶ。**
 pub fn run_detached_request() {
+    // **自分のスロットの引数を読む前に、アロケータを借りる**（2026-10-12。`ADR-0084`）。借りられなければ、譲りながら待つ
+    // （上限 [`DETACHED_ALLOCATOR_WAIT_LIMIT_TICKS`]）。待つ間に依頼の中身を読まないので、読んだ値が待つ間に古くなることは
+    // 無い。**上限まで待っても借りられなければ、`spawn` が `AllocatorUnavailable` で断ったのと同じ扱いにする**（下で）。
+    let loan = borrow_allocator_by_yielding();
     // **依頼は静的の置き場から借りる。値で取らない（`ADR-0063` の (b3)）。** **値で取ると
     // 約 2.4 KiB がこのタスクのカーネルスタックに 2 度乗り**（`take()` と `let Some(..)` で、
     // dev プロファイルはまとめない）**、高水位が半分の見張りを越えて止まった**（実測。
@@ -3493,7 +3544,10 @@ pub fn run_detached_request() {
     if let Some(pipe) = request.stdout_pipe {
         set_inherit_stdout(slot, pipe);
     }
-    let outcome = spawn(path, argv_bytes, argv_count, envp);
+    let outcome = match loan {
+        Some(loan) => spawn_with_loan(path, argv_bytes, argv_count, envp, loan),
+        None => Err(SpawnError::Load(UserLoadError::AllocatorUnavailable)),
+    };
     // **取られなかったら（読み込みの前に失敗した）、書き端を返す**——**読み手が EOF を見に行ける。**
     if let Some(unused) = take_inherit_stdout(slot) {
         crate::pipe::close_write_end(unused);
@@ -3507,6 +3561,34 @@ pub fn run_detached_request() {
     logger.info(format_args!(
         "detached: {name} ended ({outcome:?}) on ring3 slot {slot}"
     ));
+}
+
+/// 切り離したスロットの読み込みが、アロケータを待つ上限（タイマの刻み。2026-10-12）。システムコールの
+/// `borrow_allocator` と同じ 100 Hz で 1 秒である。
+const DETACHED_ALLOCATOR_WAIT_LIMIT_TICKS: u64 = 100;
+
+/// アロケータを、借りられるまで譲りながら待って借りる（2026-10-12。切り離したスロットの読み込みのタスクから）。
+///
+/// **このタスクはカーネルのタスクで、BKL を持たない**（IF=1）。システムコールの `borrow_allocator` のように BKL を解いて
+/// 眠る形ではなく、譲る（`crate::task::yield_now`）。上限まで待っても借りられなければ `None`。
+///
+/// 破壊テスト (2026-10-12, spawn-refuses-without-waiting-test): 待たずに 1 度だけ試す（直す前の形）。
+fn borrow_allocator_by_yielding() -> Option<crate::frame_allocator::Loan> {
+    if cfg!(feature = "spawn-refuses-without-waiting-test") {
+        return crate::frame_allocator::Loan::take();
+    }
+    let started = crate::arch::x86_64::monotonic_ticks();
+    loop {
+        if let Some(loan) = crate::frame_allocator::Loan::take() {
+            return Some(loan);
+        }
+        if crate::arch::x86_64::monotonic_ticks().saturating_sub(started)
+            >= DETACHED_ALLOCATOR_WAIT_LIMIT_TICKS
+        {
+            return None;
+        }
+        crate::task::yield_now();
+    }
 }
 
 #[cfg(test)]
