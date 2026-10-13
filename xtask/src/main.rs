@@ -27003,11 +27003,15 @@ const COMMON_ITEMS_FOR_HOMES: &[CommonItemsForHomes] = &[
     CommonItemsForHomes {
         module: "kernel::task",
         items: &[
+            "THREAD_TASKS",
+            "current_excursion_home",
             "current_ring3_slot",
             "note_current_excursion_depth",
             "note_current_kernel_entry_stack_top",
+            "thread_task_stack_range",
         ],
-        reason: "遠征が、今のタスクのスロットを引き、遠征の深さと入口のスタックの上端をタスクへ控える",
+        reason: "遠征が、今のタスクのスロットと置き場（スロットか池のタスク）を引き、遠征の深さと入口のスタックの上端を\
+                 タスクへ控える。池の大きさとカーネルスタックの範囲は、池のタスクの遠征の状態と回復点の表に使う",
     },
     CommonItemsForHomes {
         module: "kernel::task",

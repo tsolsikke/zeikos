@@ -182,6 +182,22 @@ struct Recovery {
     resume_rip: u64, // +56
 }
 
+/// 回復点、池のスレッドのタスクごと（M3a。[`ExcursionHome::Thread`]）。**1 つずつである**——スレッドは入れ子の遠征を
+/// 持たない（`run_excursion` はスレッドのタスクからは呼べない。`clone` の入口は、初期の文脈で Ring 3 へ入る）。
+/// **この段では誰も使わない。**
+static mut THREAD_RECOVERIES: [Recovery; crate::task::THREAD_TASKS] = [const {
+    Recovery {
+        rsp: 0,
+        rbx: 0,
+        rbp: 0,
+        r12: 0,
+        r13: 0,
+        r14: 0,
+        r15: 0,
+        resume_rip: 0,
+    }
+}; crate::task::THREAD_TASKS];
+
 /// 回復点。**深さごとに 1 つ持つ（S11-2）。**
 ///
 /// **1 つしか無いと、子の遠征に入った時点で親の回復点が上書きされ、
@@ -233,6 +249,23 @@ static CURRENT_RECOVERY: AtomicU64 = AtomicU64::new(0);
 /// - 共通の側は、スロットごとの表（システムコールの状態・ヒープ・開いたファイル・`spawn` の控え）の大きさに使う。
 ///   スロットの番号は `current_excursion_slot` が返す。
 pub const USER_TASK_SLOTS: usize = 2;
+
+/// 遠征の状態と回復点の置き場（M3a。2026-10-13。`ADR-0085` の決定 2）。
+///
+/// **スロット（メインの系統と足した 1 本。深さごとに遠征スタックと回復点を持つ）か、池のスレッドのタスク（自分の
+/// カーネルスタックが RSP0 の先で、回復点を 1 つ持つ。深さは 1 まで）のどちらかである。** 今のタスクのものは
+/// `crate::task::current_excursion_home` が、切り替えで入る側のものは `crate::task::excursion_home_of` が返す。
+///
+/// **スロットの番号（`current_excursion_slot`）とは別である**——あちらはスレッドでも作った側のプロセスのスロットで、
+/// プロセスで共有する表（システムコールの状態・fd の表・ヒープ・写像の表）を引く。**遠征の状態と回復点はスレッドごと
+/// なので、置き場を分けた。** この段（2 段目）では池のタスクは走らないので、既定の起動では必ず `Slot` である。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ExcursionHome {
+    /// スロット（0 がメインの系統、1 が足した 1 本）。
+    Slot(usize),
+    /// 池のスレッドのタスク（池の番号）。
+    Thread(usize),
+}
 
 /// 1 本の遠征が持つ状態のうち、**置き場を分けられるもの**（W1-a）。
 ///
@@ -347,13 +380,21 @@ impl ExcursionState {
 static EXCURSION_STATE: [ExcursionState; USER_TASK_SLOTS] =
     [const { ExcursionState::new() }; USER_TASK_SLOTS];
 
-/// 今のタスクの遠征の状態を引く（W1-a。W1-c-3 でタスクのスロットから引く形にした）。
+/// 遠征の状態、池のスレッドのタスクごと（M3a。[`ExcursionHome::Thread`]）。**この段では誰も使わない。**
+static THREAD_EXCURSION_STATE: [ExcursionState; crate::task::THREAD_TASKS] =
+    [const { ExcursionState::new() }; crate::task::THREAD_TASKS];
+
+/// 今のタスクの遠征の状態を引く（W1-a。W1-c-3 でタスクのスロットから引く形にし、M3a で置き場から引く形にした）。
 ///
-/// **引く入口をここ 1 つに絞ってある**（[`current_excursion_slot`]）。**既定の起動では必ずスロット 0 である**
-/// （W1-c-4 の `concurrent-test` では足した 1 本がスロット 1 を引く）。
+/// **引く入口をここ 1 つに絞ってある**（[`current_home`]）。**既定の起動では必ずスロット 0 である**
+/// （W1-c-4 の `concurrent-test` では足した 1 本がスロット 1 を引く。池のタスクが自分の置き場を引くのは、`clone` の
+/// 入口を入れる段から）。
 #[inline(always)]
 fn state() -> &'static ExcursionState {
-    &EXCURSION_STATE[current_excursion_slot()]
+    match current_home() {
+        ExcursionHome::Slot(slot) => &EXCURSION_STATE[slot],
+        ExcursionHome::Thread(index) => &THREAD_EXCURSION_STATE[index],
+    }
 }
 
 /// いま載っている回復点のアドレス（W1-b。切り替えが読む）。
@@ -413,6 +454,29 @@ pub fn excursion_recovery_belongs_to_slot(recovery: u64, slot: usize) -> bool {
     recovery >= row && recovery < row + size
 }
 
+/// 回復点のアドレスが、置き場 `home` のものか（M3a。[`excursion_recovery_belongs_to_slot`] を置き場へ広げた）。
+/// **0 は「まだ誰も入っていない」である。** スロットなら行の中、池のタスクなら自分の 1 つと同じアドレスかを見る。
+///
+/// # 契約（境界の関数。2026-10-13）
+///
+/// - 読むだけの判定で、何も変えない。どの CPU からも呼んでよい。
+/// - `recovery` が 0 なら `true`、範囲外の置き場なら `false` を返す。
+pub fn excursion_recovery_belongs_to(recovery: u64, home: ExcursionHome) -> bool {
+    match home {
+        ExcursionHome::Slot(slot) => excursion_recovery_belongs_to_slot(recovery, slot),
+        ExcursionHome::Thread(index) => {
+            if recovery == 0 {
+                return true;
+            }
+            if index >= crate::task::THREAD_TASKS {
+                return false;
+            }
+            // SAFETY: 静的配列の要素のアドレスを取るだけで、中身は読まない。
+            recovery == unsafe { addr_of!(THREAD_RECOVERIES[index]) } as u64
+        }
+    }
+}
+
 /// 今のタスクのスロットの番号（W1-a。W1-c-3 でタスクから引く形にした）。
 ///
 /// **W1-a から W1-c-2 までは定数 0 だった。** **W1-c-3 で `crate::task` から引く。**
@@ -442,6 +506,34 @@ pub(crate) fn current_excursion_slot() -> usize {
     return 0;
     #[cfg(not(feature = "ring3-slot-always-zero"))]
     crate::task::current_ring3_slot()
+}
+
+/// 今のタスクの、遠征の状態と回復点の置き場（M3a。[`ExcursionHome`]）。
+///
+/// **`#[inline(never)]` にしてある**——[`current_excursion_slot`] と同じ理由で、呼ぶ箇所のフレームに一時値を
+/// 置かない。
+#[inline(never)]
+fn current_home() -> ExcursionHome {
+    // 破壊テスト (W1-c-4, ring3-slot-always-zero): 置き場も、足した 1 本にスロット 0 を返す。**`state()` と
+    // 遠征スタックの引き方が、[`current_excursion_slot`] と同じ壊れ方をする**（この破壊テストの形を、置き場を分ける前の
+    // まま保つため）。
+    #[cfg(feature = "ring3-slot-always-zero")]
+    return ExcursionHome::Slot(0);
+    #[cfg(not(feature = "ring3-slot-always-zero"))]
+    crate::task::current_excursion_home()
+}
+
+/// 池のスレッドのタスクから遠征を始めようとした（M3a）。**止める。**
+///
+/// **スレッドのタスクは遠征を始めない**——自分のカーネルスタックが RSP0 の先で、`clone` の入口は初期の文脈で Ring 3 へ
+/// 入る（`ADR-0085` の決定 2）。
+#[inline(never)]
+#[cold]
+fn report_excursion_from_thread_task(index: usize) -> ! {
+    panic!(
+        "ring3: thread task {index} tried to start an excursion; a thread task enters Ring 3 from \
+         its initial context, not through run_excursion (M3a)"
+    );
 }
 
 // **例外による終了処理の記録（`FAULT_*` と `HANDLER_RSP`）は W1-c-3 で [`ExcursionState`] へ移した。**
@@ -543,7 +635,39 @@ pub fn excursion_stack_range() -> (u64, u64) {
 /// - 読むだけで、何も変えない。範囲外の深さでは止まる（[`excursion_stack_range_of`] が止める）。
 #[inline(always)]
 pub fn excursion_stack_range_at(depth: usize) -> (u64, u64) {
-    excursion_stack_range_of(current_excursion_slot(), depth)
+    excursion_stack_range_for(current_home(), depth)
+}
+
+/// 置き場 `home` の、深さ `depth` の、カーネル入場のスタックの (下端, 上端)（M3a）。
+///
+/// **スロットなら、その深さの遠征スタックである**（[`excursion_stack_range_of`]）。**池のスレッドのタスクなら、自分の
+/// カーネルスタックである**（深さは 0 だけ。スレッドは入れ子の遠征を持たない）。**切り替えが、入る側のタスクの
+/// 置き場で引く。**
+///
+/// # 契約（境界の関数。2026-10-13）
+///
+/// - 読むだけで、何も変えない。範囲外の置き場と深さでは止まる（黙って別のスタックを返さない）。
+pub fn excursion_stack_range_for(home: ExcursionHome, depth: usize) -> (u64, u64) {
+    match home {
+        ExcursionHome::Slot(slot) => excursion_stack_range_of(slot, depth),
+        ExcursionHome::Thread(index) => {
+            if index >= crate::task::THREAD_TASKS || depth >= 1 {
+                report_thread_excursion_index_out_of_range(index, depth);
+            }
+            crate::task::thread_task_stack_range(index)
+        }
+    }
+}
+
+/// 池のタスクの添字か深さが範囲の外だった（M3a）。**止める。**
+#[inline(never)]
+#[cold]
+fn report_thread_excursion_index_out_of_range(index: usize, depth: usize) -> ! {
+    panic!(
+        "ring3: thread task {index} / depth {depth} is out of range (THREAD_TASKS = {}, a thread task has one \
+         kernel stack and no nested excursion)",
+        crate::task::THREAD_TASKS
+    );
 }
 
 /// スロット `slot` の、深さ `depth` の遠征スタックの (下端, 上端)（W1-c-3）。
@@ -949,6 +1073,11 @@ pub unsafe fn run_excursion(
     // 216 から 840 バイトになり、遠征スタックの高水位が動いた。`docs/coding-standards.md`
     // の「番地以外が動いたら」）。**この関数のフレームは、子が走っている間ずっと載っている。**
     let state = state();
+    // **池のスレッドのタスクからは始めない（M3a）**——スレッドは自分のカーネルスタックの上に居て、遠征スタックも
+    // 深さごとの回復点も持たない。
+    if let ExcursionHome::Thread(index) = current_home() {
+        report_excursion_from_thread_task(index);
+    }
     // **この遠征の深さ（S11-2）。** 呼び出し側が [`excursion_depth`] で上限を確かめている。
     let depth = state.depth.load(Ordering::SeqCst);
     // **契約が破れていたら止める（W1-c-3c）。** **以前は回復点の添字を `depth.min(上限 - 1)` へ

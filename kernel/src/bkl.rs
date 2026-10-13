@@ -320,9 +320,14 @@ static GENERATION_FLUSHES: PerCpu<AtomicU64> = PerCpu::new([const { AtomicU64::n
 
 /// **マッピングを変えたことを知らせる（S5-b）。BKL を保持したまま呼ぶこと。**
 ///
-/// **現時点で本番の呼び出し元は無い。** マッピングを変える操作はすべて AP が起動する前の
-/// 単一コアの区間にあるためである（`verification-coverage.md`）。
-/// **呼び出し元ができるのは、実行中にマッピングを変える段階（S5-c 以降）である。**
+/// **本番の呼び手は、空間の破棄の隔離の道である**（`crate::quarantine::retire_address_space` の `ThroughQuarantine`。
+/// 2026-10-07 から。外す前に世代を上げ、隔離から返すのは全部のコアがその世代を通り過ぎたフレームだけにする）。
+/// **`munmap`・`mprotect`・`brk` の縮小は、まだ呼ばない**——プロセスは 1 つの CPU に留まり、この CPU の `invlpg` で
+/// 足りるためである（`docs/deferred-decisions.md` の TLB シュートダウンの項。「2 CPU 以上」の段で呼ぶようにする）。
+/// 破壊テストの経路（`smp-tlb-shootdown-probe`・`smp-tlb-generation-probe`）も呼ぶ。
+///
+/// 2026-10-13 まで「本番の呼び出し元は無い。マッピングを変える操作はすべて AP が起動する前の単一コアの区間にある」と
+/// 書いていた。S5-b の時点の記述で、隔離の道が入った後も残っていた。
 pub fn note_mapping_changed() {
     TLB_GENERATION.fetch_add(1, Ordering::Relaxed);
 }

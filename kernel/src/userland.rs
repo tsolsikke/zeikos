@@ -1168,7 +1168,9 @@ pub struct UserProcess {
     /// このプロセスが走った CPU の印（ビット = CPU の番号。2026-10-07）。**空間を壊すときに、その場で返してよいか
     /// （この CPU でしか走らなかったか）を決める**（`crate::quarantine::Retire` の doc）。Ring 3 へ入る所で立てる。
     /// **スレッド（M3a）を入れるときは、別の CPU で走らせる所でも立てること**——立て忘れると、ほかの CPU の TLB に
-    /// 翻訳が残ったままフレームが配られる。
+    /// 翻訳が残ったままフレームが配られる。**M3a では、同じプロセスのスレッドを作った側の CPU に寄せる**（`ADR-0085` の
+    /// 決定 5）**ので、遠征の入口で立てた印で足りる**——`clone` の入口は、スレッドのタスクの担当が作った側の CPU と同じ
+    /// であることを確かめる（2026-10-13）。別の CPU で走らせる段（2 CPU 以上）で、立てる所を足す。
     ran_on: u64,
     /// 判定行に出す名前。
     name: &'static str,
@@ -2609,7 +2611,8 @@ unsafe fn run_loaded_program(
     // 空回りする**ので、止められるまでに来たタイマはどれも DF=1 の文脈から入る（下の判定行）。
     let irq_entries_from_df_before =
         crate::arch::x86_64::entries_from_direction_flag_set(crate::arch::x86_64::EntryPath::Irq);
-    // **走る CPU の印を立てる**（2026-10-07。[`UserProcess::ran_on`]）。
+    // **走る CPU の印を立てる**（2026-10-07。[`UserProcess::ran_on`]）。**スレッド（M3a）は作った側の CPU に寄せるので、
+    // この印で足りる**（欄の doc）。
     process.ran_on |= 1u64 << common::percpu::cpu_id();
     // SAFETY: entry と stack は今マップしたユーザーページで、`ud2` が必ずフォルト
     // する。main_entry_stack_top はメインのカーネルスタック上端。単一実行文脈である。

@@ -923,6 +923,15 @@ fn thread_task_stack_bounds(index: usize) -> (VirtAddr, VirtAddr) {
     (guard, top)
 }
 
+/// 池の `index` 本目のカーネルスタックの (下端, 上端)（M3a。見張りのページを除く）。**池のタスクが Ring 3 に居る間の
+/// RSP0 の先で、切り替えの検算とカーネル入場のスタックの確かめが、この範囲を見る**（`ring3::excursion_stack_range_for`）。
+///
+/// 範囲外の `index` では止まる。
+pub fn thread_task_stack_range(index: usize) -> (u64, u64) {
+    let (guard, top) = thread_task_stack_bounds(index);
+    (guard.as_u64() + GUARD_SIZE as u64, top.as_u64())
+}
+
 /// 池の見張りのページの名前（起動ログの行と、ページフォルトの名指しに使う）。**池の数と同じ長さである。**
 const THREAD_GUARD_NAMES: [&str; THREAD_TASKS] = [
     "the thread task 0 guard page",
@@ -1113,12 +1122,18 @@ extern "sysv64" fn ring3_task_main() -> ! {
         common::arch::x86_64::halt_forever();
     }
     let handle = current_ring3_task_handle();
-    // **欄を `Finished` にしてから起こす（`ADR-0063` の (b2)）**——**起こしてから書くと、
-    // 起きた親がまだ `Finished` でない欄を読む。**
-    scheduler::set_state(RING3_TASK, TaskState::Finished);
-    // 破壊テスト (`ADR-0063` の (b2), finish-does-not-wake): 起こさない。**親が永久に待つ。**
-    #[cfg(not(feature = "finish-does-not-wake"))]
-    wake_tasks_waiting_on(Wait::Child { handle });
+    {
+        // **BKL を持って書く（M3a。2026-10-13）。** 以前は BKL の外（IF=1）で書いていた。同じ CPU（BSP）の上なので
+        // 実害は無かったが（`ADR-0085` の「全部 BSP」の一覧）、`wake_tasks_waiting_on` の契約（BKL の内側）に合わせ、
+        // スレッドの終わりも同じ形で書くので、持つ形に揃えた。
+        let _bkl = crate::bkl::acquire(crate::bkl::KernelEntry::SteadyLoop);
+        // **欄を `Finished` にしてから起こす（`ADR-0063` の (b2)）**——**起こしてから書くと、
+        // 起きた親がまだ `Finished` でない欄を読む。**
+        scheduler::set_state(RING3_TASK, TaskState::Finished);
+        // 破壊テスト (`ADR-0063` の (b2), finish-does-not-wake): 起こさない。**親が永久に待つ。**
+        #[cfg(not(feature = "finish-does-not-wake"))]
+        wake_tasks_waiting_on(Wait::Child { handle });
+    }
     loop {
         yield_now();
     }
@@ -1159,9 +1174,9 @@ fn report_zero_kernel_entry_stack_top_on_switch(next: usize) -> ! {
 fn report_foreign_recovery_on_switch(next: usize, recovery: u64) -> ! {
     serial_line(format_args!(
         "[ERROR] task: switching to task {next} while the recovery point is {recovery:#x}, which \
-         is outside ring3 slot {}'s rows; folding that task would jump to another task's recovery \
+         is outside the rows of {:?}; folding that task would jump to another task's recovery \
          point; halting",
-        scheduler::ring3_slot(next)
+        excursion_home_of(next)
     ));
     common::arch::x86_64::halt_forever();
 }
@@ -1202,6 +1217,29 @@ pub fn current_ring3_slot() -> usize {
     match current_index_if_any() {
         Some(task) => scheduler::ring3_slot(task),
         None => 0,
+    }
+}
+
+/// 今のタスクの、遠征の状態と回復点の置き場（M3a。2026-10-13。`ExcursionHome` の doc）。
+///
+/// **まだ誰も走らせていなければスロット 0 である**（[`current_ring3_slot`] と同じ理由）。**池のタスクは自分の番号、ほかは
+/// スロットである**（[`excursion_home_of`]）。`#[inline(never)]` は `ring3::current_excursion_slot` と同じ理由（呼ぶ箇所の
+/// フレームに一時値を置かない）。
+#[inline(never)]
+pub fn current_excursion_home() -> crate::arch::x86_64::ExcursionHome {
+    match current_index_if_any() {
+        Some(task) => excursion_home_of(task),
+        None => crate::arch::x86_64::ExcursionHome::Slot(0),
+    }
+}
+
+/// タスクの、遠征の状態と回復点の置き場（M3a）。**池のタスクは `Thread(池の番号)`、ほかは `Slot(欄のスロット)`。**
+/// **切り替えが、入る側のタスクのもので検算する**（`schedule_switch`）。
+pub fn excursion_home_of(task: usize) -> crate::arch::x86_64::ExcursionHome {
+    if is_thread_task(task) {
+        crate::arch::x86_64::ExcursionHome::Thread(task - THREAD_TASK_FIRST)
+    } else {
+        crate::arch::x86_64::ExcursionHome::Slot(scheduler::ring3_slot(task))
     }
 }
 
@@ -2581,8 +2619,9 @@ fn schedule_switch(current_sp: u64) -> u64 {
         let (next_bottom, next_top) = match expected_stack(next_depth) {
             ExpectedStack::Kernel => (scheduler::stack_bottom(next), scheduler::stack_top(next)),
             ExpectedStack::Excursion { index } => {
-                // **入る側のタスクのスロットで引く（W1-c-3）。** 今のタスクのものではない。**欄から読む**（M3a）。
-                crate::arch::x86_64::excursion_stack_range_of(scheduler::ring3_slot(next), index)
+                // **入る側のタスクの置き場で引く（W1-c-3。M3a で置き場に）。** 今のタスクのものではない。**池のタスクなら
+                // 自分のカーネルスタックである**（遠征スタックを持たない）。
+                crate::arch::x86_64::excursion_stack_range_for(excursion_home_of(next), index)
             }
         };
         if next_sp < next_bottom || next_sp >= next_top {
@@ -2632,10 +2671,7 @@ fn schedule_switch(current_sp: u64) -> u64 {
         // **2 本が同時に走っても、例外による終了処理が起きるのは相手が Ring 3 を出た後だったので、
         // `enter` 自身の控えと戻しが辻褄を合わせてしまった**（`ADR-0060` の W1-c-4 の Addendum）。
         let recovery = crate::arch::x86_64::current_excursion_recovery();
-        if !crate::arch::x86_64::excursion_recovery_belongs_to_slot(
-            recovery,
-            scheduler::ring3_slot(next),
-        ) {
+        if !crate::arch::x86_64::excursion_recovery_belongs_to(recovery, excursion_home_of(next)) {
             report_foreign_recovery_on_switch(next, recovery);
         }
 
@@ -3862,6 +3898,46 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// 遠征の状態と回復点の置き場（M3a）——池のタスクは自分の番号、ほかはスロットである。
+    #[test]
+    fn the_excursion_home_of_a_task_is_its_pool_index_or_its_slot() {
+        use crate::arch::x86_64::ExcursionHome;
+        for task in 0..TASK_COUNT {
+            let home = super::excursion_home_of(task);
+            if super::is_thread_task(task) {
+                assert_eq!(
+                    home,
+                    ExcursionHome::Thread(task - THREAD_TASK_FIRST),
+                    "task {task}"
+                );
+            } else {
+                assert!(
+                    matches!(home, ExcursionHome::Slot(_)),
+                    "task {task}: {home:?}"
+                );
+            }
+        }
+        // **池のカーネルスタックは、見張りのページの 1 ページ上から上端までである。**
+        for index in 0..THREAD_TASKS {
+            let (bottom, top) = super::thread_task_stack_range(index);
+            assert_eq!(top - bottom, super::RING3_TASK_STACK_SIZE as u64);
+            assert_eq!(bottom % 4096, 0);
+            assert!(crate::arch::x86_64::excursion_recovery_belongs_to(
+                0,
+                ExcursionHome::Thread(index)
+            ));
+            assert_eq!(
+                crate::arch::x86_64::excursion_stack_range_for(ExcursionHome::Thread(index), 0),
+                (bottom, top)
+            );
+        }
+        // **範囲外の池の番号の回復点は、どのアドレスも受けない。**
+        assert!(!crate::arch::x86_64::excursion_recovery_belongs_to(
+            0x1000,
+            ExcursionHome::Thread(THREAD_TASKS)
+        ));
     }
 
     /// 輪の形そのもの（M3a）——足した 1 本、池、メインの順で、ワーカーとアイドルは入らない。
