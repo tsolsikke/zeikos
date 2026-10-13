@@ -135,6 +135,7 @@ Linuxと同じ分け方である。今の置き場からの移し方は、下の
 | `kernel/src/quarantine.rs`の`Retire`と`userland.rs`の`ran_on`・`destroy_route` | 走ったCPUの印で、その場で返すかを決める | スレッドがRing 3へ入る所でも印を立てる | そのまま（既に複数CPUの形） |
 | `kernel/src/task.rs`の`schedule_switch`（`CURRENT_RECOVERY`の入れ替え） | 切り替えるCPUが1つ | スレッドにも同じ入れ替え | CPUごとの回復点 |
 | `kernel/src/task.rs`の`ring3_task_main` | `Finished`への書きと起こしが、BKLの外（IF=1） | BKLを持って書く形に揃える（スレッドの終わりと同じ形にするため） | そのまま |
+| `kernel/src/task.rs`の`pick_next`（2026-10-13） | 状態を添字から1本ずつ読み、メインを2度読む。読む間に別のCPUが状態を書かない（状態を書くのはBSPのシステムコールと割り込みの入口と足した1本の終わりで、APはBSPのタスクの状態を書かない） | そのまま | 輪で読んだメインの値を落ち先の判定に使い回す |
 | `kernel/src/task.rs`の`bsp_idle_main` | 隔離の解放・shmの解放・間隔ごとの転送はBSPのアイドルだけが行う | そのまま | APのアイドルにも回すか、BSPに任せたまま遅れを受け入れる |
 | `kernel/src/arch/x86_64/idt/mod.rs`の`advance_monotonic_ticks`と`interrupts.rs`の`wake_expired_timers` | 時計を進めて期限の待ちを起こすのはBSPのティック | そのまま | APのタスクは1ティック遅れて拾われる（壊れない） |
 | `kernel/src/interrupts.rs`の`should_fold_excursion` | Ctrl+Cの要求は大域に1つ | そのまま | 前景のタスクへ向ける |

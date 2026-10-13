@@ -204,18 +204,6 @@ pub(super) fn set_state(index: usize, value: TaskState) {
     unsafe { addr_of_mut!((*slot(index)).state).write(value) }
 }
 
-/// 状態をまとめて読む。`pick_next` を純粋関数のまま保つための値。
-///
-/// **状態そのものを渡す**（`bool` へ潰さない）。潰すと、`pick_next` の側で
-/// 「なぜ選ばれないのか」が区別できなくなる。
-pub(super) fn states() -> [TaskState; TASK_COUNT] {
-    let mut states = [TaskState::Uninitialized; TASK_COUNT];
-    for (index, slot) in states.iter_mut().enumerate() {
-        *slot = state(index);
-    }
-    states
-}
-
 /// 各タスクの担当コア（S4-c-1）。**起動時に書いた後は読むだけである。**
 pub(super) fn owners() -> [usize; TASK_COUNT] {
     let mut owners = [common::percpu::BOOTSTRAP_PROCESSOR_SLOT; TASK_COUNT];

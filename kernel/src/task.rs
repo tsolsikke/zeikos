@@ -346,8 +346,8 @@ enum TaskState {
 /// **最初はキーボードだけだった。** **W2-d+ でタイマを足した**（`ADR-0062`）。**I/O の完了は
 /// 足さない**——**virtio は既に BKL を解いて眠る形を持っている**（`ADR-0036`）。
 ///
-/// **`Copy` である必要がある**——`TaskState` が `Copy` で、`scheduler::states()` が
-/// 配列で返す。
+/// **`Copy` である必要がある**——`TaskState` が `Copy` で、`scheduler::state()` が値で返す
+/// （以前は `scheduler::states()` が配列で返していた。2026-10-13 に消した）。
 // **作るのは W2-c-2 の `read(0)` である。**
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Wait {
@@ -2500,12 +2500,11 @@ fn schedule_switch(current_sp: u64) -> u64 {
         // `owners` も 1 回だけ読み、`pick_next` と下の観測の両方へ渡す
         // （`currents` と同じ理由。上のコメント）。
         let owners = scheduler::owners();
-        // **状態と担当は参照で渡す（M3a）。** **値で渡すと、この関数の枠に写しがもう 1 組乗る**——最適化の無い
-        // ビルドでは `[TaskState; TASK_COUNT]` の 720 バイトが 2 度積まれ、Ring 3 の最中のティックがこの枠を
-        // 遠征スタックに乗せるので、`bss-test` の遠征スタックの高水位がティックの有無で揺れた（実測。2914 と 3312）。
-        // 池の 4 本で配列が 288 バイト伸びたことで、ティックの経路の高水位がシステムコールの経路を越えた。
-        let states = scheduler::states();
-        let next = pick_next(&states, &owners, currents, cpu, current);
+        // **状態は配列に写さず、添字から引く関数を渡す（M3a。2026-10-13）。** **配列（`scheduler::states()`）を
+        // ここに置くと、その 720 バイトがこの枠に乗り、Ring 3 の最中のティックがこの枠を遠征スタックに載せる**——
+        // 池の 4 本で配列が 288 バイト伸びたことで、ティックの経路の高水位がシステムコールの経路を越え、`bss-test` の
+        // 遠征スタックの高水位の行がティックの有無で揺れた（実測。2914 と、値で 3312、参照で 3232）。
+        let next = pick_next(scheduler::state, &owners, currents, cpu, current);
         // 第 1 層の実証（S4-c-4-2）。自コアが担当していないタスクを選んだら 1 度だけ
         // 出す。本番では鳴らない。第 1 層が候補から外し、落ち先も定義上自コアの担当だ
         // からである（`default_task_for`）。
@@ -2864,10 +2863,31 @@ fn report_double_selection(next: usize, cpu: usize, currents: &[usize; MAX_CPUS]
 
 /// 次に走らせるタスクを選ぶ。ワーカーを巡回し、走行可能なものが無ければ
 /// メイン（0）へ戻る。
+///
+/// **状態は、添字から引く関数（`state_of`）で受ける（2026-10-13）。** **以前は `[TaskState; TASK_COUNT]` を値で受けて
+/// いた**——その写し（1 本 72 バイト）が `schedule_switch` の枠に乗り、Ring 3 の最中のティックがこの枠を遠征スタックに
+/// 載せる。池の 4 本で配列が 720 バイトになり、ティックの経路の高水位がシステムコールの経路（`bss-test` で 2914）を
+/// 越えて、起動ログの高水位の行がティックの有無で揺れた（実測。値で 3312、参照で渡しても 3232）。**関数で引けば、
+/// 枠に乗るのは読んだ 1 本ずつだけである。** 純粋関数のままで、ホストテストは配列を閉じ込めた閉包を渡す。
+///
+/// # 同じ添字を 2 度読む所が 1 つある
+///
+/// **以前は配列へ一度に写した状態で判断していたが、今は 1 本ずつ読む。** 1 回の判断の中で同じ添字を 2 度読むのは、
+/// メインだけである——輪の最後で `is_runnable` を見て、落ち先で `Waiting` かを見る（今のタスクがメインのときは輪で
+/// 読まないので 1 度）。ワーカーと池と足した 1 本は、それぞれ 1 度しか読まない。
+///
+/// **2 度読む間に、別の CPU も割り込みも状態を書かない。** 状態を書くのは、BSP のシステムコール（BKL の内側）、BSP の
+/// 割り込みの入口（タイマとキーボード。BKL の内側で IF=0）、足した 1 本の終わり（`ring3_task_main`。BSP で IF=1）で、
+/// ここは BSP の切り替え（IF=0）の中で走るので、同じ CPU の書き手は割り込めない。AP は、担当の違うタスクの状態を
+/// 読まず（担当の判定が先で、読むのは AP 用アイドルだけ）、BSP のタスクの状態を書かない（タイマの待ちを起こすのは
+/// BSP のティックだけである。`crate::interrupts` の `advance_clock`）。**これは「ユーザーのタスクはすべて BSP で走る」
+/// 前提に依る**（`ADR-0085` の一覧。2026-10-13）。**書き手が別の CPU に出る段（2 CPU 以上）では、輪で読んだメインの値を
+/// 落ち先の判定に使い回す形にする**——2 度読んでも、読んだ値はどれも、その時点の状態として整合はしている
+/// （`Waiting` から `Ready` へ変わるだけなので、どちらを見ても選ぶ先は間違いではない）。
 // no-swap の破壊テストのビルドではスイッチしないので、次タスクを選ばず未使用になる。
 #[cfg_attr(feature = "task-switch-no-swap", allow(dead_code))]
 fn pick_next(
-    states: &[TaskState; TASK_COUNT],
+    state_of: impl Fn(usize) -> TaskState,
     owners: &[usize; TASK_COUNT],
     currents: [usize; MAX_CPUS],
     cpu: usize,
@@ -2909,7 +2929,7 @@ fn pick_next(
             LAYER_TWO_SKIPPED.store(true, Ordering::Relaxed);
             continue;
         }
-        if states[cand].is_runnable() {
+        if state_of(cand).is_runnable() {
             return cand;
         }
     }
@@ -2931,7 +2951,7 @@ fn pick_next(
         let cand = user_ring_member((start + offset) % USER_RING_LEN);
         if owners[cand] == cpu
             && !is_running_on_another_cpu(cand, cpu, &currents)
-            && states[cand].is_runnable()
+            && state_of(cand).is_runnable()
         {
             return cand;
         }
@@ -2946,7 +2966,7 @@ fn pick_next(
     // **W2-c-1 では誰も `Waiting` にならないので、この分岐は通らない。** **通るのは
     // W2-c-2（`read(0)` が待つ）からである。**
     let fallback = default_task_for(cpu);
-    if matches!(states[fallback], TaskState::Waiting(_)) {
+    if matches!(state_of(fallback), TaskState::Waiting(_)) {
         return idle_task_for(cpu);
     }
 
@@ -3304,11 +3324,17 @@ mod tests {
 
         // AP がワーカー 1 を走らせている。bootstrap processor はワーカー 2 を選ぶ。
         currents[1] = 1;
-        assert_eq!(super::pick_next(&all_ready, &ALL_BSP, currents, 0, 0), 2);
+        assert_eq!(
+            super::pick_next(|task| all_ready[task], &ALL_BSP, currents, 0, 0),
+            2
+        );
 
         // AP がワーカー 2 を走らせている。bootstrap processor はワーカー 1 を選ぶ。
         currents[1] = 2;
-        assert_eq!(super::pick_next(&all_ready, &ALL_BSP, currents, 0, 0), 1);
+        assert_eq!(
+            super::pick_next(|task| all_ready[task], &ALL_BSP, currents, 0, 0),
+            1
+        );
 
         // `MAX_CPUS = 2` では、塞がるワーカーは同時に 1 本までである。
         // 他コアは 1 つで、1 コアは 1 タスクしか走らせないためで、
@@ -3336,7 +3362,7 @@ mod tests {
     /// 包みを通る表明がすべて通っても、担当コアの振る舞いは何も言えない。
     fn pick_next(states: [TaskState; TASK_COUNT], current: usize) -> usize {
         super::pick_next(
-            &states,
+            |task| states[task],
             &ALL_BSP,
             NOBODY_RUNNING,
             common::percpu::BOOTSTRAP_PROCESSOR_SLOT,
@@ -3393,12 +3419,18 @@ mod tests {
         let ap = super::AP_IDLE_TASK_OWNER;
         // ワーカーは 2 本とも BSP 担当なので、AP から見た候補は 0 本である。
         assert_eq!(
-            super::pick_next(&all_ready, &PRODUCTION_OWNERS, NOBODY_RUNNING, ap, 0),
+            super::pick_next(
+                |task| all_ready[task],
+                &PRODUCTION_OWNERS,
+                NOBODY_RUNNING,
+                ap,
+                0
+            ),
             AP_IDLE_TASK
         );
         assert_eq!(
             super::pick_next(
-                &all_ready,
+                |task| all_ready[task],
                 &PRODUCTION_OWNERS,
                 NOBODY_RUNNING,
                 ap,
@@ -3410,12 +3442,24 @@ mod tests {
         // **足した 1 本は `Blocked` にする（W1-c-4 で引き直した）**——**`Ready` だと BSP 側がそれを選ぶ。**
         let none_ready = states([false, false, false, true, false, true]);
         assert_eq!(
-            super::pick_next(&none_ready, &PRODUCTION_OWNERS, NOBODY_RUNNING, ap, 0),
+            super::pick_next(
+                |task| none_ready[task],
+                &PRODUCTION_OWNERS,
+                NOBODY_RUNNING,
+                ap,
+                0
+            ),
             AP_IDLE_TASK
         );
         // bootstrap processor 側は従来どおりメインへ落ちる。
         assert_eq!(
-            super::pick_next(&none_ready, &PRODUCTION_OWNERS, NOBODY_RUNNING, 0, 0),
+            super::pick_next(
+                |task| none_ready[task],
+                &PRODUCTION_OWNERS,
+                NOBODY_RUNNING,
+                0,
+                0
+            ),
             super::MAIN_TASK
         );
     }
@@ -3448,16 +3492,16 @@ mod tests {
         // 全部 AP 担当にすると、bootstrap processor から見て候補が無い。
         let all_ap = [1usize; TASK_COUNT];
         assert_eq!(
-            super::pick_next(&all_ready, &all_ap, NOBODY_RUNNING, 0, 0),
+            super::pick_next(|task| all_ready[task], &all_ap, NOBODY_RUNNING, 0, 0),
             0
         );
         assert_eq!(
-            super::pick_next(&all_ready, &all_ap, NOBODY_RUNNING, 0, 1),
+            super::pick_next(|task| all_ready[task], &all_ap, NOBODY_RUNNING, 0, 1),
             0
         );
         // 逆に、AP から見れば選べる。
         assert_eq!(
-            super::pick_next(&all_ready, &all_ap, NOBODY_RUNNING, 1, 0),
+            super::pick_next(|task| all_ready[task], &all_ap, NOBODY_RUNNING, 1, 0),
             1
         );
     }
@@ -3477,16 +3521,16 @@ mod tests {
         // BSP はワーカー 1 しか選べない。現タスクが 1 でも 1 を返す
         // （`pick_next` は現タスクを返しうるという既存の契約）。
         assert_eq!(
-            super::pick_next(&all_ready, &mixed, NOBODY_RUNNING, 0, 0),
+            super::pick_next(|task| all_ready[task], &mixed, NOBODY_RUNNING, 0, 0),
             1
         );
         assert_eq!(
-            super::pick_next(&all_ready, &mixed, NOBODY_RUNNING, 0, 1),
+            super::pick_next(|task| all_ready[task], &mixed, NOBODY_RUNNING, 0, 1),
             1
         );
         // AP はワーカー 2 しか選べない。
         assert_eq!(
-            super::pick_next(&all_ready, &mixed, NOBODY_RUNNING, 1, 0),
+            super::pick_next(|task| all_ready[task], &mixed, NOBODY_RUNNING, 1, 0),
             2
         );
     }
@@ -3659,7 +3703,7 @@ mod tests {
         // AP は自分のアイドルへ落ちる（担当が違うので、BSP のアイドルへは行かない）。
         assert_eq!(
             super::pick_next(
-                &waiting,
+                |task| waiting[task],
                 &PRODUCTION_OWNERS,
                 NOBODY_RUNNING,
                 1,
@@ -3701,7 +3745,7 @@ mod tests {
         let ring3_ready = states([false, false, false, true, true, true]);
         assert_eq!(
             super::pick_next(
-                &ring3_ready,
+                |task| ring3_ready[task],
                 &PRODUCTION_OWNERS,
                 NOBODY_RUNNING,
                 1,
@@ -3764,7 +3808,7 @@ mod tests {
         }
         assert_eq!(
             super::pick_next(
-                &pool_ready,
+                |task| pool_ready[task],
                 &PRODUCTION_OWNERS,
                 NOBODY_RUNNING,
                 1,
@@ -3977,16 +4021,16 @@ mod tests {
         assert_eq!(one, super::WaitSet::single(super::Wait::Keyboard));
     }
 
-    /// 状態の欄が `schedule_switch` のフレームで運べる大きさに収まっている。
+    /// 状態の欄の大きさを留める。
     ///
-    /// **[`super::MAX_WAIT_REASONS`] の 2 つ目の根拠を機械で留める**——**`scheduler::states()`
-    /// は `[TaskState; TASK_COUNT]` を値で返すので、この大きさがそのままフレームに乗る。**
-    /// **遠征スタックの残りは 904 バイトである**（`ADR-0066` の Q4）。**理由を 8 本に増やすと
+    /// **[`super::MAX_WAIT_REASONS`] の 2 つ目の根拠を機械で留める**——**以前は `scheduler::states()` が
+    /// `[TaskState; TASK_COUNT]` を値で返し、この大きさがそのまま `schedule_switch` のフレームに乗っていた。**
+    /// **遠征スタックの残りは 904 バイトである**（`ADR-0066` の Q4。2026-09-21 の値）。**理由を 8 本に増やすと
     /// 816 バイトになり、ここが落ちる。**
     ///
-    /// **M3a で池の 4 本が増え、6 本の 432 バイトから 10 本の 720 バイトになった**（1 本 72 バイト）。**上限を
-    /// 720 へ上げた。** 遠征スタックの高水位は起動ログの行で見える——`--commit` の起動ログの突き合わせで、
-    /// 残りを確かめること。**[`THREAD_TASKS`] を増やすときは、ここも動く。**
+    /// **M3a で池の 4 本が増え、6 本の 432 バイトから 10 本の 720 バイトになった**（1 本 72 バイト）。**配列は
+    /// 枠に乗らなくなった**（`pick_next` は添字から引く関数で受け、`scheduler::states()` は消した。2026-10-13）。
+    /// 欄 1 本の大きさと、配列にしたときの大きさを、記録として留めておく。**[`THREAD_TASKS`] を増やすときは、ここも動く。**
     #[test]
     fn the_state_array_stays_small_enough_for_the_switch_frame() {
         use core::mem::size_of;
