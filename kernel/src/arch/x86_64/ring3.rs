@@ -1073,7 +1073,8 @@ pub unsafe fn run_excursion(
     // **ここへ戻った時点で IF=0 であることを確かめる（W1-c-3b）。**
     //
     // **戻る道は longjmp だけで**（`exit` は `syscall_entry`、終了処理は例外と Ctrl+C の入口から）、
-    // **どれも割り込みゲートを通って IF=0 になった文脈から跳ぶ。** **longjmp は RFLAGS を
+    // **どれも IF=0 になった文脈から跳ぶ**（例外と Ctrl+C は割り込みゲートが IF を落とす。`exit` は、`int 0x80` なら
+    // 割り込みゲートが、`syscall` 命令なら SFMASK が落とす。`super::system_call_entry`）。**longjmp は RFLAGS を
     // 戻さない。** **したがって下で欄を戻し終えるまで、切り替えは入らない**——**出口のウィンドウが
     // 閉じている根拠はこれだけなので、読みで済ませずに検算する。**
     if common::arch::x86_64::cpu::read_rflags() & RFLAGS_INTERRUPT_FLAG != 0 {

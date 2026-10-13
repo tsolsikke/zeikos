@@ -57,7 +57,7 @@ use common::percpu::{cpu_id, PerCpu, MAX_CPUS};
 pub enum KernelEntry {
     /// `irq_entry`。タイマ・キーボード・テストベクタ・スプリアス・yield。
     Irq,
-    /// `syscall_entry`（`int 0x80`）。
+    /// `syscall_entry`（`int 0x80` と `syscall` 命令）。
     Syscall,
     /// AP がカーネルの共有物へ触り始める直前の一度きり。
     ApBringUp,
