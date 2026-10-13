@@ -226,6 +226,13 @@ pub(super) fn owners() -> [usize; TASK_COUNT] {
     owners
 }
 
+/// タスクが使う Ring 3 のスロット（M3a。`Task::ring3_slot` の doc）。
+pub(super) fn ring3_slot(index: usize) -> usize {
+    // SAFETY: 有効なポインタ。登録と起動（割り込みを止めた一続き）で書き、切り替えの経路（IF=0）と
+    // そのタスク自身が読む。
+    unsafe { addr_of_mut!((*slot(index)).ring3_slot).read() }
+}
+
 pub(super) fn base(index: usize) -> u64 {
     // SAFETY: 有効なポインタ。起動時に書いた後は読むだけ。
     unsafe { addr_of_mut!((*slot(index)).base).read() }

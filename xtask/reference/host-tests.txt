@@ -748,6 +748,7 @@ kernel::syscall::tests::the_color_offsets_follow_the_pixel_order
 kernel::syscall::tests::the_page_table_estimate_covers_scattered_leaves_and_long_ranges
 kernel::syscall::tests::the_screen_fix_info_does_not_give_out_the_physical_address
 kernel::task::tests::a_nested_excursion_uses_the_next_stack_and_the_parent_returns_to_the_first
+kernel::task::tests::a_ready_thread_task_is_chosen_and_the_pool_rotates
 kernel::task::tests::a_task_outside_any_excursion_is_expected_on_its_kernel_stack
 kernel::task::tests::a_task_owned_by_another_cpu_is_not_a_candidate
 kernel::task::tests::a_task_with_a_user_space_loads_its_own_table
@@ -758,6 +759,7 @@ kernel::task::tests::a_wait_set_only_looks_at_the_reasons_it_holds
 kernel::task::tests::an_application_processor_falls_back_to_its_own_idle_task
 kernel::task::tests::an_unrunnable_worker_is_skipped
 kernel::task::tests::blocked_and_finished_are_both_unselectable_but_distinct
+kernel::task::tests::every_runnable_task_in_the_ring_is_chosen_within_one_round
 kernel::task::tests::from_main_the_first_runnable_worker_is_chosen
 kernel::task::tests::layer_two_skips_a_task_that_another_cpu_is_running
 kernel::task::tests::main_is_chosen_when_no_worker_can_run
@@ -765,6 +767,7 @@ kernel::task::tests::main_is_never_picked_as_a_rotation_candidate
 kernel::task::tests::only_ready_is_runnable
 kernel::task::tests::only_the_added_task_uses_the_second_ring3_slot
 kernel::task::tests::only_the_tasks_owned_by_this_cpu_are_rotated
+kernel::task::tests::the_application_processor_does_not_choose_a_thread_task
 kernel::task::tests::the_application_processor_does_not_choose_the_ring3_task
 kernel::task::tests::the_bsp_idle_task_is_never_rotated_and_is_not_the_fallback
 kernel::task::tests::the_current_worker_is_returned_when_it_is_the_only_runnable_one
@@ -778,6 +781,8 @@ kernel::task::tests::the_ring3_task_is_not_chosen_unless_ready
 kernel::task::tests::the_sentinel_is_displayed_as_a_word_but_still_stored_as_usize_max
 kernel::task::tests::the_sentinel_is_not_treated_as_a_running_task
 kernel::task::tests::the_state_array_stays_small_enough_for_the_switch_frame
+kernel::task::tests::the_thread_pool_is_not_chosen_while_uninitialized
+kernel::task::tests::the_user_ring_lists_the_ring3_task_the_pool_and_main_in_order
 kernel::task::tests::uninitialized_slots_are_never_chosen
 kernel::task::tests::workers_come_before_the_ring3_task
 kernel::task::tests::workers_rotate

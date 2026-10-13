@@ -55,7 +55,11 @@ pub const WORKER_COUNT: usize = 2;
 /// ——**待つタスクが出たとき、走行可能な者が居ない間に `hlt` する先が要る**（`ADR-0061` の決定 2）。
 /// **W2-a では誰も選ばない**——**`pick_next` の巡回にも落ち先にも入っていない**（[`default_task_for`]
 /// は今までどおりメインを返す）。**既存の添字は動かない**（[`RING3_TASK`] は 4 のままである。下の doc）。
-const TASK_COUNT: usize = WORKER_COUNT + 4;
+///
+/// **M3a でスレッドのタスクの池を末尾へ足した（2026-10-13。`ADR-0085` の決定 2）。** [`THREAD_TASKS`] 本で、
+/// 添字は [`THREAD_TASK_FIRST`] から末尾まで。**既存の添字は動かない**（BSP 用アイドルは 5 のまま）。**この段では
+/// 登録するだけで、`Uninitialized` のまま誰も起こさない**——`clone` の入口を入れる段まで、`pick_next` は選ばない。
+const TASK_COUNT: usize = WORKER_COUNT + 4 + THREAD_TASKS;
 
 /// メインタスクの添字。bootstrap processor の既定タスクでもある（S4-c-3-1）。
 const MAIN_TASK: usize = 0;
@@ -80,7 +84,8 @@ static mut USER_REGISTER_AREAS: [crate::arch::x86_64::UserRegisters; TASK_COUNT]
 /// （[`default_task_for`]）。
 const AP_IDLE_TASK: usize = WORKER_COUNT + 1;
 
-/// BSP 用アイドルタスクの添字（W2-a。`ADR-0061` の決定 2）。**末尾に置く。**
+/// BSP 用アイドルタスクの添字（W2-a。`ADR-0061` の決定 2）。**足した 1 本の次に置く**（W2-a では末尾だった。
+/// M3a でスレッドのタスクの池を後ろへ足したので、添字を式で固定した）。
 ///
 /// # なぜ要るのか
 ///
@@ -94,7 +99,74 @@ const AP_IDLE_TASK: usize = WORKER_COUNT + 1;
 /// 返すメインである。** **したがって登録しても選ばれない**——**S4-c-2 で AP 用アイドルを
 /// 「登録するが誰も走らせない」段階として入れたのと同じ形である。**
 /// **選ぶようにするのは W2-c で、待つ者が出てからである。**
-const BSP_IDLE_TASK: usize = TASK_COUNT - 1;
+const BSP_IDLE_TASK: usize = WORKER_COUNT + 3;
+
+/// スレッドのタスクの池の大きさ（M3a。`ADR-0085` の決定 2）。**システム全体で 4 本で、プロセスごとではない。**
+///
+/// **増やすのはこの定数 1 つである**（見張りのページの名前 `THREAD_GUARD_NAMES` は同じ長さなので、型が合わなくなって
+/// 足し忘れを止める）。1 本につき `.bss` が 68 KiB（スタック 64 KiB と見張りのページ）増え、`[TaskState; TASK_COUNT]`
+/// の写しも伸びる（`the_state_array_stays_small_enough_for_the_switch_frame` の上限を見直すこと）。**池が尽きたら
+/// `clone` は `-EAGAIN` を返す**（入口を入れる段で）。
+pub const THREAD_TASKS: usize = 4;
+
+/// 池の最初のタスクの添字（BSP 用アイドルの次。末尾まで池である）。
+const THREAD_TASK_FIRST: usize = BSP_IDLE_TASK + 1;
+
+/// その添字が池のタスクか。
+const fn is_thread_task(task: usize) -> bool {
+    task >= THREAD_TASK_FIRST && task < TASK_COUNT
+}
+
+/// 起動で張る見張りのページの数（BSP の側。2026-10-13）——カーネルスタック 1、ワーカー、足した 1 本、BSP 用アイドル、
+/// 遠征スタック（スロット × 深さ）、スレッドのタスクの池。**張る所を足したら、ここも足すこと**（`GUARD_PAGE_SLOTS`
+/// の doc が同じ内訳を言葉で持つ）。
+const GUARD_PAGES_ON_THE_BSP: usize = 1
+    + WORKER_COUNT
+    + 1
+    + 1
+    + crate::arch::x86_64::USER_TASK_SLOTS * crate::arch::x86_64::MAX_EXCURSION_DEPTH
+    + THREAD_TASKS;
+
+// **見張りのページの表が、扱う CPU の数の上限まで足りること**（2026-10-13。運用者の指摘）。BSP の側と、AP の 1 つにつき
+// `GUARD_PAGES_PER_AP` 枚。`MAX_CPUS` が 2 なら 13 + 6 = 19 枚で、表は 64 枚ある（9 コアまで足りる）。足りなくなったら
+// ここで止まる——表を増やすかは、そのときに決める。
+const _: () = assert!(
+    GUARD_PAGES_ON_THE_BSP
+        + (common::percpu::MAX_CPUS - 1) * crate::arch::x86_64::GUARD_PAGES_PER_AP
+        <= crate::arch::x86_64::GUARD_PAGE_SLOTS,
+    "the table of guard pages (stack::GUARD_PAGE_SLOTS) is too small for MAX_CPUS"
+);
+
+/// Ring 3 を走らせるタスクの輪の長さ（M3a。2026-10-13）——足した 1 本、池、メインの順。
+///
+/// **`pick_next` は、今のタスクの次から輪を一巡して、走れる者を選ぶ。** **輪にしてあるのは、走れる者がどれも
+/// 1 周のうちに必ず選ばれるようにするためである**——足した 1 本と池だけで回り続けてメインが選ばれない形を無くす
+/// （以前は、足した 1 本 → 池 → 足した 1 本 → … と回りえた。運用者の指摘）。
+const USER_RING_LEN: usize = 1 + THREAD_TASKS + 1;
+
+/// 輪の `position` 番目のタスク（0 が足した 1 本、`1..=THREAD_TASKS` が池、最後がメイン）。
+const fn user_ring_member(position: usize) -> usize {
+    if position == 0 {
+        RING3_TASK
+    } else if position <= THREAD_TASKS {
+        THREAD_TASK_FIRST + position - 1
+    } else {
+        MAIN_TASK
+    }
+}
+
+/// タスクの、輪の中の位置。**輪に入っていなければ `None`**（ワーカーと 2 つのアイドル）。
+const fn user_ring_position(task: usize) -> Option<usize> {
+    if task == RING3_TASK {
+        Some(0)
+    } else if is_thread_task(task) {
+        Some(task - THREAD_TASK_FIRST + 1)
+    } else if task == MAIN_TASK {
+        Some(THREAD_TASKS + 1)
+    } else {
+        None
+    }
+}
 
 /// そのコアの既定タスク（アイドル）を返す（S4-c-3-1）。
 ///
@@ -584,6 +656,13 @@ struct Task {
     /// この段階（S4-c-1）では全タスクが bootstrap processor の担当なので、候補集合は
     /// 今までと同じで振る舞いは変わらない。
     owner: usize,
+    /// このタスクが使う Ring 3 のスロット（M3a。`ADR-0085` の決定 2）。
+    ///
+    /// **以前はタスクの添字から決めていた**（[`ring3_slot_of`]。足した 1 本だけが 1）。**スレッドのタスクは、作った
+    /// スレッドのプロセスのスロットを写すので、添字からは決まらない**——欄で持つ形にした。**登録と起動で書き、切り替えの
+    /// 検算（`schedule_switch`）とそのタスク自身（[`current_ring3_slot`]）が読む。** この段では、値は今までと同じである
+    /// （足した 1 本が 1、ほかは 0）。
+    ring3_slot: usize,
 }
 
 const EMPTY_TASK: Task = Task {
@@ -601,6 +680,7 @@ const EMPTY_TASK: Task = Task {
     resumes: 0,
     // 既定は bootstrap processor。S4-c-2 の AP 用タスクだけがこれを上書きする。
     owner: common::percpu::BOOTSTRAP_PROCESSOR_SLOT,
+    ring3_slot: 0,
 };
 
 // スケジューラのグローバル状態は [`scheduler`] モジュールが持つ。
@@ -710,11 +790,15 @@ fn current_index_if_any() -> Option<usize> {
 /// `cmd_concurrent_task`）。**添字を式で導くのをやめ、位置を固定した。**
 const RING3_TASK: usize = WORKER_COUNT + 2;
 
-/// タスクが使う Ring 3 のスロット（W1-c-3）。
+/// タスクの添字から決まる、登録時の既定の Ring 3 のスロット（W1-c-3）。
 ///
 /// **スロット 1 を使うのは [`RING3_TASK`] だけで、ほかはすべて 0 である。**
 /// **メインのタスク（`init` とシェルの系統）が 0 を使う。** **デモのワーカーと AP 用アイドルは
 /// Ring 3 へ降りないので、0 を返しても誰も読まない。**
+///
+/// **M3a から、走っている間に読むのは `Task` の欄である**（`scheduler::ring3_slot`。[`Task::ring3_slot`] の doc）。
+/// **これは起動（[`start_ring3_task`]）が欄へ写す既定と、添字で決まる所（ハンドルと [`detached_slot`]）だけが使う。**
+/// スレッドのタスクの既定は 0 だが、起こすときに作った側のスロットを欄へ写す。
 const fn ring3_slot_of(task: usize) -> usize {
     if task == RING3_TASK {
         1
@@ -813,6 +897,40 @@ fn ring3_task_stack_bounds() -> (VirtAddr, VirtAddr) {
     (guard, top)
 }
 
+/// スレッドのタスクの池のスタック（M3a。`ADR-0085` の決定 2）。**[`Ring3TaskStack`] と同じ作りで、池の数だけ並べる。**
+///
+/// **既定の起動に置く**（足した 1 本と同じ）。**登録はするが起こさない**——起こすのは `clone` の入口を入れる段からで、
+/// それまで `pick_next` は選ばない（`Uninitialized`）。
+static mut THREAD_TASK_STACKS: [Ring3TaskStack; THREAD_TASKS] = [const {
+    Ring3TaskStack {
+        guard: [0; GUARD_SIZE],
+        stack: [0; RING3_TASK_STACK_SIZE],
+    }
+}; THREAD_TASKS];
+
+/// 池の `index` 本目のスタックの (ガードページ先頭, スタック頂点)（M3a）。
+fn thread_task_stack_bounds(index: usize) -> (VirtAddr, VirtAddr) {
+    assert!(
+        index < THREAD_TASKS,
+        "thread task {index} is outside the pool of {THREAD_TASKS}"
+    );
+    // 静的変数のアドレスを取るだけで、読み書きはしない（`addr_of!` は `static mut` でも `unsafe` を要さない）。
+    let base = addr_of!(THREAD_TASK_STACKS) as u64
+        + (index * core::mem::size_of::<Ring3TaskStack>()) as u64;
+    let guard = VirtAddr::new(base).expect("a .bss address is canonical");
+    let top = VirtAddr::new(base + GUARD_SIZE as u64 + RING3_TASK_STACK_SIZE as u64)
+        .expect("a thread task stack stays within the canonical range");
+    (guard, top)
+}
+
+/// 池の見張りのページの名前（起動ログの行と、ページフォルトの名指しに使う）。**池の数と同じ長さである。**
+const THREAD_GUARD_NAMES: [&str; THREAD_TASKS] = [
+    "the thread task 0 guard page",
+    "the thread task 1 guard page",
+    "the thread task 2 guard page",
+    "the thread task 3 guard page",
+];
+
 /// 足した 1 本の世代（`ADR-0063` の (b2)）。**起動するたびに 1 つ進む。**
 static RING3_TASK_GENERATION: AtomicU64 = AtomicU64::new(0);
 
@@ -906,6 +1024,7 @@ pub fn start_ring3_task() -> Option<u64> {
             // **遠征に入っていないタスクの RSP0 はカーネルスタック頂点である**（W1-c-3c の 0 の関所）。
             kernel_entry_stack_top: top.as_u64(),
             state: TaskState::Ready,
+            ring3_slot: ring3_slot_of(RING3_TASK),
             ..EMPTY_TASK
         },
     );
@@ -1042,7 +1161,7 @@ fn report_foreign_recovery_on_switch(next: usize, recovery: u64) -> ! {
         "[ERROR] task: switching to task {next} while the recovery point is {recovery:#x}, which \
          is outside ring3 slot {}'s rows; folding that task would jump to another task's recovery \
          point; halting",
-        ring3_slot_of(next)
+        scheduler::ring3_slot(next)
     ));
     common::arch::x86_64::halt_forever();
 }
@@ -1081,7 +1200,7 @@ const fn expected_stack(depth_count: usize) -> ExpectedStack {
 #[inline(always)]
 pub fn current_ring3_slot() -> usize {
     match current_index_if_any() {
-        Some(task) => ring3_slot_of(task),
+        Some(task) => scheduler::ring3_slot(task),
         None => 0,
     }
 }
@@ -2150,6 +2269,7 @@ unsafe fn setup_tasks(allocator: &mut crate::frame_allocator::FrameAllocator) {
                 // BSP のワーカーである。`GPR_BUF` に触るので AP へ渡さない
                 // （ADR-0023 Addendum §5。タスクのコア間移動を実装しない）。
                 owner: common::percpu::BOOTSTRAP_PROCESSOR_SLOT,
+                ring3_slot: 0,
                 base,
                 rounds_left: ROUNDS_PER_WORKER,
                 iterations: 0,
@@ -2222,6 +2342,45 @@ unsafe fn setup_tasks(allocator: &mut crate::frame_allocator::FrameAllocator) {
             top.as_u64()
         ));
     }
+
+    // **スレッドのタスクの池を足す（M3a。`ADR-0085` の決定 2）。**
+    //
+    // **見張りのページを張り、スタックの範囲だけを登録する**——**`Uninitialized` のままで、起こすのは `clone` の
+    // 入口を入れる段からである**（足した 1 本を `start_ring3_task` が起こすのと同じ形）。**担当は BSP である**
+    // （`EMPTY_TASK` の既定。`ADR-0085` の決定 5）。
+    for (index, name) in THREAD_GUARD_NAMES.iter().enumerate() {
+        let (guard, top) = thread_task_stack_bounds(index);
+        let bottom = guard.as_u64() + GUARD_SIZE as u64;
+        // SAFETY: 起動時、自前のページテーブル上。このスタックの直下 1 ページで、以後ここへ
+        // 正規のアクセスは無い。
+        unsafe {
+            crate::arch::x86_64::install_guard_page(
+                guard,
+                crate::arch::x86_64::GuardedStack::Thread(index as u8),
+                allocator,
+                "task",
+                name,
+                &mut serial_line,
+            );
+        }
+        scheduler::init_task(
+            THREAD_TASK_FIRST + index,
+            Task {
+                stack_top: top.as_u64(),
+                stack_bottom: bottom,
+                // **遠征に入っていないタスクの RSP0 はカーネルスタック頂点である**（W1-c-3c の 0 の関所）。
+                kernel_entry_stack_top: top.as_u64(),
+                state: TaskState::Uninitialized,
+                ..EMPTY_TASK
+            },
+        );
+    }
+    serial_line(format_args!(
+        "task: registered {THREAD_TASKS} thread task(s) as index {THREAD_TASK_FIRST}..={} owned by cpu {} on \
+         their own stacks; nothing starts them yet (M3a)",
+        TASK_COUNT - 1,
+        common::percpu::BOOTSTRAP_PROCESSOR_SLOT
+    ));
 }
 
 /// 協調的 yield。専用ベクタへソフトウェア割り込みを出す（[`raise_yield_interrupt`]）。
@@ -2341,7 +2500,12 @@ fn schedule_switch(current_sp: u64) -> u64 {
         // `owners` も 1 回だけ読み、`pick_next` と下の観測の両方へ渡す
         // （`currents` と同じ理由。上のコメント）。
         let owners = scheduler::owners();
-        let next = pick_next(scheduler::states(), owners, currents, cpu, current);
+        // **状態と担当は参照で渡す（M3a）。** **値で渡すと、この関数の枠に写しがもう 1 組乗る**——最適化の無い
+        // ビルドでは `[TaskState; TASK_COUNT]` の 720 バイトが 2 度積まれ、Ring 3 の最中のティックがこの枠を
+        // 遠征スタックに乗せるので、`bss-test` の遠征スタックの高水位がティックの有無で揺れた（実測。2914 と 3312）。
+        // 池の 4 本で配列が 288 バイト伸びたことで、ティックの経路の高水位がシステムコールの経路を越えた。
+        let states = scheduler::states();
+        let next = pick_next(&states, &owners, currents, cpu, current);
         // 第 1 層の実証（S4-c-4-2）。自コアが担当していないタスクを選んだら 1 度だけ
         // 出す。本番では鳴らない。第 1 層が候補から外し、落ち先も定義上自コアの担当だ
         // からである（`default_task_for`）。
@@ -2418,8 +2582,8 @@ fn schedule_switch(current_sp: u64) -> u64 {
         let (next_bottom, next_top) = match expected_stack(next_depth) {
             ExpectedStack::Kernel => (scheduler::stack_bottom(next), scheduler::stack_top(next)),
             ExpectedStack::Excursion { index } => {
-                // **入る側のタスクのスロットで引く（W1-c-3）。** 今のタスクのものではない。
-                crate::arch::x86_64::excursion_stack_range_of(ring3_slot_of(next), index)
+                // **入る側のタスクのスロットで引く（W1-c-3）。** 今のタスクのものではない。**欄から読む**（M3a）。
+                crate::arch::x86_64::excursion_stack_range_of(scheduler::ring3_slot(next), index)
             }
         };
         if next_sp < next_bottom || next_sp >= next_top {
@@ -2469,7 +2633,10 @@ fn schedule_switch(current_sp: u64) -> u64 {
         // **2 本が同時に走っても、例外による終了処理が起きるのは相手が Ring 3 を出た後だったので、
         // `enter` 自身の控えと戻しが辻褄を合わせてしまった**（`ADR-0060` の W1-c-4 の Addendum）。
         let recovery = crate::arch::x86_64::current_excursion_recovery();
-        if !crate::arch::x86_64::excursion_recovery_belongs_to_slot(recovery, ring3_slot_of(next)) {
+        if !crate::arch::x86_64::excursion_recovery_belongs_to_slot(
+            recovery,
+            scheduler::ring3_slot(next),
+        ) {
             report_foreign_recovery_on_switch(next, recovery);
         }
 
@@ -2700,8 +2867,8 @@ fn report_double_selection(next: usize, cpu: usize, currents: &[usize; MAX_CPUS]
 // no-swap の破壊テストのビルドではスイッチしないので、次タスクを選ばず未使用になる。
 #[cfg_attr(feature = "task-switch-no-swap", allow(dead_code))]
 fn pick_next(
-    states: [TaskState; TASK_COUNT],
-    owners: [usize; TASK_COUNT],
+    states: &[TaskState; TASK_COUNT],
+    owners: &[usize; TASK_COUNT],
     currents: [usize; MAX_CPUS],
     cpu: usize,
     current: usize,
@@ -2746,17 +2913,28 @@ fn pick_next(
             return cand;
         }
     }
-    // **足した 1 本（W1-c-4）。** **ワーカーの巡回より後に見る**——**デモの間は選ばれない**
-    // （デモは `init` より前に終わり、足した 1 本はその後に起動する）。
+    // **Ring 3 を走らせるタスクの輪（W1-c-4 の足した 1 本と、M3a の池とメイン。[`USER_RING_LEN`]）。**
+    // **ワーカーの巡回より後に見る**——**デモの間は選ばれない**（デモは `init` より前に終わり、足した 1 本と
+    // 池はその後に起動する）。
     //
-    // **今のタスクがそれでなければ選び、それなら落ち先へ戻す**——**メインと交互に走る。**
-    // **2 層は同じ形で掛ける。** **担当は BSP なので、AP からは選ばれない。**
-    if current != RING3_TASK
-        && owners[RING3_TASK] == cpu
-        && !is_running_on_another_cpu(RING3_TASK, cpu, &currents)
-        && states[RING3_TASK].is_runnable()
-    {
-        return RING3_TASK;
+    // **今のタスクの次から一巡し、走れる最初の者を選ぶ。** **今のタスク自身は選ばない**——走れるのが自分だけなら
+    // 落ち先へ戻る（足した 1 本がメインと交互に走っていた W1-c-4 の形と同じ）。**輪なので、走れる者はどれも 1 周の
+    // うちに必ず選ばれる**（2026-10-13。以前は足した 1 本 → 池 → 足した 1 本 → … と回りえた）。**メインが輪で選ばれる
+    // のは `Ready` のときだけで、`Blocked` のメインへ戻るのは下の落ち先である**（デモの形。期待値は今までどおり）。
+    // **2 層は同じ形で掛ける。** **担当は BSP（池は作った側）なので、AP からは選ばれない**（`ADR-0085` の決定 5）。
+    // **起動直後の池は `Uninitialized` で、選ばれない。**
+    let (start, count) = match user_ring_position(current) {
+        Some(position) => (position + 1, USER_RING_LEN - 1),
+        None => (0, USER_RING_LEN),
+    };
+    for offset in 0..count {
+        let cand = user_ring_member((start + offset) % USER_RING_LEN);
+        if owners[cand] == cpu
+            && !is_running_on_another_cpu(cand, cpu, &currents)
+            && states[cand].is_runnable()
+        {
+            return cand;
+        }
     }
     // **既定のタスクが待っているなら、自コアのアイドルへ落ちる（W2-c-1。`ADR-0061`）。**
     //
@@ -2987,6 +3165,7 @@ unsafe fn setup_preemptive_tasks() {
                 // BSP のワーカーである。`GPR_BUF` に触るので AP へ渡さない
                 // （ADR-0023 Addendum §5。タスクのコア間移動を実装しない）。
                 owner: common::percpu::BOOTSTRAP_PROCESSOR_SLOT,
+                ring3_slot: 0,
                 base,
                 rounds_left: 0,
                 iterations: 0,
@@ -3056,7 +3235,9 @@ pub(crate) extern "sysv64" fn preemptive_loop_top() -> u64 {
 
 #[cfg(test)]
 mod tests {
-    use super::{TaskState, AP_IDLE_TASK, TASK_COUNT, WORKER_COUNT};
+    use super::{
+        TaskState, AP_IDLE_TASK, TASK_COUNT, THREAD_TASKS, THREAD_TASK_FIRST, WORKER_COUNT,
+    };
 
     /// 全タスクを bootstrap processor 担当に置いた構成。
     ///
@@ -3123,11 +3304,11 @@ mod tests {
 
         // AP がワーカー 1 を走らせている。bootstrap processor はワーカー 2 を選ぶ。
         currents[1] = 1;
-        assert_eq!(super::pick_next(all_ready, ALL_BSP, currents, 0, 0), 2);
+        assert_eq!(super::pick_next(&all_ready, &ALL_BSP, currents, 0, 0), 2);
 
         // AP がワーカー 2 を走らせている。bootstrap processor はワーカー 1 を選ぶ。
         currents[1] = 2;
-        assert_eq!(super::pick_next(all_ready, ALL_BSP, currents, 0, 0), 1);
+        assert_eq!(super::pick_next(&all_ready, &ALL_BSP, currents, 0, 0), 1);
 
         // `MAX_CPUS = 2` では、塞がるワーカーは同時に 1 本までである。
         // 他コアは 1 つで、1 コアは 1 タスクしか走らせないためで、
@@ -3155,8 +3336,8 @@ mod tests {
     /// 包みを通る表明がすべて通っても、担当コアの振る舞いは何も言えない。
     fn pick_next(states: [TaskState; TASK_COUNT], current: usize) -> usize {
         super::pick_next(
-            states,
-            ALL_BSP,
+            &states,
+            &ALL_BSP,
             NOBODY_RUNNING,
             common::percpu::BOOTSTRAP_PROCESSOR_SLOT,
             current,
@@ -3212,13 +3393,13 @@ mod tests {
         let ap = super::AP_IDLE_TASK_OWNER;
         // ワーカーは 2 本とも BSP 担当なので、AP から見た候補は 0 本である。
         assert_eq!(
-            super::pick_next(all_ready, PRODUCTION_OWNERS, NOBODY_RUNNING, ap, 0),
+            super::pick_next(&all_ready, &PRODUCTION_OWNERS, NOBODY_RUNNING, ap, 0),
             AP_IDLE_TASK
         );
         assert_eq!(
             super::pick_next(
-                all_ready,
-                PRODUCTION_OWNERS,
+                &all_ready,
+                &PRODUCTION_OWNERS,
                 NOBODY_RUNNING,
                 ap,
                 AP_IDLE_TASK
@@ -3229,12 +3410,12 @@ mod tests {
         // **足した 1 本は `Blocked` にする（W1-c-4 で引き直した）**——**`Ready` だと BSP 側がそれを選ぶ。**
         let none_ready = states([false, false, false, true, false, true]);
         assert_eq!(
-            super::pick_next(none_ready, PRODUCTION_OWNERS, NOBODY_RUNNING, ap, 0),
+            super::pick_next(&none_ready, &PRODUCTION_OWNERS, NOBODY_RUNNING, ap, 0),
             AP_IDLE_TASK
         );
         // bootstrap processor 側は従来どおりメインへ落ちる。
         assert_eq!(
-            super::pick_next(none_ready, PRODUCTION_OWNERS, NOBODY_RUNNING, 0, 0),
+            super::pick_next(&none_ready, &PRODUCTION_OWNERS, NOBODY_RUNNING, 0, 0),
             super::MAIN_TASK
         );
     }
@@ -3266,10 +3447,19 @@ mod tests {
         let all_ready = states([true, true, true, true, true, true]);
         // 全部 AP 担当にすると、bootstrap processor から見て候補が無い。
         let all_ap = [1usize; TASK_COUNT];
-        assert_eq!(super::pick_next(all_ready, all_ap, NOBODY_RUNNING, 0, 0), 0);
-        assert_eq!(super::pick_next(all_ready, all_ap, NOBODY_RUNNING, 0, 1), 0);
+        assert_eq!(
+            super::pick_next(&all_ready, &all_ap, NOBODY_RUNNING, 0, 0),
+            0
+        );
+        assert_eq!(
+            super::pick_next(&all_ready, &all_ap, NOBODY_RUNNING, 0, 1),
+            0
+        );
         // 逆に、AP から見れば選べる。
-        assert_eq!(super::pick_next(all_ready, all_ap, NOBODY_RUNNING, 1, 0), 1);
+        assert_eq!(
+            super::pick_next(&all_ready, &all_ap, NOBODY_RUNNING, 1, 0),
+            1
+        );
     }
 
     /// 担当が混ざっていても、自コアのぶんだけを回す（S4-c-1）。
@@ -3280,13 +3470,25 @@ mod tests {
         // W1-c-1 で足した末尾の 1 本は BSP 担当（本番の既定と同じ）。
         // **末尾は BSP 用アイドルで、担当は BSP である（W2-a で足した）。**
         // **期待値は動かない**——**あれは巡回の候補でも落ち先でもない。**
-        let mixed = [0usize, 0, 1, 1, 0, 0];
+        // **M3a の池（末尾の 4 本）は BSP 担当で、`Uninitialized` なので選ばれない。**
+        let mut mixed = ALL_BSP;
+        mixed[2] = 1;
+        mixed[3] = 1;
         // BSP はワーカー 1 しか選べない。現タスクが 1 でも 1 を返す
         // （`pick_next` は現タスクを返しうるという既存の契約）。
-        assert_eq!(super::pick_next(all_ready, mixed, NOBODY_RUNNING, 0, 0), 1);
-        assert_eq!(super::pick_next(all_ready, mixed, NOBODY_RUNNING, 0, 1), 1);
+        assert_eq!(
+            super::pick_next(&all_ready, &mixed, NOBODY_RUNNING, 0, 0),
+            1
+        );
+        assert_eq!(
+            super::pick_next(&all_ready, &mixed, NOBODY_RUNNING, 0, 1),
+            1
+        );
         // AP はワーカー 2 しか選べない。
-        assert_eq!(super::pick_next(all_ready, mixed, NOBODY_RUNNING, 1, 0), 2);
+        assert_eq!(
+            super::pick_next(&all_ready, &mixed, NOBODY_RUNNING, 1, 0),
+            2
+        );
     }
 
     /// 旧 `runnable: bool` に対応する短縮。`true` = 走行可能。
@@ -3313,7 +3515,12 @@ mod tests {
     /// **既存の期待値は 1 つも動いていない**——**`pick_next` の巡回にも落ち先にも入っていないので、
     /// `Ready` にしても選ばれない。** **それを主張するのが
     /// `the_bsp_idle_task_is_never_rotated_and_is_not_the_fallback` である。**
-    fn states(flags: [bool; TASK_COUNT]) -> [TaskState; TASK_COUNT] {
+    ///
+    /// **M3a でスレッドのタスクの池（4 本）が末尾へ増えた。** **入力は池の前まで（[`THREAD_TASK_FIRST`] 本）で、
+    /// 池は本番の起動直後と同じ `Uninitialized` で埋める。** **既存の期待値は 1 つも動いていない**——**池が
+    /// `Uninitialized` なら選ばれないことを、既存の表明が同時に主張するようになった。** **池が選ばれる形は、
+    /// `a_ready_thread_task_is_chosen_and_the_pool_rotates` が別に持つ。**
+    fn states(flags: [bool; THREAD_TASK_FIRST]) -> [TaskState; TASK_COUNT] {
         let mut out = [TaskState::Uninitialized; TASK_COUNT];
         for (slot, flag) in out.iter_mut().zip(flags) {
             *slot = if flag {
@@ -3337,20 +3544,28 @@ mod tests {
     fn the_demo_has_two_workers_and_one_main() {
         assert_eq!(WORKER_COUNT, 2);
         // メイン（0）+ ワーカー 2 + AP 用アイドル 1 + Ring 3 を同時に走らせる 1 本（W1-c-1）
-        // + BSP 用アイドル 1（W2-a）。
-        assert_eq!(TASK_COUNT, 6);
+        // + BSP 用アイドル 1（W2-a）+ スレッドのタスクの池 4（M3a）。
+        assert_eq!(TASK_COUNT, 10);
+        assert_eq!(THREAD_TASKS, 4);
         // **足した 1 本（Ring 3）の添字は 4 で固定してある（W2-a）。** **`TASK_COUNT` から
         // 導くのをやめた**——**増やすと動き、判定が読む行の文言（`task 4 = `）が別の
         // タスクを指す。**
         assert_eq!(super::RING3_TASK, 4);
         assert_eq!(super::RING3_TASK, WORKER_COUNT + 2);
-        // **BSP 用アイドルは末尾である。**
-        assert_eq!(super::BSP_IDLE_TASK, TASK_COUNT - 1);
+        // **BSP 用アイドルは足した 1 本の次で、池の直前である**（W2-a では末尾だった。M3a で池を後ろへ足した）。
+        assert_eq!(super::BSP_IDLE_TASK, super::RING3_TASK + 1);
+        assert_eq!(super::BSP_IDLE_TASK, 5);
+        assert_eq!(super::BSP_IDLE_TASK, THREAD_TASK_FIRST - 1);
         assert_ne!(super::BSP_IDLE_TASK, AP_IDLE_TASK);
+        // **池は末尾まで続く。**
+        assert_eq!(THREAD_TASK_FIRST + THREAD_TASKS, TASK_COUNT);
+        assert!(super::is_thread_task(THREAD_TASK_FIRST));
+        assert!(super::is_thread_task(TASK_COUNT - 1));
+        assert!(!super::is_thread_task(super::BSP_IDLE_TASK));
         // **足した 1 本は AP 用アイドルの後ろに置く。既存の添字は動かない**
         // （起動ログの `registered the AP idle task as index 3` もそのまま）。
-        // **W2-a で末尾へ BSP 用アイドルが付いたので、差は 3 である。**
-        assert_eq!(TASK_COUNT, AP_IDLE_TASK + 3);
+        // **W2-a で BSP 用アイドルが付いたので、差は 2 である**（M3a の池はその後ろ）。
+        assert_eq!(super::BSP_IDLE_TASK, AP_IDLE_TASK + 2);
         // AP 用アイドルはワーカーの後ろに置く。`pick_next` の走査範囲
         // （`1..=WORKER_COUNT`）の外であることが、選ばれない理由である。
         assert_eq!(AP_IDLE_TASK, WORKER_COUNT + 1);
@@ -3373,11 +3588,12 @@ mod tests {
         );
     }
 
-    /// タスク 0（メイン）は候補として巡回されない。走行可能と目印を付けても
-    /// 選ばれるのは「他に誰もいないとき」の帰り先としてだけである。
+    /// タスク 0（メイン）は、ワーカーの巡回の候補にはならない。**M3a からは Ring 3 の輪の最後に入り、`Ready` なら
+    /// 輪で選ばれる**（2026-10-13）——**ワーカーが走れる間はワーカーが先で、誰も走れなければ落ち先として選ばれる
+    /// ので、期待値は変わらない。**
     #[test]
     fn main_is_never_picked_as_a_rotation_candidate() {
-        // メインだけが走行可能でも、返るのは 0（フォールバック経路）。
+        // メインだけが走行可能なら、返るのは 0（輪の最後。輪に入る前は落ち先の経路だった）。
         assert_eq!(
             pick_next(states([true, false, false, true, false, true]), 1),
             0
@@ -3442,7 +3658,13 @@ mod tests {
 
         // AP は自分のアイドルへ落ちる（担当が違うので、BSP のアイドルへは行かない）。
         assert_eq!(
-            super::pick_next(waiting, PRODUCTION_OWNERS, NOBODY_RUNNING, 1, AP_IDLE_TASK),
+            super::pick_next(
+                &waiting,
+                &PRODUCTION_OWNERS,
+                NOBODY_RUNNING,
+                1,
+                AP_IDLE_TASK
+            ),
             AP_IDLE_TASK
         );
     }
@@ -3479,14 +3701,151 @@ mod tests {
         let ring3_ready = states([false, false, false, true, true, true]);
         assert_eq!(
             super::pick_next(
-                ring3_ready,
-                PRODUCTION_OWNERS,
+                &ring3_ready,
+                &PRODUCTION_OWNERS,
                 NOBODY_RUNNING,
                 1,
                 AP_IDLE_TASK
             ),
             AP_IDLE_TASK
         );
+    }
+
+    /// 池のタスクは、起動直後（`Uninitialized`）には選ばれない（M3a）。**この段の「振る舞いを変えていない」の
+    /// 主張である。**
+    #[test]
+    fn the_thread_pool_is_not_chosen_while_uninitialized() {
+        let all_ready = states([true; THREAD_TASK_FIRST]);
+        for current in 0..TASK_COUNT {
+            assert!(
+                !super::is_thread_task(pick_next(all_ready, current)),
+                "from task {current}"
+            );
+        }
+    }
+
+    /// 走れる池のタスクは、メインからも足した 1 本からも選ばれ、輪の順に回る（M3a）。
+    /// **走れるのが自分だけなら、落ち先（メイン）へ戻る**（足した 1 本とメインが交互に走る形と同じ）。
+    #[test]
+    fn a_ready_thread_task_is_chosen_and_the_pool_rotates() {
+        let mut only_pool = states([false, false, false, true, false, true]);
+        only_pool[THREAD_TASK_FIRST] = TaskState::Ready;
+        only_pool[THREAD_TASK_FIRST + 2] = TaskState::Ready;
+        assert_eq!(pick_next(only_pool, super::MAIN_TASK), THREAD_TASK_FIRST);
+        assert_eq!(pick_next(only_pool, super::RING3_TASK), THREAD_TASK_FIRST);
+        assert_eq!(
+            pick_next(only_pool, THREAD_TASK_FIRST),
+            THREAD_TASK_FIRST + 2
+        );
+        assert_eq!(
+            pick_next(only_pool, THREAD_TASK_FIRST + 2),
+            THREAD_TASK_FIRST
+        );
+
+        let mut alone = states([false, false, false, true, false, true]);
+        alone[THREAD_TASK_FIRST + 1] = TaskState::Ready;
+        assert_eq!(pick_next(alone, THREAD_TASK_FIRST + 1), super::MAIN_TASK);
+
+        // **ワーカーと足した 1 本が走れるなら、そちらが先である。**
+        let mut with_ring3 = only_pool;
+        with_ring3[super::RING3_TASK] = TaskState::Ready;
+        assert_eq!(pick_next(with_ring3, super::MAIN_TASK), super::RING3_TASK);
+        let mut with_worker = only_pool;
+        with_worker[1] = TaskState::Ready;
+        assert_eq!(pick_next(with_worker, super::MAIN_TASK), 1);
+    }
+
+    /// AP は池のタスクを選ばない（M3a。`ADR-0085` の決定 5）。**担当が BSP だからである**（第 1 層）。
+    #[test]
+    fn the_application_processor_does_not_choose_a_thread_task() {
+        let mut pool_ready = states([false, false, false, true, false, true]);
+        for task in THREAD_TASK_FIRST..TASK_COUNT {
+            pool_ready[task] = TaskState::Ready;
+        }
+        assert_eq!(
+            super::pick_next(
+                &pool_ready,
+                &PRODUCTION_OWNERS,
+                NOBODY_RUNNING,
+                1,
+                AP_IDLE_TASK
+            ),
+            AP_IDLE_TASK
+        );
+        // **本番の担当は、池も含めて AP 用アイドル以外が全部 BSP である。**
+        for (task, owner) in PRODUCTION_OWNERS.iter().enumerate() {
+            let expected = if task == AP_IDLE_TASK {
+                super::AP_IDLE_TASK_OWNER
+            } else {
+                common::percpu::BOOTSTRAP_PROCESSOR_SLOT
+            };
+            assert_eq!(*owner, expected, "task {task}");
+        }
+    }
+
+    /// 輪の中で走れる者は、どれも 1 周（走れる者の数の回数）のうちに必ず選ばれる（M3a。2026-10-13 の運用者の指摘）。
+    /// **池の 1 本と 2 本が走り続ける形で、メインと足した 1 本が置き去りにならない。** どこから始めても同じである。
+    #[test]
+    fn every_runnable_task_in_the_ring_is_chosen_within_one_round() {
+        for pool in [1usize, 2] {
+            // メインと足した 1 本が `Ready`、ワーカーは `Blocked`、池の `pool` 本が `Ready`。
+            let mut input = states([true, false, false, true, true, true]);
+            for index in 0..pool {
+                input[THREAD_TASK_FIRST + index] = TaskState::Ready;
+            }
+            let mut runnable = [usize::MAX; 2 + THREAD_TASKS];
+            runnable[0] = super::MAIN_TASK;
+            runnable[1] = super::RING3_TASK;
+            for index in 0..pool {
+                runnable[2 + index] = THREAD_TASK_FIRST + index;
+            }
+            let runnable = &runnable[..2 + pool];
+            for &start in runnable {
+                let mut current = start;
+                for round in 0..3 {
+                    let mut seen = [false; TASK_COUNT];
+                    for _ in 0..runnable.len() {
+                        current = pick_next(input, current);
+                        seen[current] = true;
+                    }
+                    for &task in runnable {
+                        assert!(
+                            seen[task],
+                            "pool={pool} start={start} round={round}: task {task} was not chosen within {} picks",
+                            runnable.len()
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// 輪の形そのもの（M3a）——足した 1 本、池、メインの順で、ワーカーとアイドルは入らない。
+    #[test]
+    fn the_user_ring_lists_the_ring3_task_the_pool_and_main_in_order() {
+        assert_eq!(super::USER_RING_LEN, 2 + THREAD_TASKS);
+        assert_eq!(super::user_ring_member(0), super::RING3_TASK);
+        for index in 0..THREAD_TASKS {
+            assert_eq!(
+                super::user_ring_member(1 + index),
+                THREAD_TASK_FIRST + index
+            );
+        }
+        assert_eq!(
+            super::user_ring_member(super::USER_RING_LEN - 1),
+            super::MAIN_TASK
+        );
+        for position in 0..super::USER_RING_LEN {
+            assert_eq!(
+                super::user_ring_position(super::user_ring_member(position)),
+                Some(position)
+            );
+        }
+        for task in 1..=WORKER_COUNT {
+            assert_eq!(super::user_ring_position(task), None);
+        }
+        assert_eq!(super::user_ring_position(AP_IDLE_TASK), None);
+        assert_eq!(super::user_ring_position(super::BSP_IDLE_TASK), None);
     }
 
     #[test]
@@ -3624,13 +3983,18 @@ mod tests {
     /// は `[TaskState; TASK_COUNT]` を値で返すので、この大きさがそのままフレームに乗る。**
     /// **遠征スタックの残りは 904 バイトである**（`ADR-0066` の Q4）。**理由を 8 本に増やすと
     /// 816 バイトになり、ここが落ちる。**
+    ///
+    /// **M3a で池の 4 本が増え、6 本の 432 バイトから 10 本の 720 バイトになった**（1 本 72 バイト）。**上限を
+    /// 720 へ上げた。** 遠征スタックの高水位は起動ログの行で見える——`--commit` の起動ログの突き合わせで、
+    /// 残りを確かめること。**[`THREAD_TASKS`] を増やすときは、ここも動く。**
     #[test]
     fn the_state_array_stays_small_enough_for_the_switch_frame() {
         use core::mem::size_of;
         assert_eq!(size_of::<super::Wait>(), 16);
+        assert_eq!(size_of::<TaskState>(), 72);
         assert!(
-            size_of::<[TaskState; TASK_COUNT]>() <= 432,
-            "状態の配列が {} バイトある（432 を越えたら遠征スタックを測り直すこと）",
+            size_of::<[TaskState; TASK_COUNT]>() <= 720,
+            "状態の配列が {} バイトある（720 を越えたら遠征スタックを測り直すこと）",
             size_of::<[TaskState; TASK_COUNT]>()
         );
     }

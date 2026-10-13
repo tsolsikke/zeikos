@@ -568,6 +568,8 @@ pub enum GuardedStack {
     ApKernel { slot: u8 },
     /// AP の IST のスタック（CPU のスロットと、IST の番号。1 から）。
     ApInterrupt { slot: u8, ist: u8 },
+    /// スレッドのタスクの池のカーネルスタック（池の番号。M3a）。
+    Thread(u8),
 }
 
 impl GuardedStack {
@@ -581,6 +583,7 @@ impl GuardedStack {
             GuardedStack::Excursion { slot, depth } => (5, slot, depth),
             GuardedStack::ApKernel { slot } => (6, slot, 0),
             GuardedStack::ApInterrupt { slot, ist } => (7, slot, ist),
+            GuardedStack::Thread(index) => (8, index, 0),
         };
         kind | ((a as u64) << 8) | ((b as u64) << 16)
     }
@@ -597,6 +600,7 @@ impl GuardedStack {
             5 => Some(GuardedStack::Excursion { slot: a, depth: b }),
             6 => Some(GuardedStack::ApKernel { slot: a }),
             7 => Some(GuardedStack::ApInterrupt { slot: a, ist: b }),
+            8 => Some(GuardedStack::Thread(a)),
             _ => None,
         }
     }
@@ -616,15 +620,18 @@ impl core::fmt::Display for GuardedStack {
             GuardedStack::ApInterrupt { slot, ist } => {
                 write!(f, "the IST{ist} stack of cpu slot {slot}")
             }
+            GuardedStack::Thread(index) => write!(f, "the kernel stack of thread task {index}"),
         }
     }
 }
 
 /// 控えられる見張りのページの数。
 ///
-/// **いま張るのは、BSP の側で 9 枚**（カーネルスタック 1、ワーカー 2、足した 1 本、アイドル、遠征スタック 4）**と、
-/// AP の 1 つにつき 6 枚**（カーネルスタックと IST の 5 本）である。4 コアの起動で 27 枚になる。
-const GUARD_PAGE_SLOTS: usize = 64;
+/// **いま張るのは、BSP の側で 13 枚**（カーネルスタック 1、ワーカー 2、足した 1 本、アイドル、遠征スタック 4、
+/// スレッドのタスクの池 4）**と、AP の 1 つにつき 6 枚**（カーネルスタックと IST の 5 本。
+/// `ap_stacks::GUARD_PAGES_PER_AP`）である。`MAX_CPUS` が 2 なので 19 枚で、4 コアなら 31 枚、この表が足りるのは
+/// 9 コアまでである。**収まることは `crate::task` のコンパイル時の表明が固定する**（2026-10-13）。
+pub const GUARD_PAGE_SLOTS: usize = 64;
 
 /// 見張りのページの表（番地と、その上のスタック）。**番地が 0 の欄は空きである。**
 ///
@@ -990,6 +997,7 @@ mod tests {
             GuardedStack::Excursion { slot: 1, depth: 1 },
             GuardedStack::ApKernel { slot: 3 },
             GuardedStack::ApInterrupt { slot: 255, ist: 5 },
+            GuardedStack::Thread(3),
         ];
         for stack in all {
             assert_ne!(stack.encode(), 0, "{stack:?}");
@@ -1013,6 +1021,10 @@ mod tests {
         assert_eq!(
             GuardedStack::ApInterrupt { slot: 2, ist: 3 }.to_string(),
             "the IST3 stack of cpu slot 2"
+        );
+        assert_eq!(
+            GuardedStack::Thread(1).to_string(),
+            "the kernel stack of thread task 1"
         );
     }
 

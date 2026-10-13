@@ -21,7 +21,7 @@ pub mod worker_bodies;
 // 共通の側から呼ぶ境界の関数と型（`ADR-0071` の決定 1 の 2。2026-09-28）。共通の側（`main.rs` を除く）は、
 // ここに並べた名前で呼ぶ。並べる名前は CPU に依らない名前にし、`arch` の中でだけ使うものは並べない。
 pub use ap_bring_up::{bring_up_application_processor, ApBringUp, ApStacks};
-pub use ap_stacks::{kernel_stack_bounds_from_top, map_ap_stacks};
+pub use ap_stacks::{kernel_stack_bounds_from_top, map_ap_stacks, GUARD_PAGES_PER_AP};
 pub use ap_trampoline::{ap_stack_frame, install_trampoline, trampoline_frame};
 pub use cpu_state::{check_aps_match_bsp, record_this_ap};
 pub use execute_disable_probe::{read_execute_disable_probe, ProbeReading, PROBE_PATTERN};
@@ -65,7 +65,7 @@ pub use ring3::{
 };
 pub use stack::{
     check_entry_stack_alignment, guarded_stack_at, install_guard_page, kernel_stack_capacity,
-    kernel_stack_high_water, kernel_stack_range, record_guard_page, GuardedStack,
+    kernel_stack_high_water, kernel_stack_range, record_guard_page, GuardedStack, GUARD_PAGE_SLOTS,
     KERNEL_STACK_FILL,
 };
 pub use system_call_entry::{refuse_system_call_return, USER_ADDRESS_LIMIT};
