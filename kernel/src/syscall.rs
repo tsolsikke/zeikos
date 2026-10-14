@@ -1050,8 +1050,8 @@ unsafe fn dispatch(
         }
         SYS_SET_TID_ADDRESS => sys_set_tid_address(args[0]),
         SYS_FUTEX => {
-            // SAFETY: 同上。
-            unsafe { sys_futex(args[0], args[1], args[2], page_table_root, direct_map) }
+            // SAFETY: 同上。`bkl` はいま保持しているガードである（待つ間は解く）。
+            unsafe { sys_futex(args, page_table_root, direct_map, bkl) }
         }
         SYS_PRLIMIT64 => {
             // SAFETY: 同上。
@@ -5583,50 +5583,158 @@ const FUTEX_WAIT: u64 = 0;
 const FUTEX_WAKE: u64 = 1;
 const FUTEX_WAIT_BITSET: u64 = 9;
 const FUTEX_WAKE_BITSET: u64 = 10;
+/// `FUTEX_*_BITSET` の「全部のビット」（`FUTEX_BITSET_MATCH_ANY`）。**受けるのはこれだけである**——musl の
+/// `__timedwait` は `FUTEX_WAIT_BITSET` を絶対時刻の期限のために使い、ビットの組は必ず全部 1 である。
+const FUTEX_BITSET_MATCH_ANY: u64 = 0xffff_ffff;
 
-/// `futex(uaddr, op, val, …)`（2026-10-06。`ADR-0081`）。**スレッドが 1 本しか無い間の形である。**
+/// `futex` の求めをどう扱うか（`ADR-0081` の Addendum。2026-10-14）。**純粋な関数 [`classify_futex`] が分ける。**
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FutexRequest {
+    /// `FUTEX_WAIT` か、ビットの組が全部 1 の `FUTEX_WAIT_BITSET`（期限は無し）。
+    Wait,
+    /// `FUTEX_WAKE` か、ビットの組が全部 1 の `FUTEX_WAKE_BITSET`。
+    Wake,
+    /// ここに無い形（期限つきの待ち、全部 1 でないビットの組、PI・robust・requeue 系）。`-ENOSYS`。
+    Unsupported,
+}
+
+/// `futex(uaddr, op, val, timeout, uaddr2, val3)` の `op`・`timeout`・`val3` から、扱いを決める。
 ///
-/// - `FUTEX_WAKE`: 起こす相手は居ないので、0（起こした数）を返す。
-/// - `FUTEX_WAIT`: `*uaddr` が `val` と違えば `-EAGAIN`（Linux と同じ。待たずに戻る）。**同じなら、本当なら待つ場面
-///   である。起こすスレッドは居ないので、偽りの戻り値は返さず、番地を控えてプロセスを終わらせる**（終了状態は
-///   [`FUTEX_DEADLOCK_STATUS`]。載せる側が判定の行に出す）。行き詰まりを隠さない。スレッドが入ったら、本当に待つ形にする
-///   （`docs/deferred-decisions.md`）。
-/// - ほかの `op` は `-ENOSYS`。
+/// **`FUTEX_PRIVATE_FLAG` と `FUTEX_CLOCK_REALTIME` は見ない**（`ADR-0085` の決定 4。futex はプロセスの中だけなので、
+/// private でないものも同じ扱いである）。**期限（`timeout` が 0 でない）は受けない**——`FUTEX_WAIT` の `timeout` は相対の
+/// 時刻、`FUTEX_WAIT_BITSET` のそれは絶対の時刻で、どちらも `Wait::Timer` と組んで待つ形が要る（来たときの扱いは ADR）。
+fn classify_futex(op: u64, timeout: u64, val3: u64) -> FutexRequest {
+    match op & FUTEX_CMD_MASK {
+        FUTEX_WAIT if timeout == 0 => FutexRequest::Wait,
+        FUTEX_WAIT_BITSET
+            if timeout == 0 && val3 & FUTEX_BITSET_MATCH_ANY == FUTEX_BITSET_MATCH_ANY =>
+        {
+            FutexRequest::Wait
+        }
+        FUTEX_WAKE => FutexRequest::Wake,
+        FUTEX_WAKE_BITSET if val3 & FUTEX_BITSET_MATCH_ANY == FUTEX_BITSET_MATCH_ANY => {
+            FutexRequest::Wake
+        }
+        _ => FutexRequest::Unsupported,
+    }
+}
+
+/// `FUTEX_WAIT` で本当に眠った回数と、`FUTEX_WAKE` が起こした本数の累計（計測。2026-10-14）。**スレッドが 1 本だけの
+/// 間は、どちらも 0 のままである**（眠る前に行き詰まりの判定で終わる）。
+static FUTEX_SLEEPS: AtomicU64 = AtomicU64::new(0);
+static FUTEX_WOKEN: AtomicU64 = AtomicU64::new(0);
+
+/// `FUTEX_WAIT` で本当に眠った回数と、`FUTEX_WAKE` が起こした本数の累計。
+pub fn futex_counts() -> (u64, u64) {
+    (
+        FUTEX_SLEEPS.load(Ordering::Relaxed),
+        FUTEX_WOKEN.load(Ordering::Relaxed),
+    )
+}
+
+/// `futex(uaddr, op, val, timeout, uaddr2, val3)`（2026-10-06。`ADR-0081`。**2026-10-14 の Addendum で、本当に待つ形にした**）。
+///
+/// - `FUTEX_WAKE`（と全部 1 の `FUTEX_WAKE_BITSET`）: 同じプロセス（スロット）で `uaddr` を待っているタスクを、多くても `val` 本
+///   起こし、起こした本数を返す。待つ相手が居なければ 0。
+/// - `FUTEX_WAIT`（と全部 1 の `FUTEX_WAIT_BITSET`。期限は無し）: `*uaddr` が `val` と違えば `-EAGAIN`（Linux と同じ。待たずに
+///   戻る）。**同じなら、眠ると誰も起こせないか（[`crate::task::another_task_of_the_slot_could_wake`]）を見る**——
+///   誰も起こせなければ**行き詰まり**で、今までどおり番地を控えてプロセスを終わらせる（終了状態は [`FUTEX_DEADLOCK_STATUS`]。
+///   載せる側が判定の行に出す。行き詰まりを隠さない。**スレッドが 1 本だけのプロセスは必ずこれに当たる**）。起こしうる
+///   タスクが居れば、`Wait::Futex`（スロットと番地の組）を欄に書き、BKL を解いて眠る。起こされたら 0 を返す——**空振りで
+///   起こしてよい**（`ADR-0061`。futex の仕様でも偽の起こしは許され、呼ぶ側が値を見直す）。
+/// - ほかの形（期限つき、全部 1 でないビットの組、PI・robust・requeue 系）は `-ENOSYS`（[`classify_futex`]）。
+///
+/// **値を確かめてから眠るまでは BKL の内側（IF=0）である**——`FUTEX_WAKE` も BKL の内側で欄を見るので、「値を見てから
+/// `Waiting` にする」までに起こしが入ることは無い（`ADR-0085` の決定 4。`sys_read` と同じ形）。
 ///
 /// # Safety
 ///
-/// `page_table_root` / `direct_map` が稼働中のテーブルのものであること。
+/// `page_table_root` / `direct_map` が稼働中のテーブルのものであること。`bkl` は今持っているガードであること。
 #[inline(never)]
 unsafe fn sys_futex(
-    uaddr: u64,
-    op: u64,
-    val: u64,
+    args: &[u64; 6],
     page_table_root: PhysAddr,
     direct_map: DirectMap,
+    bkl: &mut Option<crate::bkl::BklGuard>,
 ) -> u64 {
-    match op & FUTEX_CMD_MASK {
-        FUTEX_WAKE | FUTEX_WAKE_BITSET => 0,
-        FUTEX_WAIT | FUTEX_WAIT_BITSET => {
+    // `futex(uaddr, op, val, timeout, uaddr2, val3)`。`uaddr2` は requeue 系のもので、ここでは読まない。**局所を増やさない**
+    // （`args` を直に読む）——この枠は、`futex` を打ったプログラムの遠征スタックの高水位にそのまま乗る。
+    // **番地は 4 バイト境界**（Linux は `-EINVAL`）。
+    if !args[0].is_multiple_of(4) {
+        return (-EINVAL) as u64;
+    }
+    match classify_futex(args[1], args[3], args[5]) {
+        FutexRequest::Wake => wake_futex_waiters(
+            crate::arch::x86_64::current_excursion_slot(),
+            args[0],
+            args[2],
+        ),
+        FutexRequest::Wait => {
             // SAFETY: 呼び出し元契約をそのまま渡す。
-            let Some(bytes) = (unsafe { read_user_fixed::<4>(page_table_root, direct_map, uaddr) })
+            let Some(bytes) =
+                (unsafe { read_user_fixed::<4>(page_table_root, direct_map, args[0]) })
             else {
                 return (-EFAULT) as u64;
             };
-            if u64::from(u32::from_le_bytes(bytes)) != (val & 0xffff_ffff) {
+            if u64::from(u32::from_le_bytes(bytes)) != (args[2] & 0xffff_ffff) {
                 return (-EAGAIN) as u64;
             }
-            // **待つ場面である。** 起こす者が居ないので、終わらせる。
-            state()
-                .futex_deadlock_address
-                .store(uaddr, Ordering::SeqCst);
-            state()
-                .process_exit_status
-                .store(FUTEX_DEADLOCK_STATUS, Ordering::SeqCst);
-            state().process_exited.store(true, Ordering::SeqCst);
+            // **待つ場面である。** 起こしうる者が居なければ、行き詰まりとして終わらせる（今までどおり）。
+            if !crate::task::another_task_of_the_slot_could_wake(
+                crate::arch::x86_64::current_excursion_slot(),
+            ) {
+                end_process_on_futex_deadlock(args[0]);
+                return 0;
+            }
+            sleep_on_futex(crate::arch::x86_64::current_excursion_slot(), args[0], bkl);
             0
         }
-        _ => (-ENOSYS) as u64,
+        FutexRequest::Unsupported => (-ENOSYS) as u64,
     }
+}
+
+/// `FUTEX_WAIT` の行き詰まり——番地を控え、137 でプロセスを終わらせる印を立てる（`ADR-0081` の決定 3。載せる側が
+/// `futex:` の行に出す）。**別の関数にしてあるのは、`sys_futex` の枠を広げないため。**
+#[inline(never)]
+#[cold]
+fn end_process_on_futex_deadlock(uaddr: u64) {
+    let state = state();
+    state.futex_deadlock_address.store(uaddr, Ordering::SeqCst);
+    state
+        .process_exit_status
+        .store(FUTEX_DEADLOCK_STATUS, Ordering::SeqCst);
+    state.process_exited.store(true, Ordering::SeqCst);
+}
+
+/// `FUTEX_WAKE` の本体——同じプロセス（スロット）で `uaddr` を待つタスクを、多くても `limit` 本起こす。**別の関数に
+/// してあるのは、`sys_futex` の枠を広げないため**（鍵の一時値。あちらの枠は、`futex` を打ったプログラムの遠征スタックの
+/// 高水位にそのまま乗る）。
+#[inline(never)]
+fn wake_futex_waiters(slot: usize, uaddr: u64, limit: u64) -> u64 {
+    let woken = crate::task::wake_up_to_tasks_waiting_on(
+        // **鍵のスロットは `u8` で持つ**（`Wait` の大きさを増やさないため。スロットは 2 つ）。
+        crate::task::Wait::Futex {
+            slot: slot as u8,
+            address: uaddr,
+        },
+        limit as usize,
+    );
+    FUTEX_WOKEN.fetch_add(woken as u64, Ordering::Relaxed);
+    woken as u64
+}
+
+/// `FUTEX_WAIT` の眠る本体——鍵を欄に書き、BKL を解いて譲り、起こされたら BKL を取り直す。**別の関数にしてあるのは
+/// [`wake_futex_waiters`] と同じ理由**（行き詰まりで終わる道しか通らないプログラムの高水位に、眠る道の枠を乗せない）。
+#[inline(never)]
+fn sleep_on_futex(slot: usize, uaddr: u64, bkl: &mut Option<crate::bkl::BklGuard>) {
+    FUTEX_SLEEPS.fetch_add(1, Ordering::Relaxed);
+    crate::task::set_current_waiting(crate::task::Wait::Futex {
+        slot: slot as u8,
+        address: uaddr,
+    });
+    drop(bkl.take());
+    crate::task::yield_now();
+    *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
 }
 
 /// `FUTEX_WAIT` で待つ場面になったプロセスの終了状態（2026-10-06）。**128 + 9（`SIGKILL`）**——シェルが「シグナルで
@@ -7443,6 +7551,45 @@ pub fn in_ring3_at_entry() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `futex` の求めの分け方（`ADR-0081` の Addendum）——private の有無は見ず、全部 1 のビットの組だけを受け、期限つきと
+    /// ほかの命令は `-ENOSYS` の側になる。
+    #[test]
+    fn futex_requests_are_sorted_into_wait_wake_and_unsupported() {
+        const PRIVATE: u64 = 128;
+        const CLOCK_REALTIME: u64 = 256;
+        assert_eq!(classify_futex(FUTEX_WAIT, 0, 0), FutexRequest::Wait);
+        assert_eq!(
+            classify_futex(FUTEX_WAIT | PRIVATE, 0, 0),
+            FutexRequest::Wait
+        );
+        assert_eq!(
+            classify_futex(FUTEX_WAIT_BITSET | PRIVATE | CLOCK_REALTIME, 0, 0xffff_ffff),
+            FutexRequest::Wait
+        );
+        assert_eq!(
+            classify_futex(FUTEX_WAKE | PRIVATE, 0, 0),
+            FutexRequest::Wake
+        );
+        assert_eq!(
+            classify_futex(FUTEX_WAKE_BITSET, 0, 0xffff_ffff),
+            FutexRequest::Wake
+        );
+        assert_eq!(
+            classify_futex(FUTEX_WAIT, 0x7fff_0000, 0),
+            FutexRequest::Unsupported
+        );
+        assert_eq!(
+            classify_futex(FUTEX_WAIT_BITSET, 0, 1),
+            FutexRequest::Unsupported
+        );
+        assert_eq!(
+            classify_futex(FUTEX_WAKE_BITSET, 0, 1),
+            FutexRequest::Unsupported
+        );
+        assert_eq!(classify_futex(3 | PRIVATE, 0, 0), FutexRequest::Unsupported); // FUTEX_REQUEUE
+        assert_eq!(classify_futex(6, 0, 0), FutexRequest::Unsupported); // FUTEX_LOCK_PI
+    }
 
     /// **`readv`・`writev` の範囲の確かめと、合計の切り詰め**（2026-10-09。Linux の `__import_iovec`）。
     #[test]

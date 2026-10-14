@@ -106,7 +106,7 @@ Linuxと同じ分け方である。今の置き場からの移し方は、下の
 | `EXCURSION_STACKS`・`RECOVERIES`［スロット］［深さ］ | （全部） | スレッド | スレッドのタスクは自分のカーネルスタックと回復点を1つ持つ |
 | `SyscallState`［スロット］ | `user_window_start`・`user_window_end` | プロセス（そのまま） | 窓はアドレス空間のもの |
 | `SyscallState`［スロット］ | `process_exited`・`process_exit_status` | プロセス（そのまま） | 「終わる」印を足す（第3項）。`exit`はスレッドの終わりへ分ける |
-| `SyscallState`［スロット］ | `futex_deadlock_address` | 消す | 本当に待つ形になるので要らない |
+| `SyscallState`［スロット］ | `futex_deadlock_address` | プロセス（そのまま） | 本当に待つ形にしても、眠ると誰も起こせない行き詰まりの検出に使うので残す（`ADR-0081`の2026-10-14のAddendum。当初は「消す」としていた） |
 | `SyscallState`［スロット］ | `handler_sp`・`in_ring3_at_entry`・`last_*`・`write_*`ほか診断の記録 | プロセス（そのまま） | 「最後に見た」の記録。スレッドで分ける必要が出たら分ける |
 | `ProcessState`［スロット］［深さ］ | `actions`・`exec_name`・`exec_name_len` | プロセス（そのまま） | |
 | `ProcessState`［スロット］［深さ］ | `blocked`・`alt_stack`・`tid_address` | スレッド | Linuxではスレッドごと。シグナルのマスクと代替スタックの課題で移す |

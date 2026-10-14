@@ -399,6 +399,16 @@ pub enum Wait {
         /// 待っている側。
         side: crate::socket::Side,
     },
+    /// futex の番地で待っている（`ADR-0081` の Addendum。2026-10-14。`ADR-0085` の決定 4）。**鍵はプロセス（スロット）と
+    /// ユーザーの番地の組である**——同じ番地でも別のスロットのプロセスは起こさない。**起こすのは `FUTEX_WAKE` と、
+    /// スレッドの終わり（`CLONE_CHILD_CLEARTID` の番地）である。**
+    Futex {
+        /// Ring 3 のスロット（プロセス）。**`u8` にしてあるのは、`Wait` の大きさ（16 バイト。`Timer` の締切と同じ）を
+        /// 増やさないため**——`WaitSet` は `TaskState` に入り、切り替えと待ちの枠に乗る。
+        slot: u8,
+        /// ユーザーの番地（4 バイト境界）。
+        address: u64,
+    },
 }
 
 /// 1 つのタスクが同時に待てる理由の本数（`ADR-0066` の Y-b）。
@@ -486,6 +496,14 @@ impl WaitSet {
     /// 入っている本数。
     pub fn len(&self) -> usize {
         self.len as usize
+    }
+
+    /// futex 以外の理由が 1 本でも入っているか（futex の行き詰まりの判定。`another_task_of_the_slot_could_wake`）。
+    /// **futex 以外の理由は、プロセスの外（パイプの相手・ソケットの相手・キーボード・タイマ）が起こせる。**
+    pub fn has_a_reason_other_than_futex(&self) -> bool {
+        self.reasons[..self.len as usize]
+            .iter()
+            .any(|reason| !matches!(reason, Wait::Futex { .. }))
     }
 
     /// 1 本も入っていないか。
@@ -1537,6 +1555,62 @@ pub(crate) fn wake_tasks_waiting_on(on: Wait) -> usize {
 /// 居たかどうかは、積む側にしか分からない。**
 pub(crate) fn someone_waits_on(on: Wait) -> bool {
     (0..TASK_COUNT).any(|index| waits_on(scheduler::state(index), on))
+}
+
+/// その合図を待っているタスクを、多くても `limit` 本起こす（`FUTEX_WAKE` の `val`。`ADR-0081` の Addendum。2026-10-14）。
+/// **起こした本数を返す。** 合図で引く形は [`wake_tasks_waiting_on`] と同じで、本数の上限だけが違う。
+///
+/// **呼ぶのはシステムコールの入口（BKL の内側。IF=0）である。**
+pub(crate) fn wake_up_to_tasks_waiting_on(on: Wait, limit: usize) -> usize {
+    let mut woken = 0;
+    for index in 0..TASK_COUNT {
+        if woken >= limit {
+            break;
+        }
+        if waits_on(scheduler::state(index), on) {
+            scheduler::set_state(index, TaskState::Ready);
+            woken += 1;
+        }
+    }
+    if woken > 0 {
+        WAKES_ISSUED.fetch_add(woken as u64, Ordering::Relaxed);
+    }
+    woken
+}
+
+/// 今のタスクが futex で眠ったとき、同じプロセス（スロット `slot`）のほかのタスクが起こしうるか（`ADR-0081` の
+/// Addendum。2026-10-14）。**偽なら、眠ると誰も起こせない行き詰まりである**——`FUTEX_WAIT` は眠らずに、今までどおり
+/// 137 の道へ進む（`crate::syscall::sys_futex`）。
+///
+/// **起こしうるのは、同じスロットで `Ready` のタスクか、futex 以外の理由で待っているタスクである**（後者はプロセスの外が
+/// 起こせるので、起きた後に `FUTEX_WAKE` を打ちうる）。futex だけで待っているタスクは、誰かが起こすまで何もできない。
+/// 見るのはユーザーのタスク（足した 1 本・池・メイン）だけで、ワーカーとアイドルは数えない。**スレッドが 1 本だけの
+/// プロセスでは、必ず偽である。**
+pub fn another_task_of_the_slot_could_wake(slot: usize) -> bool {
+    could_be_woken_by_others(
+        current_index(),
+        slot,
+        scheduler::state,
+        scheduler::ring3_slot,
+    )
+}
+
+/// [`another_task_of_the_slot_could_wake`] の本体（純粋な関数。ホストの単体試験が固定する）。
+fn could_be_woken_by_others(
+    current: usize,
+    slot: usize,
+    state_of: impl Fn(usize) -> TaskState,
+    slot_of: impl Fn(usize) -> usize,
+) -> bool {
+    (0..USER_RING_LEN).map(user_ring_member).any(|task| {
+        task != current
+            && slot_of(task) == slot
+            && match state_of(task) {
+                TaskState::Ready => true,
+                TaskState::Waiting(set) => set.has_a_reason_other_than_futex(),
+                _ => false,
+            }
+    })
 }
 
 /// その状態がその合図を待っているか（`ADR-0066` の Y-b）。**所属判定を 1 箇所に集める。**
@@ -3898,6 +3972,133 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// futex の行き詰まりの判定（`ADR-0081` の Addendum）——同じスロットに `Ready` か futex 以外で待つタスクが居るときだけ
+    /// 起こしうる。自分・別のスロット・futex だけで待つもの・ワーカーは数えない。
+    #[test]
+    fn a_futex_sleeper_can_be_woken_only_by_a_ready_or_otherwise_waiting_task_of_its_slot() {
+        use super::{Wait, WaitSet, MAIN_TASK, RING3_TASK};
+        let futex = Wait::Futex {
+            slot: 0,
+            address: 0x1000,
+        };
+        let pipe = Wait::PipeReadable { pipe: 0 };
+        let with = |states: [(usize, TaskState, usize); 2]| {
+            let mut table = [(TaskState::Uninitialized, 0usize); TASK_COUNT];
+            for (task, state, slot) in states {
+                table[task] = (state, slot);
+            }
+            move |task: usize| table[task]
+        };
+        // スレッドが 1 本だけ（メインだけが Ready で、それが自分）。
+        let t = with([(MAIN_TASK, TaskState::Ready, 0), (1, TaskState::Ready, 0)]);
+        assert!(!super::could_be_woken_by_others(
+            MAIN_TASK,
+            0,
+            |k| t(k).0,
+            |k| t(k).1
+        ));
+        // 池のタスクが Ready。
+        let t = with([
+            (MAIN_TASK, TaskState::Ready, 0),
+            (THREAD_TASK_FIRST, TaskState::Ready, 0),
+        ]);
+        assert!(super::could_be_woken_by_others(
+            MAIN_TASK,
+            0,
+            |k| t(k).0,
+            |k| t(k).1
+        ));
+        // 池のタスクが futex だけで待っている——誰も起こせない。
+        let t = with([
+            (MAIN_TASK, TaskState::Ready, 0),
+            (
+                THREAD_TASK_FIRST,
+                TaskState::Waiting(WaitSet::single(futex)),
+                0,
+            ),
+        ]);
+        assert!(!super::could_be_woken_by_others(
+            MAIN_TASK,
+            0,
+            |k| t(k).0,
+            |k| t(k).1
+        ));
+        // 池のタスクがパイプで待っている——書き手が起こせる。
+        let t = with([
+            (MAIN_TASK, TaskState::Ready, 0),
+            (
+                THREAD_TASK_FIRST,
+                TaskState::Waiting(WaitSet::single(pipe)),
+                0,
+            ),
+        ]);
+        assert!(super::could_be_woken_by_others(
+            MAIN_TASK,
+            0,
+            |k| t(k).0,
+            |k| t(k).1
+        ));
+        // 別のスロットの Ready は数えない。
+        let t = with([
+            (MAIN_TASK, TaskState::Ready, 0),
+            (RING3_TASK, TaskState::Ready, 1),
+        ]);
+        assert!(!super::could_be_woken_by_others(
+            MAIN_TASK,
+            0,
+            |k| t(k).0,
+            |k| t(k).1
+        ));
+        // ワーカー（輪の外）の Ready は数えない。
+        let t = with([(MAIN_TASK, TaskState::Ready, 0), (1, TaskState::Ready, 0)]);
+        assert!(!super::could_be_woken_by_others(
+            MAIN_TASK,
+            0,
+            |k| t(k).0,
+            |k| t(k).1
+        ));
+    }
+
+    /// futex の鍵はスロットと番地の組である——同じ番地でも別のスロットは起こさない。
+    #[test]
+    fn a_futex_wait_matches_only_the_same_slot_and_address() {
+        use super::{Wait, WaitSet};
+        let waiting = TaskState::Waiting(WaitSet::single(Wait::Futex {
+            slot: 0,
+            address: 0x2000,
+        }));
+        assert!(super::waits_on(
+            waiting,
+            Wait::Futex {
+                slot: 0,
+                address: 0x2000
+            }
+        ));
+        assert!(!super::waits_on(
+            waiting,
+            Wait::Futex {
+                slot: 1,
+                address: 0x2000
+            }
+        ));
+        assert!(!super::waits_on(
+            waiting,
+            Wait::Futex {
+                slot: 0,
+                address: 0x2004
+            }
+        ));
+        // **`Futex` を足しても `Wait` は 16 バイトのままである**（`Timer` の締切と同じ大きさ。スロットを `u8` にした理由）。
+        assert_eq!(core::mem::size_of::<Wait>(), 16);
+        let mut set = WaitSet::single(Wait::Futex {
+            slot: 0,
+            address: 0x2000,
+        });
+        assert!(!set.has_a_reason_other_than_futex());
+        assert!(set.push(Wait::Keyboard));
+        assert!(set.has_a_reason_other_than_futex());
     }
 
     /// 遠征の状態と回復点の置き場（M3a）——池のタスクは自分の番号、ほかはスロットである。

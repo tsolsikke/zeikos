@@ -2580,6 +2580,7 @@ Linuxのlibcが起動の最初に呼ぶ小物（`set_tid_address`・`rt_sigactio
 | `tkill(gettid(), SIGABRT)`が、名指しの行を出してプロセスを134で終わらせること | `syscall-test`の検算119（`/bin/tkill-self`を`spawn`する）と、起動ログの参照の`[WARN] tkill:`の行 |
 | 知らない番号を打った回数が、プロセスの終わりの行に出ること（`spawn`の前後で親の数が消えないこと） | 起動ログの参照（`syscall-test`は検算3で1回打つので`1 with a number the kernel does not know; the last such number was 4351`、ほかは0） |
 | 起こす者の居ない`FUTEX_WAIT`が、偽りの戻り値を返さずにプロセスを終わらせること | `syscall-test`の検算93（`/bin/futex-wait`を`spawn`する）と、起動ログの参照 |
+| futexの最小（`ADR-0081`の2026-10-14のAddendum）——`FUTEX_WAIT`は、眠ると誰も起こせないときだけ137の道へ進み、それ以外は`Wait::Futex`（スロットと番地の組）で眠って`FUTEX_WAKE`に起こされること | **本当に眠る道は、このコミットでは一度も通らない**（スレッドが1本だけのプロセスは必ず行き詰まりの判定に当たる）——「落とす破壊が無い判定」の側である。通すのは`clone`の3段目の確かめ（必ず待つ形のプログラム）。判定の純粋な部分はホストの単体試験——鍵の作り方（`a_futex_wait_matches_only_the_same_slot_and_address`）と、「眠ると誰も起こせない」の判定（`a_futex_sleeper_can_be_woken_only_by_a_ready_or_otherwise_waiting_task_of_its_slot`）、求めの分け方（`futex_requests_are_sorted_into_wait_wake_and_unsupported`）。**起動ログの参照で番地以外に動いたのは`/bin/futex-wait`の遠征スタックの高水位（2,402 → 2,370）の1行だけで、原因は`sys_futex`の枠（168 → 136。眠る道・起こす道・行き詰まりの道を別の関数に出した）である** |
 | `exit`・`exit_group`・`futex`の待つ場面が、同じ「返らない」道を通ること | `syscall-test`が`exit_group`で終わること（既定の起動） |
 
 **確かめていないこと。** `fstat`の端末・ソケット・パイプ・共有メモリの欄の値は、検算に入れていない（開いたファイルだけ）。`sendto`は`socket-test`の側で、`write`と同じ道を通ることを前提にしており、`sendto`そのものは打っていない。`readlink`の`/proc/self/exe`以外の道（`-EINVAL`・`-ENOENT`）も検算に入れていない。破壊テストは、まだ足していない（小物の1つを壊すと`syscall-test`の対応する番号で止まるので、検算そのものが破壊の受け皿になる）。
