@@ -1,0 +1,4 @@
+m3a-exit-while-spinning-rust: main starts with 4 argument(s)
+m3a-exit-while-spinning-rust: the thread spins on sched_yield from now on
+m3a-exit-while-spinning-rust: main exits while the thread is still runnable
+exit status: 4

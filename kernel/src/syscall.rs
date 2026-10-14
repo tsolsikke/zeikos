@@ -3901,8 +3901,11 @@ pub(crate) unsafe extern "sysv64" fn syscall_entry(
     // （Linux も次のカーネルへの入口で止める）——池のスレッドのタスクならそのスレッドだけを終え、主スレッドなら下の分岐で
     // 出る。**実行してから見る形では、主スレッドの `join` の `futex` が「起こす者が居ない」と判定されて 137 で上書きした**
     // （実測。ティックでスレッドが先に走って `exit_group` を打った後、主スレッドが `join` に入った回）。
+    // 破壊テスト (M3a の 3-2, syscall-entry-ignores-process-end-test): 入口では印を見ない。`m3a-exit-group-spin-rust` の
+    // 主スレッドの `join` の `futex` が行き詰まりと判定され、137 で上書きする（3-1b で踏んだ形）。
     #[cfg(not(feature = "user-exit-ignored"))]
-    let exited_at_entry = state.process_exited.load(Ordering::SeqCst);
+    let exited_at_entry = state.process_exited.load(Ordering::SeqCst)
+        && !cfg!(feature = "syscall-entry-ignores-process-end-test");
     #[cfg(feature = "user-exit-ignored")]
     let exited_at_entry = false;
     if exited_at_entry && crate::task::current_thread_index().is_some() {
@@ -5882,7 +5885,9 @@ unsafe fn exit_thread_from_ring3(
 ) -> ! {
     let address = crate::task::thread_tid_address(index);
     let mut cleared = None;
-    if address != 0 {
+    // 破壊テスト (M3a の 3-2, clone-no-clear-tid-test): `CLONE_CHILD_CLEARTID` の番地に 0 を書かず、起こしもしない。
+    // 親の `join` は番地が 0 になるのを待ち続ける。
+    if address != 0 && !cfg!(feature = "clone-no-clear-tid-test") {
         // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効（自分の空間のまま）。
         let written =
             unsafe { write_user_fixed(page_table_root, direct_map, address, &0u32.to_le_bytes()) };
@@ -5958,6 +5963,11 @@ fn process_end_set_by_current_thread() -> bool {
 /// 欄を入れ替えて走るので、残ったスレッドが子の表を見てしまう。
 #[inline(never)]
 fn spawn_refused_for_threads(number: u64) -> Option<u64> {
+    // 破壊テスト (M3a の 3-2, spawn-ignores-threads-test): 断らない。スレッドを持つプロセスとスレッドからの `spawn` が
+    // そのまま進む。
+    if cfg!(feature = "spawn-ignores-threads-test") {
+        return None;
+    }
     let refusal =
         crate::task::spawn_refusal_for_threads(crate::arch::x86_64::current_excursion_slot())?;
     Some(report_spawn_refused_for_threads(number, refusal))

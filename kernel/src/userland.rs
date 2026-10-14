@@ -1462,7 +1462,11 @@ pub fn load_user_program_with(
         // 終わっていれば 0 本である。残っていれば `Finished` にして刈り取る——全部 BSP 担当で走っているのは主スレッド
         // だけなので、止める処理は要らない。**`forget_task_root_before_destroy` より前に置く**——刈り取りが
         // `page_table_root` を 0 へ戻すので、あちらは何も見つけない。
+        #[cfg(not(feature = "process-end-leaves-threads-test"))]
         let (threads_ended, threads_parked) = crate::task::finish_threads_of_slot(slot);
+        // 破壊テスト (M3a の 3-2, process-end-leaves-threads-test): 残っているスレッドを終えず、刈り取らない。
+        #[cfg(feature = "process-end-leaves-threads-test")]
+        let (threads_ended, threads_parked) = (0, 0);
         forget_task_root_before_destroy(logger, &process);
         // **この CPU でしか走らなかった空間は、その場で返す。ほかの CPU でも走った空間は隔離を通す**（2026-10-07。
         // `crate::quarantine::Retire` の doc）。

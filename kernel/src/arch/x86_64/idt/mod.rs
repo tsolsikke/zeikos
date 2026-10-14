@@ -1308,7 +1308,13 @@ impl IrqContext {
     /// （`task_frame::build_initial_context_from_image`）。
     pub(crate) fn thread_start_image(&self, user_stack: u64) -> IrqContext {
         IrqContext {
-            rax: 0,
+            // 破壊テスト (M3a の 3-2, clone-keeps-parent-rax-test): RAX を 0 にせず、親の値（`clone` の番号）のままにする。
+            // 子は `clone` の戻り値を親の値で読む。
+            rax: if cfg!(feature = "clone-keeps-parent-rax-test") {
+                self.rax
+            } else {
+                0
+            },
             rsp: user_stack,
             cs: crate::arch::x86_64::gdt::USER_CODE_SELECTOR.bits() as u64,
             ss: crate::arch::x86_64::gdt::USER_DATA_SELECTOR.bits() as u64,

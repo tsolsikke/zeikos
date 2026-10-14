@@ -33,4 +33,8 @@ record m3a-fault-rust
 record m3a-exit-group-rust
 record m3a-exit-group-join-rust
 record m3a-exit-group-waiters-rust
+record m3a-exit-while-spinning-rust
+record m3a-nested-clone-rust
+record m3a-spawn-from-thread-rust
+record m3a-exit-group-spin-rust
 record m1-c

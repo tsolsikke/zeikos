@@ -6665,6 +6665,30 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
         b"m3a-exit-group-waiters-rust\0/etc/motd\0a\0b\0",
         kernel::userland::SpawnOutcome::Exited(7),
     );
+    // **3-2 の像（2026-10-15）。** 主スレッドの `exit` の間に `sched_yield` で回り続けるスレッド（刈り取りの行が出て、次の
+    // 像の `clone` が通る）、スレッドからの `clone`、スレッドを持つ間の `spawn`（`-EAGAIN` で断る）、主スレッドが Ring 3 で
+    // 回っている間の `exit_group`（入口で印を見る道を毎回通す）。
+    verify_linux_program(
+        logger,
+        b"/bin/linux/m3a-exit-while-spinning-rust",
+        b"m3a-exit-while-spinning-rust\0/etc/motd\0a\0b\0",
+    );
+    verify_linux_program(
+        logger,
+        b"/bin/linux/m3a-nested-clone-rust",
+        b"m3a-nested-clone-rust\0/etc/motd\0a\0b\0",
+    );
+    verify_linux_program(
+        logger,
+        b"/bin/linux/m3a-spawn-from-thread-rust",
+        b"m3a-spawn-from-thread-rust\0/etc/motd\0a\0b\0",
+    );
+    verify_linux_program_ending(
+        logger,
+        b"/bin/linux/m3a-exit-group-spin-rust",
+        b"m3a-exit-group-spin-rust\0/etc/motd\0a\0b\0",
+        kernel::userland::SpawnOutcome::Exited(7),
+    );
     #[cfg(feature = "linux-c-test")]
     verify_linux_program(logger, b"/bin/linux/m1-c", b"m1-c\0/etc/motd\0a\0b\0");
 }
@@ -14136,6 +14160,46 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "virtio-open-wakeup-window-test",
         cfg!(feature = "virtio-open-wakeup-window-test"),
         "完了の検査と hlt の間で IF を開ける",
+    ),    // M3a の 3-2（2026-10-15）: スレッドの破壊テスト。
+    (
+        "clone-keeps-parent-rax-test",
+        cfg!(feature = "clone-keeps-parent-rax-test"),
+        "池のタスクの最初の文脈で RAX を 0 にせず、親の値のままにする",
+    ),
+    (
+        "clone-no-clear-tid-test",
+        cfg!(feature = "clone-no-clear-tid-test"),
+        "スレッドの exit で CLONE_CHILD_CLEARTID の番地に 0 を書かず、起こしもしない",
+    ),
+    (
+        "clone-no-settls-test",
+        cfg!(feature = "clone-no-settls-test"),
+        "池のタスクの FS の基底を 0 にする",
+    ),
+    (
+        "thread-pool-owner-is-ap-test",
+        cfg!(feature = "thread-pool-owner-is-ap-test"),
+        "池のタスクの担当を AP にする",
+    ),
+    (
+        "process-end-leaves-threads-test",
+        cfg!(feature = "process-end-leaves-threads-test"),
+        "プロセスの終わりで、残っているスレッドを終えず刈り取らない",
+    ),
+    (
+        "spawn-ignores-threads-test",
+        cfg!(feature = "spawn-ignores-threads-test"),
+        "スレッドを持つプロセスとスレッドからの spawn を断らない",
+    ),
+    (
+        "process-end-keeps-futex-sleepers-test",
+        cfg!(feature = "process-end-keeps-futex-sleepers-test"),
+        "プロセスの終わりの印で、同じスロットの futex の待ちを起こさない",
+    ),
+    (
+        "syscall-entry-ignores-process-end-test",
+        cfg!(feature = "syscall-entry-ignores-process-end-test"),
+        "システムコールの入口で終了の印を見ない",
     ),
 ];
 

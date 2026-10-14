@@ -1269,3 +1269,25 @@ highhalf-remove-before-highify = []
 # B-2b-4(e): 恒等除去の直後に意図的 panic する。パニック経路（シリアル I/O・レジスタ値のみ・walk なし）が
 # 恒等非依存であることを、除去後の実状態で確認する。期待署名はパニックダンプ。`--highhalf-test panic-after-remove`。
 highhalf-panic-after-remove = []
+# 破壊（M3a の 3-2。2026-10-15）: 池のタスクの最初の文脈で RAX を 0 にせず、親の値（clone の番号）のままにする。
+# 子が clone の戻り値を親の値で読む。`--critical-test clone-keeps-parent-rax`。
+clone-keeps-parent-rax-test = []
+# 破壊（3-2）: スレッドの exit で CLONE_CHILD_CLEARTID の番地に 0 を書かず、起こしもしない。親の join が
+# 番地を待ち続ける。`--critical-test clone-no-clear-tid`。
+clone-no-clear-tid-test = []
+# 破壊（3-2）: 池のタスクの FS の基底を、渡された tls ではなく 0 にする。スレッドが自分の TLS を読めない。
+# `--critical-test clone-no-settls`。
+clone-no-settls-test = []
+# 破壊（3-2）: 池のタスクの担当を AP にする。clone の入口の担当の検査が名指しして止める。
+# `--critical-test thread-pool-owner-is-ap`。
+thread-pool-owner-is-ap-test = []
+# 破壊（3-2）: プロセスの終わりで、残っているスレッドを終えず、刈り取らない。`--critical-test process-end-leaves-threads`。
+process-end-leaves-threads-test = []
+# 破壊（3-2）: スレッドを持つプロセスとスレッドからの spawn を断らない。`--critical-test spawn-ignores-threads`。
+spawn-ignores-threads-test = []
+# 破壊（3-2）: プロセスの終わりの印で、同じスロットの futex の待ちを起こさない。join で眠る主スレッドが永久に残る。
+# `--critical-test process-end-keeps-futex-sleepers`。
+process-end-keeps-futex-sleepers-test = []
+# 破壊（3-2）: システムコールの入口で終了の印を見ない。主スレッドの join の futex が行き詰まりと判定され、137 で上書きする。
+# `--critical-test syscall-entry-ignores-process-end`。
+syscall-entry-ignores-process-end-test = []

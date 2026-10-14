@@ -625,6 +625,10 @@ const LINUX_PROGRAMS: &[&str] = &[
     "m3a-exit-group-rust",
     "m3a-exit-group-join-rust",
     "m3a-exit-group-waiters-rust",
+    "m3a-exit-while-spinning-rust",
+    "m3a-nested-clone-rust",
+    "m3a-spawn-from-thread-rust",
+    "m3a-exit-group-spin-rust",
 ];
 
 /// Linux 向けのプログラム（`linux-programs/`。musl で静的リンクした、`std` を使う Rust）を `rustc` でビルドする

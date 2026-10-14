@@ -1,0 +1,5 @@
+m3a-nested-clone-rust: main starts with 4 argument(s)
+m3a-nested-clone-rust: the outer thread starts an inner thread
+m3a-nested-clone-rust: the inner thread runs
+m3a-nested-clone-rust: joined, the outer thread returned 7
+exit status: 4

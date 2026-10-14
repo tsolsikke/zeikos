@@ -241,6 +241,11 @@ pub const PATH_RULES: &[PathRule] = &[
             // **主スレッドが join の futex で眠る間に、スレッドが exit_group で終える像**（3-1b の直し 1）。
             "linux-programs/m3a-exit-group-join-rust.rs",
             "linux-programs/m3a-exit-group-waiters-rust.rs",
+            // **3-2 の像**（主スレッドの exit の間に回るスレッド、スレッドからの clone、スレッドを持つ間の spawn、入口の印）。
+            "linux-programs/m3a-exit-while-spinning-rust.rs",
+            "linux-programs/m3a-nested-clone-rust.rs",
+            "linux-programs/m3a-spawn-from-thread-rust.rs",
+            "linux-programs/m3a-exit-group-spin-rust.rs",
             "kernel/userland/chello.c",
             "kernel/userland/dbfault.c",
             "kernel/userland/fp*.c",

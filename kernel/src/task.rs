@@ -1354,9 +1354,21 @@ pub fn start_thread_task(start: ThreadStart<'_>) -> Result<(usize, u64), ThreadS
     let parent = current_index();
     let owners = scheduler::owners();
     let cpu = common::percpu::cpu_id();
-    if owners[task] != owners[parent] || owners[task] != cpu {
-        report_thread_owner_mismatch(task, owners[task], parent, owners[parent], cpu);
+    // 破壊テスト (M3a の 3-2, thread-pool-owner-is-ap-test): 池のタスクの担当を AP にする。**下の検査が止める**
+    // （`ADR-0085` の決定 5。スレッドは親と同じ CPU に居る）。
+    #[cfg(not(feature = "thread-pool-owner-is-ap-test"))]
+    let task_owner = owners[task];
+    #[cfg(feature = "thread-pool-owner-is-ap-test")]
+    let task_owner = AP_IDLE_TASK_OWNER;
+    if task_owner != owners[parent] || task_owner != cpu {
+        report_thread_owner_mismatch(task, task_owner, parent, owners[parent], cpu);
     }
+    // 破壊テスト (M3a の 3-2, clone-no-settls-test): FS の基底を、渡された tls ではなく 0 にする。スレッドは自分の TLS を
+    // 読めない（musl の `pthread_self` が番地 0 の近くを読む）。
+    #[cfg(not(feature = "clone-no-settls-test"))]
+    let tls = start.tls;
+    #[cfg(feature = "clone-no-settls-test")]
+    let tls = 0;
     let generation = THREAD_GENERATIONS[index].load(Ordering::Relaxed);
     let tid = thread_tid_for(index, generation);
     if tid > i32::MAX as u64 {
@@ -1391,7 +1403,7 @@ pub fn start_thread_task(start: ThreadStart<'_>) -> Result<(usize, u64), ThreadS
     // 呼び手が `is_allowed_user_segment_base` を通している（契約）。
     unsafe {
         let areas = &mut *core::ptr::addr_of_mut!(USER_REGISTER_AREAS);
-        crate::arch::x86_64::save_user_registers_for_thread(&mut areas[task], start.tls);
+        crate::arch::x86_64::save_user_registers_for_thread(&mut areas[task], tls);
     }
     crate::arch::x86_64::prepare_thread_excursion_state(index, depth);
     set_thread_tid_address(index, start.tid_address);
@@ -1409,7 +1421,7 @@ pub fn start_thread_task(start: ThreadStart<'_>) -> Result<(usize, u64), ThreadS
                 page_table_root: root,
                 current_recovery: 0,
                 state: TaskState::Ready,
-                owner: owners[task],
+                owner: task_owner,
                 ring3_slot: slot,
                 ..EMPTY_TASK
             },
@@ -2132,6 +2144,11 @@ pub(crate) fn wake_up_to_tasks_waiting_on(on: Wait, limit: usize) -> usize {
 /// **BKL の内側（IF=0）で呼ぶ。** 合図で引く形は `wake_tasks_waiting_on` と同じで、鍵がスロットだけである。
 pub fn wake_futex_waiters_of_slot(slot: usize) -> usize {
     debug_assert!(crate::bkl::held_by_this_cpu());
+    // 破壊テスト (M3a の 3-2, process-end-keeps-futex-sleepers-test): 起こさない。`join` で眠る主スレッドが永久に残り、
+    // `m3a-exit-group-join-rust` で起動が止まる（3-1b で 1 回確かめた形を、検査の項目にした）。
+    if cfg!(feature = "process-end-keeps-futex-sleepers-test") {
+        return 0;
+    }
     let mut woken = 0;
     // 起こした本数は、起動ログの `futex:` の行（プロセスごと）に出る。**`thread:` の行には出さない**——ティックでスレッドが
     // 先に走ると主スレッドはまだ眠っておらず 0 になり、行が揺れる（実測）。`futex:` の行は伏せて範囲で見る。

@@ -622,6 +622,145 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         forbidden_markers: &["sti: interrupts are now enabled"],
         wait_for_full_timeout: false,
         min_heartbeats: None,
+    },    // **M3a の 3-2（2026-10-15）：スレッドの破壊テスト 8 件。** 目印は 2026-10-15 の実測で決めた（落ち方は
+    // `docs/verification-coverage.md` の feature の一覧）。どれも既定の起動（起動時の Linux の像の確かめ）で落ちる。
+    // 子が clone の戻り値を親の RAX（56）で読む。musl の __clone は 0 でない戻り値を親の道として扱い、子のスタックの番地へ ret する
+    // ——スレッドが命令フェッチの #PF で落ち、プロセスは Folded(14)、起動時の確かめが名指しして止まる。
+    CriticalTest {
+        name: "clone-keeps-parent-rax",
+        feature: "clone-keeps-parent-rax-test",
+        expected_markers: &[
+            "thread: tid 2 (task 6) faulted in ring 3 (vector 14, rip 0x10207aa0, cr2 0x10207aa0)",
+            "linux-check: /bin/linux/m3a-rust ended Ok(Folded(14)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &[
+            "m3a-rust: the thread runs",
+            "zash: ready",
+        ],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // スレッドの exit で CLONE_CHILD_CLEARTID の番地に 0 を書かない。親の join は番地が 0 になるまで FUTEX_WAIT し、起こす者が
+    // 居ないので行き詰まりの判定が 137 で終える。起動時の確かめが名指しして止まる。
+    CriticalTest {
+        name: "clone-no-clear-tid",
+        feature: "clone-no-clear-tid-test",
+        expected_markers: &[
+            "the clear-tid address was 0x475358 (0 written = false)",
+            "futex: /bin/linux/m3a-rust waited on 0x475358 (FUTEX_WAIT with the expected value) and there is no other thread to wake it",
+            "linux-check: /bin/linux/m3a-rust ended Ok(Exited(137)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &[
+            "m3a-rust: joined",
+            "zash: ready",
+        ],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // 池のタスクの FS の基底を 0 にする。スレッドは最初の TLS の参照（musl の pthread_self）で番地 0 を読み、#PF で落ちる。
+    // プロセスは Folded(14)、起動時の確かめが名指しして止まる。
+    CriticalTest {
+        name: "clone-no-settls",
+        feature: "clone-no-settls-test",
+        expected_markers: &[
+            "thread: tid 2 (task 6) faulted in ring 3 (vector 14, rip 0x4311b4, cr2 0x0)",
+            "linux-check: /bin/linux/m3a-rust ended Ok(Folded(14)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &[
+            "m3a-rust: the thread runs",
+            "zash: ready",
+        ],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // 池のタスクの担当を AP（cpu 1）にする。clone の入口の担当の検査（ADR-0085 の決定 5）が、最初の clone で名指しして止まる。
+    CriticalTest {
+        name: "thread-pool-owner-is-ap",
+        feature: "thread-pool-owner-is-ap-test",
+        expected_markers: &[
+            "[ERROR] thread: task 6 is owned by cpu 1, but its parent task 0 is owned by cpu 0 and clone runs on cpu 0",
+            "halting",
+        ],
+        forbidden_markers: &[
+            "thread: task 6 started",
+            "zash: ready",
+        ],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // プロセスの終わりで、残っているスレッドを終えず刈り取らない。終わったスレッドのタスクが壊される空間を指したまま残り、
+    // W1-b-2 の検査（forget_task_root_before_destroy）が最初のスレッドを持つプロセスで [ERROR] を出す。sched_yield で
+    // 回り続けるスレッドは Ready のまま残り、次の像（m3a-nested-clone-rust）の空間で走って #PF を起こす——その像が
+    // 1 回のシステムコールで Folded(14) になり、起動時の確かめが名指しして止まる。
+    CriticalTest {
+        name: "process-end-leaves-threads",
+        feature: "process-end-leaves-threads-test",
+        expected_markers: &[
+            "[ERROR] task: a task still pointed its cr3 at /bin/linux/m3a-rust's address space",
+            "linux-check: /bin/linux/m3a-nested-clone-rust ended Ok(Folded(14)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &[
+            "m3a-nested-clone-rust: joined",
+            "zash: ready",
+        ],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // スレッドを持つプロセスとスレッドからの spawn を断らない。主スレッドの spawn が同じスロットで /bin/ls を走らせ、その
+    // 終わりが（スロットの表を共有しているので）親のスレッドを「still runnable」として刈り取る。親の join は起こす者が
+    // 居ないので 137 になり、起動時の確かめが名指しして止まる（ADR-0085 の決定 3 が断る理由そのもの）。
+    CriticalTest {
+        name: "spawn-ignores-threads",
+        feature: "spawn-ignores-threads-test",
+        expected_markers: &[
+            "thread: 1 thread(s) of /bin/ls were still runnable when the process ended",
+            "m3a-spawn-from-thread-rust: spawn from the main thread while the thread is alive returned 0",
+            "linux-check: /bin/linux/m3a-spawn-from-thread-rust ended Ok(Exited(137)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &[
+            "refused with -EAGAIN",
+            "zash: ready",
+        ],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // プロセスの終わりの印で、同じスロットの futex の待ちを起こさない。m3a-exit-group-join-rust の主スレッドが join で眠った
+    // まま永久に残り、起動がそこで止まる。カーネルは報告できないので、時間切れまで待って「その後の行が無い」ことで見る
+    // （3-1b で 1 回確かめた形。docs/troubleshooting.md）。
+    CriticalTest {
+        name: "process-end-keeps-futex-sleepers",
+        feature: "process-end-keeps-futex-sleepers-test",
+        expected_markers: &[
+            "thread: tid 18 (task 6) ended the process through system call 231 with status 7",
+        ],
+        forbidden_markers: &[
+            "linux-check: /bin/linux/m3a-exit-group-join-rust ended",
+            "futex: /bin/linux/m3a-exit-group-join-rust slept",
+            "zash: ready",
+        ],
+        wait_for_full_timeout: true,
+        min_heartbeats: None,
+    },
+    // システムコールの入口で終了の印を見ない。m3a-exit-group-spin-rust の主スレッドが、スレッドの exit_group の後に join の
+    // futex へ入り、行き詰まりの判定が終了の状態を 137 で上書きする（3-1b で踏んだ形）。起動時の確かめが名指しして止まる。
+    CriticalTest {
+        name: "syscall-entry-ignores-process-end",
+        feature: "syscall-entry-ignores-process-end-test",
+        expected_markers: &[
+            "futex: /bin/linux/m3a-exit-group-spin-rust waited on",
+            "linux-check: /bin/linux/m3a-exit-group-spin-rust ended Ok(Exited(137)), wanted Exited(7)",
+            "halting",
+        ],
+        forbidden_markers: &[
+            "zash: ready",
+        ],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
     },
 ];
 
@@ -20453,6 +20592,67 @@ const BOOT_LOG_VOLATILE_FIELDS: &[VolatileField] = &[
         before: " woke ",
         after: " waiter(s)",
     },
+    // 3-2 の像（2026-10-15）のシステムコールの数と futex の眠り・起こし。
+    VolatileField {
+        line: "spawn: /bin/linux/m3a-exit-while-spinning-rust ended",
+        before: " after ",
+        after: " syscall(s)",
+    },
+    VolatileField {
+        line: "futex: /bin/linux/m3a-exit-while-spinning-rust slept",
+        before: " slept ",
+        after: " time(s)",
+    },
+    VolatileField {
+        line: "futex: /bin/linux/m3a-exit-while-spinning-rust slept",
+        before: " woke ",
+        after: " waiter(s)",
+    },
+    VolatileField {
+        line: "spawn: /bin/linux/m3a-nested-clone-rust ended",
+        before: " after ",
+        after: " syscall(s)",
+    },
+    VolatileField {
+        line: "futex: /bin/linux/m3a-nested-clone-rust slept",
+        before: " slept ",
+        after: " time(s)",
+    },
+    VolatileField {
+        line: "futex: /bin/linux/m3a-nested-clone-rust slept",
+        before: " woke ",
+        after: " waiter(s)",
+    },
+    VolatileField {
+        line: "spawn: /bin/linux/m3a-spawn-from-thread-rust ended",
+        before: " after ",
+        after: " syscall(s)",
+    },
+    VolatileField {
+        line: "futex: /bin/linux/m3a-spawn-from-thread-rust slept",
+        before: " slept ",
+        after: " time(s)",
+    },
+    VolatileField {
+        line: "futex: /bin/linux/m3a-spawn-from-thread-rust slept",
+        before: " woke ",
+        after: " waiter(s)",
+    },
+    VolatileField {
+        line: "spawn: /bin/linux/m3a-exit-group-spin-rust ended",
+        before: " after ",
+        after: " syscall(s)",
+    },
+    VolatileField {
+        line: "futex: /bin/linux/m3a-exit-group-spin-rust slept",
+        before: " slept ",
+        after: " time(s)",
+    },
+    VolatileField {
+        line: "futex: /bin/linux/m3a-exit-group-spin-rust slept",
+        before: " woke ",
+        after: " waiter(s)",
+    },
     // プロセスの終わりの印が起こした futex の待ちの本数（ティックでスレッドが先に走ると、主スレッドはまだ眠っていない）。
     VolatileField {
         line: "futex: /bin/linux/m3a-exit-group-join-rust slept",
@@ -20501,9 +20701,9 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         line: "spawn: /bin/linux/m3a-mutex-rust ended",
         before: " after ",
         after: " syscall(s)",
-        min: 111,
+        min: 110,
         max: 113,
-        what: "m3a-mutex-rust's system calls (measured 111 in 110 boots; room for one tick in musl's thread-list-lock window, +2)",
+        what: "m3a-mutex-rust's system calls (measured 110 or 111 in 113 boots: 111, or 110 when a tick let the thread finish between the unlock and the join so the join did not sleep; room for one tick in musl's thread-list-lock window, +2)",
     },
     BootLogRange {
         line: "spawn: /bin/linux/m3a-fault-rust ended",
@@ -20534,8 +20734,8 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         before: " after ",
         after: " syscall(s)",
         min: 56,
-        max: 61,
-        what: "m3a-exit-group-waiters-rust's system calls (measured 56..=59 in 104 boots: 58, moved by the sched_yield loops that wait for the flag; room for two more ticks)",
+        max: 63,
+        what: "m3a-exit-group-waiters-rust's system calls (measured 56..=60 in 107 boots: 58, moved by the sched_yield loops that wait for the flag, +2 per tick in musl's thread-list-lock window of either clone; room for both windows)",
     },
     BootLogRange {
         line: "thread: task ",
@@ -20630,16 +20830,16 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         before: " slept ",
         after: " time(s)",
         min: 1,
-        max: 2,
-        what: "m3a-exit-group-waiters-rust's futex sleeps (measured 1 or 2: the waiter's mutex and the main thread's join; 1 when a tick kept the main thread from the join before the ender exited)",
+        max: 4,
+        what: "m3a-exit-group-waiters-rust's futex sleeps (measured 1..=3: the waiter's mutex and the main thread's join; 1 when a tick kept the main thread from the join before the ender exited; +1 per tick in musl's thread-list-lock window of either clone)",
     },
     BootLogRange {
         line: "futex: /bin/linux/m3a-exit-group-waiters-rust slept",
         before: " woke ",
         after: " waiter(s)",
         min: 0,
-        max: 0,
-        what: "m3a-exit-group-waiters-rust's futex wakes (measured 0 in 107 boots; nobody unlocks)",
+        max: 2,
+        what: "m3a-exit-group-waiters-rust's futex wakes (measured 0 or 1: nobody unlocks; 1 per tick in musl's thread-list-lock window of either clone, paired with the sleep)",
     },
     BootLogRange {
         line: "futex: /bin/linux/m3a-exit-group-join-rust slept",
@@ -20656,6 +20856,102 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         min: 1,
         max: 2,
         what: "the sleepers the process end roused in m3a-exit-group-waiters-rust (measured 2 in 69 boots: the waiter and the main thread; 1 if a tick kept the main thread from the join)",
+    },
+    BootLogRange {
+        line: "spawn: /bin/linux/m3a-exit-while-spinning-rust ended",
+        before: " after ",
+        after: " syscall(s)",
+        min: 54,
+        max: 59,
+        what: "m3a-exit-while-spinning-rust's system calls (measured 55..=57 in 40 boots: the main thread's sched_yield loop that waits for the thread's flag moves with the ticks; room for one more tick each way)",
+    },
+    BootLogRange {
+        line: "spawn: /bin/linux/m3a-nested-clone-rust ended",
+        before: " after ",
+        after: " syscall(s)",
+        min: 119,
+        max: 124,
+        what: "m3a-nested-clone-rust's system calls (measured 119..=124 in 40 boots: 120; 119 when a tick let the inner thread finish before the outer's join; +2 per tick in musl's thread-list-lock window of either clone)",
+    },
+    BootLogRange {
+        line: "spawn: /bin/linux/m3a-spawn-from-thread-rust ended",
+        before: " after ",
+        after: " syscall(s)",
+        min: 44,
+        max: 48,
+        what: "m3a-spawn-from-thread-rust's system calls (measured 44..=46 in 40 boots: 45; 44 when a tick let the thread finish before the main thread's join; 46 when the thread's flag-wait loop yielded once more; room for musl's thread-list-lock window, +2)",
+    },
+    BootLogRange {
+        line: "spawn: /bin/linux/m3a-exit-group-spin-rust ended",
+        before: " after ",
+        after: " syscall(s)",
+        min: 37,
+        max: 39,
+        what: "m3a-exit-group-spin-rust's system calls (measured 37 or 38 in 40 boots: 38 in 39 of them; 37: the cause is not identified yet (2026-10-15, 1 of 40 boots; keep that boot's log and report it if it appears again); room for one tick above)",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-exit-while-spinning-rust slept",
+        before: " slept ",
+        after: " time(s)",
+        min: 0,
+        max: 0,
+        what: "m3a-exit-while-spinning-rust's futex sleeps (measured 0 in 40 boots; nobody joins and the thread never reaches pthread_exit)",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-exit-while-spinning-rust slept",
+        before: " woke ",
+        after: " waiter(s)",
+        min: 0,
+        max: 0,
+        what: "m3a-exit-while-spinning-rust's futex wakes (measured 0 in 40 boots)",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-nested-clone-rust slept",
+        before: " slept ",
+        after: " time(s)",
+        min: 0,
+        max: 3,
+        what: "m3a-nested-clone-rust's futex sleeps (measured 0..=3 in 40 boots: 1 for the outer's join on the inner; 0 when a tick let the inner finish first; +1 per tick in musl's thread-list-lock window of either clone)",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-nested-clone-rust slept",
+        before: " woke ",
+        after: " waiter(s)",
+        min: 0,
+        max: 3,
+        what: "m3a-nested-clone-rust's futex wakes (measured 0..=3 in 40 boots, paired with the sleeps)",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-spawn-from-thread-rust slept",
+        before: " slept ",
+        after: " time(s)",
+        min: 0,
+        max: 2,
+        what: "m3a-spawn-from-thread-rust's futex sleeps (measured 0..=2 in 40 boots: 1 for the main thread's join; 0 when a tick let the thread finish first; +1 for a tick in musl's thread-list-lock window)",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-spawn-from-thread-rust slept",
+        before: " woke ",
+        after: " waiter(s)",
+        min: 0,
+        max: 2,
+        what: "m3a-spawn-from-thread-rust's futex wakes (measured 0..=2 in 40 boots, paired with the sleeps)",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-exit-group-spin-rust slept",
+        before: " slept ",
+        after: " time(s)",
+        min: 0,
+        max: 0,
+        what: "m3a-exit-group-spin-rust's futex sleeps (measured 0 in 40 boots; the join's futex sees the end mark at the entry and never sleeps)",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-exit-group-spin-rust slept",
+        before: " woke ",
+        after: " waiter(s)",
+        min: 0,
+        max: 0,
+        what: "m3a-exit-group-spin-rust's futex wakes (measured 0 in 40 boots)",
     },
     BootLogRange {
         line: "user-destroy: /bin/linux/m3a-exit-group-waiters-rust returned",
@@ -21597,6 +21893,10 @@ const LINUX_PROGRAMS_IN_THE_BOOT_LOG: &[&str] = &[
     "m3a-exit-group-rust",
     "m3a-exit-group-join-rust",
     "m3a-exit-group-waiters-rust",
+    "m3a-exit-while-spinning-rust",
+    "m3a-nested-clone-rust",
+    "m3a-spawn-from-thread-rust",
+    "m3a-exit-group-spin-rust",
 ];
 
 /// `linux-programs/reference/<name>.txt`（Linux 上で控えた stdout と終了の状態）の各行が、`output` に順に在るか
@@ -33970,7 +34270,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 64,
-    full: 518,
+    full: 526,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。
@@ -36869,10 +37169,18 @@ thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack
 [INFO] futex: /bin/linux/m3a-exit-group-join-rust slept 1 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 1 sleeper(s)
 [INFO] futex: /bin/linux/m3a-exit-group-waiters-rust slept 2 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 2 sleeper(s)
 [INFO] user-destroy: /bin/linux/m3a-exit-group-waiters-rust returned 1220 frame(s) at once and quarantined 0 (0 wait(s), 0 released meanwhile, 0 leaked) in 8409908 cycle(s)
+[INFO] spawn: /bin/linux/m3a-exit-while-spinning-rust ended (Exited(4)) after 55 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
+[INFO] spawn: /bin/linux/m3a-nested-clone-rust ended (Exited(4)) after 120 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
+[INFO] spawn: /bin/linux/m3a-spawn-from-thread-rust ended (Exited(4)) after 45 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
+[INFO] spawn: /bin/linux/m3a-exit-group-spin-rust ended (Exited(7)) after 38 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
+[INFO] futex: /bin/linux/m3a-exit-while-spinning-rust slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
+[INFO] futex: /bin/linux/m3a-nested-clone-rust slept 1 time(s) and woke 1 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
+[INFO] futex: /bin/linux/m3a-spawn-from-thread-rust slept 1 time(s) and woke 1 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
+[INFO] futex: /bin/linux/m3a-exit-group-spin-rust slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 ";
         let (findings, seen) = super::check_boot_log_ranges("t", good);
         assert!(findings.is_empty(), "{findings:?}");
-        assert_eq!(seen, 23);
+        assert_eq!(seen, 35);
         let bad = good
             .replace("after 106 syscall", "after 300 syscall")
             .replace("used 3112 of", "used 40000 of");
