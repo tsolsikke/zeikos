@@ -1506,7 +1506,8 @@ pub fn load_user_program_with(
                 retired.released_others
             ));
         }
-        // **大きな空間の破棄は、道と掛かった時間を出す**（1,024 本以上。既定の起動には出ない）。揺れる値なので判定には使わない。
+        // **大きな空間の破棄は、道と掛かった時間を出す**（1,024 本以上。既定の起動では、スレッドを 2 本持つ
+        // `m3a-exit-group-waiters-rust` だけが越える。時間は起動ログの参照で伏せる——`xtask` の `BOOT_LOG_VOLATILE_FIELDS`）。揺れる値なので判定には使わない。
         if retired.collected() >= 1024 {
             logger.info(format_args!(
                 "user-destroy: {} returned {} frame(s) at once and quarantined {} ({} wait(s), {} released \
@@ -2484,12 +2485,16 @@ fn report_threads_ended_with_the_process(
 /// プロセスが走っている間に futex で眠った回数と起こした本数を 1 行出す（2026-10-14。`ADR-0081` の Addendum）。
 /// **`#[inline(never)]`** で、`format_args!` の一時値を [`run_loaded_program`] のフレームへ乗せない。
 #[inline(never)]
-fn report_futex_counts(logger: &mut Logger<Serial>, name: &str, before: (u64, u64)) {
-    let (sleeps, woken) = crate::syscall::futex_counts();
+fn report_futex_counts(logger: &mut Logger<Serial>, name: &str, before: (u64, u64, u64)) {
+    let (sleeps, woken, roused) = crate::syscall::futex_counts();
+    // **3 つ目は、プロセスの終わりの印が起こした futex の待ちの本数**（3-1b。`join` や `Mutex` で眠っていた主スレッドと
+    // スレッド）。ティックの位置で揺れる像は、`xtask` が伏せて範囲で見る。
     logger.info(format_args!(
-        "futex: {name} slept {} time(s) and woke {} waiter(s) (0 and 0 unless the program has threads)",
+        "futex: {name} slept {} time(s) and woke {} waiter(s) (0 and 0 unless the program has threads); the process end \
+         roused {} sleeper(s)",
         sleeps - before.0,
-        woken - before.1
+        woken - before.1,
+        roused - before.2
     ));
 }
 
@@ -3221,8 +3226,13 @@ pub fn spawn_with_loan(
     // **子の終わり方をここで読む。** 戻す前に読まなければ、親のもので上書きされる。
     // **中断を先に見る（S12 前の手当て、C）。** **`exit` も例外による終了処理も通っていない**
     // ので、先に見なければ `Folded(0)` に化ける。
+    // **畳んだ印を終了の印より先に見る（M3a の 3-1b。2026-10-14）**——スレッドが Ring 3 で例外を起こすと、記録はこのスロットに
+    // 書かれ、終了の印も立つ（主スレッドが出るための印）。終わり方は、主スレッドが同じ例外で終わるときと同じ
+    // `Folded(ベクタ)` である。
     let child = if crate::arch::x86_64::excursion_interrupted() {
         SpawnOutcome::Interrupted
+    } else if crate::arch::x86_64::folded() {
+        SpawnOutcome::Folded(crate::arch::x86_64::excursion_fault_number())
     } else if crate::syscall::process_exited() {
         SpawnOutcome::Exited(crate::syscall::process_exit_status())
     } else {

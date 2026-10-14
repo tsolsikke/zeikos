@@ -1,7 +1,7 @@
 #!/bin/sh
 # Linux 向けのプログラム（linux-programs/）を手で作る。
 #
-# - m1-rust・m3a-rust・m3a-mutex-rust: 既定の像にも入る（kernel/build.rs が rustc を直に呼ぶ）。ここでは、Linux の上で走らせて参照を控える
+# - m1-rust・m3a-*: 既定の像にも入る（kernel/build.rs が rustc を直に呼ぶ）。ここでは、Linux の上で走らせて参照を控える
 #   ための写しを作る。版は rust-toolchain.toml のもので、像の中身と同じバイトになる。
 # - m1-c: musl-gcc で作る。版が配布物（Ubuntu の musl）に依るので、既定の像には入れない。道具が無ければ名指しで飛ばす。
 #
@@ -11,7 +11,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 out=${1:-"$root/target/linux-programs"}
 mkdir -p "$out"
 
-for name in m1-rust m3a-rust m3a-mutex-rust; do
+for name in m1-rust m3a-rust m3a-mutex-rust m3a-fault-rust m3a-exit-group-rust m3a-exit-group-join-rust m3a-exit-group-waiters-rust; do
     rustc --edition 2021 --target x86_64-unknown-linux-musl \
         -C target-feature=+crt-static -C opt-level=2 -C strip=symbols \
         --remap-path-prefix="$root/linux-programs=linux-programs" \

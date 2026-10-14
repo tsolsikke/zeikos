@@ -1,0 +1,3 @@
+m3a-fault-rust: main starts with 4 argument(s)
+m3a-fault-rust: the thread writes to address 8 now
+exit status: 139

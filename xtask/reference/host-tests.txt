@@ -760,6 +760,7 @@ kernel::task::tests::a_task_with_no_user_space_loads_the_kernel_table
 kernel::task::tests::a_thread_tid_is_unique_per_pool_index_and_generation_and_never_one
 kernel::task::tests::a_wait_set_holds_more_than_one_reason
 kernel::task::tests::a_wait_set_is_a_set_and_has_a_limit
+kernel::task::tests::a_wait_set_matches_a_futex_of_its_slot_at_any_address
 kernel::task::tests::a_wait_set_only_looks_at_the_reasons_it_holds
 kernel::task::tests::an_application_processor_falls_back_to_its_own_idle_task
 kernel::task::tests::an_unrunnable_worker_is_skipped

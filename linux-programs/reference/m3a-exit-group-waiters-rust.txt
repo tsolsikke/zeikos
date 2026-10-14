@@ -1,0 +1,4 @@
+m3a-exit-group-waiters-rust: main starts with 4 argument(s)
+m3a-exit-group-waiters-rust: the waiter thread waits for the mutex now
+m3a-exit-group-waiters-rust: the ender thread calls exit_group(7) now
+exit status: 7

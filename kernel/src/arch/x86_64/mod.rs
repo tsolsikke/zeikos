@@ -59,7 +59,7 @@ pub use ring3::{
     excursion_recovery_belongs_to, excursion_recovery_belongs_to_slot, excursion_stack_budget,
     excursion_stack_capacity, excursion_stack_high_water, excursion_stack_range,
     excursion_stack_range_at, excursion_stack_range_for, excursion_stack_range_of,
-    excursion_stack_within_budget, install_excursion_guard_pages, leave_user_mode,
+    excursion_stack_within_budget, folded, install_excursion_guard_pages, leave_user_mode,
     note_kernel_entry_from_user, note_return_to_user, prepare_thread_excursion_state,
     restore_fold_record, run_excursion, save_fold_record, set_current_excursion_recovery,
     thread_task_in_ring3, ExcursionHome, MAX_EXCURSION_DEPTH, USER_TASK_SLOTS,

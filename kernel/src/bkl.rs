@@ -63,6 +63,10 @@ pub enum KernelEntry {
     ApBringUp,
     /// Ring 0 の定常ループのうち、共有物を触る区間。
     SteadyLoop,
+    /// 池のスレッドのタスクが Ring 3 で起こした例外を、スレッドを終える形で処理する間（M3a の 3-1b。2026-10-14）。
+    /// **例外の入口そのものは取らない**（[`NON_ACQUIRING_ENTRIES`] の `exception`）——取るのは、Ring 3 の例外で、
+    /// しかも池のタスクのものと分かった後の、欄を書いて切り替えるまでの短い区間だけである。
+    ThreadFault,
 }
 
 impl KernelEntry {
@@ -73,6 +77,7 @@ impl KernelEntry {
             KernelEntry::Syscall => "Syscall",
             KernelEntry::ApBringUp => "ApBringUp",
             KernelEntry::SteadyLoop => "SteadyLoop",
+            KernelEntry::ThreadFault => "ThreadFault",
         }
     }
 
@@ -83,6 +88,7 @@ impl KernelEntry {
             KernelEntry::Syscall => 1,
             KernelEntry::ApBringUp => 2,
             KernelEntry::SteadyLoop => 3,
+            KernelEntry::ThreadFault => 4,
         }
     }
 
@@ -93,6 +99,7 @@ impl KernelEntry {
             1 => Some(KernelEntry::Syscall),
             2 => Some(KernelEntry::ApBringUp),
             3 => Some(KernelEntry::SteadyLoop),
+            4 => Some(KernelEntry::ThreadFault),
             _ => None,
         }
     }
@@ -112,7 +119,9 @@ pub const NON_ACQUIRING_ENTRIES: &[(&str, &str)] = &[
          -> ! だが、Ring 3 の遠征の畳みだけは制御をカーネルへ戻す（ring3.rs）。\
          それでも安全なのは、遠征が AP 起こしより前の単一コア区間に閉じていて、\
          戻った先で他コアと競合しないからである。Ring 3 が定常状態で走る段（S9）で \
-         再評価する",
+         再評価する。例外が 1 つある（M3a の 3-1b）——池のスレッドのタスクが Ring 3 で \
+         起こした例外は、畳まずにスレッドを終える。その間だけ ThreadFault として取り、\
+         欄を書いたら解いてから切り替える（死なない区間に閉じている）",
     ),
     (
         "double fault",

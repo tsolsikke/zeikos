@@ -6636,8 +6636,61 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
         b"/bin/linux/m3a-mutex-rust",
         b"m3a-mutex-rust\0/etc/motd\0a\0b\0",
     );
+    // **スレッドの中の例外と、スレッドからの `exit_group` の像（M3a の 3-1b。2026-10-14）。** 終わり方は、主スレッドが同じ
+    // 例外で終わるときと同じ `Folded(14)` と、`exit_group(7)` の `Exited(7)` である（`thread:` の行が起動ログの参照に入る）。
+    verify_linux_program_ending(
+        logger,
+        b"/bin/linux/m3a-fault-rust",
+        b"m3a-fault-rust\0/etc/motd\0a\0b\0",
+        kernel::userland::SpawnOutcome::Folded(14),
+    );
+    verify_linux_program_ending(
+        logger,
+        b"/bin/linux/m3a-exit-group-rust",
+        b"m3a-exit-group-rust\0/etc/motd\0a\0b\0",
+        kernel::userland::SpawnOutcome::Exited(7),
+    );
+    // **主スレッドが `join` の futex で眠っている間に、スレッドが `exit_group` で終える像**（3-1b の直し 1。2026-10-14）。
+    // 印を立てたスレッドが同じスロットの futex の待ちを起こさなければ、主スレッドは永久に眠り、ここで起動が止まる。
+    // `waiters` は、主スレッドと別のスレッドの 2 本が futex で眠っている形（起きたスレッドは出口で印を見て Finished になる）。
+    verify_linux_program_ending(
+        logger,
+        b"/bin/linux/m3a-exit-group-join-rust",
+        b"m3a-exit-group-join-rust\0/etc/motd\0a\0b\0",
+        kernel::userland::SpawnOutcome::Exited(7),
+    );
+    verify_linux_program_ending(
+        logger,
+        b"/bin/linux/m3a-exit-group-waiters-rust",
+        b"m3a-exit-group-waiters-rust\0/etc/motd\0a\0b\0",
+        kernel::userland::SpawnOutcome::Exited(7),
+    );
     #[cfg(feature = "linux-c-test")]
     verify_linux_program(logger, b"/bin/linux/m1-c", b"m1-c\0/etc/motd\0a\0b\0");
+}
+
+/// [`verify_linux_programs`] の、終わり方を名指しする形（M3a の 3-1b。2026-10-14）。**`spawn` の結果が `wanted` と違えば
+/// 名指しして止まる。** 引数の数で終わる像は [`verify_linux_program`] が見る。
+fn verify_linux_program_ending(
+    logger: &mut Logger<Serial>,
+    path: &[u8],
+    argv: &[u8],
+    wanted: kernel::userland::SpawnOutcome,
+) {
+    let name = core::str::from_utf8(path).unwrap_or("<not utf-8>");
+    let outcome = kernel::userland::spawn(path, argv, 4, Some((b"", 0)));
+    if matches!(&outcome, Ok(ending) if *ending == wanted) {
+        logger.info(format_args!(
+            "linux-check: {name} ended {outcome:?}, the wanted ending (a thread ended the process; the lines it \
+             printed are compared with linux-programs/reference by the base check)"
+        ));
+        return;
+    }
+    logger.error(format_args!(
+        "linux-check: {name} ended {outcome:?}, wanted {wanted:?}; a thread's fault or exit_group did not end the \
+         process the way Linux does. halting"
+    ));
+    cpu::halt_forever();
 }
 
 /// 隔離の容量（256 フレーム）より多いフレームを持つプロセス（`/bin/frame-hog`。32 MiB の無名の `mmap`）を起こし、

@@ -107,7 +107,7 @@ Linuxと同じ分け方である。今の置き場からの移し方は、下の
 | `SyscallState`［スロット］ | `user_window_start`・`user_window_end` | プロセス（そのまま） | 窓はアドレス空間のもの |
 | `SyscallState`［スロット］ | `process_exited`・`process_exit_status` | プロセス（そのまま） | 「終わる」印を足す（第3項）。`exit`はスレッドの終わりへ分ける |
 | `SyscallState`［スロット］ | `futex_deadlock_address` | プロセス（そのまま） | 本当に待つ形にしても、眠ると誰も起こせない行き詰まりの検出に使うので残す（`ADR-0081`の2026-10-14のAddendum。当初は「消す」としていた） |
-| `SyscallState`［スロット］ | `handler_sp`・`in_ring3_at_entry`・`last_*`・`write_*`ほか診断の記録 | プロセス（そのまま） | 「最後に見た」の記録。スレッドで分ける必要が出たら分ける |
+| `SyscallState`［スロット］ | `handler_sp`・`in_ring3_at_entry`・`last_*`・`write_*`ほか診断の記録 | プロセス（そのまま） | 「最後に見た」の記録。スレッドで分ける必要が出たら分ける。`handler_sp`は主スレッドの入口だけが書く（3-1b。スレッドの入口も書くと、最後に入った側で`spawn:`の行が揺れた） |
 | `ProcessState`［スロット］［深さ］ | `actions`・`exec_name`・`exec_name_len` | プロセス（そのまま） | |
 | `ProcessState`［スロット］［深さ］ | `blocked`・`alt_stack`・`tid_address` | スレッド | Linuxではスレッドごと。シグナルのマスクと代替スタックの課題で移す |
 | `MemoryMap`［スロット］［深さ］ | （全部） | プロセス（そのまま） | |
@@ -188,5 +188,10 @@ M3aの実装は、次の順で分ける。大きさは、1つの課題でfull ch
 - **スレッドがスレッドを作ること（池のタスクからの`clone`）は許す。** Linuxと同じで、muslもライブラリの中のスレッドから`pthread_create`を呼びうる。子は作った側のプロセス（スロットと深さ）に属し、担当は作った側と同じBSPである（起こすときに確かめる）。3-2で試す項目にする。
 - **プロセスの終わりの刈り取りは「全部BSP」に依る**（上の一覧に足した）。`Finished`にしてから刈り取るまでの間に別のCPUがそのタスクを走らせないことを、走っているのが主スレッドだけであることで言っている。「2 CPU以上」の段で見直す。
 - **カーネルの中で止まっているスレッドの枠を捨てても安全な理由は、`finish_threads_of_slot`のdocに書いた**——スレッドから届く`yield_now`の呼び手を全部挙げ、どれも譲る前にBKLを解き、枠に`Drop`の要るものを残さない。`InterruptGuard`は`on_yield`の深さの検査が、BKLは池のタスクの譲りの検査（`yield_now`が割り込みを起こす前に見る。`report_thread_yield_with_bkl`）が機械で止める。
-- **異常の道（スレッドの中の例外・池のタスクからの`exit_group`・`tkill`・`futex`の行き詰まり・Ctrl+C・正準でない戻り先）は、この段では名指しして止まる**（`leave_user_mode`が、池のタスクには回復点が無いことで止める）。形は次の段で決める。
+- **異常の道（3-1b。2026-10-14）。** 池のタスクは回復点を持たないので、どの道も「スレッドを`Finished`にして切り替え、プロセスの終わりは主スレッドに任せる」形である。
+  - スレッドの中の例外（Ring 3の例外）：`record_and_fold`が記録をスレッドの置き場とプロセスのスロットの両方に書き、共通の側（`finish_thread_task_on_fault`）がプロセスを終わらせる印を立て、スレッドを`Finished`にして切り替える。主スレッドは次のシステムコールの戻りで出て、終わり方は主スレッドが同じ例外で終わるときと同じ`Folded(ベクタ)`（畳んだ印を終了の印より先に見る）。例外の入口はBKLを取らないので、この区間だけ`KernelEntry::ThreadFault`として取り、欄を書いたら解いてから切り替える（例外の入口から`yield_now`で切り替える新しい道。捨てる枠に`Drop`の要るものが無いことは、スレッドの`exit`と同じ形でdocと`debug_assert!`で示す）。カーネルの中の例外は今までどおり止まる。
+  - 池のタスクからの`exit_group`・`tkill`・`futex`の行き詰まり：`dispatch`が立てた印（`process_exited`と終了の状態）をスロットの表に残し、そのスレッドを`Finished`にして切り替える（`end_thread_after_process_exit`）。主スレッドは次のシステムコールの入口で見て、実行せずに出る（印の後に入った池のスレッドのタスクも同じ）。**印を立てたスレッドは、同じスロットのfutexの待ちを番地を問わず全部起こす**（`wake_futex_waiters_of_slot`。例外の道も同じ）——`join`や`Mutex`のfutexで眠っている主スレッドは起きて`futex`の戻りで印を見て出る。起きた側が別のスレッドなら、入口か戻りで印を見て`Finished`になる（印の後に入ったスレッドも、入口で見て何も実行せずに終わる）。パイプ・キーボード・タイマで待っている主スレッドは起こさない（`docs/deferred-decisions.md`）。
+  - Ctrl+C：割り込まれたのが池のタスクなら畳まず、フラグも消費しない。主スレッドが次にRing 3で割り込まれたときに畳む。
+  - 想定の外（上の道を通らずに`leave_user_mode`へ来る形）は、今までどおり名指しして止まる。
+  - 確かめは`linux-programs/m3a-fault-rust.rs`（スレッドが番地8へ書く。`Folded(14)`）、`linux-programs/m3a-exit-group-rust.rs`（スレッドが`exit_group(7)`。`Exited(7)`）、`linux-programs/m3a-exit-group-join-rust.rs`（主スレッドが`join`のfutexで眠っている間にスレッドが`exit_group(7)`。起こさなければ起動が止まる）、`linux-programs/m3a-exit-group-waiters-rust.rs`（主スレッドと別のスレッドの2本がfutexで眠っている間に第3のスレッドが`exit_group(7)`）で、起動のたびにカーネルが起こす。
 

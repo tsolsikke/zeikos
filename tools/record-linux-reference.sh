@@ -29,4 +29,8 @@ record() {
 record m1-rust
 record m3a-rust
 record m3a-mutex-rust
+record m3a-fault-rust
+record m3a-exit-group-rust
+record m3a-exit-group-join-rust
+record m3a-exit-group-waiters-rust
 record m1-c

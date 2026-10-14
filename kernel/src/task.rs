@@ -506,6 +506,14 @@ impl WaitSet {
             .any(|reason| !matches!(reason, Wait::Futex { .. }))
     }
 
+    /// そのスロット（プロセス）の futex の理由が入っているか（番地は問わない。プロセスの終わりの印で、同じスロットの
+    /// futex の待ちを全部起こす `wake_futex_waiters_of_slot`。M3a の 3-1b）。
+    pub fn waits_on_a_futex_of_slot(&self, slot: u8) -> bool {
+        self.reasons[..self.len as usize]
+            .iter()
+            .any(|reason| matches!(reason, Wait::Futex { slot: s, .. } if *s == slot))
+    }
+
     /// 1 本も入っていないか。
     pub fn is_empty(&self) -> bool {
         self.len == 0
@@ -1437,6 +1445,82 @@ pub fn mark_current_thread_finished(status: u64, cleared: Option<u64>) -> usize 
     index
 }
 
+/// 池のスレッドのタスクが Ring 3 で例外を起こした（M3a の 3-1b。2026-10-14。`ADR-0085` の Addendum）。**戻らない。**
+///
+/// 記録はもう書かれている（`arch` の `record_and_fold` が、スレッドの置き場とプロセスのスロットの両方に）。ここでは、
+/// プロセスを終わらせる印を立て（主スレッドが次のシステムコールの入口か戻りで見て、`Folded(ベクタ)` で出る。主スレッドが同じ
+/// 例外で終わるときと同じ符号）、スレッドを `Finished` にして、切り替えて二度と戻らない。
+///
+/// # 例外の入口から切り替える（新しい道）
+///
+/// 例外の入口は BKL を取らない（`crate::bkl` の `NON_ACQUIRING_ENTRIES`）。**ここで `ThreadFault` として取り、欄を書いたら
+/// 解いてから切り替える**——捨てる枠（例外の入口の文脈と、この関数の枠）に BKL のガードを残さない。IF=0（割り込みゲート）
+/// なので、`yield_now` はソフトウェア割り込みでそのまま切り替えられる（`sys_read` の待ちと同じ）。
+///
+/// **捨てる枠に `Drop` の要るものが無い**——例外の入口（`exception_entry`）の局所は、文脈への参照・シリアル（`Drop` を持た
+/// ない）・整数だけで、ロックのガード・`Box`・`Vec` は無い。この関数の局所は BKL のガード（解いてから切り替える）と整数だけ。
+/// `park_finished_thread_task` が、BKL と `InterruptGuard` を持っていないことを `debug_assert!` で確かめる。
+///
+/// **呼ぶのは `arch` の `record_and_fold` だけである**（Ring 3 の例外で、置き場が池のタスクのとき。カーネルの中の例外は
+/// 今までどおり止まる）。
+///
+/// 引数は CPU によらない名前で受ける（例外の番号・命令のアドレス・例外のアドレス）。行の文言は x86 の言葉のままである
+/// （`arch` の側の記録と同じ名前で読めるように）——共通の側で数えるのはコードの語だけで、文言は数えない。
+pub fn finish_thread_task_on_fault(
+    index: usize,
+    fault_number: u64,
+    instruction_address: u64,
+    fault_address: u64,
+) -> ! {
+    let bkl = crate::bkl::acquire(crate::bkl::KernelEntry::ThreadFault);
+    crate::syscall::mark_process_ended_by_thread_fault();
+    // **同じスロットの futex の待ちを全部起こす**（[`wake_futex_waiters_of_slot`]）。主スレッドが `join` で眠っていれば、
+    // 起きて `futex` の戻りで印を見て出る。本数は `futex:` の行に出る。
+    wake_futex_waiters_of_slot(current_ring3_slot());
+    let task = THREAD_TASK_FIRST + index;
+    serial_line(format_args!(
+        "thread: tid {} (task {task}) faulted in ring 3 (vector {fault_number}, rip {instruction_address:#x}, cr2 \
+         {fault_address:#x}); the process ends as folded({fault_number}) at the main thread's next system call",
+        thread_tid(index)
+    ));
+    scheduler::set_state(task, TaskState::Finished);
+    drop(bkl);
+    park_finished_thread_task()
+}
+
+/// 池のスレッドのタスクが、プロセスを終わらせる印の立った状態でシステムコールの入口に居る（M3a の 3-1b。2026-10-14）。
+/// **`Finished` にして池の番号を返す。** 印（`process_exited` と終了の状態）はスロットの表に在り、主スレッドが次の
+/// システムコールの入口か戻りで見て出る。**BKL の内側で呼ぶ**（システムコールの入口）。切り替えて戻らないのは呼び手が
+/// [`park_finished_thread_task`] で行う。
+///
+/// `ended_it` が真なら、この呼び出し（`exit_group`・`tkill`・`futex` の行き詰まり）が印を立てた側である——**同じスロットの
+/// futex の待ちを全部起こす**（[`wake_futex_waiters_of_slot`]）。偽なら、印は別のスレッドが立てていて、このスレッドは
+/// システムコールの入口か戻りでそれを見ただけである（起こされた側か、印の後に入った側）。起こすのは立てた側だけでよい。
+pub fn mark_current_thread_finished_after_process_exit(
+    number: u64,
+    status: u64,
+    ended_it: bool,
+) -> usize {
+    let index = current_thread_index().expect("only a thread task ends the process this way");
+    let task = THREAD_TASK_FIRST + index;
+    debug_assert!(crate::bkl::held_by_this_cpu());
+    scheduler::set_state(task, TaskState::Finished);
+    if ended_it {
+        wake_futex_waiters_of_slot(current_ring3_slot());
+        serial_line(format_args!(
+            "thread: tid {} (task {task}) ended the process through system call {number} with status {status}; the \
+             process ends at the main thread's next system call",
+            thread_tid(index)
+        ));
+    } else {
+        serial_line(format_args!(
+            "thread: tid {} (task {task}) found the process ended at system call {number}; it is finished",
+            thread_tid(index)
+        ));
+    }
+    index
+}
+
 /// `Finished` にした池のタスクが、切り替えて二度と戻らない（スレッドの `exit` の出口。M3a）。
 ///
 /// # 捨てるカーネルスタックの枠に、`Drop` の要るものを残さない
@@ -2033,6 +2117,45 @@ pub(crate) fn wake_up_to_tasks_waiting_on(on: Wait, limit: usize) -> usize {
         WAKES_ISSUED.fetch_add(woken as u64, Ordering::Relaxed);
     }
     woken
+}
+
+/// そのスロット（プロセス）の futex で待つタスクを、番地を問わず全部起こす（M3a の 3-1b。2026-10-14。`ADR-0085` の
+/// Addendum）。**起こした本数を返す。** 空振りの起こしである——futex の仕様は空振りを許し、起きた側は値を見直して
+/// また待つか、システムコールの出口で印を見て出る。
+///
+/// **呼ぶのは、スレッドがプロセスを終わらせる印を立てた所である**（`finish_thread_task_on_fault` と、`exit_group`・`tkill`・
+/// `futex` の行き詰まりの出口）。主スレッドが `join` や `Mutex` の futex で眠っている間にスレッドがプロセスを終わらせると、
+/// 起こす者が居ない——印は次のシステムコールで見るので、眠ったままでは永久に終わらず、Ctrl+C も届かない。
+/// 起きた主スレッドは `futex` の戻りで印を見て出る。起きた側が別のスレッドなら、同じ出口で印を見て `Finished` になる。
+/// **パイプ・キーボード・タイマの待ちは起こさない**（起こしても眠り直す。`docs/deferred-decisions.md`）。
+///
+/// **BKL の内側（IF=0）で呼ぶ。** 合図で引く形は `wake_tasks_waiting_on` と同じで、鍵がスロットだけである。
+pub fn wake_futex_waiters_of_slot(slot: usize) -> usize {
+    debug_assert!(crate::bkl::held_by_this_cpu());
+    let mut woken = 0;
+    // 起こした本数は、起動ログの `futex:` の行（プロセスごと）に出る。**`thread:` の行には出さない**——ティックでスレッドが
+    // 先に走ると主スレッドはまだ眠っておらず 0 になり、行が揺れる（実測）。`futex:` の行は伏せて範囲で見る。
+    for index in 0..TASK_COUNT {
+        if let TaskState::Waiting(set) = scheduler::state(index) {
+            if set.waits_on_a_futex_of_slot(slot as u8) {
+                scheduler::set_state(index, TaskState::Ready);
+                woken += 1;
+            }
+        }
+    }
+    if woken > 0 {
+        WAKES_ISSUED.fetch_add(woken as u64, Ordering::Relaxed);
+        PROCESS_END_WAKES.fetch_add(woken as u64, Ordering::Relaxed);
+    }
+    woken
+}
+
+/// プロセスの終わりの印が起こした futex の待ちの本数の累計（[`wake_futex_waiters_of_slot`]。計測）。
+static PROCESS_END_WAKES: AtomicU64 = AtomicU64::new(0);
+
+/// `PROCESS_END_WAKES` の値。`crate::syscall::futex_counts` が返し、`crate::userland` がプロセスごとの差を出す。
+pub fn process_end_wakes() -> u64 {
+    PROCESS_END_WAKES.load(Ordering::Relaxed)
 }
 
 /// 今のタスクが futex で眠ったとき、同じプロセス（スロット `slot`）のほかのタスクが起こしうるか（`ADR-0081` の
@@ -4469,6 +4592,32 @@ mod tests {
                 }
             }
         }
+    }
+
+    /// プロセスの終わりの印で起こすのは、同じスロットの futex の理由を持つ集合だけである（番地は問わない。別のスロットの
+    /// futex と、futex 以外の理由は引かない。M3a の 3-1b）。
+    #[test]
+    fn a_wait_set_matches_a_futex_of_its_slot_at_any_address() {
+        use super::{Wait, WaitSet};
+        let own = WaitSet::single(Wait::Futex {
+            slot: 0,
+            address: 0x1000,
+        });
+        assert!(own.waits_on_a_futex_of_slot(0));
+        assert!(!own.waits_on_a_futex_of_slot(1));
+        let other_slot = WaitSet::single(Wait::Futex {
+            slot: 1,
+            address: 0x1000,
+        });
+        assert!(!other_slot.waits_on_a_futex_of_slot(0));
+        assert!(!WaitSet::single(Wait::PipeReadable { pipe: 0 }).waits_on_a_futex_of_slot(0));
+        let mut mixed = WaitSet::single(Wait::Keyboard);
+        assert!(mixed.push(Wait::Futex {
+            slot: 2,
+            address: 0x2000,
+        }));
+        assert!(mixed.waits_on_a_futex_of_slot(2));
+        assert!(!mixed.waits_on_a_futex_of_slot(0));
     }
 
     /// futex の行き詰まりの判定（`ADR-0081` の Addendum）——同じスロットに `Ready` か futex 以外で待つタスクが居るときだけ

@@ -1373,19 +1373,56 @@ pub unsafe fn record_and_fold(
     handler_rsp: u64,
 ) -> ! {
     // **1 回だけ引く（W1-c-3。[`run_excursion`] の同じ箇所の注記）。**
-    let state = state();
-    state.fault_vector.store(fault_vector, Ordering::SeqCst);
-    state.fault_rip.store(fault_rip, Ordering::SeqCst);
-    state.fault_cs.store(fault_cs, Ordering::SeqCst);
-    state.fault_cr2.store(fault_cr2, Ordering::SeqCst);
-    state
-        .fault_error_code
-        .store(fault_error_code, Ordering::SeqCst);
-    state.fault_rsp.store(fault_rsp, Ordering::SeqCst);
-    state.handler_rsp.store(handler_rsp, Ordering::SeqCst);
-    state.folded.store(true, Ordering::SeqCst);
+    let record = FaultRecord {
+        fault_vector,
+        fault_cs,
+        fault_rip,
+        fault_rsp,
+        fault_cr2,
+        fault_error_code,
+        handler_rsp,
+    };
+    record.store_into(state());
+    // **池のスレッドのタスクの Ring 3 の例外は、畳まずにスレッドを終える**（M3a の 3-1b。2026-10-14。`ADR-0085` の
+    // Addendum）。池のタスクは回復点を持たない。記録はプロセス（スロット）の遠征の状態にも書く——主スレッドが次の
+    // システムコールの戻りで出た後、プロセスの終わり方を `Folded(ベクタ)` として読むのは、スロットの状態だからである
+    // （`crate::userland` の `excursion_fault_number`）。終える本体は共通の側（`crate::task`）。
+    if let ExcursionHome::Thread(index) = current_home() {
+        record.store_into(&EXCURSION_STATE[current_excursion_slot()]);
+        crate::task::finish_thread_task_on_fault(index, fault_vector, fault_rip, fault_cr2);
+    }
     // SAFETY: 呼び出し側契約により遠征中で、RECOVERY は保存済み。
     unsafe { leave_user_mode() }
+}
+
+/// 例外による終了処理の記録の 1 組（[`record_and_fold`] が書く）。**書く先が 2 つになったので型にした**（スレッドの置き場と、
+/// そのスレッドのプロセスのスロット）。
+struct FaultRecord {
+    fault_vector: u64,
+    fault_cs: u64,
+    fault_rip: u64,
+    fault_rsp: u64,
+    fault_cr2: u64,
+    fault_error_code: u64,
+    handler_rsp: u64,
+}
+
+impl FaultRecord {
+    /// `state` へ書き、畳んだ印を立てる。
+    fn store_into(&self, state: &ExcursionState) {
+        state
+            .fault_vector
+            .store(self.fault_vector, Ordering::SeqCst);
+        state.fault_rip.store(self.fault_rip, Ordering::SeqCst);
+        state.fault_cs.store(self.fault_cs, Ordering::SeqCst);
+        state.fault_cr2.store(self.fault_cr2, Ordering::SeqCst);
+        state
+            .fault_error_code
+            .store(self.fault_error_code, Ordering::SeqCst);
+        state.fault_rsp.store(self.fault_rsp, Ordering::SeqCst);
+        state.handler_rsp.store(self.handler_rsp, Ordering::SeqCst);
+        state.folded.store(true, Ordering::SeqCst);
+    }
 }
 
 /// Ring 3 を出てカーネルへ戻る（S9-b-3-1）。**戻らない。**
@@ -1421,9 +1458,9 @@ pub unsafe fn record_and_fold(
 /// Ring 3 から入ったカーネル文脈から呼ぶこと。
 pub unsafe fn leave_user_mode() -> ! {
     // **池のスレッドのタスクには回復点が無い（M3a。2026-10-14）**——スレッドの `exit` は切り替えで出る
-    // （`crate::task::park_finished_thread_task`）。ここへ来るのは、スレッドの中の例外・Ctrl+C・プロセスを終わらせる呼び出し
-    // （`exit_group`・`tkill`・`futex` の行き詰まり）・正準でない戻り先で、どれも次の段（異常の道）で形を決める。
-    // **それまでは名指しして止まる**（0 へ longjmp して黙って壊れる形にしない）。
+    // （`crate::task::park_finished_thread_task`）。スレッドの中の例外（[`record_and_fold`]）・プロセスを終わらせる
+    // 呼び出し（`crate::syscall` の入口）・Ctrl+C（`crate::interrupts` は池のタスクでは畳まない）は、3-1b でそれぞれの
+    // 道を持つので、ここへは来ない。**来たら想定の外で、名指しして止まる**（0 へ longjmp して黙って壊れる形にしない）。
     if let ExcursionHome::Thread(index) = current_home() {
         report_thread_task_without_a_recovery(index);
     }
@@ -1435,14 +1472,14 @@ pub unsafe fn leave_user_mode() -> ! {
 
 /// 池のスレッドのタスクが、回復点への longjmp で Ring 3 を出ようとした（M3a。2026-10-14）。**止める。**
 ///
-/// **名指しの行である**——`thread task` と `has no recovery point` が目印（スレッドの中の例外・Ctrl+C・プロセスを
-/// 終わらせる呼び出しは、次の段で形を決める）。
+/// **名指しの行である**——`thread task` と `has no recovery point` が目印。3-1b で、スレッドの中の例外・プロセスを終わらせる
+/// 呼び出し・Ctrl+C はそれぞれ別の道を持ったので、ここへ来るのは想定の外である。
 #[inline(never)]
 #[cold]
 fn report_thread_task_without_a_recovery(index: usize) -> ! {
     panic!(
-        "ring3: thread task {index} (pool index) has no recovery point to leave user mode through; a fault, \
-         Ctrl+C or a process-ending call from a thread task is not handled yet (the next stage); halting"
+        "ring3: thread task {index} (pool index) has no recovery point to leave user mode through; every known way \
+         out of a thread task is handled before this point, so this is unexpected; halting"
     );
 }
 

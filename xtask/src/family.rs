@@ -235,6 +235,12 @@ pub const PATH_RULES: &[PathRule] = &[
             // **スレッドを 1 つ作る像**（M3a。2026-10-14。起動時の `linux-check` が `m1-rust` の次に起こす）。
             "linux-programs/m3a-rust.rs",
             "linux-programs/m3a-mutex-rust.rs",
+            // **スレッドの中の例外と、スレッドからの exit_group の像**（M3a の 3-1b。2026-10-14）。
+            "linux-programs/m3a-fault-rust.rs",
+            "linux-programs/m3a-exit-group-rust.rs",
+            // **主スレッドが join の futex で眠る間に、スレッドが exit_group で終える像**（3-1b の直し 1）。
+            "linux-programs/m3a-exit-group-join-rust.rs",
+            "linux-programs/m3a-exit-group-waiters-rust.rs",
             "kernel/userland/chello.c",
             "kernel/userland/dbfault.c",
             "kernel/userland/fp*.c",

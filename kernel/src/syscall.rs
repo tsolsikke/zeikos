@@ -35,7 +35,7 @@
 //! **第 4 引数を RCX から読む `syscall-test-arg4-rcx` と、戻り値の書き戻しを落とす `syscall-test-drop-retval` は、
 //! レジスタの形と一緒に [`crate::abi::linux::x86_64`] にある。**
 
-use core::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 
 use common::addr::{DirectMap, PhysAddr};
 
@@ -354,6 +354,10 @@ struct SyscallState {
     /// [`SYS_EXIT`] を受け取ったか（S9-b-3-1）。**呼び出し側は、遠征から戻った理由が
     /// 終了なのか例外による終了処理なのかをこれで区別する。**
     process_exited: AtomicBool,
+    /// 印を立てた側（M3a の 3-1b。2026-10-14）。池のスレッドのタスクなら池の添字、主スレッドなら [`NO_THREAD`]。
+    /// **印を立てたスレッドだけが、同じスロットの futex の待ちを起こす**（[`end_thread_after_process_exit`]）——眠っている
+    /// 間に別のスレッドが印を立てた側と、入口の前後の値では見分けられない（眠る `futex` は、入口では印が無く、戻りでは在る）。
+    process_end_setter: AtomicUsize,
     /// [`SYS_EXIT`] が受け取った終了状態（RDI）。[`SyscallState::process_exited`] が真のときだけ意味を持つ。
     process_exit_status: AtomicU64,
     /// `futex` の `FUTEX_WAIT` で、値が同じで待つ場面になった番地（2026-10-06）。**起こすスレッドが居ないので、
@@ -370,7 +374,8 @@ struct SyscallState {
     last_number: AtomicU64,
     /// 直近に受け取った 6 引数（RDI/RSI/RDX/R10/R8/R9）。PROBE_ARGS と突き合わせる。
     last_args: [AtomicU64; 6],
-    /// `syscall_entry` が走ったときの RSP（RSP0 スタックのはず）。読み戻し検証に使う。
+    /// `syscall_entry` が走ったときの RSP（RSP0 スタックのはず）。読み戻し検証に使う。**主スレッドの入口だけが書く**
+    /// （池のスレッドのタスクの入口は書かない。M3a の 3-1b）。
     handler_sp: AtomicU64,
     /// 入場時点の [`crate::arch::x86_64::ring3`] の「今 Ring 3 にいる」の値（S8-b）。**Ring 3 から
     /// 来たのなら真のはず**で、往復検証が突き合わせる。
@@ -389,6 +394,7 @@ impl SyscallState {
             user_window_start: AtomicU64::new(0),
             user_window_end: AtomicU64::new(0),
             process_exited: AtomicBool::new(false),
+            process_end_setter: AtomicUsize::new(NO_THREAD),
             process_exit_status: AtomicU64::new(0),
             futex_deadlock_address: AtomicU64::new(0),
             invocation_count: AtomicU64::new(0),
@@ -1122,7 +1128,7 @@ unsafe fn dispatch(
             #[cfg(feature = "user-exit-wrong-status")]
             let status = args[1];
             state().process_exit_status.store(status, Ordering::SeqCst);
-            state().process_exited.store(true, Ordering::SeqCst);
+            mark_process_exited();
             // **溜まっている描画を送る（ADR-0047）。**
             //
             // **待たずに終わるプログラムを取りこぼさない**——`cat` と `ls` は
@@ -3855,7 +3861,13 @@ pub(crate) unsafe extern "sysv64" fn syscall_entry(
     for (slot, value) in state.last_args.iter().zip(request.args.iter()) {
         slot.store(*value, Ordering::SeqCst);
     }
-    state.handler_sp.store(sp_at_call, Ordering::SeqCst);
+    // **池のスレッドのタスクの入口は記録しない**（M3a の 3-1b。2026-10-14）。この欄はスロットに 1 つで、主スレッドの入口が
+    // 遠征のスタック（RSP0）に載ったことを `spawn` の行が読む。スレッドの入口は自分のカーネルスタックに載るので、書くと
+    // 「最後に入ったのがどちらか」で行が変わる（ティックの位置で揺れた）。スレッドの入口がそのスタックに載ったことは、
+    // 刈り取りの行の使った量（`thread: … reaped; it used …`。0 なら範囲の外）が見る。
+    if crate::task::current_thread_index().is_none() {
+        state.handler_sp.store(sp_at_call, Ordering::SeqCst);
+    }
 
     // ポインタ検証のため、稼働中テーブルの PML4 物理と登録 direct map を用意する。
     let direct_map = common::addr::direct_map();
@@ -3885,8 +3897,22 @@ pub(crate) unsafe extern "sysv64" fn syscall_entry(
     // **[`SYS_SPAWN`] だけは、この関数が持つ。** BKL を解いてから入る必要があり、
     // ガードはここのローカルである（[`spawn_from_ring3`]）。
     //
+    // **入口でも印を見る**（M3a の 3-1b。2026-10-14）。別のスレッドがプロセスを終わらせた後に入ったなら、何も実行しない
+    // （Linux も次のカーネルへの入口で止める）——池のスレッドのタスクならそのスレッドだけを終え、主スレッドなら下の分岐で
+    // 出る。**実行してから見る形では、主スレッドの `join` の `futex` が「起こす者が居ない」と判定されて 137 で上書きした**
+    // （実測。ティックでスレッドが先に走って `exit_group` を打った後、主スレッドが `join` に入った回）。
+    #[cfg(not(feature = "user-exit-ignored"))]
+    let exited_at_entry = state.process_exited.load(Ordering::SeqCst);
+    #[cfg(feature = "user-exit-ignored")]
+    let exited_at_entry = false;
+    if exited_at_entry && crate::task::current_thread_index().is_some() {
+        end_thread_after_process_exit(request.number, &mut bkl);
+    }
+
     // SAFETY: page_table_root / direct_map は稼働中テーブルのもので、walk の契約を満たす。
-    let ret = if request.number == SYS_CLONE {
+    let ret = if exited_at_entry {
+        0
+    } else if request.number == SYS_CLONE {
         // **[`SYS_CLONE`] もこの関数が持つ**——親の文脈を写す（[`clone_from_ring3`]）。
         // SAFETY: 同上。`ctx` は Ring 3 からこのシステムコールで入った文脈で、BKL の内側である。
         unsafe { clone_from_ring3(ctx, &request.args, page_table_root, direct_map) }
@@ -3946,15 +3972,18 @@ pub(crate) unsafe extern "sysv64" fn syscall_entry(
 
     // **プロセスを終わらせる呼び出しは、Ring 3 へ返らない。** `exit` と `exit_group`（2026-10-06 に足した。スレッドが
     // 無い間は同じ）と、`futex` の待つ場面（起こす者が居ないので終わらせる。`dispatch` が終了の印を立てる）である。
-    // **見るのは番号ではなく、終了の印である**——どの経路でも、印が立っていれば返らない。
+    // **見るのは番号ではなく、終了の印である**——どの経路でも、印が立っていれば返らない。**入口で立っていた印も
+    // ここで見る**（上の `exited_at_entry`。実行せずにここへ来る）。
     //
     // 破壊テスト (S9-b-3-1, user-exit-ignored): 終了させずに Ring 3 へ返す。プロセスは
     // `exit` の直後に置いた `ud2` へ落ち、ベクタ 6 の例外による終了処理として現れる。
     #[cfg(not(feature = "user-exit-ignored"))]
     if state.process_exited.load(Ordering::SeqCst) {
-        // **池のスレッドのタスクからは、この段では名指しして止まる**（M3a。[`report_process_end_from_thread_task`]）。
-        if let Some(index) = crate::task::current_thread_index() {
-            report_process_end_from_thread_task(index, request.number);
+        // **池のスレッドのタスクからは、印を主スレッドへ残して、そのスレッドだけを終える**（M3a の 3-1b。
+        // [`end_thread_after_process_exit`]）。印をこの呼び出しが立てたのなら、同じスロットの futex の待ちを起こすのもここ
+        // である（立てた側は `process_end_setter` で見る）。
+        if crate::task::current_thread_index().is_some() {
+            end_thread_after_process_exit(request.number, &mut bkl);
         }
         // **BKL は自分で解く。** 下の `leave_user_mode` は longjmp で、`Drop` を
         // 走らせない。**取ったまま戻ると、二度と解かれない。**
@@ -5505,7 +5534,7 @@ fn sys_tkill(tid: u64, sig: u64) -> u64 {
     state()
         .process_exit_status
         .store(128 + sig, Ordering::SeqCst);
-    state().process_exited.store(true, Ordering::SeqCst);
+    mark_process_exited();
     0
 }
 
@@ -5869,18 +5898,58 @@ unsafe fn exit_thread_from_ring3(
     crate::task::park_finished_thread_task()
 }
 
-/// 池のスレッドのタスクが、プロセスを終わらせる印を立てた（`exit_group`・`tkill`・`futex` の行き詰まり。M3a。
-/// 2026-10-14）。**この段では名指しして止まる**——池のタスクには回復点が無く、主スレッドへ印を渡して終える形は
-/// 次の段（異常の道）で決める。
+/// 池のスレッドのタスクが、プロセスを終わらせる印の立った状態でシステムコールの入口に居る（`exit_group`・`tkill`・`futex` の
+/// 行き詰まりを打った側か、別のスレッドが立てた印を入口か戻りで見た側。M3a の 3-1b。2026-10-14。`ADR-0085` の Addendum）。
+/// **戻らない。**
+///
+/// 印（`process_exited` と終了の状態）はスロットの表に在り、主スレッドが次のシステムコールの入口か戻りで見て出る
+/// （[`syscall_entry`] の同じ分岐）。ここではそのスレッドを `Finished` にして、BKL を解き、切り替えて二度と戻らない。
+/// **印を立てた側（`process_end_setter` が自分）は、同じスロットの futex の待ちを全部起こす**——主スレッドが `join` や `Mutex` の futex で
+/// 眠っていても、起きて `futex` の戻りで印を見て出る。**パイプ・キーボード・タイマで待っている主スレッドは起こさない**
+/// （`docs/deferred-decisions.md`。起こしても眠り直すので、プロセスの終わり方の課題で扱う）。
+///
+/// # 捨てる枠に `Drop` の要るものを残さない
+///
+/// [`exit_thread_from_ring3`] と同じ——局所は整数だけで、BKL のガードは `bkl.take()` で解いてから切り替える。
 #[inline(never)]
-#[cold]
-fn report_process_end_from_thread_task(index: usize, number: u64) -> ! {
-    serial_line(format_args!(
-        "[ERROR] thread: pool index {index} (tid {}) ended the process through system call {number} (exit_group, tkill \
-         or a futex deadlock); ending the process from a thread task is not handled yet; halting",
-        crate::task::thread_tid(index)
-    ));
-    common::arch::x86_64::halt_forever();
+fn end_thread_after_process_exit(number: u64, bkl: &mut Option<crate::bkl::BklGuard>) -> ! {
+    crate::task::mark_current_thread_finished_after_process_exit(
+        number,
+        state().process_exit_status.load(Ordering::SeqCst),
+        process_end_set_by_current_thread(),
+    );
+    drop(bkl.take());
+    crate::task::park_finished_thread_task()
+}
+
+/// 池のスレッドのタスクが Ring 3 で例外を起こしたので、プロセスを終わらせる印を立てる（M3a の 3-1b。2026-10-14）。
+/// **終了の状態は触らない**——終わり方は `Folded(ベクタ)` で、スロットの遠征の状態の記録から読む（主スレッドが同じ例外で
+/// 終わるときと同じ符号）。呼ぶのは `crate::task::finish_thread_task_on_fault`。
+pub fn mark_process_ended_by_thread_fault() {
+    mark_process_exited();
+}
+
+/// `process_end_setter` の「主スレッド（池のタスクでない）」の値。
+const NO_THREAD: usize = usize::MAX;
+
+/// プロセスを終わらせる印を立て、立てた側（池の添字か主スレッド）を控える（M3a の 3-1b。2026-10-14）。**印を立てる所は
+/// 全部ここを通る**（`exit`・`exit_group`・`tkill`・`futex` の行き詰まり・スレッドの例外）。
+fn mark_process_exited() {
+    let state = state();
+    state.process_end_setter.store(
+        crate::task::current_thread_index().unwrap_or(NO_THREAD),
+        Ordering::SeqCst,
+    );
+    state.process_exited.store(true, Ordering::SeqCst);
+}
+
+/// 今の池のスレッドのタスクが、プロセスを終わらせる印を立てた側か（[`end_thread_after_process_exit`] が、futex の待ちを
+/// 起こすかを決める）。
+fn process_end_set_by_current_thread() -> bool {
+    match crate::task::current_thread_index() {
+        Some(index) => state().process_end_setter.load(Ordering::SeqCst) == index,
+        None => false,
+    }
 }
 
 /// `spawn`（3 つの形のどれか）を、スレッドのために断るなら `-EAGAIN` を名指しの行と一緒に返す（M3a。`ADR-0085` の
@@ -5960,11 +6029,13 @@ fn classify_futex(op: u64, timeout: u64, val3: u64) -> FutexRequest {
 static FUTEX_SLEEPS: AtomicU64 = AtomicU64::new(0);
 static FUTEX_WOKEN: AtomicU64 = AtomicU64::new(0);
 
-/// `FUTEX_WAIT` で本当に眠った回数と、`FUTEX_WAKE` が起こした本数の累計。
-pub fn futex_counts() -> (u64, u64) {
+/// `FUTEX_WAIT` で本当に眠った回数と、`FUTEX_WAKE` が起こした本数と、プロセスの終わりの印が起こした futex の待ちの本数
+/// （`crate::task` の `wake_futex_waiters_of_slot`。3-1b）の累計。
+pub fn futex_counts() -> (u64, u64, u64) {
     (
         FUTEX_SLEEPS.load(Ordering::Relaxed),
         FUTEX_WOKEN.load(Ordering::Relaxed),
+        crate::task::process_end_wakes(),
     )
 }
 
@@ -6043,7 +6114,7 @@ fn end_process_on_futex_deadlock(uaddr: u64) {
     state
         .process_exit_status
         .store(FUTEX_DEADLOCK_STATUS, Ordering::SeqCst);
-    state.process_exited.store(true, Ordering::SeqCst);
+    mark_process_exited();
 }
 
 /// `FUTEX_WAKE` の本体——同じプロセス（スロット）で `uaddr` を待つタスクを、多くても `limit` 本起こす。**別の関数に
@@ -7642,6 +7713,7 @@ pub fn reset_counters() {
     state.handler_sp.store(0, Ordering::SeqCst);
     state.in_ring3_at_entry.store(false, Ordering::SeqCst);
     state.process_exited.store(false, Ordering::SeqCst);
+    state.process_end_setter.store(NO_THREAD, Ordering::SeqCst);
     state.process_exit_status.store(0, Ordering::SeqCst);
     state.futex_deadlock_address.store(0, Ordering::SeqCst);
     state.write_fd.store(0, Ordering::SeqCst);

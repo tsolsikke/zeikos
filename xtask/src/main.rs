@@ -20371,7 +20371,28 @@ const BOOT_LOG_VOLATILE_FIELDS: &[VolatileField] = &[
         before: "byte(s) of its kernel stack (",
         after: "%), over half=",
     },
-    // futex で眠った回数と起こした本数（スレッドを作る 2 本）。
+    // スレッドの中の例外と exit_group の像（3-1b）。
+    VolatileField {
+        line: "spawn: /bin/linux/m3a-fault-rust ended",
+        before: " after ",
+        after: " syscall(s)",
+    },
+    VolatileField {
+        line: "spawn: /bin/linux/m3a-exit-group-rust ended",
+        before: " after ",
+        after: " syscall(s)",
+    },
+    VolatileField {
+        line: "spawn: /bin/linux/m3a-exit-group-join-rust ended",
+        before: " after ",
+        after: " syscall(s)",
+    },
+    VolatileField {
+        line: "spawn: /bin/linux/m3a-exit-group-waiters-rust ended",
+        before: " after ",
+        after: " syscall(s)",
+    },
+    // futex で眠った回数と起こした本数（スレッドを作る像）。
     VolatileField {
         line: "futex: /bin/linux/m3a-rust slept",
         before: " slept ",
@@ -20391,6 +20412,63 @@ const BOOT_LOG_VOLATILE_FIELDS: &[VolatileField] = &[
         line: "futex: /bin/linux/m3a-mutex-rust slept",
         before: " woke ",
         after: " waiter(s)",
+    },
+    VolatileField {
+        line: "futex: /bin/linux/m3a-fault-rust slept",
+        before: " slept ",
+        after: " time(s)",
+    },
+    VolatileField {
+        line: "futex: /bin/linux/m3a-fault-rust slept",
+        before: " woke ",
+        after: " waiter(s)",
+    },
+    VolatileField {
+        line: "futex: /bin/linux/m3a-exit-group-rust slept",
+        before: " slept ",
+        after: " time(s)",
+    },
+    VolatileField {
+        line: "futex: /bin/linux/m3a-exit-group-rust slept",
+        before: " woke ",
+        after: " waiter(s)",
+    },
+    VolatileField {
+        line: "futex: /bin/linux/m3a-exit-group-join-rust slept",
+        before: " slept ",
+        after: " time(s)",
+    },
+    VolatileField {
+        line: "futex: /bin/linux/m3a-exit-group-join-rust slept",
+        before: " woke ",
+        after: " waiter(s)",
+    },
+    VolatileField {
+        line: "futex: /bin/linux/m3a-exit-group-waiters-rust slept",
+        before: " slept ",
+        after: " time(s)",
+    },
+    VolatileField {
+        line: "futex: /bin/linux/m3a-exit-group-waiters-rust slept",
+        before: " woke ",
+        after: " waiter(s)",
+    },
+    // プロセスの終わりの印が起こした futex の待ちの本数（ティックでスレッドが先に走ると、主スレッドはまだ眠っていない）。
+    VolatileField {
+        line: "futex: /bin/linux/m3a-exit-group-join-rust slept",
+        before: " roused ",
+        after: " sleeper(s)",
+    },
+    VolatileField {
+        line: "futex: /bin/linux/m3a-exit-group-waiters-rust slept",
+        before: " roused ",
+        after: " sleeper(s)",
+    },
+    // 大きな空間（1,024 フレーム以上）の破棄に掛かった時間。スレッドを 2 本持つ像で初めて既定の起動に出た（3-1b）。
+    VolatileField {
+        line: "user-destroy: /bin/linux/m3a-exit-group-waiters-rust returned",
+        before: " in ",
+        after: " cycle(s)",
     },
 ];
 
@@ -20407,49 +20485,81 @@ struct BootLogRange {
     what: &'static str,
 }
 
-/// [`BootLogRange`] の一覧。**下限は、`pthread_create` の窓にティックが当たらなかったときの決まった値で、上限はそこに
-/// 当たったときに増える分（futex の待ちと起こし、`sched_yield` の戻り）を見込んだ値である**（実測の根拠は
-/// `docs/verification-coverage.md`）。
+/// [`BootLogRange`] の一覧。**範囲は実測の最小から最大に、理由を説明できる余裕だけを足した幅である**（運用者の決定。
+/// 2026-10-14）——広いと、本当の異常も範囲に入って黙って通る。根拠は各 `what` に書く（実測の本数と、ティックが窓に当たった
+/// ときに動く分）。実測は 2026-10-14 の 110 本の起動ログ（`-smp` 1・2・4）。
 const BOOT_LOG_RANGES: &[BootLogRange] = &[
     BootLogRange {
         line: "spawn: /bin/linux/m3a-rust ended",
         before: " after ",
         after: " syscall(s)",
         min: 106,
-        max: 114,
-        what: "m3a-rust's system calls",
+        max: 110,
+        what: "m3a-rust's system calls (measured 106 or 108 in 110 boots: 106, plus 2 per tick that lands in musl's thread-list-lock window; room for two landings)",
     },
     BootLogRange {
         line: "spawn: /bin/linux/m3a-mutex-rust ended",
         before: " after ",
         after: " syscall(s)",
-        min: 108,
-        max: 118,
-        what: "m3a-mutex-rust's system calls",
+        min: 111,
+        max: 113,
+        what: "m3a-mutex-rust's system calls (measured 111 in 110 boots; room for one tick in musl's thread-list-lock window, +2)",
+    },
+    BootLogRange {
+        line: "spawn: /bin/linux/m3a-fault-rust ended",
+        before: " after ",
+        after: " syscall(s)",
+        min: 33,
+        max: 36,
+        what: "m3a-fault-rust's system calls (measured 33..=35 in 110 boots: 34, moved by 1 per tick in the sched_yield window; room for two landings above)",
+    },
+    BootLogRange {
+        line: "spawn: /bin/linux/m3a-exit-group-rust ended",
+        before: " after ",
+        after: " syscall(s)",
+        min: 37,
+        max: 40,
+        what: "m3a-exit-group-rust's system calls (measured 37..=39 in 110 boots: 38, moved by 1 per tick in the sched_yield window; room for two landings above)",
+    },
+    BootLogRange {
+        line: "spawn: /bin/linux/m3a-exit-group-join-rust ended",
+        before: " after ",
+        after: " syscall(s)",
+        min: 37,
+        max: 39,
+        what: "m3a-exit-group-join-rust's system calls (measured 37 or 38 in 110 boots: 38, or 37 when a tick ran the thread before the join; room for one more tick)",
+    },
+    BootLogRange {
+        line: "spawn: /bin/linux/m3a-exit-group-waiters-rust ended",
+        before: " after ",
+        after: " syscall(s)",
+        min: 56,
+        max: 61,
+        what: "m3a-exit-group-waiters-rust's system calls (measured 56..=59 in 104 boots: 58, moved by the sched_yield loops that wait for the flag; room for two more ticks)",
     },
     BootLogRange {
         line: "thread: task ",
         before: "reaped; it used ",
         after: " of 65536",
-        min: 1,
-        max: 32767,
-        what: "a thread task's kernel stack high water (under the half line)",
+        min: 2900,
+        max: 6400,
+        what: "a thread task's kernel stack high water (measured 3010..=5136 over the exit, fault, exit_group and woken-futex paths; room for a tick inside a system call, about 1 KiB; the half line is checked on the line itself)",
     },
     BootLogRange {
         line: "futex: /bin/linux/m3a-rust slept",
         before: " slept ",
         after: " time(s)",
         min: 0,
-        max: 2,
-        what: "m3a-rust's futex sleeps",
+        max: 1,
+        what: "m3a-rust's futex sleeps (measured 0 or 1: 1 when a tick lands in musl's thread-list-lock window)",
     },
     BootLogRange {
         line: "futex: /bin/linux/m3a-rust slept",
         before: " woke ",
         after: " waiter(s)",
         min: 0,
-        max: 2,
-        what: "m3a-rust's futex wakes",
+        max: 1,
+        what: "m3a-rust's futex wakes (measured 0 or 1, paired with the sleep)",
     },
     BootLogRange {
         line: "futex: /bin/linux/m3a-mutex-rust slept",
@@ -20457,7 +20567,7 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         after: " time(s)",
         min: 1,
         max: 3,
-        what: "m3a-mutex-rust's futex sleeps (the thread always waits for the mutex)",
+        what: "m3a-mutex-rust's futex sleeps (measured 1 or 2: the mutex and the join; 1 when a tick let the thread finish before the join; room for the thread-list-lock window, +1)",
     },
     BootLogRange {
         line: "futex: /bin/linux/m3a-mutex-rust slept",
@@ -20465,7 +20575,95 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         after: " waiter(s)",
         min: 1,
         max: 3,
-        what: "m3a-mutex-rust's futex wakes",
+        what: "m3a-mutex-rust's futex wakes (measured 1 or 2, paired with the sleeps; same room)",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-fault-rust slept",
+        before: " slept ",
+        after: " time(s)",
+        min: 0,
+        max: 0,
+        what: "m3a-fault-rust's futex sleeps (measured 0 in 110 boots; the thread never reaches pthread_exit, so musl's lock window does not apply)",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-fault-rust slept",
+        before: " woke ",
+        after: " waiter(s)",
+        min: 0,
+        max: 0,
+        what: "m3a-fault-rust's futex wakes (measured 0 in 110 boots)",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-exit-group-rust slept",
+        before: " slept ",
+        after: " time(s)",
+        min: 0,
+        max: 0,
+        what: "m3a-exit-group-rust's futex sleeps (measured 0 in 110 boots; the thread never reaches pthread_exit)",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-exit-group-rust slept",
+        before: " woke ",
+        after: " waiter(s)",
+        min: 0,
+        max: 0,
+        what: "m3a-exit-group-rust's futex wakes (measured 0 in 110 boots)",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-exit-group-join-rust slept",
+        before: " slept ",
+        after: " time(s)",
+        min: 0,
+        max: 1,
+        what: "m3a-exit-group-join-rust's futex sleeps (measured 0 or 1: the join sleeps once, or not at all when a tick ran the thread first)",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-exit-group-join-rust slept",
+        before: " woke ",
+        after: " waiter(s)",
+        min: 0,
+        max: 0,
+        what: "m3a-exit-group-join-rust's futex wakes (measured 0 in 109 boots; FUTEX_WAKE only, the process-end wake is the roused count)",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-exit-group-waiters-rust slept",
+        before: " slept ",
+        after: " time(s)",
+        min: 1,
+        max: 2,
+        what: "m3a-exit-group-waiters-rust's futex sleeps (measured 1 or 2: the waiter's mutex and the main thread's join; 1 when a tick kept the main thread from the join before the ender exited)",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-exit-group-waiters-rust slept",
+        before: " woke ",
+        after: " waiter(s)",
+        min: 0,
+        max: 0,
+        what: "m3a-exit-group-waiters-rust's futex wakes (measured 0 in 107 boots; nobody unlocks)",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-exit-group-join-rust slept",
+        before: " roused ",
+        after: " sleeper(s)",
+        min: 0,
+        max: 1,
+        what: "the sleepers the process end roused in m3a-exit-group-join-rust (measured 0 or 1: the main thread, or none when a tick ran the thread before the join)",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-exit-group-waiters-rust slept",
+        before: " roused ",
+        after: " sleeper(s)",
+        min: 1,
+        max: 2,
+        what: "the sleepers the process end roused in m3a-exit-group-waiters-rust (measured 2 in 69 boots: the waiter and the main thread; 1 if a tick kept the main thread from the join)",
+    },
+    BootLogRange {
+        line: "user-destroy: /bin/linux/m3a-exit-group-waiters-rust returned",
+        before: " in ",
+        after: " cycle(s)",
+        min: 1,
+        max: 1000000000,
+        what: "the cycles the destroy of m3a-exit-group-waiters-rust's space took (wall-clock, 8 to 18 million measured; only the line's presence is checked)",
     },
 ];
 
@@ -21389,8 +21587,17 @@ enum LinuxReferenceEnvironment {
 }
 
 /// 起動のたびにカーネルが起こす Linux 向けのプログラム（`kernel/src/main.rs` の `verify_linux_programs`。`m1-rust` は M1、
-/// `m3a-rust` はスレッドを 1 つ作る像で M3a。2026-10-14）。**どれも引数 4 つで起こし、4 で終わる。**
-const LINUX_PROGRAMS_IN_THE_BOOT_LOG: &[&str] = &["m1-rust", "m3a-rust", "m3a-mutex-rust"];
+/// `m3a-*` はスレッドの像で M3a。2026-10-14）。**どれも引数 4 つで起こす。** 終わり方はカーネルの側が見る（`m3a-fault-rust` は
+/// `Folded(14)`、`m3a-exit-group-rust` は `Exited(7)`、ほかは `Exited(4)`）——ここで見るのは出力の行だけである。
+const LINUX_PROGRAMS_IN_THE_BOOT_LOG: &[&str] = &[
+    "m1-rust",
+    "m3a-rust",
+    "m3a-mutex-rust",
+    "m3a-fault-rust",
+    "m3a-exit-group-rust",
+    "m3a-exit-group-join-rust",
+    "m3a-exit-group-waiters-rust",
+];
 
 /// `linux-programs/reference/<name>.txt`（Linux 上で控えた stdout と終了の状態）の各行が、`output` に順に在るか
 /// （M1。2026-10-06）。**参照の最後の行 `exit status: N` は、出力の中では探さない**——終了の状態は呼ぶ側が別の行で見る
@@ -27236,12 +27443,14 @@ const COMMON_ITEMS_FOR_HOMES: &[CommonItemsForHomes] = &[
             "THREAD_TASKS",
             "current_excursion_home",
             "current_ring3_slot",
+            "finish_thread_task_on_fault",
             "note_current_excursion_depth",
             "note_current_kernel_entry_stack_top",
             "thread_task_stack_range",
         ],
         reason: "遠征が、今のタスクのスロットと置き場（スロットか池のタスク）を引き、遠征の深さと入口のスタックの上端を\
-                 タスクへ控える。池の大きさとカーネルスタックの範囲は、池のタスクの遠征の状態と回復点の表に使う",
+                 タスクへ控える。池の大きさとカーネルスタックの範囲は、池のタスクの遠征の状態と回復点の表に使う。池の\
+                 タスクの Ring 3 の例外は、畳まずにスレッドを終える（共通の側が欄を書いて切り替える）",
     },
     CommonItemsForHomes {
         module: "kernel::task",
@@ -36646,15 +36855,24 @@ mod tests {
     fn boot_log_ranges_name_the_values_outside_and_the_missing_lines() {
         let good = "\
 [INFO] spawn: /bin/linux/m3a-rust ended (Exited(4)) after 106 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
-[INFO] spawn: /bin/linux/m3a-mutex-rust ended (Exited(4)) after 110 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
+[INFO] spawn: /bin/linux/m3a-mutex-rust ended (Exited(4)) after 111 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
 thread: task 6 (tid 2) reaped; it used 3112 of 65536 byte(s) of its kernel stack (4%), over half=false (expected false)
 thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack (4%), over half=false (expected false)
 [INFO] futex: /bin/linux/m3a-rust slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads)
 [INFO] futex: /bin/linux/m3a-mutex-rust slept 2 time(s) and woke 2 waiter(s) (0 and 0 unless the program has threads)
+[INFO] spawn: /bin/linux/m3a-fault-rust ended (Folded(14)) after 34 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
+[INFO] spawn: /bin/linux/m3a-exit-group-rust ended (Exited(7)) after 38 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
+[INFO] futex: /bin/linux/m3a-fault-rust slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads)
+[INFO] futex: /bin/linux/m3a-exit-group-rust slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads)
+[INFO] spawn: /bin/linux/m3a-exit-group-join-rust ended (Exited(7)) after 38 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
+[INFO] spawn: /bin/linux/m3a-exit-group-waiters-rust ended (Exited(7)) after 58 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
+[INFO] futex: /bin/linux/m3a-exit-group-join-rust slept 1 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 1 sleeper(s)
+[INFO] futex: /bin/linux/m3a-exit-group-waiters-rust slept 2 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 2 sleeper(s)
+[INFO] user-destroy: /bin/linux/m3a-exit-group-waiters-rust returned 1220 frame(s) at once and quarantined 0 (0 wait(s), 0 released meanwhile, 0 leaked) in 8409908 cycle(s)
 ";
         let (findings, seen) = super::check_boot_log_ranges("t", good);
         assert!(findings.is_empty(), "{findings:?}");
-        assert_eq!(seen, 8);
+        assert_eq!(seen, 23);
         let bad = good
             .replace("after 106 syscall", "after 300 syscall")
             .replace("used 3112 of", "used 40000 of");

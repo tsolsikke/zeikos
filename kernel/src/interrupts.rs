@@ -334,6 +334,13 @@ fn should_fold_excursion(interrupted: &crate::arch::x86_64::Interrupted<'_>) -> 
     #[cfg(not(feature = "kill-fold-at-depth-one-test"))]
     const MINIMUM_DEPTH: usize = 2;
 
+    // **池のスレッドのタスクが Ring 3 で割り込まれたときは畳まず、フラグも消費しない**（M3a の 3-1b。2026-10-14。
+    // `ADR-0085` の Addendum）。池のタスクは回復点を持たないので、畳むのは主スレッドである——フラグを残しておけば、
+    // 主スレッドが次に Ring 3 で割り込まれたときに畳み、プロセスの終わりがスレッドも終える。**主スレッドがカーネルの中で
+    // 待っている間にスレッドが Ring 3 で回り続けると、Ctrl+C で止められない**（`docs/deferred-decisions.md`）。
+    if crate::task::current_thread_index().is_some() {
+        return false;
+    }
     let depth = interrupted.excursion_depth();
     // **切り離して起動するスロットは深さ 1 でも終了させる（`ADR-0063` の (b3)）。** **そこに居るのは
     // 常に子で、シェルは居ない**——**`spin | cat` の `spin` はスロット 1 の深さ 1 である。**
