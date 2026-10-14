@@ -30,6 +30,9 @@ pub const SYS_CLOCK_GETTIME: u64 = 228;
 /// `nanosleep(req, rem)` の番号（W2-d+。`asm/unistd_64.h` の `__NR_nanosleep`）。
 pub const SYS_NANOSLEEP: u64 = 35;
 
+/// `sched_yield()` の番号（M3a。2026-10-14。`__NR_sched_yield`）。
+pub const SYS_SCHED_YIELD: u64 = 24;
+
 /// `open(path, flags, mode)` の番号（S10-b。`asm/unistd_64.h` の `__NR_open`）。
 pub const SYS_OPEN: u64 = 2;
 
@@ -113,6 +116,8 @@ pub const SYS_UNAME: u64 = 63;
 pub const SYS_FCNTL: u64 = 72;
 /// `readlink(path, buf, bufsiz)` の番号（2026-10-06。`__NR_readlink`）。
 pub const SYS_READLINK: u64 = 89;
+/// `clone(flags, stack, parent_tid, child_tid, tls)` の番号（2026-10-14。`__NR_clone`。M3a）。
+pub const SYS_CLONE: u64 = 56;
 /// `sigaltstack(ss, old_ss)` の番号（2026-10-06。`__NR_sigaltstack`）。
 pub const SYS_SIGALTSTACK: u64 = 131;
 /// `futex(uaddr, op, val, timeout, uaddr2, val3)` の番号（2026-10-06。`__NR_futex`）。

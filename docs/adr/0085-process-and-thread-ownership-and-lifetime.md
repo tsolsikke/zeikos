@@ -132,6 +132,7 @@ Linuxと同じ分け方である。今の置き場からの移し方は、下の
 | `kernel/src/bkl.rs`の`TLB_GENERATION`のdoc（ふるいの例外）と`note_mapping_changed`のdoc | 畳んで戻る所がflushしなくてよいのは、遠征がAPより前だから。`note_mapping_changed`に本番の呼び手が無い（古い。`quarantine.rs`が呼ぶ） | docを直す（M3aの課題の中で） | `munmap`・`mprotect`・`brk`の縮小も世代を上げる |
 | `kernel/src/task/scheduler.rs`の`kernel_entry_stack_top`・`excursion_depth`・`page_table_root`の`SAFETY`と`task.rs`の`switch_page_table_root_and_note` | タスクはBSPだけが持つので、同じコアの割り込みを止めれば切り替えと重ならない | そのまま | `init`の深さ0の書きもBKLの下へ |
 | `kernel/src/syscall.rs`の`mprotect_from_ring3`・`release_range_and_unmap`、`paging/active.rs`の`unmap_4kib` | `invlpg`はこのCPUだけ。フレームはすぐ返す | そのまま（第5項） | TLBシュートダウン。返すのは隔離を通す |
+| `kernel/src/task.rs`の`finish_threads_of_slot`と`reap_thread_task`（2026-10-14。3段目） | プロセスの終わりが、残ったスレッドのタスクを`Finished`にして刈り取る間、別のCPUがそのタスクを走らせることも刈り取ることも無い（走っているのは主スレッドだけ） | そのまま | 刈り取りをBKLの中で「どのCPUの`CURRENT`でもない」ことを見てから行うか、別のCPUのスレッドを止めてから刈り取る（IPI） |
 | `kernel/src/quarantine.rs`の`Retire`と`userland.rs`の`ran_on`・`destroy_route` | 走ったCPUの印で、その場で返すかを決める | スレッドがRing 3へ入る所でも印を立てる | そのまま（既に複数CPUの形） |
 | `kernel/src/task.rs`の`schedule_switch`（`CURRENT_RECOVERY`の入れ替え） | 切り替えるCPUが1つ | スレッドにも同じ入れ替え | CPUごとの回復点 |
 | `kernel/src/task.rs`の`ring3_task_main` | `Finished`への書きと起こしが、BKLの外（IF=1） | BKLを持って書く形に揃える（スレッドの終わりと同じ形にするため） | そのまま |
@@ -172,3 +173,20 @@ M3aの実装は、次の順で分ける。大きさは、1つの課題でfull ch
 - 池が尽きた`clone`は`-EAGAIN`で、`thread:`の行で見える。池の数を増やすのは定数1つである。
 - 「全部BSP」の前提は、スレッドの`owner`を作った側と同じにすることで保たれる。この決まりを守る単体試験を足す。「2 CPU以上」の段で、上の一覧の「2 CPU」の列を順に入れてから、制約を外す。
 - `borrow_allocator`の決まり（眠る前に読んだ状態を使わない）が、futexの待ちにも当たるようになる。BKLを手放す所を足すときは、この決まりを見ること。
+
+## Addendum（2026-10-14。`clone`の3段目「正常の道」で決めたこと）
+
+`clone`（後の課題の順の1）は、池と欄（1段目）、回復点と遠征の状態の置き場（2段目）、`clone`の入口（3段目）に分けて入れた。3段目はさらに、正常の道（入口・スレッドの`exit`・刈り取り）と異常の道（スレッドの中の例外・池のタスクからの`exit_group`・Ctrl+C）に分けた。正常の道で決めたことを書く。
+
+- **池のタスクは、最初の文脈から直にRing 3へ入る（案A）。** `clone`が、親の文脈（`IrqContext`）の写しにRAX=0・RSP=渡されたスタック・CSとSS=ユーザーのセレクタを入れたものを、池のカーネルスタックの上端に積む。最初の切り替えで、復元経路（15本のpopと`iretq`）がそのままRing 3へ落とす——タイマで止めたRing 3のタスクへ戻るのと同じ経路で、新しいasmは無い。`run_excursion`の枠は無く、回復点も無い（`THREAD_RECOVERIES`の欄は0のまま）。**Ring 3を出る道は切り替えである**——スレッドの`exit`は`Finished`にして`yield_now`で切り替え、二度と戻らない。捨てるカーネルスタックの枠に`Drop`の要るものを残さないことを、docと`debug_assert!`（BKLと`InterruptGuard`を持っていない）で示す。却下した案Bは、足した1本と同じ`run_excursion`の形で、回復点へlongjmpで戻るもの。親の汎用レジスタを積んで`iretq`するasmの別版と、入場のスタックの分け方（同じ64 KiBを分けるか、池ごとに遠征スタックを足すか）が要る。
+- **受けるフラグ。** muslの`pthread_create`の組（`CLONE_VM|FS|FILES|SIGHAND|THREAD|SYSVSEM|SETTLS|PARENT_SETTID|CHILD_CLEARTID` = 0x3d0f00）を受け、`CLONE_DETACHED`（0x400000。Linuxが無視するフラグ。muslは付け、glibcは付けない）の有無は見ない。**下位8ビット（`CSIGNAL`）も見ない**——Linuxのlegacyの`clone`は、`CLONE_THREAD`のとき`exit_signal`を-1にして、この8ビットを使わない（`kernel/fork.c`の`copy_process`）。Linuxが`-EINVAL`で断る組（`CLONE_THREAD`に`CLONE_SIGHAND`が無い、`CLONE_SIGHAND`に`CLONE_VM`が無い、など）はそのまま`-EINVAL`で、Linuxでは通るがここに無い組（`fork`の形）は決定2のとおり`-ENOSYS`。番地は、スタックが窓の外なら`-EINVAL`、TLSがユーザーの範囲の正準な番地でなければ`-EPERM`（`arch_prctl`と同じ）、`parent_tid`と`child_tid`に書けなければ`-EFAULT`。
+- **`tid_address`はスレッドごとに持つ**（後の課題の順の4から前倒し）。`CLONE_CHILD_CLEARTID`の番地を池のタスクの欄に控え、スレッドの`exit`がそこへ0を書き、その番地で待つ者を1本起こす（`FUTEX_WAKE`と同じ。futexの最小は`ADR-0081`の2026-10-14のAddendum）。池のタスクからの`set_tid_address`も同じ欄に書く。主スレッドのものは今までどおりプロセスの表に控えるだけである。`blocked`と`alt_stack`は順の4のまま（プロセスに1つ。配送が無いので動きは変わらない。`docs/deferred-decisions.md`）。
+- **深さの欄は1つの意味にした。** 池のタスクの`Task::excursion_depth`と`ring3`側の`ExcursionState::depth`は、どちらも属するプロセスの深さ（親が`clone`を打ったときの深さ）で、同じ値である。切り替えの検算は、池のタスクなら深さに依らず自分のカーネルスタックを期待する。2段目で「池のタスクの深さは0だけ」としていたのを直した。
+- **主スレッドの`exit`に生きているスレッドが在るときは、3段目では`exit_group`と同じく終える**（決定3の「待ってから終える」は、プロセスの終わり方の課題で入れる）。futexの無い間、待たれる側はfutexで137になる道しか無く、意味のある待ちにならない。全部BSP担当で走っているのは主スレッドだけなので、残りのスレッドは欄を`Finished`にして刈り取るだけで止まる。Linuxとの差として`docs/deferred-decisions.md`に書いた。
+- **刈り取りは2か所から同じ関数を呼ぶ**——`clone`の入口（`Finished`のまま残っている池のタスクを先に刈り取る）と、プロセスの終わり（空間を壊す前）。刈り取りで世代が進み、池のタスクのカーネルスタックの高水位を`thread:`の行に出す（足した1本と同じ半分の線）。
+- **確かめは`linux-programs/m3a-rust.rs`と`linux-programs/m3a-mutex-rust.rs`（スレッドが必ずfutexで待つ形）**——`std::thread::spawn`でスレッドを1つ作り、主スレッドは`sched_yield`を決まった回数（64回）打ってから`join`する（スレッドが先に終わっていれば、muslの`pthread_join`はfutexを打たない）。起動のたびにカーネルが起こし、Linuxで控えた参照と突き合わせる。**`sched_yield`（24）はこのために足した**——BKLを解いて1度譲るだけで、輪の次のタスク（池のスレッド）が選ばれる。それまでは知らない番号で、譲りはティック任せになり、システムコールの数が起動ごとに揺れた（実測。754回の`-ENOSYS`）。
+- **スレッドがスレッドを作ること（池のタスクからの`clone`）は許す。** Linuxと同じで、muslもライブラリの中のスレッドから`pthread_create`を呼びうる。子は作った側のプロセス（スロットと深さ）に属し、担当は作った側と同じBSPである（起こすときに確かめる）。3-2で試す項目にする。
+- **プロセスの終わりの刈り取りは「全部BSP」に依る**（上の一覧に足した）。`Finished`にしてから刈り取るまでの間に別のCPUがそのタスクを走らせないことを、走っているのが主スレッドだけであることで言っている。「2 CPU以上」の段で見直す。
+- **カーネルの中で止まっているスレッドの枠を捨てても安全な理由は、`finish_threads_of_slot`のdocに書いた**——スレッドから届く`yield_now`の呼び手を全部挙げ、どれも譲る前にBKLを解き、枠に`Drop`の要るものを残さない。`InterruptGuard`は`on_yield`の深さの検査が、BKLは池のタスクの譲りの検査（`yield_now`が割り込みを起こす前に見る。`report_thread_yield_with_bkl`）が機械で止める。
+- **異常の道（スレッドの中の例外・池のタスクからの`exit_group`・`tkill`・`futex`の行き詰まり・Ctrl+C・正準でない戻り先）は、この段では名指しして止まる**（`leave_user_mode`が、池のタスクには回復点が無いことで止める）。形は次の段で決める。
+

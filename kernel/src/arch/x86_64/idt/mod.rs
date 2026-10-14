@@ -1296,6 +1296,27 @@ impl IrqContext {
     pub(crate) fn check_stack_alignment(&self, rsp_at_call: u64, path: &str) {
         check_stack_alignment(rsp_at_call, path, self.vector);
     }
+
+    /// 池のスレッドのタスクが最初に Ring 3 へ入るときの文脈（M3a。2026-10-14。`ADR-0085` の決定 2）。
+    ///
+    /// **`clone` を打った親の文脈の写しで、RAX を 0、RSP を渡されたスタックにし、CS と SS をユーザーのセレクタにしたもの。**
+    /// Linux と同じく、ほかの汎用レジスタは親のまま（musl の `__clone` は r9 に入れた関数を子で呼ぶ）。RCX と R11 は
+    /// `syscall` 命令が壊した後の値で、それも親と同じである。RFLAGS は親のものに IF を立てた値——Ring 3 は必ず IF=1 で走る。
+    /// ベクタの欄は yield の番号で、復元経路が捨てる（`task_frame::build_initial_context` と同じ）。
+    ///
+    /// **共通の側はこの型の中身を読まない**——写しを作るのは `arch` で、`crate::task` は値として池のスタックへ積むだけである
+    /// （`task_frame::build_initial_context_from_image`）。
+    pub(crate) fn thread_start_image(&self, user_stack: u64) -> IrqContext {
+        IrqContext {
+            rax: 0,
+            rsp: user_stack,
+            cs: crate::arch::x86_64::gdt::USER_CODE_SELECTOR.bits() as u64,
+            ss: crate::arch::x86_64::gdt::USER_DATA_SELECTOR.bits() as u64,
+            rflags: self.rflags | 0x202,
+            vector: YIELD_VECTOR as u64,
+            ..*self
+        }
+    }
 }
 
 /// IRQ の共通処理。戻る。

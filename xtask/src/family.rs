@@ -232,6 +232,9 @@ pub const PATH_RULES: &[PathRule] = &[
             // **Linux 向けのプログラム**（2026-10-06。既定の像の `/bin/linux` に入り、起動時の `linux-check`（カーネル。
             // `bss-check` の後）とシェルの台本が起こす。2026-10-07 までは `syscall-test` が起こしていた）。
             "linux-programs/m1-rust.rs",
+            // **スレッドを 1 つ作る像**（M3a。2026-10-14。起動時の `linux-check` が `m1-rust` の次に起こす）。
+            "linux-programs/m3a-rust.rs",
+            "linux-programs/m3a-mutex-rust.rs",
             "kernel/userland/chello.c",
             "kernel/userland/dbfault.c",
             "kernel/userland/fp*.c",

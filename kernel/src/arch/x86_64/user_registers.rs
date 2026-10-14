@@ -91,6 +91,27 @@ pub unsafe fn save_user_registers(area: &mut UserRegisters) {
     area.gs_base = cpu::read_gs_base();
 }
 
+/// 池のスレッドのタスクの置き場を、親（今走っている文脈）の写しに FS の基底 `fs_base` を入れたもので埋める
+/// （M3a。2026-10-14。`clone` の `CLONE_SETTLS`）。
+///
+/// **FP の状態と GS の基底は親の写しである**（Linux と同じ）。**FS の基底だけが、渡された TLS である。**
+///
+/// # 契約（境界の関数）
+///
+/// - この CPU のレジスタを読んで書き出す。呼ぶのは池のタスクを起こす所（`crate::task`）で、親が走っている
+///   文脈（BKL の内側。IF=0）から呼ぶ。
+///
+/// # Safety
+///
+/// [`save_user_registers`] と同じ。`fs_base` は [`is_allowed_user_segment_base`] を通った番地であること（正準でない
+/// 値を置くと、次にこのタスクへ切り替えたときの MSR の書きがカーネルの中で一般保護例外になる）。
+pub unsafe fn save_user_registers_for_thread(area: &mut UserRegisters, fs_base: u64) {
+    debug_assert!(is_allowed_user_segment_base(fs_base));
+    // SAFETY: この関数の契約。
+    unsafe { save_user_registers(area) };
+    area.fs_base = fs_base;
+}
+
 /// 領域から、ユーザーのレジスタ（FP の状態と、FS・GS の基底）を戻す。
 ///
 /// # 契約（境界の関数）

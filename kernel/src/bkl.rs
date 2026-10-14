@@ -513,6 +513,13 @@ impl Drop for BklGuard {
     }
 }
 
+/// この CPU が BKL を持っているか（M3a。2026-10-14）。**診断専用である**——持っていない側の答えは読んだ瞬間に
+/// 変わりうるが、「自分が持っている」は自分が解くまで変わらないので、`debug_assert!` の材料にしてよい
+/// （`crate::task::park_finished_thread_task` が、切り替えで捨てる枠に BKL のガードが残っていないことに使う）。
+pub fn held_by_this_cpu() -> bool {
+    BKL.held.load(Ordering::Relaxed) && BKL.holder_cpu.load(Ordering::Relaxed) == cpu_id()
+}
+
 /// 保持者の情報を読む。**診断専用で、読んだ瞬間に変わっていることがある。**
 fn holder_snapshot() -> (usize, &'static str, u64) {
     let cpu = BKL.holder_cpu.load(Ordering::Relaxed);

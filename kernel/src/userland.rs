@@ -1458,6 +1458,11 @@ pub fn load_user_program_with(
         // **遠征の戻りが元の値へ戻していれば、何も見つからない。** **見つかったら
         // 不変条件が破れかけていたので、消してから声を出す**——**死んだテーブルを
         // 載せる形は静かに効くので、黙って直さない。**
+        // **残っているスレッドを先に終えて刈り取る（M3a。2026-10-14。`ADR-0085` の決定 3）。** 主スレッドより先に
+        // 終わっていれば 0 本である。残っていれば `Finished` にして刈り取る——全部 BSP 担当で走っているのは主スレッド
+        // だけなので、止める処理は要らない。**`forget_task_root_before_destroy` より前に置く**——刈り取りが
+        // `page_table_root` を 0 へ戻すので、あちらは何も見つけない。
+        let (threads_ended, threads_parked) = crate::task::finish_threads_of_slot(slot);
         forget_task_root_before_destroy(logger, &process);
         // **この CPU でしか走らなかった空間は、その場で返す。ほかの CPU でも走った空間は隔離を通す**（2026-10-07。
         // `crate::quarantine::Retire` の doc）。
@@ -1478,6 +1483,14 @@ pub fn load_user_program_with(
         DESTROYS_IN_PROGRESS.fetch_sub(1, core::sync::atomic::Ordering::SeqCst);
         note_destroy(slot, retired, quarantine.held_count());
         drop(bkl);
+        if threads_ended > 0 {
+            report_threads_ended_with_the_process(
+                logger,
+                process.name,
+                threads_ended,
+                threads_parked,
+            );
+        }
         // **自分の残りを 2 通りで数えて突き合わせる**（2026-10-11）。差し引き（`still_quarantined`）と、隔離から数え直した数
         // （`own_held`）である。食い違えば、前の破棄の分を自分の分として差し引いている。
         if retired.own_held != retired.still_quarantined() {
@@ -2450,6 +2463,36 @@ fn report_signal_that_ended_the_process(logger: &mut Logger<Serial>, name: &str,
     ));
 }
 
+/// プロセスの終わりに、まだ走れる状態で残っていたスレッドを終えたことを出す（M3a。2026-10-14。`ADR-0085` の決定 3）。
+/// **別の関数にしてある理由**——読み込みの関数の枠を広げないため（あちらの枠は、足した 1 本のカーネルスタックの
+/// 高水位にそのまま乗る）。
+#[inline(never)]
+#[cold]
+fn report_threads_ended_with_the_process(
+    logger: &mut Logger<Serial>,
+    name: &str,
+    ended: usize,
+    parked: usize,
+) {
+    logger.info(format_args!(
+        "thread: {ended} thread(s) of {name} were still runnable when the process ended ({parked} of them parked \
+         inside the kernel at a wait); ended and reaped them before the space was destroyed (the main thread's exit \
+         does not wait in M3a)"
+    ));
+}
+
+/// プロセスが走っている間に futex で眠った回数と起こした本数を 1 行出す（2026-10-14。`ADR-0081` の Addendum）。
+/// **`#[inline(never)]`** で、`format_args!` の一時値を [`run_loaded_program`] のフレームへ乗せない。
+#[inline(never)]
+fn report_futex_counts(logger: &mut Logger<Serial>, name: &str, before: (u64, u64)) {
+    let (sleeps, woken) = crate::syscall::futex_counts();
+    logger.info(format_args!(
+        "futex: {name} slept {} time(s) and woke {} waiter(s) (0 and 0 unless the program has threads)",
+        sleeps - before.0,
+        woken - before.1
+    ));
+}
+
 /// `futex` で待つ場面に入ったプロセスを終わらせたことを 1 行出す（2026-10-06）。**`#[inline(never)]`** で、
 /// `format_args!` の一時値を [`run_loaded_program`] のフレームへ乗せない。
 #[inline(never)]
@@ -2609,6 +2652,8 @@ unsafe fn run_loaded_program(
 
     // **DF=1 の文脈から入った割り込みを数える起点（2026-09-24）。** **`spin` は `std` の後で
     // 空回りする**ので、止められるまでに来たタイマはどれも DF=1 の文脈から入る（下の判定行）。
+    // **futex で眠った回数と起こした本数の起点**（2026-10-14。`ADR-0081` の Addendum。下の `futex:` の行）。
+    let futex_before = crate::syscall::futex_counts();
     let irq_entries_from_df_before =
         crate::arch::x86_64::entries_from_direction_flag_set(crate::arch::x86_64::EntryPath::Irq);
     // **走る CPU の印を立てる**（2026-10-07。[`UserProcess::ran_on`]）。**スレッド（M3a）は作った側の CPU に寄せるので、
@@ -2678,6 +2723,10 @@ unsafe fn run_loaded_program(
     // **限界も同じである**——**プログラムが毒値そのものを書いたら、使ったとは
     // 数えられない。** **下側から数えるので、間に毒値が挟まっても影響しない。**
     report_user_stack_high_water(logger, process);
+    // **このプロセスが走っている間に、futex で眠った回数と起こした本数を出す**（2026-10-14。`ADR-0081` の Addendum）。
+    // **スレッドの無いプログラムでは 0 と 0 である。** スレッドを作るプログラムでは、`pthread_create` の窓にティックが
+    // 当たったかで変わる（スケジュールで決まる値。起動ログの参照では値を伏せ、`xtask` が範囲で見る）。
+    report_futex_counts(logger, process.name, futex_before);
     // **`futex` で待つ場面に入って、終わらせたプロセス**（2026-10-06。`ADR-0081`）。スレッドが 1 本しか無い間は、
     // 起こす者が居ないので、偽りの戻り値を返さずに終わらせる。**行き詰まりを隠さない。**
     if let Some(address) = crate::syscall::futex_deadlock_address() {

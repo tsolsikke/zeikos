@@ -1,0 +1,5 @@
+m3a-mutex-rust: main starts with 4 argument(s)
+m3a-mutex-rust: unlocking after 64 yields
+m3a-mutex-rust: the thread took the lock and set the value to 7
+m3a-mutex-rust: joined, the thread returned 7; the value is now 7
+exit status: 4

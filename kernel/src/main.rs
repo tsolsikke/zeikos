@@ -6618,9 +6618,24 @@ fn verify_bss_is_mapped(logger: &mut Logger<Serial>) {
 ///
 /// **環境変数は空**——Linux 上で控えた参照（`env -i`）と出す行を揃えるため。**出力の中身はここでは見ない**——起動ログの参照に
 /// 入った行を、`linux-programs/reference/` と突き合わせる基本の検査が見る。終了の状態が引数の数（4）でなければ、名指しして止まる。
-/// C 版（`/bin/linux/m1-c`）は、`linux-c-test` のビルドだけが像に持つので、そのときだけ起こす。
+/// C 版（`/bin/linux/m1-c`）は、`linux-c-test` のビルドだけが像に持つので、そのときだけ起こす。**`m3a-rust`（スレッドを
+/// 1 つ作る像）も同じ形で起こす**（2026-10-14）。
 fn verify_linux_programs(logger: &mut Logger<Serial>) {
     verify_linux_program(logger, b"/bin/linux/m1-rust", b"m1-rust\0/etc/motd\0a\0b\0");
+    // **スレッドを 1 つ作って終わる像（M3a。2026-10-14。`linux-programs/m3a-rust.rs`）。** 池のタスクが起きて走り、
+    // `exit` で終わって刈り取られる所までを、起動のたびに通す（`thread:` の行が起動ログの参照に入る）。
+    verify_linux_program(
+        logger,
+        b"/bin/linux/m3a-rust",
+        b"m3a-rust\0/etc/motd\0a\0b\0",
+    );
+    // **スレッドが必ず futex で待つ像（`linux-programs/m3a-mutex-rust.rs`）。** `FUTEX_WAIT` で眠る道と `FUTEX_WAKE` で
+    // 起こす道を、起動のたびに通す（`futex:` の行に眠った回数が出る）。
+    verify_linux_program(
+        logger,
+        b"/bin/linux/m3a-mutex-rust",
+        b"m3a-mutex-rust\0/etc/motd\0a\0b\0",
+    );
     #[cfg(feature = "linux-c-test")]
     verify_linux_program(logger, b"/bin/linux/m1-c", b"m1-c\0/etc/motd\0a\0b\0");
 }

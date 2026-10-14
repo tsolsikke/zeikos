@@ -20333,11 +20333,208 @@ const BOOT_LOG_CORE_COUNT_MARKERS: &[&str] = &[
     "virtio-blk: host features=",
 ];
 
+/// 起動ログの参照で、**行は残して値だけを伏せる所**（M3a。2026-10-14）。**スケジュールで決まる値である**——
+/// `pthread_create` の窓（`clone` から戻って `__tl_unlock` するまで）にティックが当たると、futex の待ちと起こしが増え、
+/// システムコールの数・池のタスクのカーネルスタックの高水位・futex の数が変わる。行ごと落とすと、同じ行に在る
+/// 決まった値（終了の状態・知らない番号の数・`over half=false (expected false)`）まで落ちるので、数だけを `<n>` に置く。
+/// **伏せた値は [`BOOT_LOG_RANGES`] が範囲で見る**——伏せたのに代わりの検査が無い値は置かない。
+struct VolatileField {
+    /// この文字列を含む行だけが対象。
+    line: &'static str,
+    /// 伏せる数の直前の文字列。
+    before: &'static str,
+    /// 伏せる数の直後の文字列（空なら行末まで）。
+    after: &'static str,
+}
+
+/// [`VolatileField`] の一覧。
+const BOOT_LOG_VOLATILE_FIELDS: &[VolatileField] = &[
+    // スレッドを作る 2 本の、システムコールの数。
+    VolatileField {
+        line: "spawn: /bin/linux/m3a-rust ended",
+        before: " after ",
+        after: " syscall(s)",
+    },
+    VolatileField {
+        line: "spawn: /bin/linux/m3a-mutex-rust ended",
+        before: " after ",
+        after: " syscall(s)",
+    },
+    // 池のタスクのカーネルスタックの高水位（バイト数と割合）。
+    VolatileField {
+        line: "thread: task ",
+        before: "reaped; it used ",
+        after: " of 65536",
+    },
+    VolatileField {
+        line: "thread: task ",
+        before: "byte(s) of its kernel stack (",
+        after: "%), over half=",
+    },
+    // futex で眠った回数と起こした本数（スレッドを作る 2 本）。
+    VolatileField {
+        line: "futex: /bin/linux/m3a-rust slept",
+        before: " slept ",
+        after: " time(s)",
+    },
+    VolatileField {
+        line: "futex: /bin/linux/m3a-rust slept",
+        before: " woke ",
+        after: " waiter(s)",
+    },
+    VolatileField {
+        line: "futex: /bin/linux/m3a-mutex-rust slept",
+        before: " slept ",
+        after: " time(s)",
+    },
+    VolatileField {
+        line: "futex: /bin/linux/m3a-mutex-rust slept",
+        before: " woke ",
+        after: " waiter(s)",
+    },
+];
+
+/// 伏せた値を範囲で見る所（M3a。2026-10-14。[`BOOT_LOG_VOLATILE_FIELDS`] の代わりの検査）。**取った起動ログ（-smp 1・2・4）の
+/// 生の行で見る。** 行が無ければ落ちる（伏せた行が消えたことを見逃さない）。
+struct BootLogRange {
+    line: &'static str,
+    before: &'static str,
+    after: &'static str,
+    /// 範囲（両端を含む）。
+    min: u64,
+    max: u64,
+    /// 何を見ているか（結果の行に出す）。
+    what: &'static str,
+}
+
+/// [`BootLogRange`] の一覧。**下限は、`pthread_create` の窓にティックが当たらなかったときの決まった値で、上限はそこに
+/// 当たったときに増える分（futex の待ちと起こし、`sched_yield` の戻り）を見込んだ値である**（実測の根拠は
+/// `docs/verification-coverage.md`）。
+const BOOT_LOG_RANGES: &[BootLogRange] = &[
+    BootLogRange {
+        line: "spawn: /bin/linux/m3a-rust ended",
+        before: " after ",
+        after: " syscall(s)",
+        min: 106,
+        max: 114,
+        what: "m3a-rust's system calls",
+    },
+    BootLogRange {
+        line: "spawn: /bin/linux/m3a-mutex-rust ended",
+        before: " after ",
+        after: " syscall(s)",
+        min: 108,
+        max: 118,
+        what: "m3a-mutex-rust's system calls",
+    },
+    BootLogRange {
+        line: "thread: task ",
+        before: "reaped; it used ",
+        after: " of 65536",
+        min: 1,
+        max: 32767,
+        what: "a thread task's kernel stack high water (under the half line)",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-rust slept",
+        before: " slept ",
+        after: " time(s)",
+        min: 0,
+        max: 2,
+        what: "m3a-rust's futex sleeps",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-rust slept",
+        before: " woke ",
+        after: " waiter(s)",
+        min: 0,
+        max: 2,
+        what: "m3a-rust's futex wakes",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-mutex-rust slept",
+        before: " slept ",
+        after: " time(s)",
+        min: 1,
+        max: 3,
+        what: "m3a-mutex-rust's futex sleeps (the thread always waits for the mutex)",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-mutex-rust slept",
+        before: " woke ",
+        after: " waiter(s)",
+        min: 1,
+        max: 3,
+        what: "m3a-mutex-rust's futex wakes",
+    },
+];
+
+/// `line` の `before` と `after` に挟まれた数の位置を読む（[`BOOT_LOG_VOLATILE_FIELDS`]・[`BOOT_LOG_RANGES`]）。無ければ `None`。
+fn volatile_field_span(line: &str, before: &str, after: &str) -> Option<(usize, usize)> {
+    let start = line.find(before)? + before.len();
+    let end = if after.is_empty() {
+        line.len()
+    } else {
+        start + line[start..].find(after)?
+    };
+    let digits = &line[start..end];
+    (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())).then_some((start, end))
+}
+
+/// [`BOOT_LOG_VOLATILE_FIELDS`] の値を `<n>` に置く。
+fn mask_volatile_fields(line: &str) -> String {
+    let mut line = line.to_string();
+    for field in BOOT_LOG_VOLATILE_FIELDS {
+        if !line.contains(field.line) {
+            continue;
+        }
+        if let Some((start, end)) = volatile_field_span(&line, field.before, field.after) {
+            line.replace_range(start..end, "<n>");
+        }
+    }
+    line
+}
+
+/// [`BOOT_LOG_RANGES`] を 1 本の起動ログで見る。**範囲の外と、行が無いものを返す**（空なら全部通った）。
+/// 2 つ目の値は見た値の数。
+fn check_boot_log_ranges(label: &str, serial: &str) -> (Vec<String>, usize) {
+    let mut findings = Vec::new();
+    let mut seen = 0;
+    for range in BOOT_LOG_RANGES {
+        let mut found = false;
+        for line in serial.lines().filter(|line| line.contains(range.line)) {
+            let Some((start, end)) = volatile_field_span(line, range.before, range.after) else {
+                continue;
+            };
+            found = true;
+            seen += 1;
+            let value: u64 = line[start..end].parse().unwrap_or(u64::MAX);
+            if value < range.min || value > range.max {
+                findings.push(format!(
+                    "{label}: {} = {value} is outside {}..={} ({})",
+                    range.what,
+                    range.min,
+                    range.max,
+                    line.trim()
+                ));
+            }
+        }
+        if !found {
+            findings.push(format!(
+                "{label}: no line holds {} ({:?} … {:?}{:?})",
+                range.what, range.line, range.before, range.after
+            ));
+        }
+    }
+    (findings, seen)
+}
+
 /// 起動ログを正規化する（S6-d）。
 ///
 /// **値を消すのではなく、行ごと落とす。** 桁や書式に結合しないためである
 /// （`docstyle` の正規化差分で、書式へ結合させると検査が文書の書き方を縛ると
-/// 分かっている）。
+/// 分かっている）。**例外は [`BOOT_LOG_VOLATILE_FIELDS`] である**（行は残して値だけ伏せる。代わりの検査が
+/// [`BOOT_LOG_RANGES`] に在る）。
 fn normalize_boot_log(serial: &str, drop_core_count_lines: bool) -> Vec<String> {
     serial
         .lines()
@@ -20345,7 +20542,7 @@ fn normalize_boot_log(serial: &str, drop_core_count_lines: bool) -> Vec<String> 
         .filter(|line| {
             !drop_core_count_lines || !BOOT_LOG_CORE_COUNT_MARKERS.iter().any(|m| line.contains(m))
         })
-        .map(|line| line.to_string())
+        .map(mask_volatile_fields)
         .collect()
 }
 
@@ -21191,6 +21388,10 @@ enum LinuxReferenceEnvironment {
     AnyCount,
 }
 
+/// 起動のたびにカーネルが起こす Linux 向けのプログラム（`kernel/src/main.rs` の `verify_linux_programs`。`m1-rust` は M1、
+/// `m3a-rust` はスレッドを 1 つ作る像で M3a。2026-10-14）。**どれも引数 4 つで起こし、4 で終わる。**
+const LINUX_PROGRAMS_IN_THE_BOOT_LOG: &[&str] = &["m1-rust", "m3a-rust", "m3a-mutex-rust"];
+
 /// `linux-programs/reference/<name>.txt`（Linux 上で控えた stdout と終了の状態）の各行が、`output` に順に在るか
 /// （M1。2026-10-06）。**参照の最後の行 `exit status: N` は、出力の中では探さない**——終了の状態は呼ぶ側が別の行で見る
 /// （`spawn` の結果か `zash: exit status`）。`environment variable(s)` の行は、`how` に従って数を見るか形だけ見る。
@@ -21860,6 +22061,30 @@ fn cmd_boot_log_diff(update_reference: bool, allow_shrink: bool, only_masked: bo
                 failed = true;
             }
         }
+    }
+
+    // --- 1b. 伏せた値の範囲（M3a。2026-10-14）---
+    let mut range_findings = Vec::new();
+    let mut range_values = 0;
+    for (label, serial) in [("-smp 1", &smp1), ("-smp 2", &smp2), ("-smp 4", &smp4)] {
+        let (findings, seen) = check_boot_log_ranges(label, serial);
+        range_values += seen;
+        range_findings.extend(findings);
+    }
+    if range_findings.is_empty() {
+        println!(
+            "--- boot log ranges: OK ({range_values} masked value(s) in the three boots are inside their ranges; \
+             BOOT_LOG_RANGES)"
+        );
+    } else {
+        for finding in &range_findings {
+            println!("    {finding}");
+        }
+        println!(
+            "--- boot log ranges: FAILED ({} value(s) outside their ranges or missing)",
+            range_findings.len()
+        );
+        failed = true;
     }
 
     // --- 2. 定義 3: コア数を変えても、コア数に依らない部分は同じ ---
@@ -23326,6 +23551,11 @@ const DIRECT_SERIAL_PORT_ALLOWLIST: &[DirectSerialPortSite] = &[
         file: "kernel/src/task.rs",
         item: "serial_line",
         reason: "スケジューラの観測行の唯一の出口（31 箇所の呼び出しを覆う。粒度の限界）",
+    },
+    DirectSerialPortSite {
+        file: "kernel/src/syscall.rs",
+        item: "serial_line",
+        reason: "スレッド（clone・exit・spawn の断り）の名指しの行の出口（M3a。2026-10-14）。システムコールの入口（BKL の内側）から出すが、ロガーは lib からは届かない（sys_write と同じ）",
     },
 ];
 
@@ -30199,19 +30429,25 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
         Family::Base,
         "the Linux program's lines in the boot log reference match the reference recorded on Linux",
     );
+    // **`m3a-rust`（スレッドを 1 つ作る像。M3a。2026-10-14）も同じ参照の形で見る。**
     match fs::read_to_string(workspace_root.join(REFERENCE_BOOT_LOG))
         .context("failed to read the boot log reference")
         .and_then(|text| {
-            linux_program_output_matches(
-                &workspace_root,
-                "m1-rust",
-                &text,
-                LinuxReferenceEnvironment::ExactCount,
-            )
+            LINUX_PROGRAMS_IN_THE_BOOT_LOG.iter().try_fold(Vec::new(), |mut missing, name| {
+                if !linux_program_output_matches(
+                    &workspace_root,
+                    name,
+                    &text,
+                    LinuxReferenceEnvironment::ExactCount,
+                )? {
+                    missing.push(*name);
+                }
+                Ok(missing)
+            })
         }) {
-        Ok(true) => println!("--- linux program reference: OK (m1-rust: every line of linux-programs/reference/m1-rust.txt is in the boot log reference, in order, with the exit status 4)"),
-        Ok(false) => {
-            println!("--- linux program reference: FAILED (the boot log reference does not hold the lines of linux-programs/reference/m1-rust.txt in order; re-record the boot log, or the program's output changed)");
+        Ok(missing) if missing.is_empty() => println!("--- linux program reference: OK ({}: every line of linux-programs/reference/<name>.txt is in the boot log reference, in order, with the exit status 4)", LINUX_PROGRAMS_IN_THE_BOOT_LOG.join(", ")),
+        Ok(missing) => {
+            println!("--- linux program reference: FAILED (the boot log reference does not hold the lines of linux-programs/reference/<name>.txt in order for {missing:?}; re-record the boot log, or the program's output changed)");
             failed.push("linux program reference".to_string());
         }
         Err(error) => {
@@ -36380,6 +36616,67 @@ fn qemu_launch_args(opts: &QemuLaunchOptions) -> Vec<OsString> {
 
 #[cfg(test)]
 mod tests {
+    /// 起動ログの参照で伏せる値（M3a）——対象の行の、挟まれた数だけが `<n>` になり、ほかの行と数は動かない。
+    #[test]
+    fn volatile_fields_mask_only_the_scheduled_numbers() {
+        let ended = "[INFO] spawn: /bin/linux/m3a-rust ended (Exited(4)) after 106 syscall(s) (0 with a number the kernel does not know; the last such number was 0); x";
+        let masked = super::mask_volatile_fields(ended);
+        assert!(
+            masked.contains("after <n> syscall(s) (0 with a number"),
+            "{masked}"
+        );
+        assert!(masked.contains("Exited(4)"));
+        let reaped = "thread: task 6 (tid 2) reaped; it used 3112 of 65536 byte(s) of its kernel stack (4%), over half=false (expected false); the pool index 0 moves to generation 1";
+        let masked = super::mask_volatile_fields(reaped);
+        assert_eq!(
+            masked,
+            "thread: task 6 (tid 2) reaped; it used <n> of 65536 byte(s) of its kernel stack (<n>%), over half=false (expected false); the pool index 0 moves to generation 1"
+        );
+        let other = "[INFO] spawn: /bin/linux/m1-rust ended (Exited(4)) after 39 syscall(s) (0 with a number the kernel does not know; the last such number was 0)";
+        assert_eq!(super::mask_volatile_fields(other), other);
+        let futex = "[INFO] futex: /bin/linux/m3a-mutex-rust slept 2 time(s) and woke 2 waiter(s) (0 and 0 unless the program has threads)";
+        assert_eq!(
+            super::mask_volatile_fields(futex),
+            "[INFO] futex: /bin/linux/m3a-mutex-rust slept <n> time(s) and woke <n> waiter(s) (0 and 0 unless the program has threads)"
+        );
+    }
+
+    /// 伏せた値の範囲（M3a）——範囲の中なら何も言わず、外なら名指しし、行が無ければそれも名指しする。
+    #[test]
+    fn boot_log_ranges_name_the_values_outside_and_the_missing_lines() {
+        let good = "\
+[INFO] spawn: /bin/linux/m3a-rust ended (Exited(4)) after 106 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
+[INFO] spawn: /bin/linux/m3a-mutex-rust ended (Exited(4)) after 110 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
+thread: task 6 (tid 2) reaped; it used 3112 of 65536 byte(s) of its kernel stack (4%), over half=false (expected false)
+thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack (4%), over half=false (expected false)
+[INFO] futex: /bin/linux/m3a-rust slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads)
+[INFO] futex: /bin/linux/m3a-mutex-rust slept 2 time(s) and woke 2 waiter(s) (0 and 0 unless the program has threads)
+";
+        let (findings, seen) = super::check_boot_log_ranges("t", good);
+        assert!(findings.is_empty(), "{findings:?}");
+        assert_eq!(seen, 8);
+        let bad = good
+            .replace("after 106 syscall", "after 300 syscall")
+            .replace("used 3112 of", "used 40000 of");
+        let (findings, _) = super::check_boot_log_ranges("t", &bad);
+        assert_eq!(findings.len(), 2, "{findings:?}");
+        let missing: String = good
+            .lines()
+            .filter(|l| !l.contains("m3a-mutex-rust slept"))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        let (findings, _) = super::check_boot_log_ranges("t", &missing);
+        assert_eq!(findings.len(), 2, "{findings:?}");
+        // m3a-rust の `futex:` の行を消すと、眠った回数と起こした本数の 2 つの範囲が欠けを名指しする。
+        let missing: String = good
+            .lines()
+            .filter(|l| !l.contains("m3a-rust slept"))
+            .map(|l| format!("{l}\n"))
+            .collect();
+        let (findings, _) = super::check_boot_log_ranges("t", &missing);
+        assert_eq!(findings.len(), 2, "{findings:?}");
+    }
+
     use super::*;
 
     /// 写しの置き場の数の行を読む（2026-10-08）。

@@ -60,9 +60,9 @@ pub use ring3::{
     excursion_stack_capacity, excursion_stack_high_water, excursion_stack_range,
     excursion_stack_range_at, excursion_stack_range_for, excursion_stack_range_of,
     excursion_stack_within_budget, install_excursion_guard_pages, leave_user_mode,
-    note_kernel_entry_from_user, note_return_to_user, restore_fold_record, run_excursion,
-    save_fold_record, set_current_excursion_recovery, ExcursionHome, MAX_EXCURSION_DEPTH,
-    USER_TASK_SLOTS,
+    note_kernel_entry_from_user, note_return_to_user, prepare_thread_excursion_state,
+    restore_fold_record, run_excursion, save_fold_record, set_current_excursion_recovery,
+    thread_task_in_ring3, ExcursionHome, MAX_EXCURSION_DEPTH, USER_TASK_SLOTS,
 };
 pub use stack::{
     check_entry_stack_alignment, guarded_stack_at, install_guard_page, kernel_stack_capacity,
@@ -70,8 +70,11 @@ pub use stack::{
     KERNEL_STACK_FILL,
 };
 pub use system_call_entry::{refuse_system_call_return, USER_ADDRESS_LIMIT};
-pub use task_frame::{build_initial_context, raise_yield_interrupt};
+pub use task_frame::{
+    build_initial_context, build_initial_context_from_image, raise_yield_interrupt,
+};
 pub use user_registers::{
-    restore_user_registers, restore_user_segment_bases, save_user_registers, set_user_fs_base,
-    set_user_gs_base, user_fs_base, user_gs_base, UserRegisters,
+    is_allowed_user_segment_base, restore_user_registers, restore_user_segment_bases,
+    save_user_registers, save_user_registers_for_thread, set_user_fs_base, set_user_gs_base,
+    user_fs_base, user_gs_base, UserRegisters,
 };

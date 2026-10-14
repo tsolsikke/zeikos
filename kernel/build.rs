@@ -617,7 +617,7 @@ fn build_user_programs(manifest_dir: &str, out_dir: &str) {
 }
 
 /// Linux 向けのプログラムの名前（`linux-programs/<名前>.rs`。像の `/bin/linux/<名前>` に置く）。
-const LINUX_PROGRAMS: &[&str] = &["m1-rust"];
+const LINUX_PROGRAMS: &[&str] = &["m1-rust", "m3a-rust", "m3a-mutex-rust"];
 
 /// Linux 向けのプログラム（`linux-programs/`。musl で静的リンクした、`std` を使う Rust）を `rustc` でビルドする
 /// （2026-10-06。M1——Linux のプログラムをそのまま動かす）。

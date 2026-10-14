@@ -184,7 +184,9 @@ struct Recovery {
 
 /// 回復点、池のスレッドのタスクごと（M3a。[`ExcursionHome::Thread`]）。**1 つずつである**——スレッドは入れ子の遠征を
 /// 持たない（`run_excursion` はスレッドのタスクからは呼べない。`clone` の入口は、初期の文脈で Ring 3 へ入る）。
-/// **この段では誰も使わない。**
+/// **誰も据えない**——池のタスクは回復点を持たず（欄は 0 のまま。`excursion_recovery_belongs_to` は 0 を「まだ誰も
+/// 入っていない」として受ける）、Ring 3 を出る道は longjmp ではなく切り替えである（[`leave_user_mode`] の注記）。
+/// 置き場は、2 CPU 以上の段で回復点の形が要るようになったときのために残してある。
 static mut THREAD_RECOVERIES: [Recovery; crate::task::THREAD_TASKS] = [const {
     Recovery {
         rsp: 0,
@@ -380,9 +382,48 @@ impl ExcursionState {
 static EXCURSION_STATE: [ExcursionState; USER_TASK_SLOTS] =
     [const { ExcursionState::new() }; USER_TASK_SLOTS];
 
-/// 遠征の状態、池のスレッドのタスクごと（M3a。[`ExcursionHome::Thread`]）。**この段では誰も使わない。**
+/// 遠征の状態、池のスレッドのタスクごと（M3a。[`ExcursionHome::Thread`]）。**`clone` の入口が据え（[`prepare_thread_excursion_state`]）、
+/// そのタスクが Ring 3 に居る間、システムコールと例外の入口が読む。**
 static THREAD_EXCURSION_STATE: [ExcursionState; crate::task::THREAD_TASKS] =
     [const { ExcursionState::new() }; crate::task::THREAD_TASKS];
+
+/// 池の `index` 本目のタスクを起こす前に、その遠征の状態を据える（M3a。2026-10-14。`ADR-0085` の決定 2）。
+///
+/// **`depth` は属するプロセスの深さ（親が `clone` を打ったときの [`excursion_depth`]）である**——スレッドのシステムコールが
+/// プロセスの表（`crate::process_state`・`crate::syscall` のスロットの表）を親と同じ欄で引くため。**「今 Ring 3 に居る」は
+/// 立てておく**——最初の切り替えが復元経路から直に Ring 3 へ落とすので、立てる機会はここしか無い（`run_excursion` が
+/// `iretq` の直前で立てるのと同じ役）。畳みと中断と例外の記録は 0 へ戻す。
+///
+/// # 契約（境界の関数）
+///
+/// - 呼ぶのは池のタスクを起こす所（`crate::task`）で、BKL の内側、そのタスクが `Ready` になる前である。
+pub fn prepare_thread_excursion_state(index: usize, depth: usize) {
+    let state = &THREAD_EXCURSION_STATE[index];
+    state.depth.store(depth, Ordering::SeqCst);
+    state.in_ring3.store(true, Ordering::SeqCst);
+    state.folded.store(false, Ordering::SeqCst);
+    state.interrupted.store(false, Ordering::SeqCst);
+    state.fault_vector.store(0, Ordering::SeqCst);
+    state.fault_rip.store(0, Ordering::SeqCst);
+    state.fault_rsp.store(0, Ordering::SeqCst);
+    state.handler_rsp.store(0, Ordering::SeqCst);
+    state.fault_cs.store(0, Ordering::SeqCst);
+    state.fault_cr2.store(0, Ordering::SeqCst);
+    state.fault_error_code.store(0, Ordering::SeqCst);
+}
+
+/// 池の `index` 本目のタスクが、今 Ring 3 に居るか（M3a。2026-10-14）。**偽なら、カーネルの中（システムコールの待ち）で
+/// 止まっている。** プロセスの終わりが、終えたスレッドのうちカーネルの中で止まっていた本数を数えるのに読む
+/// （`crate::task::finish_threads_of_slot`）。
+///
+/// # 契約（境界の関数）
+///
+/// - 読むだけで、何も変えない。範囲外の `index` では止まる。
+pub fn thread_task_in_ring3(index: usize) -> bool {
+    THREAD_EXCURSION_STATE[index]
+        .in_ring3
+        .load(Ordering::SeqCst)
+}
 
 /// 今のタスクの遠征の状態を引く（W1-a。W1-c-3 でタスクのスロットから引く形にし、M3a で置き場から引く形にした）。
 ///
@@ -640,9 +681,11 @@ pub fn excursion_stack_range_at(depth: usize) -> (u64, u64) {
 
 /// 置き場 `home` の、深さ `depth` の、カーネル入場のスタックの (下端, 上端)（M3a）。
 ///
-/// **スロットなら、その深さの遠征スタックである**（[`excursion_stack_range_of`]）。**池のスレッドのタスクなら、自分の
-/// カーネルスタックである**（深さは 0 だけ。スレッドは入れ子の遠征を持たない）。**切り替えが、入る側のタスクの
-/// 置き場で引く。**
+/// **スロットなら、その深さの遠征スタックである**（[`excursion_stack_range_of`]）。**池のスレッドのタスクなら、深さに
+/// 依らず自分のカーネルスタックである**——スレッドの深さは、属するプロセスの深さ（親が `clone` を打ったときの深さ）で、
+/// プロセスの表を同じ欄で引くために持つ。スレッドは入れ子の遠征を持たず、スタックは 1 本である（2026-10-14 に
+/// 「深さは 0 だけ」から直した。`Task::excursion_depth` と `ExcursionState::depth` を同じ値にするため）。**切り替えが、
+/// 入る側のタスクの置き場で引く。**
 ///
 /// # 契約（境界の関数。2026-10-13）
 ///
@@ -651,7 +694,7 @@ pub fn excursion_stack_range_for(home: ExcursionHome, depth: usize) -> (u64, u64
     match home {
         ExcursionHome::Slot(slot) => excursion_stack_range_of(slot, depth),
         ExcursionHome::Thread(index) => {
-            if index >= crate::task::THREAD_TASKS || depth >= 1 {
+            if index >= crate::task::THREAD_TASKS || depth >= MAX_EXCURSION_DEPTH {
                 report_thread_excursion_index_out_of_range(index, depth);
             }
             crate::task::thread_task_stack_range(index)
@@ -664,8 +707,8 @@ pub fn excursion_stack_range_for(home: ExcursionHome, depth: usize) -> (u64, u64
 #[cold]
 fn report_thread_excursion_index_out_of_range(index: usize, depth: usize) -> ! {
     panic!(
-        "ring3: thread task {index} / depth {depth} is out of range (THREAD_TASKS = {}, a thread task has one \
-         kernel stack and no nested excursion)",
+        "ring3: thread task {index} / depth {depth} is out of range (THREAD_TASKS = {}, MAX_EXCURSION_DEPTH = \
+         {MAX_EXCURSION_DEPTH}; a thread task has one kernel stack whatever the depth of its process)",
         crate::task::THREAD_TASKS
     );
 }
@@ -1377,10 +1420,30 @@ pub unsafe fn record_and_fold(
 /// `RECOVERY` が [`run_excursion`] で保存済みであること（遠征中なら必ずそう）。
 /// Ring 3 から入ったカーネル文脈から呼ぶこと。
 pub unsafe fn leave_user_mode() -> ! {
+    // **池のスレッドのタスクには回復点が無い（M3a。2026-10-14）**——スレッドの `exit` は切り替えで出る
+    // （`crate::task::park_finished_thread_task`）。ここへ来るのは、スレッドの中の例外・Ctrl+C・プロセスを終わらせる呼び出し
+    // （`exit_group`・`tkill`・`futex` の行き詰まり）・正準でない戻り先で、どれも次の段（異常の道）で形を決める。
+    // **それまでは名指しして止まる**（0 へ longjmp して黙って壊れる形にしない）。
+    if let ExcursionHome::Thread(index) = current_home() {
+        report_thread_task_without_a_recovery(index);
+    }
     state().in_ring3.store(false, Ordering::SeqCst);
     // SAFETY: 呼び出し側契約により RECOVERY は保存済み。longjmp は RSP と
     // callee-saved を復元して復帰 RIP へ飛ぶ。戻らない。
     unsafe { zeikos_resume_from_ring3() }
+}
+
+/// 池のスレッドのタスクが、回復点への longjmp で Ring 3 を出ようとした（M3a。2026-10-14）。**止める。**
+///
+/// **名指しの行である**——`thread task` と `has no recovery point` が目印（スレッドの中の例外・Ctrl+C・プロセスを
+/// 終わらせる呼び出しは、次の段で形を決める）。
+#[inline(never)]
+#[cold]
+fn report_thread_task_without_a_recovery(index: usize) -> ! {
+    panic!(
+        "ring3: thread task {index} (pool index) has no recovery point to leave user mode through; a fault, \
+         Ctrl+C or a process-ending call from a thread task is not handled yet (the next stage); halting"
+    );
 }
 
 /// 例外による終了処理が起きたか（遠征後の会計）。

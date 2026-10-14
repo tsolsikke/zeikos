@@ -941,6 +941,20 @@ fn thread_task_stack_bounds(index: usize) -> (VirtAddr, VirtAddr) {
     (guard, top)
 }
 
+/// 池の `index` 本目のタスクの、登録のときの欄（M3a。2026-10-14）。**`Uninitialized` で、担当は BSP（`EMPTY_TASK` の既定。
+/// `ADR-0085` の決定 5）、RSP0 はカーネルスタック頂点（W1-c-3c の 0 の関所）。** 起動の登録（`setup_tasks`）と刈り取り
+/// （[`reap_thread_task`]）の両方がこれを使う——刈り取りが欄を別に組み立てると、担当が登録と違う形を作れてしまう。
+fn registered_thread_task(index: usize) -> Task {
+    let (guard, top) = thread_task_stack_bounds(index);
+    Task {
+        stack_top: top.as_u64(),
+        stack_bottom: guard.as_u64() + GUARD_SIZE as u64,
+        kernel_entry_stack_top: top.as_u64(),
+        state: TaskState::Uninitialized,
+        ..EMPTY_TASK
+    }
+}
+
 /// 池の `index` 本目のカーネルスタックの (下端, 上端)（M3a。見張りのページを除く）。**池のタスクが Ring 3 に居る間の
 /// RSP0 の先で、切り替えの検算とカーネル入場のスタックの確かめが、この範囲を見る**（`ring3::excursion_stack_range_for`）。
 ///
@@ -1168,6 +1182,449 @@ fn ring3_task_stack_high_water() -> usize {
         }
     }
     0
+}
+
+// ---------------------------------------------------------------------------------------------
+// 池のスレッドのタスクの運用（M3a。2026-10-14。`ADR-0085` の決定 2・3・5・8）
+// ---------------------------------------------------------------------------------------------
+
+/// 池のタスクの世代（`ADR-0085` の決定 8）。**刈り取るたびに 1 つ進む。** tid の上の桁になるので、終わったスレッドの
+/// tid は使い回されない。
+static THREAD_GENERATIONS: [AtomicU64; THREAD_TASKS] = [const { AtomicU64::new(0) }; THREAD_TASKS];
+
+/// `CLONE_CHILD_CLEARTID` の番地、池のタスクごと（`ADR-0085` の決定 1 の `tid_address`。順の 4 から前倒しした）。
+/// **0 なら無い。** スレッドの `exit` がそこへ 0 を書く（`crate::syscall`）。刈り取りで 0 へ戻す。
+static THREAD_TID_ADDRESSES: [AtomicU64; THREAD_TASKS] =
+    [const { AtomicU64::new(0) }; THREAD_TASKS];
+
+/// 池が尽きて `clone` を断った回数（計測。本番の起動では 0）。
+static POOL_EXHAUSTED_REFUSALS: AtomicU64 = AtomicU64::new(0);
+
+/// 刈り取った池のタスクの延べ本数（計測）。
+static THREADS_REAPED: AtomicU64 = AtomicU64::new(0);
+
+/// 主スレッドの tid（`getpid` と同じ 1。`ADR-0085` の決定 8）。
+pub const MAIN_THREAD_TID: u64 = 1;
+
+/// 池の `index` 本目のタスクの、世代 `generation` での tid（`ADR-0085` の決定 8）。
+///
+/// **`2 + 池の番号 + THREAD_TASKS × 世代`**——1 にはならず（主スレッド）、同じ池のタスクでも世代が違えば別の値になる。
+pub const fn thread_tid_for(index: usize, generation: u64) -> u64 {
+    2 + index as u64 + THREAD_TASKS as u64 * generation
+}
+
+/// 池の `index` 本目のタスクの、今の tid。
+pub fn thread_tid(index: usize) -> u64 {
+    thread_tid_for(index, THREAD_GENERATIONS[index].load(Ordering::Relaxed))
+}
+
+/// 今走っているタスクが池のタスクなら、その池の番号。
+pub fn current_thread_index() -> Option<usize> {
+    current_index_if_any()
+        .filter(|task| is_thread_task(*task))
+        .map(|task| task - THREAD_TASK_FIRST)
+}
+
+/// 今走っているスレッドの tid（`gettid`）。**池のタスクなら自分の tid、ほかは 1。**
+pub fn current_tid() -> u64 {
+    current_thread_index().map_or(MAIN_THREAD_TID, thread_tid)
+}
+
+/// 池の `index` 本目のタスクの `CLONE_CHILD_CLEARTID` の番地（0 なら無い）。
+pub fn thread_tid_address(index: usize) -> u64 {
+    THREAD_TID_ADDRESSES[index].load(Ordering::Relaxed)
+}
+
+/// 池の `index` 本目のタスクの `CLONE_CHILD_CLEARTID` の番地を据える（`clone` と、池のタスクからの `set_tid_address`）。
+pub fn set_thread_tid_address(index: usize, address: u64) {
+    THREAD_TID_ADDRESSES[index].store(address, Ordering::Relaxed);
+}
+
+/// スロット `slot` のプロセスに属する、生きている（`Uninitialized` でない）池のタスクの数。
+pub fn live_threads_in_slot(slot: usize) -> usize {
+    (0..THREAD_TASKS)
+        .filter(|index| {
+            let task = THREAD_TASK_FIRST + index;
+            scheduler::state(task) != TaskState::Uninitialized
+                && scheduler::ring3_slot(task) == slot
+        })
+        .count()
+}
+
+/// スロット `slot` のプロセスに、tid が `tid` の生きているスレッドが居るか（`tkill` の相手）。
+pub fn slot_has_live_thread_with_tid(slot: usize, tid: u64) -> bool {
+    (0..THREAD_TASKS).any(|index| {
+        let task = THREAD_TASK_FIRST + index;
+        scheduler::state(task) != TaskState::Uninitialized
+            && scheduler::ring3_slot(task) == slot
+            && thread_tid(index) == tid
+    })
+}
+
+/// 入れ子の `spawn` を断る理由（`ADR-0085` の決定 3）。**スレッドを持つプロセスは、M3a の間は子を起こせない。**
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpawnRefusal {
+    /// 池のタスク（スレッド）が `spawn` を打った。入れ子の子は打った側のタスクの上で走るので、スレッドの上では起こさない。
+    FromThread {
+        /// 池の番号。
+        index: usize,
+    },
+    /// 主スレッドが打ったが、同じスロットに生きているスレッドが居る。入れ子の子はスロットの欄を入れ替えるので、残った
+    /// スレッドが子の表を見てしまう。
+    ThreadsAlive {
+        /// 生きているスレッドの数。
+        count: usize,
+    },
+}
+
+/// 今のタスクからの `spawn`（切り離しとパイプの形も）を、スレッドのために断るか（`ADR-0085` の決定 3）。**断るなら理由。**
+pub fn spawn_refusal_for_threads(slot: usize) -> Option<SpawnRefusal> {
+    if let Some(index) = current_thread_index() {
+        return Some(SpawnRefusal::FromThread { index });
+    }
+    match live_threads_in_slot(slot) {
+        0 => None,
+        count => Some(SpawnRefusal::ThreadsAlive { count }),
+    }
+}
+
+/// 池のタスクを起こす依頼（`clone` の入口が作る）。
+pub struct ThreadStart<'a> {
+    /// 最初に Ring 3 へ入る文脈（親の文脈の写し。`arch` が作る。共通の側は中身を読まない）。
+    pub image: &'a crate::arch::x86_64::IrqContext,
+    /// 渡されたユーザースタック（起動ログの行に出すだけ。文脈の中にも同じ値が在る）。
+    pub user_stack: u64,
+    /// TLS（FS の基底）。`arch` の `is_allowed_user_segment_base` を通った番地であること。
+    pub tls: u64,
+    /// `CLONE_CHILD_CLEARTID` の番地（0 なら無い）。
+    pub tid_address: u64,
+}
+
+/// 池のタスクを起こせなかった理由。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThreadStartError {
+    /// 池が尽きている（`clone` は `-EAGAIN`。`ADR-0085` の決定 2）。
+    PoolExhausted,
+}
+
+/// 池のタスクを 1 本起こす（M3a。`ADR-0085` の決定 2）。**起こせたら (池の番号, tid)。**
+///
+/// # 形（案 A。3 段目の設計）
+///
+/// 最初の文脈は、親の文脈の写し（RAX=0、RSP=渡されたスタック、CS/SS=ユーザー）を池のカーネルスタックの上端に
+/// 積んだものである。**最初の切り替えで復元経路（pop 15 本 → `iretq`）が直に Ring 3 へ落とす**——`run_excursion` の枠は
+/// 無く、回復点も無い。RSP0 は自分のカーネルスタックの上端で、Ring 3 からの入場はそこへ積む。
+///
+/// # 欄の意味
+///
+/// - `excursion_depth` は属するプロセスの深さ（親が `clone` を打ったときの深さ）で、`ring3` 側の `ExcursionState::depth`
+///   と同じ値である（プロセスの表を親と同じ欄で引くため。切り替えの検算は、池のタスクなら深さに依らず自分のカーネル
+///   スタックを期待する——`ring3::excursion_stack_range_for`）。
+/// - `page_table_root` は親の値の写し（決定 1 の「スレッド（写し）」）。
+/// - `owner` は登録のまま（BSP）で、**親の `owner` と今の CPU に一致することをここで確かめる**（決定 5。`ran_on` の
+///   前提。違えば名指しして止まる——本番では起きない）。
+/// - `ring3_slot` は親のスロット（プロセスの表はスロットで共有する）。
+///
+/// # 呼ぶ条件
+///
+/// `clone` の入口（`crate::syscall`）が、BKL の内側（IF=0）で呼ぶ。**共有の資源に触れる前に断る**——池が尽きていれば、
+/// ここは何も書かずに `PoolExhausted` を返す。**`Finished` のまま残っている池のタスクは、先に刈り取る**（遅延の刈り取り。
+/// プロセスの終わりでも刈り取るので、本番で残っているのは、主スレッドより先に終わったスレッドだけである）。
+pub fn start_thread_task(start: ThreadStart<'_>) -> Result<(usize, u64), ThreadStartError> {
+    for index in 0..THREAD_TASKS {
+        if scheduler::state(THREAD_TASK_FIRST + index) == TaskState::Finished {
+            reap_thread_task(index);
+        }
+    }
+    let Some(index) = (0..THREAD_TASKS)
+        .find(|index| scheduler::state(THREAD_TASK_FIRST + index) == TaskState::Uninitialized)
+    else {
+        POOL_EXHAUSTED_REFUSALS.fetch_add(1, Ordering::Relaxed);
+        return Err(ThreadStartError::PoolExhausted);
+    };
+    let task = THREAD_TASK_FIRST + index;
+    let parent = current_index();
+    let owners = scheduler::owners();
+    let cpu = common::percpu::cpu_id();
+    if owners[task] != owners[parent] || owners[task] != cpu {
+        report_thread_owner_mismatch(task, owners[task], parent, owners[parent], cpu);
+    }
+    let generation = THREAD_GENERATIONS[index].load(Ordering::Relaxed);
+    let tid = thread_tid_for(index, generation);
+    if tid > i32::MAX as u64 {
+        report_thread_tid_overflow(index, generation, tid);
+    }
+    let slot = scheduler::ring3_slot(parent);
+    let depth = crate::arch::x86_64::excursion_depth();
+    debug_assert!(
+        depth >= 1,
+        "clone comes from ring 3, so the parent is inside an excursion"
+    );
+    let root = scheduler::page_table_root(parent);
+    let (guard, top) = thread_task_stack_bounds(index);
+    let bottom = guard.as_u64() + GUARD_SIZE as u64;
+    // **高水位を測るために目印で埋める**（`start_ring3_task` と同じ。文脈を積む前である）。システムコールの入口は IF=0 で
+    // 走るので、埋めるのもその中である（`spawn` が ELF を読み込むのと同じ区間）。
+    // SAFETY: まだ誰も乗っていないスタック本体の全体で、ガードページは含まない（`Uninitialized` の池のタスク）。
+    unsafe {
+        core::ptr::write_bytes(
+            bottom as *mut u8,
+            crate::arch::x86_64::KERNEL_STACK_FILL,
+            RING3_TASK_STACK_SIZE,
+        )
+    };
+    // SAFETY: top はガードページを設けた静的スタックの頂点で、まだ誰も使っていない。4KiB 境界に載っている。
+    // `image` は `arch` が作った、ユーザーの CS・SS を持つ文脈である。
+    let saved_stack_pointer =
+        unsafe { crate::arch::x86_64::build_initial_context_from_image(top, start.image) };
+    // **ユーザーのレジスタの置き場を、親の写しに TLS を入れたもので埋める**（`arch` の `UserRegisters`）。最初の切り替えが
+    // これを載せる。
+    // SAFETY: IF=0 かつ BKL の内側で、この配列に触るのは切り替えとここだけである。添字は `TASK_COUNT` 未満。`tls` は
+    // 呼び手が `is_allowed_user_segment_base` を通している（契約）。
+    unsafe {
+        let areas = &mut *core::ptr::addr_of_mut!(USER_REGISTER_AREAS);
+        crate::arch::x86_64::save_user_registers_for_thread(&mut areas[task], start.tls);
+    }
+    crate::arch::x86_64::prepare_thread_excursion_state(index, depth);
+    set_thread_tid_address(index, start.tid_address);
+    {
+        // **登録から `Ready` までを割り込みを止めて一続きにする**（`start_ring3_task` と同じ）。
+        let _no_switch = common::critical::InterruptGuard::enter();
+        scheduler::init_task(
+            task,
+            Task {
+                saved_stack_pointer,
+                stack_top: top.as_u64(),
+                stack_bottom: bottom,
+                kernel_entry_stack_top: top.as_u64(),
+                excursion_depth: depth,
+                page_table_root: root,
+                current_recovery: 0,
+                state: TaskState::Ready,
+                owner: owners[task],
+                ring3_slot: slot,
+                ..EMPTY_TASK
+            },
+        );
+    }
+    serial_line(format_args!(
+        "thread: task {task} started as tid {tid} (pool index {index}, generation {generation}) for ring3 slot \
+         {slot} at depth {depth}, owned by cpu {cpu} like its parent task {parent}; user stack {:#x}, tls {:#x}, \
+         clear-tid address {:#x}",
+        start.user_stack, start.tls, start.tid_address
+    ));
+    Ok((index, tid))
+}
+
+/// 今走っている池のタスクを `Finished` にする（スレッドの `exit`。`ADR-0085` の決定 3）。**池の番号を返す。**
+///
+/// **BKL の内側で呼ぶ**（`ring3_task_main` の終わりと同じ形。`wake_tasks_waiting_on` の契約）。`CLONE_CHILD_CLEARTID` の
+/// 書きは呼び手（`crate::syscall`）が先に済ませ、書けたかを `cleared` で渡す。**起こす相手は、futex（次の課題）が
+/// 入るまで居ない**——入ったら、ここで `Wait::Futex` を起こす。
+///
+/// 切り替えて戻らないのは [`park_finished_thread_task`] で、BKL を解いてから呼ぶ。
+pub fn mark_current_thread_finished(status: u64, cleared: Option<u64>) -> usize {
+    let index = current_thread_index().expect("only a thread task finishes this way");
+    let task = THREAD_TASK_FIRST + index;
+    debug_assert!(crate::bkl::held_by_this_cpu());
+    scheduler::set_state(task, TaskState::Finished);
+    serial_line(format_args!(
+        "thread: tid {} (task {task}) exited with status {status}; the clear-tid address was {:#x} (0 written = {})",
+        thread_tid(index),
+        thread_tid_address(index),
+        cleared.is_some()
+    ));
+    index
+}
+
+/// `Finished` にした池のタスクが、切り替えて二度と戻らない（スレッドの `exit` の出口。M3a）。
+///
+/// # 捨てるカーネルスタックの枠に、`Drop` の要るものを残さない
+///
+/// **ここから先、このタスクは選ばれないので、呼び手の枠に積まれたものは `Drop` されない。** 呼び手（`crate::syscall` の
+/// スレッドの `exit`）は、BKL のガードを解き（`bkl.take()`）、ロックのガード・`Box`・`Vec` を持たない形でここへ来る。
+/// **`debug_assert!` で、BKL を持っていないこと（[`crate::bkl::held_by_this_cpu`]）と、`InterruptGuard`／`Locked` を
+/// 持っていないこと（`critical_nesting_depth` が 0）を確かめる**——型で表せる 2 つはこれで、`Box`・`Vec` は doc で守る
+/// （どちらもカーネルのヒープのもので、システムコールの入口の経路には無い）。
+///
+/// # 切り替えの形
+///
+/// `yield_now`（`int` で切り替えの経路へ入る）。**IF=0 のまま呼べる**（ソフトウェア割り込み。`sys_read` の待ちと同じ）。
+/// `Finished` なので `pick_next` は選ばず、`loop` は 1 周目で切り替えたきりである。
+pub fn park_finished_thread_task() -> ! {
+    debug_assert!(!crate::bkl::held_by_this_cpu());
+    debug_assert_eq!(critical_nesting_depth(), 0);
+    debug_assert_eq!(scheduler::state(current_index()), TaskState::Finished);
+    loop {
+        yield_now();
+    }
+}
+
+/// 池の `index` 本目のタスクを刈り取る（`Finished` → `Uninitialized`。`ADR-0085` の決定 3）。**刈り取ったら tid と
+/// カーネルスタックの高水位。** `Finished` でなければ何もしない。
+///
+/// **刈り取るのは、走っていない側である**——`clone` の入口（遅延の刈り取り）か、プロセスの終わり
+/// （[`finish_threads_of_slot`]）。そのタスクの `exit` の経路の枠まで積まれた後なので、高水位は最大の値である。
+/// 世代を進め、欄を登録のとおりに戻し、`CLONE_CHILD_CLEARTID` の番地を 0 にする。
+///
+/// **半分の線を越えていたら止まる**（足した 1 本と同じ線。`ring3_task_main`）。
+pub fn reap_thread_task(index: usize) -> Option<(u64, usize)> {
+    let task = THREAD_TASK_FIRST + index;
+    if scheduler::state(task) != TaskState::Finished {
+        return None;
+    }
+    debug_assert_ne!(
+        current_index_if_any(),
+        Some(task),
+        "a thread task does not reap itself"
+    );
+    let tid = thread_tid(index);
+    let used = thread_task_stack_high_water(index);
+    let generation = THREAD_GENERATIONS[index].fetch_add(1, Ordering::Relaxed) + 1;
+    set_thread_tid_address(index, 0);
+    {
+        // **欄を登録のとおりに戻す**（[`registered_thread_task`]。担当は登録のまま BSP で、起こすときに親と突き合わせる）。
+        let registered = registered_thread_task(index);
+        debug_assert_eq!(
+            registered.owner,
+            scheduler::owners()[task],
+            "the owner never changes"
+        );
+        let _no_switch = common::critical::InterruptGuard::enter();
+        scheduler::init_task(task, registered);
+    }
+    THREADS_REAPED.fetch_add(1, Ordering::Relaxed);
+    let over_half = used * 2 > RING3_TASK_STACK_SIZE;
+    serial_line(format_args!(
+        "thread: task {task} (tid {tid}) reaped; it used {used} of {RING3_TASK_STACK_SIZE} byte(s) of its kernel \
+         stack ({}%), over half={over_half} (expected false); the pool index {index} moves to generation \
+         {generation}; the page below the stack is a guard page",
+        used * 100 / RING3_TASK_STACK_SIZE
+    ));
+    if over_half {
+        serial_line(format_args!(
+            "[ERROR] thread: task {task} used more than half of its kernel stack ({used} of \
+             {RING3_TASK_STACK_SIZE}); decide the size again with a measurement; halting"
+        ));
+        common::arch::x86_64::halt_forever();
+    }
+    Some((tid, used))
+}
+
+/// 池の `index` 本目のカーネルスタックの高水位。**底から目印でない最初の位置を探す**（`ring3_task_stack_high_water` と
+/// 同じ）。
+fn thread_task_stack_high_water(index: usize) -> usize {
+    let (guard, _) = thread_task_stack_bounds(index);
+    let bottom = (guard.as_u64() + GUARD_SIZE as u64) as *const u8;
+    for offset in 0..RING3_TASK_STACK_SIZE {
+        // SAFETY: `offset` はスタック本体の中である。読み取りのみ。
+        if unsafe { bottom.add(offset).read_volatile() } != crate::arch::x86_64::KERNEL_STACK_FILL {
+            return RING3_TASK_STACK_SIZE - offset;
+        }
+    }
+    0
+}
+
+/// スロット `slot` のプロセスの、生きている池のタスクを全部終えて刈り取る（プロセスの終わり。`ADR-0085` の決定 3）。
+/// **返すのは (終えた本数, そのうちカーネルの中で止まっていた本数)。** 終えたのは `Finished` でなかったもので、自分で
+/// `exit` して `Finished` のまま残っていたものは、数えずに刈り取るだけである（`exit` の行が既に出ている）。
+///
+/// # 止める処理は要らない
+///
+/// 全部のユーザーのタスクが BSP 担当で（決定 5・7）、走っているのは呼び手（主スレッド）だけなので、残りは `Ready` か
+/// `Waiting` のまま止まっている。欄を `Finished` にすれば二度と選ばれず、`Waiting` の理由は欄ごと消える（起こす側は
+/// `Waiting` でない欄に何もしない。**待ちの登録は `Task` の欄の中にしか無い**——パイプ・ソケット・キーボード・タイマの
+/// 起こす側は欄を走査するだけで、待つタスクの番号を別に控えない。前景の持ち主はスロットと深さで、タスクではない）。
+/// **捨てるスタックの上の文脈は、戻らない。**
+///
+/// # カーネルの中で止まっているスレッドの枠を捨てても安全な理由（2026-10-14）
+///
+/// 止まっているスレッドは、Ring 3 で止まっている（枠はカーネルの入口の文脈だけ）か、システムコールの中の `yield_now`
+/// で止まっている。**スレッドから届く `yield_now` の呼び手は次の全部で、どれも譲る前に BKL のガードを `bkl.take()` で解き、
+/// 枠に残るのは整数・固定長の配列・`Copy` の証明トークンだけである**（`Box`・`Vec`・`Arc`・`Rc` は `crate::syscall`・
+/// `crate::task`・`crate::pipe`・`crate::socket`・`crate::process_state` に 1 つも無く、アロケータの貸し出し `Loan` は
+/// 取れたときにだけ生まれて譲る前に返している）。
+///
+/// - `sched_yield`（`dispatch`）、`read`・`write` のパイプとソケットの待ち（`read_from_pipe`・`write_to_pipe`・
+///   `read_from_socket`・`write_to_socket`・`wait_until_readable`）、`accept` の待ち、`poll` の待ち、キーボードの待ち
+///   （`wait_for_keyboard`）、`nanosleep`・`clock_nanosleep` と `borrow_allocator` の待ち（`sleep_until_ticks`。
+///   貸し出しは取れるまで持たない）、子の待ち（`wait_child_from_ring3` → `userland::wait_for_ring3_task`。
+///   `InterruptGuard` は譲る前に落とす）。
+/// - `spawn` の 3 つの形はスレッドからは断るので、その中の `yield_now` には届かない。`run_excursion` の入れ子も同じ。
+///
+/// **機械でも守る**——`InterruptGuard`／`Locked` を持ったままの譲りは `on_yield` の深さの検査が止め、**池のタスクが BKL を
+/// 持ったまま譲る形は `yield_now` が割り込みを起こす前に名指しして止める**（`report_thread_yield_with_bkl`）。この 2 つが、捨てる枠に `Drop` の
+/// 要るガードが残っていないことの根拠である。
+///
+/// **呼ぶのは、空間を壊す前、BKL の内側である**（`crate::userland`。`forget_task_root_before_destroy` より前——刈り取りが
+/// `page_table_root` を 0 へ戻すので、あちらは何も見つけない）。主スレッドの `exit` に生きているスレッドが残っていた
+/// ときも、M3a ではこの形で終える（待つ形は、プロセスの終わり方の課題で。`docs/deferred-decisions.md`）。
+/// **「全部 BSP」に依っている**——`Finished` にしてから刈り取るまでの間に、別の CPU がそのタスクを走らせることも
+/// 刈り取ることも無い（`ADR-0085` の一覧）。
+pub fn finish_threads_of_slot(slot: usize) -> (usize, usize) {
+    debug_assert!(crate::bkl::held_by_this_cpu());
+    let mut ended = 0;
+    let mut parked_in_kernel = 0;
+    for index in 0..THREAD_TASKS {
+        let task = THREAD_TASK_FIRST + index;
+        if scheduler::state(task) == TaskState::Uninitialized || scheduler::ring3_slot(task) != slot
+        {
+            continue;
+        }
+        debug_assert_ne!(
+            current_index_if_any(),
+            Some(task),
+            "the main thread ends the process, not a thread"
+        );
+        if scheduler::state(task) != TaskState::Finished {
+            scheduler::set_state(task, TaskState::Finished);
+            ended += 1;
+            if !crate::arch::x86_64::thread_task_in_ring3(index) {
+                parked_in_kernel += 1;
+            }
+        }
+        reap_thread_task(index);
+    }
+    (ended, parked_in_kernel)
+}
+
+/// 池が尽きて `clone` を断った回数（計測）。
+pub fn pool_exhausted_refusals() -> u64 {
+    POOL_EXHAUSTED_REFUSALS.load(Ordering::Relaxed)
+}
+
+/// 刈り取った池のタスクの延べ本数（計測）。
+pub fn threads_reaped() -> u64 {
+    THREADS_REAPED.load(Ordering::Relaxed)
+}
+
+/// 池のタスクの担当が、親の担当か今の CPU と違った（`ADR-0085` の決定 5）。**止める。**
+#[inline(never)]
+#[cold]
+fn report_thread_owner_mismatch(
+    task: usize,
+    owner: usize,
+    parent: usize,
+    parent_owner: usize,
+    cpu: usize,
+) -> ! {
+    serial_line(format_args!(
+        "[ERROR] thread: task {task} is owned by cpu {owner}, but its parent task {parent} is owned by cpu \
+         {parent_owner} and clone runs on cpu {cpu}; a thread must stay on its creator's cpu (ADR-0085, decision 5); \
+         halting"
+    ));
+    common::arch::x86_64::halt_forever();
+}
+
+/// tid が `pid_t` に収まらなくなった（`ADR-0085` の決定 8）。**止める。**
+#[inline(never)]
+#[cold]
+fn report_thread_tid_overflow(index: usize, generation: u64, tid: u64) -> ! {
+    serial_line(format_args!(
+        "[ERROR] thread: the tid for pool index {index} at generation {generation} would be {tid}, beyond pid_t; \
+         halting"
+    ));
+    common::arch::x86_64::halt_forever();
 }
 
 /// 切り替えで入るタスクの `kernel_entry_stack_top` の欄が 0 だった（W1-c-3c）。**止める。**
@@ -1582,10 +2039,10 @@ pub(crate) fn wake_up_to_tasks_waiting_on(on: Wait, limit: usize) -> usize {
 /// Addendum。2026-10-14）。**偽なら、眠ると誰も起こせない行き詰まりである**——`FUTEX_WAIT` は眠らずに、今までどおり
 /// 137 の道へ進む（`crate::syscall::sys_futex`）。
 ///
-/// **起こしうるのは、同じスロットで `Ready` のタスクか、futex 以外の理由で待っているタスクである**（後者はプロセスの外が
-/// 起こせるので、起きた後に `FUTEX_WAKE` を打ちうる）。futex だけで待っているタスクは、誰かが起こすまで何もできない。
-/// 見るのはユーザーのタスク（足した 1 本・池・メイン）だけで、ワーカーとアイドルは数えない。**スレッドが 1 本だけの
-/// プロセスでは、必ず偽である。**
+/// **起こしうるのは、同じスロットで走れるタスク（`Ready`。メインは `Blocked` のまま走るので、メインの `Blocked` も
+/// 走れる）か、futex 以外の理由で待っているタスクである**（後者はプロセスの外が起こせるので、起きた後に `FUTEX_WAKE` を
+/// 打ちうる）。futex だけで待っているタスクは、誰かが起こすまで何もできない。見るのはユーザーのタスク（足した 1 本・池・
+/// メイン）だけで、ワーカーとアイドルは数えない。**スレッドが 1 本だけのプロセスでは、必ず偽である。**
 pub fn another_task_of_the_slot_could_wake(slot: usize) -> bool {
     could_be_woken_by_others(
         current_index(),
@@ -1593,6 +2050,35 @@ pub fn another_task_of_the_slot_could_wake(slot: usize) -> bool {
         scheduler::state,
         scheduler::ring3_slot,
     )
+}
+
+/// futex の行き詰まりと判定したとき、輪のタスクの状態とスロットを 1 行に出す（`ADR-0081` の Addendum。2026-10-14）。
+/// **行き詰まりの理由を名指しする**——どのタスクが何で待っていたかが無いと、本当の行き詰まりか判定の誤りかが読めない。
+pub fn report_user_ring_for_futex_deadlock(slot: usize, address: u64) {
+    let current = current_index();
+    serial_line(format_args!(
+        "futex: task {current} would sleep on {address:#x} in slot {slot} with no one to wake it; the user ring is: {}",
+        UserRingSummary
+    ));
+}
+
+/// [`report_user_ring_for_futex_deadlock`] の、輪のタスクの並び（添字・状態・スロット）。
+struct UserRingSummary;
+
+impl core::fmt::Display for UserRingSummary {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for position in 0..USER_RING_LEN {
+            let task = user_ring_member(position);
+            write!(
+                f,
+                "{}task {task} {:?} slot {}",
+                if position == 0 { "" } else { "; " },
+                scheduler::state(task),
+                scheduler::ring3_slot(task)
+            )?;
+        }
+        Ok(())
+    }
 }
 
 /// [`another_task_of_the_slot_could_wake`] の本体（純粋な関数。ホストの単体試験が固定する）。
@@ -1607,6 +2093,9 @@ fn could_be_woken_by_others(
             && slot_of(task) == slot
             && match state_of(task) {
                 TaskState::Ready => true,
+                // **メインのタスクは `Blocked` のまま走る**（帰り先なので、`pick_next` は状態を見ずに戻る。
+                // [`TaskState::Blocked`] の doc）。**メインの `Blocked` は「走れる」である。**
+                TaskState::Blocked => task == MAIN_TASK,
                 TaskState::Waiting(set) => set.has_a_reason_other_than_futex(),
                 _ => false,
             }
@@ -2461,8 +2950,7 @@ unsafe fn setup_tasks(allocator: &mut crate::frame_allocator::FrameAllocator) {
     // 入口を入れる段からである**（足した 1 本を `start_ring3_task` が起こすのと同じ形）。**担当は BSP である**
     // （`EMPTY_TASK` の既定。`ADR-0085` の決定 5）。
     for (index, name) in THREAD_GUARD_NAMES.iter().enumerate() {
-        let (guard, top) = thread_task_stack_bounds(index);
-        let bottom = guard.as_u64() + GUARD_SIZE as u64;
+        let (guard, _) = thread_task_stack_bounds(index);
         // SAFETY: 起動時、自前のページテーブル上。このスタックの直下 1 ページで、以後ここへ
         // 正規のアクセスは無い。
         unsafe {
@@ -2475,17 +2963,7 @@ unsafe fn setup_tasks(allocator: &mut crate::frame_allocator::FrameAllocator) {
                 &mut serial_line,
             );
         }
-        scheduler::init_task(
-            THREAD_TASK_FIRST + index,
-            Task {
-                stack_top: top.as_u64(),
-                stack_bottom: bottom,
-                // **遠征に入っていないタスクの RSP0 はカーネルスタック頂点である**（W1-c-3c の 0 の関所）。
-                kernel_entry_stack_top: top.as_u64(),
-                state: TaskState::Uninitialized,
-                ..EMPTY_TASK
-            },
-        );
+        scheduler::init_task(THREAD_TASK_FIRST + index, registered_thread_task(index));
     }
     serial_line(format_args!(
         "task: registered {THREAD_TASKS} thread task(s) as index {THREAD_TASK_FIRST}..={} owned by cpu {} on \
@@ -2506,6 +2984,15 @@ unsafe fn setup_tasks(allocator: &mut crate::frame_allocator::FrameAllocator) {
 /// - ガードの判定は [`on_yield`] 側で行う（`int` を通る全 yield を覆うため）
 #[inline(always)]
 pub fn yield_now() {
+    // **池のスレッドのタスクは、BKL を持ったまま譲らない（M3a。2026-10-14）。** 譲った先でプロセスが終わると、
+    // 呼び手の枠は捨てられて `Drop` が走らない（[`finish_threads_of_slot`]）。BKL のガードが残っていれば二度と解かれない。
+    // `InterruptGuard` は `on_yield` の深さの検査が止める。BKL は深さに数えないので、ここで別に見る——**割り込みを起こす前
+    // （呼び手の文脈）で見る**。`on_yield` の中では、yield の割り込みの入口が自分で BKL を取っているので見分けられない。
+    if let Some(index) = current_thread_index() {
+        if crate::bkl::held_by_this_cpu() {
+            report_thread_yield_with_bkl(index);
+        }
+    }
     raise_yield_interrupt();
 }
 
@@ -2530,8 +3017,18 @@ pub fn on_yield(current_sp: u64) -> u64 {
         ));
         common::arch::x86_64::halt_forever();
     }
-
     schedule_switch(current_sp)
+}
+
+/// 池のスレッドのタスクが、BKL を持ったまま譲った（M3a。2026-10-14）。**止める。**
+#[inline(never)]
+#[cold]
+fn report_thread_yield_with_bkl(index: usize) -> ! {
+    serial_line(format_args!(
+        "[ERROR] thread: pool index {index} yielded while holding the BKL; its frames may be dropped without Drop \
+         when the process ends, so a thread task releases the BKL before every yield; halting"
+    ));
+    common::arch::x86_64::halt_forever();
 }
 
 /// timer（IRQ0）のティックで `irq_entry` から呼ばれ、プリエンプティブに切り替える
@@ -4059,6 +4556,29 @@ mod tests {
             |k| t(k).0,
             |k| t(k).1
         ));
+        // **メインは `Blocked` のまま走る**——池のタスクから見て、メインの `Blocked` は起こしうる（実測で踏んだ。
+        // 2026-10-14。メインの欄は起動の協調デモの後ずっと `Blocked` である）。
+        let t = with([
+            (MAIN_TASK, TaskState::Blocked, 0),
+            (THREAD_TASK_FIRST, TaskState::Ready, 0),
+        ]);
+        assert!(super::could_be_woken_by_others(
+            THREAD_TASK_FIRST,
+            0,
+            |k| t(k).0,
+            |k| t(k).1
+        ));
+        // 池のタスクの `Blocked` は走れない（池は `Blocked` にならないが、形として）。
+        let t = with([
+            (MAIN_TASK, TaskState::Ready, 0),
+            (THREAD_TASK_FIRST, TaskState::Blocked, 0),
+        ]);
+        assert!(!super::could_be_woken_by_others(
+            MAIN_TASK,
+            0,
+            |k| t(k).0,
+            |k| t(k).1
+        ));
     }
 
     /// futex の鍵はスロットと番地の組である——同じ番地でも別のスロットは起こさない。
@@ -4099,6 +4619,33 @@ mod tests {
         assert!(!set.has_a_reason_other_than_futex());
         assert!(set.push(Wait::Keyboard));
         assert!(set.has_a_reason_other_than_futex());
+    }
+
+    /// tid の式（`ADR-0085` の決定 8）——1 にはならず、池の番号と世代の組ごとに別の値で、世代が進むと使い回さない。
+    #[test]
+    fn a_thread_tid_is_unique_per_pool_index_and_generation_and_never_one() {
+        let mut seen = std::collections::BTreeSet::new();
+        for generation in 0..64 {
+            for index in 0..THREAD_TASKS {
+                let tid = super::thread_tid_for(index, generation);
+                assert_ne!(
+                    tid,
+                    super::MAIN_THREAD_TID,
+                    "index {index}, generation {generation}"
+                );
+                assert!(tid >= 2);
+                assert!(
+                    seen.insert(tid),
+                    "tid {tid} repeats (index {index}, generation {generation})"
+                );
+            }
+        }
+        assert_eq!(super::thread_tid_for(0, 0), 2);
+        assert_eq!(
+            super::thread_tid_for(THREAD_TASKS - 1, 0),
+            1 + THREAD_TASKS as u64
+        );
+        assert_eq!(super::thread_tid_for(0, 1), 2 + THREAD_TASKS as u64);
     }
 
     /// 遠征の状態と回復点の置き場（M3a）——池のタスクは自分の番号、ほかはスロットである。

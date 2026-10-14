@@ -42,13 +42,14 @@ use common::addr::{DirectMap, PhysAddr};
 use crate::abi::linux::x86_64::SYS_CLOCK_NANOSLEEP;
 use crate::abi::linux::x86_64::{
     stat_bytes, ARCH_GET_FS, ARCH_GET_GS, ARCH_SET_FS, ARCH_SET_GS, STAT_LEN, SYS_ACCEPT,
-    SYS_ARCH_PRCTL, SYS_BIND, SYS_BRK, SYS_CLOCK_GETTIME, SYS_CLOSE, SYS_CONNECT, SYS_EXIT,
-    SYS_EXIT_GROUP, SYS_FCNTL, SYS_FSTAT, SYS_FTRUNCATE, SYS_FUTEX, SYS_GETDENTS64, SYS_GETPID,
-    SYS_GETRANDOM, SYS_GETTID, SYS_IOCTL, SYS_LISTEN, SYS_LSEEK, SYS_MADVISE, SYS_MEMFD_CREATE,
-    SYS_MKDIR, SYS_MMAP, SYS_MPROTECT, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPEN, SYS_POLL,
-    SYS_PRLIMIT64, SYS_READ, SYS_READLINK, SYS_READV, SYS_RECVMSG, SYS_RMDIR, SYS_RT_SIGACTION,
-    SYS_RT_SIGPROCMASK, SYS_SENDMSG, SYS_SENDTO, SYS_SET_TID_ADDRESS, SYS_SIGALTSTACK, SYS_SOCKET,
-    SYS_STAT, SYS_TKILL, SYS_UNAME, SYS_UNLINK, SYS_WRITE, SYS_WRITEV,
+    SYS_ARCH_PRCTL, SYS_BIND, SYS_BRK, SYS_CLOCK_GETTIME, SYS_CLONE, SYS_CLOSE, SYS_CONNECT,
+    SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FSTAT, SYS_FTRUNCATE, SYS_FUTEX, SYS_GETDENTS64,
+    SYS_GETPID, SYS_GETRANDOM, SYS_GETTID, SYS_IOCTL, SYS_LISTEN, SYS_LSEEK, SYS_MADVISE,
+    SYS_MEMFD_CREATE, SYS_MKDIR, SYS_MMAP, SYS_MPROTECT, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPEN,
+    SYS_POLL, SYS_PRLIMIT64, SYS_READ, SYS_READLINK, SYS_READV, SYS_RECVMSG, SYS_RMDIR,
+    SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SCHED_YIELD, SYS_SENDMSG, SYS_SENDTO,
+    SYS_SET_TID_ADDRESS, SYS_SIGALTSTACK, SYS_SOCKET, SYS_STAT, SYS_TKILL, SYS_UNAME, SYS_UNLINK,
+    SYS_WRITE, SYS_WRITEV,
 };
 use crate::abi::linux::{
     cmsg_one_fd_bytes, dirent64_record, dirent64_record_len, fb_fix_screeninfo_bytes,
@@ -882,8 +883,15 @@ unsafe fn dispatch(
                 (-EINVAL) as u64
             }
         }
-        // **プロセスもスレッドも 1 つずつなので、番号は決まった値である**（2026-10-06。`set_tid_address` と同じ）。
-        SYS_GETPID | SYS_GETTID => THE_ONLY_TID,
+        // **プロセスの番号は決まった値である**（2026-10-06。`ADR-0085` の決定 8——`getpid` はどのプロセスでも 1）。
+        SYS_GETPID => THE_ONLY_TID,
+        // **スレッドの番号は、池のタスクなら自分の tid、主スレッドなら 1**（M3a。2026-10-14。`ADR-0085` の決定 8）。
+        SYS_GETTID => crate::task::current_tid(),
+        SYS_CLONE => {
+            // **ここへは来ない。** [`SYS_CLONE`] は [`syscall_entry`] が持つ——親の文脈（`IrqContext`）を写すので、
+            // `dispatch` の引数では足りない（[`SYS_SPAWN`] と同じ形の受け皿）。
+            (-EAGAIN) as u64
+        }
         SYS_TKILL => sys_tkill(args[0], args[1]),
         SYS_GETDENTS64 => {
             // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
@@ -930,6 +938,15 @@ unsafe fn dispatch(
             unsafe {
                 sys_clock_nanosleep(args[0], args[1], args[2], page_table_root, direct_map, bkl)
             }
+        }
+        // **`sched_yield` は、BKL を解いて 1 度譲る**（M3a。2026-10-14。`m3a-rust` が `join` の前に打つ。musl の
+        // `pthread_create` の後に、スレッドへ CPU を渡す道）。待つ理由は無いので `Ready` のままで、輪の次のタスク
+        // （足した 1 本・池・主スレッド）が選ばれる。
+        SYS_SCHED_YIELD => {
+            drop(bkl.take());
+            crate::task::yield_now();
+            *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
+            0
         }
         SYS_NANOSLEEP => {
             // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
@@ -3373,6 +3390,10 @@ unsafe fn spawn_detached_from_ring3(
     direct_map: DirectMap,
     bkl: &mut Option<crate::bkl::BklGuard>,
 ) -> u64 {
+    // **スレッドを持つプロセスと、スレッドのタスクからは断る**（M3a。2026-10-14。[`spawn_refused_for_threads`]）。
+    if let Some(refused) = spawn_refused_for_threads(SYS_SPAWN_DETACHED) {
+        return refused;
+    }
     if flags & !DETACHED_STDOUT_TO_PIPE != 0 {
         return (-EINVAL) as u64;
     }
@@ -3503,6 +3524,10 @@ unsafe fn spawn_with_piped_stdin_from_ring3(
     direct_map: DirectMap,
     bkl: &mut Option<crate::bkl::BklGuard>,
 ) -> u64 {
+    // **スレッドを持つプロセスと、スレッドのタスクからは断る**（M3a。2026-10-14。[`spawn_refused_for_threads`]）。
+    if let Some(refused) = spawn_refused_for_threads(SYS_SPAWN_WITH_PIPED_STDIN) {
+        return refused;
+    }
     let slot = crate::arch::x86_64::current_excursion_slot();
     let mut buf = [0u8; PATH_MAX];
     // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
@@ -3657,6 +3682,10 @@ unsafe fn spawn_from_ring3(
     direct_map: DirectMap,
     bkl: &mut Option<crate::bkl::BklGuard>,
 ) -> u64 {
+    // **スレッドを持つプロセスと、スレッドのタスクからは断る**（M3a。2026-10-14。[`spawn_refused_for_threads`]）。
+    if let Some(refused) = spawn_refused_for_threads(SYS_SPAWN) {
+        return refused;
+    }
     // **パスと `argv` をコピーする。BKL を保持したままである。**
     // **ユーザーメモリへ触るのはここだけで、区間ごと BKL の内側に残す**
     // （`copy_from_user` の TOCTOU の注記）。
@@ -3834,11 +3863,34 @@ pub(crate) unsafe extern "sysv64" fn syscall_entry(
     let page_table_root =
         unsafe { crate::arch::x86_64::ActivePageTable::current(direct_map) }.root();
 
+    // **池のスレッドのタスクの `exit`（60）は、ここで終わる**（M3a。2026-10-14。`ADR-0085` の決定 3）。**`dispatch` の
+    // 終了の印は使わない**——印は「プロセスを終わらせる」もので、スレッドの `exit` はそのスレッドだけを終える。
+    // 戻らない（切り替えで出る。[`exit_thread_from_ring3`] の「捨てる枠」の節）。
+    if request.number == SYS_EXIT {
+        if let Some(index) = crate::task::current_thread_index() {
+            // SAFETY: Ring 3 からこのシステムコールで入った文脈で、今のタスクは池のタスクである。page_table_root /
+            // direct_map は稼働中テーブルのもの。`bkl` はいま保持しているガードである。
+            unsafe {
+                exit_thread_from_ring3(
+                    index,
+                    request.args[0],
+                    page_table_root,
+                    direct_map,
+                    &mut bkl,
+                )
+            }
+        }
+    }
+
     // **[`SYS_SPAWN`] だけは、この関数が持つ。** BKL を解いてから入る必要があり、
     // ガードはここのローカルである（[`spawn_from_ring3`]）。
     //
     // SAFETY: page_table_root / direct_map は稼働中テーブルのもので、walk の契約を満たす。
-    let ret = if request.number == SYS_SPAWN {
+    let ret = if request.number == SYS_CLONE {
+        // **[`SYS_CLONE`] もこの関数が持つ**——親の文脈を写す（[`clone_from_ring3`]）。
+        // SAFETY: 同上。`ctx` は Ring 3 からこのシステムコールで入った文脈で、BKL の内側である。
+        unsafe { clone_from_ring3(ctx, &request.args, page_table_root, direct_map) }
+    } else if request.number == SYS_SPAWN {
         // SAFETY: 同上。`bkl` はいま保持しているガードである。
         unsafe {
             spawn_from_ring3(
@@ -3900,6 +3952,10 @@ pub(crate) unsafe extern "sysv64" fn syscall_entry(
     // `exit` の直後に置いた `ud2` へ落ち、ベクタ 6 の例外による終了処理として現れる。
     #[cfg(not(feature = "user-exit-ignored"))]
     if state.process_exited.load(Ordering::SeqCst) {
+        // **池のスレッドのタスクからは、この段では名指しして止まる**（M3a。[`report_process_end_from_thread_task`]）。
+        if let Some(index) = crate::task::current_thread_index() {
+            report_process_end_from_thread_task(index, request.number);
+        }
         // **BKL は自分で解く。** 下の `leave_user_mode` は longjmp で、`Drop` を
         // 走らせない。**取ったまま戻ると、二度と解かれない。**
         //
@@ -5402,15 +5458,18 @@ unsafe fn sys_sigaltstack(
     0
 }
 
-/// このカーネルが返すスレッドの番号（`set_tid_address` の戻り値。2026-10-06）。**プロセスは 1 つずつ走り、スレッドは
-/// 無い**ので、決まった値である。`getpid` を足すときは、同じ値を返す。
+/// このカーネルが返すプロセスの番号（`getpid`。2026-10-06）。**どのプロセスでも 1 である**（既存の制限。`ADR-0085` の
+/// 決定 8。プロセスの番号を分けるのは `fork` の段）。**主スレッドの tid も同じ 1 で**（`crate::task::MAIN_THREAD_TID`）、
+/// 池のスレッドのタスクの tid は 2 からである（M3a。2026-10-14 まで、スレッドが無かったので `gettid` と
+/// `set_tid_address` もこの値を返していた）。
 const THE_ONLY_TID: u64 = 1;
 
 /// 既定の振る舞いが「無視」のシグナル（`SIGCHLD`・`SIGURG`・`SIGWINCH`）と、止まっているプロセスを続ける `SIGCONT`。
 /// `tkill` で自分へ送っても、何も起きずに 0 が返る（Linux と同じ）。
 const SIGNALS_IGNORED_BY_DEFAULT: [u64; 4] = [17, 18, 23, 28];
 
-/// `tkill(tid, sig)` の本体（2026-10-06。`ADR-0081` の続き）。**自分（番号 1）以外は `-ESRCH`。**
+/// `tkill(tid, sig)` の本体（2026-10-06。`ADR-0081` の続き）。**自分のプロセスの tid（主スレッドの 1 と、生きている
+/// スレッドのもの）以外は `-ESRCH`。**
 ///
 /// **配送は無い。** 登録が `SIG_IGN` のシグナルと、既定が「無視」のシグナルは、何も起きずに 0。**それ以外（既定が
 /// 終了・コアダンプ・停止のものと、ハンドラを登録したもの）は、名指しの行を出してプロセスを終わらせる**——
@@ -5418,7 +5477,14 @@ const SIGNALS_IGNORED_BY_DEFAULT: [u64; 4] = [17, 18, 23, 28];
 /// 打つので、落ちたプログラムは 134 で終わる。ハンドラを登録したシグナルを呼べない差は、`docs/deferred-decisions.md`
 /// の「シグナルの配送」の行。`sig` が 0 なら、居るかどうかの問い合わせで、0 を返す。
 fn sys_tkill(tid: u64, sig: u64) -> u64 {
-    if tid != THE_ONLY_TID {
+    // **受けるのは自分のプロセスの tid だけである**（M3a。2026-10-14。`ADR-0085` の決定 8）——主スレッドの 1 と、同じ
+    // スロットの生きているスレッドの tid。どれに送っても、配送が無いので、プロセスを終わらせる形は同じである。
+    if tid != THE_ONLY_TID
+        && !crate::task::slot_has_live_thread_with_tid(
+            crate::arch::x86_64::current_excursion_slot(),
+            tid,
+        )
+    {
         return (-ESRCH) as u64;
     }
     if sig == 0 {
@@ -5570,11 +5636,281 @@ fn check_iovecs(iovecs: &mut [(u64, u64)]) -> Result<(), i64> {
     Ok(())
 }
 
-/// `set_tid_address(tidptr)`（2026-10-06）。**番地を控えて、スレッドの番号を返す。** スレッドが終わるときにそこへ 0 を
-/// 書いて `futex` で起こす仕組みは、スレッドが無いので要らない（番地は控えるだけ）。
+/// `set_tid_address(tidptr)`（2026-10-06）。**番地を控えて、スレッドの番号を返す。**
+///
+/// **池のスレッドのタスクから呼ばれたら、そのタスクの欄に控える**（M3a。2026-10-14。`clone` の `CLONE_CHILD_CLEARTID` と
+/// 同じ欄。スレッドの `exit` がそこへ 0 を書く）。主スレッドのものはプロセスの表に控えるだけで、主スレッドの終わりに
+/// 0 を書いて起こす形は、プロセスの終わり方の課題で決める（`ADR-0085` の後の課題の順の 3）。
 fn sys_set_tid_address(address: u64) -> u64 {
-    crate::process_state::with_current(|state| state.set_tid_address(address));
-    THE_ONLY_TID
+    match crate::task::current_thread_index() {
+        Some(index) => crate::task::set_thread_tid_address(index, address),
+        None => crate::process_state::with_current(|state| state.set_tid_address(address)),
+    }
+    crate::task::current_tid()
+}
+
+/// `clone` のフラグ（`linux/sched.h`。M3a。2026-10-14）。
+const CLONE_VM: u64 = 0x100;
+const CLONE_FS: u64 = 0x200;
+const CLONE_FILES: u64 = 0x400;
+const CLONE_SIGHAND: u64 = 0x800;
+const CLONE_PIDFD: u64 = 0x1000;
+const CLONE_THREAD: u64 = 0x10000;
+const CLONE_NEWNS: u64 = 0x20000;
+const CLONE_SYSVSEM: u64 = 0x40000;
+const CLONE_SETTLS: u64 = 0x80000;
+const CLONE_PARENT_SETTID: u64 = 0x100000;
+const CLONE_CHILD_CLEARTID: u64 = 0x200000;
+const CLONE_DETACHED: u64 = 0x400000;
+const CLONE_NEWIPC: u64 = 0x8000000;
+const CLONE_NEWUSER: u64 = 0x10000000;
+const CLONE_NEWPID: u64 = 0x20000000;
+/// `clone` の下位 8 ビット（子が終わるときに親へ送るシグナル。`CSIGNAL`）。**`CLONE_THREAD` のときは Linux の legacy の
+/// `clone` も見ない**（`kernel/fork.c` の `copy_process` は、スレッドなら `exit_signal` を -1 にする）ので、判定の前に外す。
+const CSIGNAL: u64 = 0xff;
+/// 受ける組（musl の `pthread_create`。glibc も同じ組に `CLONE_DETACHED` を付けない形で打つ。`ADR-0085` の決定 2）。
+/// **`CLONE_DETACHED`（Linux が無視するフラグ）の有無は見ない。**
+const THREAD_CLONE_FLAGS: u64 = CLONE_VM
+    | CLONE_FS
+    | CLONE_FILES
+    | CLONE_SIGHAND
+    | CLONE_THREAD
+    | CLONE_SYSVSEM
+    | CLONE_SETTLS
+    | CLONE_PARENT_SETTID
+    | CLONE_CHILD_CLEARTID;
+
+/// `clone` のフラグの組をどう扱うか（M3a。2026-10-14）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CloneRequest {
+    /// musl の `pthread_create` の組。スレッドを 1 本起こす。
+    Thread,
+    /// Linux も `-EINVAL` で断る組（`kernel/fork.c` の `copy_process` の条件）。理由を添える。
+    Invalid(&'static str),
+    /// Linux では通るが、ここには無い組（`fork` の形など）。`-ENOSYS`（`ADR-0085` の決定 2）。
+    Unsupported,
+}
+
+/// `clone` のフラグの組を分ける。**純粋な関数である**（ホストの単体試験が固定する）。
+fn classify_clone_flags(flags: u64) -> CloneRequest {
+    let flags = flags & !CSIGNAL;
+    if flags & CLONE_THREAD != 0 && flags & CLONE_SIGHAND == 0 {
+        return CloneRequest::Invalid("CLONE_THREAD without CLONE_SIGHAND");
+    }
+    if flags & CLONE_SIGHAND != 0 && flags & CLONE_VM == 0 {
+        return CloneRequest::Invalid("CLONE_SIGHAND without CLONE_VM");
+    }
+    if flags & CLONE_THREAD != 0 && flags & (CLONE_NEWUSER | CLONE_NEWPID) != 0 {
+        return CloneRequest::Invalid("CLONE_THREAD with CLONE_NEWUSER or CLONE_NEWPID");
+    }
+    if flags & CLONE_NEWNS != 0 && flags & CLONE_FS != 0 {
+        return CloneRequest::Invalid("CLONE_NEWNS with CLONE_FS");
+    }
+    if flags & CLONE_NEWIPC != 0 && flags & CLONE_SYSVSEM != 0 {
+        return CloneRequest::Invalid("CLONE_NEWIPC with CLONE_SYSVSEM");
+    }
+    if flags & CLONE_PIDFD != 0
+        && flags & (CLONE_DETACHED | CLONE_THREAD | CLONE_PARENT_SETTID) != 0
+    {
+        return CloneRequest::Invalid(
+            "CLONE_PIDFD with CLONE_DETACHED, CLONE_THREAD or CLONE_PARENT_SETTID",
+        );
+    }
+    if flags & !CLONE_DETACHED == THREAD_CLONE_FLAGS {
+        CloneRequest::Thread
+    } else {
+        CloneRequest::Unsupported
+    }
+}
+
+/// `clone(flags, stack, parent_tid, child_tid, tls)` の本体（M3a。2026-10-14。`ADR-0085` の決定 2）。**スレッドを 1 本
+/// 起こし、その tid を返す。**
+///
+/// **受けるのは musl の `pthread_create` の組だけである**（[`classify_clone_flags`]）。Linux が `-EINVAL` にする組はそのまま
+/// `-EINVAL`、Linux では通るがここに無い組（`fork` の形）は `-ENOSYS`。**番地は、スタックが窓の外なら `-EINVAL`、TLS が
+/// ユーザーの範囲の正準な番地でなければ `-EPERM`（`arch_prctl` と同じ。Linux の `do_arch_prctl_64` も `-EPERM`）、
+/// `parent_tid` と `child_tid` に書けなければ `-EFAULT`。** 池が尽きていれば `-EAGAIN`（Linux の `EAGAIN` は、スレッドの数の
+/// 上限に当たったときの値である）。**断るのは全部、池を取る前である**（巻き戻すものは無い）。
+///
+/// **`CLONE_PARENT_SETTID` は、起こした直後にここで書く**（子はまだ走っていない。IF=0 のまま）。**`CLONE_CHILD_CLEARTID` の
+/// 番地は池のタスクの欄に控え、スレッドの `exit` が 0 を書く**（[`exit_thread_from_ring3`]）。`CLONE_CHILD_SETTID` は組に
+/// 無い。
+///
+/// **[`syscall_entry`] が持つ**（[`SYS_SPAWN`] と同じ理由——親の文脈 `ctx` を写す。`dispatch` の引数では足りない）。
+/// **`#[inline(never)]` は、文脈の写し（168 バイト）を `syscall_entry` の枠に載せないため。**
+///
+/// # Safety
+///
+/// `ctx` は Ring 3 からこのシステムコールで入った文脈であること。`page_table_root` / `direct_map` が稼働中のテーブルの
+/// ものであること。BKL の内側（IF=0）で呼ぶこと。
+#[inline(never)]
+unsafe fn clone_from_ring3(
+    ctx: &IrqContext,
+    args: &[u64; 6],
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+) -> u64 {
+    let (flags, stack, parent_tid, child_tid, tls) = (args[0], args[1], args[2], args[3], args[4]);
+    match classify_clone_flags(flags) {
+        CloneRequest::Thread => {}
+        CloneRequest::Invalid(reason) => {
+            serial_line(format_args!(
+                "thread: clone refused: flags {flags:#x} are invalid on Linux too ({reason}); -EINVAL"
+            ));
+            return (-EINVAL) as u64;
+        }
+        CloneRequest::Unsupported => {
+            serial_line(format_args!(
+                "thread: clone refused: flags {flags:#x} are not the thread set {THREAD_CLONE_FLAGS:#x} (CLONE_DETACHED \
+                 and the low 8 bits aside); a fork-like clone is not implemented; -ENOSYS"
+            ));
+            return (-ENOSYS) as u64;
+        }
+    }
+    let (window_start, window_end) = user_window();
+    if stack < window_start || stack >= window_end {
+        serial_line(format_args!(
+            "thread: clone refused: the stack {stack:#x} is outside the user window [{window_start:#x}, \
+             {window_end:#x}); -EINVAL"
+        ));
+        return (-EINVAL) as u64;
+    }
+    if !crate::arch::x86_64::is_allowed_user_segment_base(tls) {
+        serial_line(format_args!(
+            "thread: clone refused: the tls {tls:#x} is not a canonical user address; -EPERM"
+        ));
+        return (-EPERM) as u64;
+    }
+    // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。書く前に、書ける番地かを見るだけである。
+    let tid_slots_writable = unsafe {
+        validate_user_range_for_write(page_table_root, direct_map, parent_tid, 4).is_some()
+            && validate_user_range_for_write(page_table_root, direct_map, child_tid, 4).is_some()
+    };
+    if !tid_slots_writable {
+        serial_line(format_args!(
+            "thread: clone refused: parent_tid {parent_tid:#x} or child_tid {child_tid:#x} is not writable; -EFAULT"
+        ));
+        return (-EFAULT) as u64;
+    }
+    let image = ctx.thread_start_image(stack);
+    let (_, tid) = match crate::task::start_thread_task(crate::task::ThreadStart {
+        image: &image,
+        user_stack: stack,
+        tls,
+        tid_address: child_tid,
+    }) {
+        Ok(started) => started,
+        Err(crate::task::ThreadStartError::PoolExhausted) => {
+            serial_line(format_args!(
+                "thread: the pool of {} task(s) is exhausted ({} alive in this slot); clone returns -EAGAIN",
+                crate::task::THREAD_TASKS,
+                crate::task::live_threads_in_slot(crate::arch::x86_64::current_excursion_slot())
+            ));
+            return (-EAGAIN) as u64;
+        }
+    };
+    // **`CLONE_PARENT_SETTID`。** 上で書ける番地だと見ている。子はまだ走っていない（IF=0 のまま。切り替えは入らない）。
+    // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+    if !unsafe {
+        write_user_fixed(
+            page_table_root,
+            direct_map,
+            parent_tid,
+            &(tid as u32).to_le_bytes(),
+        )
+    } {
+        serial_line(format_args!(
+            "[ERROR] thread: parent_tid {parent_tid:#x} was writable a moment ago but the write of tid {tid} failed"
+        ));
+    }
+    tid
+}
+
+/// 池のスレッドのタスクの `exit`（M3a。2026-10-14。`ADR-0085` の決定 3）。**戻らない。**
+///
+/// `CLONE_CHILD_CLEARTID` の番地が在れば 0 を書き（Linux と同じく、書けなくても止めない）、その番地で待つ者を 1 本起こし
+/// （`FUTEX_WAKE` と同じ。`ADR-0081` の Addendum）、`Finished` にして、BKL を解き、切り替えて二度と戻らない
+/// （`crate::task::park_finished_thread_task`）。
+///
+/// # 捨てる枠に `Drop` の要るものを残さない
+///
+/// **ここと呼び手（[`syscall_entry`]）の枠は、切り替えた後は誰も戻らないので、`Drop` が走らない。** この関数の局所は
+/// 整数だけで、BKL のガードは `bkl.take()` で解いてから切り替える。呼び手の枠に在るのは、文脈への参照・読み取った番号と
+/// 引数（`Copy`）・スロットの状態への `'static` の参照だけである（`Box`・`Vec`・ロックのガードは無い）。
+/// **`park_finished_thread_task` が、BKL と `InterruptGuard` を持っていないことを `debug_assert!` で確かめる。**
+///
+/// # Safety
+///
+/// Ring 3 からこのシステムコールで入った文脈で、今のタスクが池のタスク（`index`）であること。`page_table_root` /
+/// `direct_map` が稼働中のテーブルのものであること。`bkl` は今持っているガードであること。
+#[inline(never)]
+unsafe fn exit_thread_from_ring3(
+    index: usize,
+    status: u64,
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+    bkl: &mut Option<crate::bkl::BklGuard>,
+) -> ! {
+    let address = crate::task::thread_tid_address(index);
+    let mut cleared = None;
+    if address != 0 {
+        // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効（自分の空間のまま）。
+        let written =
+            unsafe { write_user_fixed(page_table_root, direct_map, address, &0u32.to_le_bytes()) };
+        cleared = written.then_some(address);
+        // **書いた番地で待つ者を 1 本起こす**（Linux の `CLONE_CHILD_CLEARTID` と同じ。musl の `pthread_join` は
+        // `__thread_list_lock` のこの番地が 0 になるのを待つ）。
+        if written {
+            wake_futex_waiters(crate::arch::x86_64::current_excursion_slot(), address, 1);
+        }
+    }
+    crate::task::mark_current_thread_finished(status, cleared);
+    drop(bkl.take());
+    crate::task::park_finished_thread_task()
+}
+
+/// 池のスレッドのタスクが、プロセスを終わらせる印を立てた（`exit_group`・`tkill`・`futex` の行き詰まり。M3a。
+/// 2026-10-14）。**この段では名指しして止まる**——池のタスクには回復点が無く、主スレッドへ印を渡して終える形は
+/// 次の段（異常の道）で決める。
+#[inline(never)]
+#[cold]
+fn report_process_end_from_thread_task(index: usize, number: u64) -> ! {
+    serial_line(format_args!(
+        "[ERROR] thread: pool index {index} (tid {}) ended the process through system call {number} (exit_group, tkill \
+         or a futex deadlock); ending the process from a thread task is not handled yet; halting",
+        crate::task::thread_tid(index)
+    ));
+    common::arch::x86_64::halt_forever();
+}
+
+/// `spawn`（3 つの形のどれか）を、スレッドのために断るなら `-EAGAIN` を名指しの行と一緒に返す（M3a。`ADR-0085` の
+/// 決定 3）。**3 つの入口（`spawn_from_ring3`・`spawn_detached_from_ring3`・`spawn_with_piped_stdin_from_ring3`）の先頭で
+/// 呼ぶ**——`syscall_entry` に置くと、その枠（遠征スタックの高水位にそのまま乗る）が広がる。入れ子の子は同じスロットの
+/// 欄を入れ替えて走るので、残ったスレッドが子の表を見てしまう。
+#[inline(never)]
+fn spawn_refused_for_threads(number: u64) -> Option<u64> {
+    let refusal =
+        crate::task::spawn_refusal_for_threads(crate::arch::x86_64::current_excursion_slot())?;
+    Some(report_spawn_refused_for_threads(number, refusal))
+}
+
+/// `spawn` をスレッドのために断ったことを名指しして、`-EAGAIN` を返す（M3a）。
+#[inline(never)]
+#[cold]
+fn report_spawn_refused_for_threads(number: u64, refusal: crate::task::SpawnRefusal) -> u64 {
+    serial_line(format_args!(
+        "thread: spawn (system call {number}) refused with -EAGAIN: {refusal:?} (a process with threads does not \
+         spawn while M3a keeps the slot tables shared; ADR-0085, decision 3)"
+    ));
+    (-EAGAIN) as u64
+}
+
+/// 観測用のシリアルへ 1 行書く小さな補助（`crate::task::serial_line` と同じ作法。M3a。2026-10-14）。**ロガーも BKL も
+/// 介さない**——システムコールの入口（BKL の内側。IF=0）から、スレッドの名指しの行を出すために置いた。
+fn serial_line(args: core::fmt::Arguments) {
+    use core::fmt::Write as _;
+    let mut serial = common::machine::pc::open_direct_serial();
+    let _ = writeln!(serial, "{args}");
 }
 
 /// `futex` の `op` から、`FUTEX_PRIVATE_FLAG`（128）と `FUTEX_CLOCK_REALTIME`（256）を外した命令の部分。
@@ -5698,6 +6034,10 @@ unsafe fn sys_futex(
 #[inline(never)]
 #[cold]
 fn end_process_on_futex_deadlock(uaddr: u64) {
+    crate::task::report_user_ring_for_futex_deadlock(
+        crate::arch::x86_64::current_excursion_slot(),
+        uaddr,
+    );
     let state = state();
     state.futex_deadlock_address.store(uaddr, Ordering::SeqCst);
     state
@@ -7589,6 +7929,46 @@ mod tests {
         );
         assert_eq!(classify_futex(3 | PRIVATE, 0, 0), FutexRequest::Unsupported); // FUTEX_REQUEUE
         assert_eq!(classify_futex(6, 0, 0), FutexRequest::Unsupported); // FUTEX_LOCK_PI
+    }
+
+    /// `clone` のフラグの分け方（M3a）——musl の組は `CLONE_DETACHED` と下位 8 ビットの有無に依らず受け、Linux が断る組は
+    /// `-EINVAL` の側、`fork` の形は `-ENOSYS` の側になる。
+    #[test]
+    fn clone_flags_are_sorted_into_thread_invalid_and_unsupported() {
+        assert_eq!(THREAD_CLONE_FLAGS, 0x3d0f00);
+        assert_eq!(classify_clone_flags(0x7d0f00), CloneRequest::Thread);
+        assert_eq!(classify_clone_flags(0x3d0f00), CloneRequest::Thread);
+        assert_eq!(classify_clone_flags(0x7d0f00 | 17), CloneRequest::Thread);
+        assert!(matches!(
+            classify_clone_flags(0x7d0f00 & !CLONE_SIGHAND),
+            CloneRequest::Invalid(_)
+        ));
+        assert!(matches!(
+            classify_clone_flags(CLONE_SIGHAND | CLONE_THREAD),
+            CloneRequest::Invalid(_)
+        ));
+        assert!(matches!(
+            classify_clone_flags(0x7d0f00 | CLONE_NEWPID),
+            CloneRequest::Invalid(_)
+        ));
+        assert!(matches!(
+            classify_clone_flags(CLONE_NEWNS | CLONE_FS | 17),
+            CloneRequest::Invalid(_)
+        ));
+        // `fork` と `vfork` の形、組の一部が欠けた形は、Linux では通るがここには無い。
+        assert_eq!(classify_clone_flags(17), CloneRequest::Unsupported);
+        assert_eq!(
+            classify_clone_flags(CLONE_VM | 0x4000 | 17),
+            CloneRequest::Unsupported
+        );
+        assert_eq!(
+            classify_clone_flags(0x7d0f00 & !CLONE_SETTLS),
+            CloneRequest::Unsupported
+        );
+        assert_eq!(
+            classify_clone_flags(0x7d0f00 | 0x1000000),
+            CloneRequest::Unsupported
+        );
     }
 
     /// **`readv`・`writev` の範囲の確かめと、合計の切り詰め**（2026-10-09。Linux の `__import_iovec`）。

@@ -8,6 +8,7 @@
 use common::addr::VirtAddr;
 
 use crate::arch::x86_64::gdt;
+use crate::arch::x86_64::idt::context::IrqContext;
 use crate::arch::x86_64::idt::YIELD_VECTOR;
 
 /// `IrqContext` のバイト数（21 個の `u64`）。偽コンテキストの大きさに使う。
@@ -48,6 +49,30 @@ pub unsafe fn build_initial_context(top: VirtAddr, entry: u64) -> u64 {
     slot(18, 0x202); // rflags（IF=1、予約ビット1）
     slot(19, top.as_u64()); // rsp（iretq 後にタスクが使う RSP）
     slot(20, gdt::KERNEL_DATA_SELECTOR.bits() as u64); // ss
+    saved_stack_pointer
+}
+
+/// 池のスレッドのタスクの最初の文脈を、`image`（親の文脈の写し。`IrqContext::thread_start_image`）のまま
+/// スタック頂点に積み、保存 RSP を返す（M3a。2026-10-14）。
+///
+/// **[`build_initial_context`] との違いは、積む中身が 0 の汎用レジスタとカーネルの入口ではなく、親の汎用レジスタと
+/// ユーザーの CS・SS・RIP・RSP であることだけである。** 最初の切り替えで復元経路（pop 15 本 → `add rsp, 8` → `iretq`）が
+/// そのまま Ring 3 へ落とす——タイマで止めた Ring 3 のタスクへ戻るときと同じ経路で、新しい asm は無い。
+///
+/// # 契約（境界の関数）
+///
+/// - 書くのは `top` の直下の、割り込みの文脈 1 つぶんだけである。
+/// - 呼ぶのは池のタスクを起こす所（`crate::task`）で、返した値をそのタスクの保存するスタックポインタにする。
+///
+/// # Safety
+///
+/// `top` が有効でマップ済みのスタック頂点（16 バイト境界）で、誰も使っていないこと。`image` の CS と SS がユーザーの
+/// セレクタであること（`thread_start_image` が作ったもの）。
+pub unsafe fn build_initial_context_from_image(top: VirtAddr, image: &IrqContext) -> u64 {
+    let saved_stack_pointer = top.as_u64() - IRQ_CONTEXT_BYTES;
+    // SAFETY: 呼び出し元契約により、[saved_stack_pointer, top) はマップ済みで誰も使っていないスタック領域で、
+    // `IrqContext` 1 つぶんの大きさである。
+    unsafe { core::ptr::write_volatile(saved_stack_pointer as *mut IrqContext, *image) };
     saved_stack_pointer
 }
 

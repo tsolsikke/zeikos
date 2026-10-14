@@ -27,4 +27,6 @@ record() {
 }
 
 record m1-rust
+record m3a-rust
+record m3a-mutex-rust
 record m1-c

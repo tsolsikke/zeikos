@@ -743,6 +743,7 @@ kernel::socket::tests::the_side_and_its_peer_index_the_two_rings
 kernel::syscall::tests::a_clip_rect_is_half_open_and_refuses_empty_ones
 kernel::syscall::tests::a_spawn_status_never_meets_the_interrupted_mark_nor_passes_the_limit
 kernel::syscall::tests::an_image_that_cannot_be_executed_is_reported_as_enoexec
+kernel::syscall::tests::clone_flags_are_sorted_into_thread_invalid_and_unsupported
 kernel::syscall::tests::futex_requests_are_sorted_into_wait_wake_and_unsupported
 kernel::syscall::tests::iovecs_out_of_the_user_range_are_refused_and_the_total_is_clamped
 kernel::syscall::tests::the_color_offsets_follow_the_pixel_order
@@ -756,6 +757,7 @@ kernel::task::tests::a_task_outside_any_excursion_is_expected_on_its_kernel_stac
 kernel::task::tests::a_task_owned_by_another_cpu_is_not_a_candidate
 kernel::task::tests::a_task_with_a_user_space_loads_its_own_table
 kernel::task::tests::a_task_with_no_user_space_loads_the_kernel_table
+kernel::task::tests::a_thread_tid_is_unique_per_pool_index_and_generation_and_never_one
 kernel::task::tests::a_wait_set_holds_more_than_one_reason
 kernel::task::tests::a_wait_set_is_a_set_and_has_a_limit
 kernel::task::tests::a_wait_set_only_looks_at_the_reasons_it_holds
@@ -963,6 +965,7 @@ xtask::tests::any_judgement_verdicts_are_counted_apart
 xtask::tests::ap_ticks_that_grow_across_the_observation_pass_even_when_the_ap_line_is_missing
 xtask::tests::ap_ticks_that_stay_at_zero_fail_the_way_ap_no_svr_would
 xtask::tests::array_elements_are_counted_outside_strings_and_brackets
+xtask::tests::boot_log_ranges_name_the_values_outside_and_the_missing_lines
 xtask::tests::both_forms_of_the_qemu_shutdown_line_are_read
 xtask::tests::declarations_are_read_through_their_qualifiers
 xtask::tests::declared_limit_runs_are_listed_with_their_items
@@ -1029,6 +1032,7 @@ xtask::tests::the_selection_score_separates_caught_from_complete
 xtask::tests::the_stop_watch_waits_one_more_round
 xtask::tests::the_two_s13b_markers_drop_their_lines_and_nothing_else
 xtask::tests::the_x86_word_sides_follow_the_homes
+xtask::tests::volatile_fields_mask_only_the_scheduled_numbers
 xtask::tests::x86_word_exceptions_skip_the_listed_identifier_and_find_dead_rows
 xtask::tests::x86_words_are_counted_in_code_and_asm_but_not_in_comments_or_log_text
 xtask::tool_checks::tests::png_dimensions_are_read_from_the_header

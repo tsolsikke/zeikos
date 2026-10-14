@@ -1,0 +1,4 @@
+m3a-rust: main starts with 4 argument(s)
+m3a-rust: the thread runs
+m3a-rust: joined, the thread returned 7 and had set the flag = true
+exit status: 4
