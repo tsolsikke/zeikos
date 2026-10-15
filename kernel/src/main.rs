@@ -14250,6 +14250,17 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         cfg!(feature = "shm-ftruncate-shrinks-mapped-test"),
         "2 回目の ftruncate で、マップ中でも memfd を縮める（末尾のフレームを返す）",
     ),
+    // スレッドの破壊テスト、スレッドの検証の5（2026-10-15）。
+    (
+        "futex-wake-dropped-test",
+        cfg!(feature = "futex-wake-dropped-test"),
+        "FUTEX_WAKE で誰も起こさない",
+    ),
+    (
+        "clone-shares-tls-test",
+        cfg!(feature = "clone-shares-tls-test"),
+        "clone で子の FS の基底を親の今の基底にする（TLS を共有する）",
+    ),
 ];
 
 /// 有効な仕込み feature を起動時に報告する。

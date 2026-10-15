@@ -1298,3 +1298,9 @@ memfd-shrink-test = []
 # 破壊（2026-10-15）: 2 回目の ftruncate で、縮める向きならマップ中でも末尾のフレームをアロケータへ返して縮める。
 # `--critical-test shm-ftruncate-shrinks-mapped`。
 shm-ftruncate-shrinks-mapped-test = []
+# 破壊（スレッドの検証の5。2026-10-15）: FUTEX_WAKE で誰も起こさない。チャネルで待つ側が起きず、行き詰まりの判定で止まる。
+# `--critical-test futex-wake-dropped`。
+futex-wake-dropped-test = []
+# 破壊（2026-10-15）: clone で子の FS の基底を、渡された tls ではなく親の今の基底にする。TLS が親と子で混ざる。
+# `--critical-test clone-shares-tls`。
+clone-shares-tls-test = []

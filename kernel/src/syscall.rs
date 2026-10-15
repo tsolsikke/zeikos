@@ -6101,6 +6101,9 @@ unsafe fn sys_futex(
         return (-EINVAL) as u64;
     }
     match classify_futex(args[1], args[3], args[5]) {
+        // 破壊テスト (2026-10-15, futex-wake-dropped-test): 起こさずに 0 を返す。チャネルで待つ側が二度と起きず、
+        // 送る側が join か recv で眠ると、行き詰まりの判定（起こしうるタスクが無い）で 137 になる。
+        FutexRequest::Wake if cfg!(feature = "futex-wake-dropped-test") => 0,
         FutexRequest::Wake => wake_futex_waiters(
             crate::arch::x86_64::current_excursion_slot(),
             args[0],

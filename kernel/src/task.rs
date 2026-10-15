@@ -1365,10 +1365,18 @@ pub fn start_thread_task(start: ThreadStart<'_>) -> Result<(usize, u64), ThreadS
     }
     // 破壊テスト (M3a の 3-2, clone-no-settls-test): FS の基底を、渡された tls ではなく 0 にする。スレッドは自分の TLS を
     // 読めない（musl の `pthread_self` が番地 0 の近くを読む）。
-    #[cfg(not(feature = "clone-no-settls-test"))]
+    #[cfg(not(any(feature = "clone-no-settls-test", feature = "clone-shares-tls-test")))]
     let tls = start.tls;
     #[cfg(feature = "clone-no-settls-test")]
     let tls = 0;
+    // 破壊テスト (2026-10-15, clone-shares-tls-test): 子の FS の基底を親の今の基底にする。子は親の TLS（musl の pthread の
+    // 構造体と `thread_local!` の値）をそのまま読み書きする。**ここで読む MSR は、いつも親のものである**——`clone` の入口
+    // （`bkl::acquire` は cli が先で、待つ間も割り込みを開けない）からここまでに切り替えは無く、切り替えの 1 点
+    // （`schedule_switch` の `save_user_registers` と `restore_user_registers`）が FS の基底を控えて戻すので、どのタスクが
+    // カーネルに居ても MSR はそのタスクの基底である（下の `save_user_registers_for_thread` が GS の基底を親の写しに
+    // するのと同じ前提）。
+    #[cfg(feature = "clone-shares-tls-test")]
+    let tls = crate::arch::x86_64::user_fs_base();
     let generation = THREAD_GENERATIONS[index].load(Ordering::Relaxed);
     let tid = thread_tid_for(index, generation);
     if tid > i32::MAX as u64 {

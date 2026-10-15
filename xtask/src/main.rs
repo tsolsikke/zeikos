@@ -789,6 +789,36 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         forbidden_markers: &["shm: ftruncate refused", "zash: ready"],
         wait_for_full_timeout: false,
         min_heartbeats: None,
+    },    // **スレッドの破壊テスト 2 件（スレッドの検証の5。2026-10-15）。** 目印は実測で決めた。
+    // FUTEX_WAKE で誰も起こさない。m3a-mutex-rust のスレッドが Mutex の futex で眠ったまま、主スレッドの unlock が起こせず、
+    // 主スレッドの join が眠る場面で「起こしうるタスクが無い」と判定され、137 で終わる。起動時の確かめが名指しして止まる。
+    CriticalTest {
+        name: "futex-wake-dropped",
+        feature: "futex-wake-dropped-test",
+        expected_markers: &[
+            "futex: task 0 would sleep on 0x10207b70 in slot 0 with no one to wake it",
+            "futex: /bin/linux/m3a-mutex-rust waited on 0x10207b70 (FUTEX_WAIT with the expected value) and there is no other thread to wake it",
+            "linux-check: /bin/linux/m3a-mutex-rust ended Ok(Exited(137)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &["m3a-mutex-rust: joined", "zash: ready"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // clone で子の FS の基底を親の今の基底にする。子は親の pthread の構造体を自分のものとして読み、musl が矛盾を見つけて
+    // abort（tkill の SIGABRT）を打つ——スレッドがプロセスを 134 で終わらせ、起動時の確かめが名指しして止まる。
+    CriticalTest {
+        name: "clone-shares-tls",
+        feature: "clone-shares-tls-test",
+        expected_markers: &[
+            "thread: tid 2 (task 6) ended the process through system call 200 with status 134",
+            "tkill: /bin/linux/m3a-rust sent itself signal 6",
+            "linux-check: /bin/linux/m3a-rust ended Ok(Exited(134)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &["m3a-rust: the thread runs", "zash: ready"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
     },
 ];
 
@@ -34460,7 +34490,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 64,
-    full: 528,
+    full: 530,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。
