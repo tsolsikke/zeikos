@@ -5076,6 +5076,13 @@ Linuxの像（`m3a-*`）を起こし、主スレッド（タスク0）が遠征�
 `xtask`の読み手（`task 0 = `の後の数）はそのままである。**累計の計数を判定に使うときは、判定の窓の始めで控えて差を読むこと**
 ——起動の順が変わる（前に走る試験が増える）たびに、累計は意味を変える。
 
+**同じ日に2つ目が出た。** `--shell-script-test`の`fold: depth one was not folded N time(s) during this session`も起動からの
+累計で、起動時のLinuxの像（深さ1で走る）の分が段階ごとに増えていた（ba5c62f 115 → 3-1a 127 → 3-1b 144 → 3-2 149〜167。
+各コミットを`checkout`して台本の試験を1回ずつ走らせて測った）。`clock-goes-backwards`の狙いの判定「the clock kept pace
+with the timer」は、眠りを引かない経過ティックと弾いた回数の比を1.5で切るので、分母が増えて比が1.43〜1.50に落ち、
+3回とも真になった（破壊自体は「sleep 1 kept its length = false」で捕まっていた）。直しは同じ形——セッションの始めで
+控えて差を出す（`depth_one_folds_at_start`）。**セッションの後に出す計数は、`clock:`の行と同じく始めからの差にすること。**
+
 **見つけ方。** 全検査の失敗の行は「the sabotage was NOT caught; every judgement still held」で、判定1の行が
 `task 0 = Some(22)`だった。前回の緑（ba5c62f）の同じ行は`Some(0)`で、通常の`concurrent-test`も15から40に増えていた。
 差（22）が、その前に走った9本のスレッドの像の切り替えの数である。

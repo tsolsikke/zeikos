@@ -2586,6 +2586,10 @@ fn run_init(logger: &mut Logger<Serial>, console: Option<&mut Console>) -> ! {
         // **起動シーケンスの検算より後である**（`kernel::input::arm_input_script`）。
         // **セッションの開始のティックを控える（W2-d+）。** **終わった後との差を計測に出す。**
         let clock_at_start = kernel::arch::x86_64::idt::monotonic_ticks();
+        // **深さ 1 を弾いた回数も、セッションの始めで控える**（2026-10-15）。累計は起動からのもので、起動時の Linux の像
+        // （深さ 1 で走る。M3a で 9 本に増えた）の分が段階ごとに増え、`fold:` の行を読む `--shell-script-test` の判定
+        // （`clock-goes-backwards` の狙い）の比を動かした（`docs/verification-coverage.md` の「判定が見た時点が違う」）。
+        let depth_one_folds_at_start = kernel::interrupts::depth_one_not_folded();
         // **起動時のプログラムはここまでである。** 以後、既定のビルドはユーザーのプログラムのページの権限の一覧を
         // 出さない（`kernel::page_survey`。シェルから走らせるたびに 1 行増えるのを避ける）。
         kernel::page_survey::boot_programs_are_done();
@@ -2680,7 +2684,7 @@ fn run_init(logger: &mut Logger<Serial>, console: Option<&mut Console>) -> ! {
                 ));
                 logger.info(format_args!(
                     "fold: depth one was not folded {} time(s) during this session",
-                    kernel::interrupts::depth_one_not_folded()
+                    kernel::interrupts::depth_one_not_folded() - depth_one_folds_at_start
                 ));
                 // **パイプの計測（`ADR-0063` の (b3)）。** **既定の起動では全部 0 である**
                 // ——**`|` を打つ者が居ない。** **台本のグループ（`pipe-test`）が読む。**
