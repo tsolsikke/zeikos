@@ -140,3 +140,6 @@ DOCUMENTATION_URL="https://github.com/tsolsikke/zeikos/tree/main/docs"
   - PI（`FUTEX_LOCK_PI`など）とrobust（`set_robust_list`は受けて控えるだけ）——muslは使わない。使う利用者が出るまで足さない。
   - 全部1でないビットの組——使う利用者が出るまで足さない。
 
+## 参照（2026-10-15）
+
+シグナル（M3b）は、セルフホスティングの各段の設計で確かめる条件の1つである（`ADR-0086`）。

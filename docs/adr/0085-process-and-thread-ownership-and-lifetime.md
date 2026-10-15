@@ -196,3 +196,6 @@ M3aの実装は、次の順で分ける。大きさは、1つの課題でfull ch
   - **破壊テスト（3-2。2026-10-15）。** `clone`の道（RAX・CLEARTID・TLS・担当）、プロセスの終わり（残るスレッド・futexの待ち・入口の印）、スレッドを持つ間の`spawn`の8件を`--critical-test`に置き、落ち方は`docs/verification-coverage.md`のfeatureの一覧にある。起動のたびの像は`m3a-exit-while-spinning-rust`（主スレッドの`exit`の間に回るスレッド）、`m3a-nested-clone-rust`（スレッドからの`clone`）、`m3a-spawn-from-thread-rust`（`spawn`を`-EAGAIN`で断る）、`m3a-exit-group-spin-rust`（入口で印を見る）。
   - 確かめは`linux-programs/m3a-fault-rust.rs`（スレッドが番地8へ書く。`Folded(14)`）、`linux-programs/m3a-exit-group-rust.rs`（スレッドが`exit_group(7)`。`Exited(7)`）、`linux-programs/m3a-exit-group-join-rust.rs`（主スレッドが`join`のfutexで眠っている間にスレッドが`exit_group(7)`。起こさなければ起動が止まる）、`linux-programs/m3a-exit-group-waiters-rust.rs`（主スレッドと別のスレッドの2本がfutexで眠っている間に第3のスレッドが`exit_group(7)`）で、起動のたびにカーネルが起こす。
 
+## 参照（2026-10-15）
+
+決定3で持ち越した「主スレッドの`exit`がほかのスレッドを待つ」形は、セルフホスティングの守る条件（Linuxに合わせたプロセスの終わり方）に入る（`ADR-0086`）。
