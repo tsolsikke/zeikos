@@ -1,5 +1,5 @@
 //! `m3a-memfd-shrink-rust`: Linux 向けにビルドした、musl で静的リンクした Rust のプログラム（`std` を使う）。**マップ中の
-//! memfd を縮める `ftruncate` を ZeikOS が断ること（`-EINVAL`）を見る**（ZEIKOS-108。`ADR-0065`）。
+//! memfd を縮める `ftruncate` を ZeikOS が断ること（`-EINVAL`）を見る**（`ADR-0065` の 2026-10-15 の Addendum）。
 //!
 //! # 何をするか
 //!

@@ -1448,7 +1448,7 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
     // **C の Linux 向けのプログラムは、`linux-c-test` のビルドだけが入れる**（2026-10-06）。`musl-gcc` で手で作った
     // もの（`tools/build-linux-programs.sh`）で、版が配布物に依るので既定の像には入れない。無ければ名指しして止まる。
     if std::env::var("CARGO_FEATURE_LINUX_C_TEST").is_ok() {
-        // `m3a-c`（musl の pthread。ZEIKOS-107 の 3）も同じ扱いである（2026-10-15）。
+        // `m3a-c`（musl の pthread。スレッドの検証の3）も同じ扱いである（2026-10-15）。
         for name in ["m1-c", "m3a-c"] {
             let built = format!("{manifest_dir}/../target/linux-programs/{name}");
             println!("cargo:rerun-if-changed={built}");

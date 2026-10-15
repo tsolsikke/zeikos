@@ -246,10 +246,10 @@ pub const PATH_RULES: &[PathRule] = &[
             "linux-programs/m3a-nested-clone-rust.rs",
             "linux-programs/m3a-spawn-from-thread-rust.rs",
             "linux-programs/m3a-exit-group-spin-rust.rs",
-            // **ZEIKOS-107 のイメージ**（チャネルと TLS、チャネルで待つスレッドを残した exit）。
+            // **スレッドの検証のイメージ**（チャネルと TLS、チャネルで待つスレッドを残した exit）。
             "linux-programs/m3a-channel-tls-rust.rs",
             "linux-programs/m3a-exit-with-waiting-thread-rust.rs",
-            // **マップ中の memfd を縮める ftruncate を断る確かめ**（ZEIKOS-108。`memfd-shrink-test` のビルドだけが起こす）。
+            // **マップ中の memfd を縮める ftruncate を断る確かめ**（`memfd-shrink-test` のビルドだけが起こす）。
             "linux-programs/m3a-memfd-shrink-rust.rs",
             "kernel/userland/chello.c",
             "kernel/userland/dbfault.c",
