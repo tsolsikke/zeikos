@@ -3033,6 +3033,14 @@ fn run_concurrent_test(logger: &mut Logger<Serial>, console: Option<&mut Console
 
     let mut console = console;
     let ring3_task = kernel::task::ring3_task_index();
+    // **切り替えの数は、この試験の始めからの差で数える**（2026-10-15）。累計は起動からのもので、起動時の Linux の像
+    // （スレッドを使う `m3a-*`。M3a）が主スレッドを池のタスクへ何度も切り替えるので、この試験の前に task 0 の分が 22 に
+    // なっていた。破壊テスト `task-switch-holds-back-ring3-task` は「遠征の最中の切り替えが 0」で捕まるので、累計のままだと
+    // 捕まらない（全検査で踏んだ。`docs/verification-coverage.md` の「判定が見た時点が違う」）。
+    let switches_before = (
+        kernel::task::switches_out_of_excursion(0),
+        kernel::task::switches_out_of_excursion(ring3_task),
+    );
     let started = kernel::arch::x86_64::idt::timer_ticks();
     let Some(handle) =
         kernel::userland::start_detached(b"/bin/tickera", b"tickera\0", 1, None, None)
@@ -3129,11 +3137,11 @@ fn run_concurrent_test(logger: &mut Logger<Serial>, console: Option<&mut Console
         LogLevel::Info,
         format_args!(
             "concurrent: /bin/tickera finished {} tick(s) after /bin/tickerb ended; switches out \
-             of an excursion: task 0 = {}, task {ring3_task} = {}; CR3 loads on switch = {}; the \
-             foreground was refused {} time(s)",
+             of an excursion: task 0 = {}, task {ring3_task} = {} (since this test began); CR3 loads on \
+             switch = {}; the foreground was refused {} time(s)",
             a_finished.saturating_sub(b_ended),
-            kernel::task::switches_out_of_excursion(0),
-            kernel::task::switches_out_of_excursion(ring3_task),
+            kernel::task::switches_out_of_excursion(0) - switches_before.0,
+            kernel::task::switches_out_of_excursion(ring3_task) - switches_before.1,
             kernel::task::page_table_root_loads_on_switch(),
             kernel::input::foreground_refused_count()
         ),
