@@ -1782,3 +1782,21 @@ Linuxも次のカーネルへの入口で止める。`deferred-decisions.md`の�
 **起こした本数の置き場。** 最初は`thread:`の行に「起こした本数」を書いたが、同じティックの回で0になって参照と
 食い違った（主スレッドがまだ眠っていない）。本数はプロセスごとの`futex:`の行へ移し、`xtask`が伏せて範囲で見る
 （`join`の像は0..=1、`waiters`の像は1..=2）。
+
+## 2026-10-15 主スレッドがfutexで眠る像で、隔離を通す確かめが`DestroyAccounting`で止まった（M3aの3-2の全検査）
+
+**症状。** 3ec447cの全検査で、`ring3-test frame-hog-through-quarantine`と`frame-hog-overlapping-quarantine`が時間切れで
+落ちた。どちらも`destroy-through-quarantine-test`（どの空間も隔離を通す）で起動する。起動時の確かめが
+`m3a-exit-group-join-rust`（37238）と`m3a-exit-group-waiters-rust`（37239）で
+`left the allocator short: 0 frame(s) consumed but 193 quarantined`のように落ち、`linux-check`が止めたので`frame-hog`まで
+届かなかった。
+
+**原因。** `spawn`の会計は、窓の前後の空きフレームの差を「消えた数」として、隔離に残る数と突き合わせる。前の破棄の分が
+窓の中で返るのは、子の破棄が返す場合（`released_others`）しか数えていなかった。主スレッドが`join`や`Mutex`のfutexで眠る
+像では、眠っている間にBSPのアイドルの定常経路（`release_retired_quarantines`）が走り、隔離に残っていた前の像の
+フレーム（193本）を返す。その分だけ窓の後の空きが増え、消えた数が0に見えた。スレッドを持たない像では主スレッドが
+眠らないのでアイドルが走らず、M3aまで出なかった。
+
+**直し。** アイドルの経路が返した本数を数え（`IDLE_RELEASED`）、窓の前に控えて差を`consumed`へ足し戻す
+（`released_by_idle`）。`spawn:`の行に`idle returned N of earlier destroys meanwhile`を添えた。
+

@@ -939,6 +939,17 @@ pub fn spawn_released_others() -> usize {
     SPAWN_RELEASED_OTHERS.load(core::sync::atomic::Ordering::SeqCst)
 }
 
+/// アイドルの定常経路（[`release_retired_quarantines`]）が、隔離に残っていた前の破棄のフレームを返した本数の累計
+/// （2026-10-15）。**`spawn` の窓の中でアイドルが走る形は、主スレッドが futex で眠る像（M3a）で初めて出た**——隔離を
+/// 通す確かめ（`destroy-through-quarantine-test`）で、前の像の 193 本が窓の中で返り、`consumed` が 0 に見えて
+/// `DestroyAccounting` で落ちた（`docs/verification-coverage.md`）。窓の前後の差を取って `consumed` へ足し戻す。
+static IDLE_RELEASED: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// `IDLE_RELEASED` の値。
+pub fn idle_released_frames() -> usize {
+    IDLE_RELEASED.load(core::sync::atomic::Ordering::SeqCst)
+}
+
 /// 子が隔離へ入れた枚数と漏らした枚数（S11-5）。
 pub fn spawn_accounting() -> (usize, usize) {
     (
@@ -1019,6 +1030,9 @@ pub fn release_retired_quarantines() -> usize {
         remaining += quarantine.held_count();
     }
     crate::frame_allocator::give_back(allocator);
+    // **窓の会計のために数える**（2026-10-15）。`spawn` の窓の中でアイドルが前の破棄の分を返すと、窓の前後の空きの差が
+    // その分だけ小さく出る（[`idle_released_frames`]）。
+    IDLE_RELEASED.fetch_add(released, core::sync::atomic::Ordering::SeqCst);
     if remaining == 0 {
         QUARANTINE_HOLDS.store(false, core::sync::atomic::Ordering::SeqCst);
         #[cfg(feature = "destroy-through-quarantine-test")]
@@ -3068,6 +3082,7 @@ pub fn spawn_with_loan(
     // 実測で 35 枚消えて、シェル自身の隔離は 9 枚だった（9 + 9 + 9 + 8）。
     let (children_before, leaked_before) = spawn_accounting();
     let released_before_children = spawn_released_others();
+    let idle_released_before = idle_released_frames();
     // **会計のウィンドウを開く（`ADR-0063` の (b1)）。** **他のウィンドウと交差したら、大域の差は主張しない。**
     let window = open_spawn_window();
 
@@ -3303,9 +3318,13 @@ pub fn spawn_with_loan(
     let destroy = last_destroy();
     let own_still = destroy.still_quarantined();
     let released_by_children = spawn_released_others().saturating_sub(released_before_children);
+    // **アイドルが窓の中で返した前の破棄の分も足し戻す**（2026-10-15）。主スレッドが futex で眠る間はアイドルが走り、
+    // 隔離に残っていたフレームを返す——その分は窓の前後の差を減らすが、この空間が消したものではない。
+    let released_by_idle = idle_released_frames().saturating_sub(idle_released_before);
     let consumed = (free_before as i64 - free_after as i64 - shared_net as i64
         + destroy.released_others as i64
-        + released_by_children as i64)
+        + released_by_children as i64
+        + released_by_idle as i64)
         .max(0) as usize;
     // **ウィンドウを閉じる。** **交差していたら、大域の差は相手の分を取り込んでいる**（`ADR-0063` の (b1)）。
     let crossed = close_spawn_window(window);
@@ -3327,7 +3346,8 @@ pub fn spawn_with_loan(
          entries ran on RSP {child_handler_sp:#x} (inside its own excursion stack \
          {child_bottom:#x}..{child_top:#x} = {handler_on_child_stack}); the space was destroyed \
          ({consumed} frame(s) left the allocator; {} returned at once, {quarantined} still quarantined \
-         ({own_still} its own + {} from what it spawned), match={} leaked={all_leaked}); the space \
+         ({own_still} its own + {} from what it spawned), match={} leaked={all_leaked}, idle returned \
+         {released_by_idle} of earlier destroys meanwhile); the space \
          took {taken} frame(s) and the destroy collected {} (match={}); the global difference \
          was {} (checked {} time(s) so far)",
         destroy.returned,
