@@ -1013,6 +1013,7 @@ xtask::tests::sigign_is_read_for_sigxfsz
 xtask::tests::signs_on_different_lines_are_told_apart_from_signs_that_never_appear
 xtask::tests::slowness_is_compared_without_the_cargo_time
 xtask::tests::smap_and_fsgsbase_instructions_are_found_but_symbol_names_are_not
+xtask::tests::string_slice_constants_are_read_from_the_source_text
 xtask::tests::strings_are_attributed_to_the_item_that_declares_them
 xtask::tests::the_agent_index_check_looks_both_ways
 xtask::tests::the_ap_heartbeat_line_is_not_read_as_a_bsp_row

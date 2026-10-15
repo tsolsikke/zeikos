@@ -31012,6 +31012,21 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
         }
     }
 
+    // **起動のたびに起こす Linux のイメージが、page permissions の参照 3 本に行を持つこと**（2026-10-15。運用者の決定。
+    // 採り直し忘れを 2 度踏んだので機械にした。`check_linux_images_in_page_permission_references` の doc）。
+    total += 1;
+    begin_item(
+        Family::Base,
+        "the Linux images started at every boot have rows in the three page-permission references",
+    );
+    match check_linux_images_in_page_permission_references(&workspace_root) {
+        Ok(message) => println!("--- Linux images in the page-permission references: {message}"),
+        Err(error) => {
+            println!("--- Linux images in the page-permission references: FAILED ({error})");
+            failed.push("Linux images in the page-permission references".to_string());
+        }
+    }
+
     // **Git の pre-push の関門が入っていること**（2026-09-26。運用者の決定 1 の ③ の条件 3）。**hook の本体が
     // 追跡されて実行でき、WSL の中では `core.hooksPath` がそこを指していること。**
     total += 1;
@@ -34533,8 +34548,8 @@ fn count_elements(text: &str) -> usize {
 
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
-    base: 64,
-    full: 530,
+    base: 65,
+    full: 531,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。
@@ -34670,6 +34685,120 @@ fn check_shell_sabotage_split() -> Result<String> {
     Ok(format!(
         "OK ({sendkey} by sendkey, {script} by the script; both lists counted, no overlap)"
     ))
+}
+
+/// 起動のたびに起こす Linux のイメージが、page permissions の参照 3 本に行を持つこと（2026-10-15。運用者の決定）。
+///
+/// **「起動時に起こすイメージを足したら、page permissions の 3 つの参照も採り直す」の決まりを機械にしたものである**
+/// （`docs/verification-coverage.md`）。**この 3 項目は全検査でしか走らないので、同じ日に 2 度、採り直さずに全検査で
+/// 落ちた**（3ec447c と 6255393）。**名前は基本の検査で見られる**——コミット直後の hook が検出する。
+///
+/// # 見るもの
+///
+/// - [`LINUX_PROGRAMS_IN_THE_BOOT_LOG`]（起動のたびに起こす名前）が、`kernel/build.rs` の `LINUX_PROGRAMS`（作る名前）に
+///   在ること。
+/// - その名前の行（`user program /bin/linux/<名前> |`）が、3 本の参照の全部に在ること。
+/// - `kernel/src/userland.rs` の `MMAP_PAGES_NOT_COMPARED`（`mmap` の範囲のページ数を比べないイメージ）の名前が
+///   [`LINUX_PROGRAMS_IN_THE_BOOT_LOG`] に在り、3 本の参照のその `mapped by request` の行が `pages=~` であること。
+///
+/// # 見ないもの
+///
+/// `LINUX_PROGRAMS` に在っても起動時に起こさないイメージ（`m3a-memfd-shrink-rust`。`memfd-shrink-test` のビルドだけが
+/// 起こす）は、参照に行が無くてよい。**カーネルの側の一覧（`verify_linux_programs`）は読まない**——起こす名前の一覧は
+/// [`LINUX_PROGRAMS_IN_THE_BOOT_LOG`] で、起動ログの参照との突き合わせが、そちらが実際に起きていることを見ている。
+fn check_linux_images_in_page_permission_references(workspace_root: &Path) -> Result<String> {
+    let read = |relative: &str| -> Result<String> {
+        let path = workspace_root.join(relative);
+        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))
+    };
+    let built = string_slice_constant(&read("kernel/build.rs")?, "LINUX_PROGRAMS")?;
+    let not_compared =
+        string_slice_constant(&read("kernel/src/userland.rs")?, "MMAP_PAGES_NOT_COMPARED")?;
+    let references = [
+        "xtask/reference/page-permissions.txt",
+        "xtask/reference/page-permissions-heap.txt",
+        "xtask/reference/page-permissions-screen.txt",
+    ];
+    let mut texts = Vec::with_capacity(references.len());
+    for relative in references {
+        texts.push((relative, read(relative)?));
+    }
+    let mut findings = Vec::new();
+    for name in LINUX_PROGRAMS_IN_THE_BOOT_LOG {
+        if !built.iter().any(|b| b == name) {
+            findings.push(format!(
+                "{name} is started at every boot but kernel/build.rs LINUX_PROGRAMS does not build it"
+            ));
+        }
+        let prefix = format!("user program /bin/linux/{name} |");
+        for (relative, text) in &texts {
+            if !text.lines().any(|line| line.starts_with(&prefix)) {
+                findings.push(format!(
+                    "{relative} has no row for {name}; re-record it with `cargo xtask run \
+                     --page-permissions [--scene heap|screen] --update-reference`"
+                ));
+            }
+        }
+    }
+    for name in &not_compared {
+        if !LINUX_PROGRAMS_IN_THE_BOOT_LOG.contains(&name.as_str()) {
+            findings.push(format!(
+                "MMAP_PAGES_NOT_COMPARED names {name}, which LINUX_PROGRAMS_IN_THE_BOOT_LOG does not \
+                 list (only an image started at every boot has rows to compare)"
+            ));
+            continue;
+        }
+        let prefix = format!("user program /bin/linux/{name} | mapped by request |");
+        for (relative, text) in &texts {
+            match text.lines().find(|line| line.starts_with(&prefix)) {
+                Some(row) if row.contains("pages=~") => {}
+                Some(_) => findings.push(format!(
+                    "{relative}: the mapped-by-request row of {name} compares its page count, but \
+                     MMAP_PAGES_NOT_COMPARED says it must not (pages=~); re-record it"
+                )),
+                None => findings.push(format!(
+                    "{relative} has no mapped-by-request row for {name}"
+                )),
+            }
+        }
+    }
+    if !findings.is_empty() {
+        bail!("{}", findings.join("; "));
+    }
+    Ok(format!(
+        "OK ({} image(s) started at every boot have rows in the 3 references; {} of them with an \
+         uncompared mmap page count)",
+        LINUX_PROGRAMS_IN_THE_BOOT_LOG.len(),
+        not_compared.len()
+    ))
+}
+
+/// `const <名前>: &[&str] = &[ "a", "b" ];` の文字列を、ソースの文面から読む（純粋な論理）。
+///
+/// **1 行の形でも、複数行の形でもよい。** `//` の後（コメント）は読まない。**名前が 1 つも無ければ断る**——一覧を空に
+/// する編集も、ここで見える。
+fn string_slice_constant(source: &str, name: &str) -> Result<Vec<String>> {
+    let head = format!("const {name}: &[&str] = &[");
+    let start = source
+        .find(&head)
+        .with_context(|| format!("`{head}` was not found in the source"))?;
+    let rest = &source[start + head.len()..];
+    let end = rest
+        .find("];")
+        .with_context(|| format!("the end `];` of `{head}` was not found"))?;
+    let mut names = Vec::new();
+    for line in rest[..end].lines() {
+        let code = line.split("//").next().unwrap_or("");
+        let mut parts = code.split('"');
+        parts.next();
+        while let (Some(literal), Some(_)) = (parts.next(), parts.next()) {
+            names.push(literal.to_string());
+        }
+    }
+    if names.is_empty() {
+        bail!("`{head}` lists no name");
+    }
+    Ok(names)
 }
 
 /// 実際に走った項目数が会計行と一致するかを見る。
@@ -37428,6 +37557,23 @@ mod tests {
         assert!(
             super::volatile_field_span("next at 12ab (every", " next at ", " (every").is_none()
         );
+    }
+
+    /// `const X: &[&str] = &[…];` の文字列を文面から読む——複数行・1 行・コメント付き・空。
+    #[test]
+    fn string_slice_constants_are_read_from_the_source_text() {
+        let multi = "const A: &[&str] = &[\n    \"m1-rust\",\n    // \"not-a-name\" in a comment\n    \"m3a-rust\",\n];\n";
+        assert_eq!(
+            super::string_slice_constant(multi, "A").unwrap(),
+            ["m1-rust", "m3a-rust"]
+        );
+        let single = "    const B: &[&str] = &[\"m3a-channel-tls-rust\"];\n";
+        assert_eq!(
+            super::string_slice_constant(single, "B").unwrap(),
+            ["m3a-channel-tls-rust"]
+        );
+        assert!(super::string_slice_constant("const C: &[&str] = &[];", "C").is_err());
+        assert!(super::string_slice_constant(multi, "Z").is_err());
     }
 
     /// 伏せた値の範囲（M3a）——範囲の中なら何も言わず、外なら名指しし、行が無ければそれも名指しする。
