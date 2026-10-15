@@ -631,6 +631,8 @@ const LINUX_PROGRAMS: &[&str] = &[
     "m3a-exit-group-spin-rust",
     "m3a-channel-tls-rust",
     "m3a-exit-with-waiting-thread-rust",
+    // **ZeikOS と Linux で結果が違うイメージ**（マップ中の memfd を縮める ftruncate。`memfd-shrink-test` のビルドだけが起こす）。
+    "m3a-memfd-shrink-rust",
 ];
 
 /// Linux 向けのプログラム（`linux-programs/`。musl で静的リンクした、`std` を使う Rust）を `rustc` でビルドする

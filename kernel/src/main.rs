@@ -6720,6 +6720,15 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
     // `linux-c-test` のビルドだけが持つ。
     #[cfg(feature = "linux-c-test")]
     verify_linux_program(logger, b"/bin/linux/m3a-c", b"m3a-c\0/etc/motd\0a\0b\0");
+    // **マップ中の memfd を縮める `ftruncate` を断ることの確かめ**（2026-10-15。`ADR-0065` の Addendum）。ZeikOS と Linux で
+    // 結果が違う（Linux は縮めて SIGBUS にする）ので、Linux の参照とは突き合わせず、`memfd-shrink-test` のビルドだけが起こす。
+    // 判定は `--critical-test memfd-shrink-refused` が、イメージの出力の行とカーネルの名指しの行で行う。
+    #[cfg(feature = "memfd-shrink-test")]
+    verify_linux_program(
+        logger,
+        b"/bin/linux/m3a-memfd-shrink-rust",
+        b"m3a-memfd-shrink-rust\0/etc/motd\0a\0b\0",
+    );
 }
 
 /// [`verify_linux_programs`] の、終わり方を名指しする形（M3a の 3-1b。2026-10-14）。**`spawn` の結果が `wanted` と違えば
@@ -14229,6 +14238,17 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "syscall-entry-ignores-process-end-test",
         cfg!(feature = "syscall-entry-ignores-process-end-test"),
         "システムコールの入口で終了の印を見ない",
+    ),
+    // マップ中の memfd を縮める ftruncate（2026-10-15）。
+    (
+        "memfd-shrink-test",
+        cfg!(feature = "memfd-shrink-test"),
+        "マップ中の memfd を縮める ftruncate を打つイメージを起動時に起こす（確かめ。破壊ではない）",
+    ),
+    (
+        "shm-ftruncate-shrinks-mapped-test",
+        cfg!(feature = "shm-ftruncate-shrinks-mapped-test"),
+        "2 回目の ftruncate で、マップ中でも memfd を縮める（末尾のフレームを返す）",
     ),
 ];
 

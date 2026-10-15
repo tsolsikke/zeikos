@@ -207,3 +207,14 @@ fd を `SCM_RIGHTS` で送り、`sockd` が同じ物理フレームを `mmap` �
 - **`sendmsg`と`recvmsg`は、iovが1本でfdが1つの形だけ**。実測では最小のクライアントはこの形に収まっていた。コンポジタの側が何を使うかは、動かす段で測る。
 
 共有のページを破棄のときに集めない目印と、表のフレームの会計は、そのまま使う。
+
+## Addendum（2026-10-15、マップ中のmemfdを縮める`ftruncate`は`-EINVAL`で断る）
+
+**決めたこと。** マップ中のmemfdを縮める`ftruncate`は断る。errnoは`-EINVAL`である。今の実装は2回目の`ftruncate`を向きにかかわらず`-EINVAL`で断る（`kernel/src/shm.rs`の`set_size`の`AlreadySet`）ので、「マップ中の縮小を断る」はその一部として守られている。断るときはカーネルが名指しの行を出す（`shm: ftruncate refused: shm N already has P page(s) (R reference(s)); the shrink to S byte(s) is -EINVAL …`。`kernel/src/syscall.rs`の`report_second_ftruncate_refused`）。表はマップの数を持たないので、マップ中かどうかで分けていない。
+
+**Linuxとの差。** Linuxは縮められ、縮めた先のマップに触るとSIGBUSになる。ZeikOSで同じ形にするのは、ページをマップの表から外してSIGBUSを配送するM3bの後である（`docs/deferred-decisions.md`）。
+
+**待つもの。** マップしていないmemfdの縮小と拡大、アンマップした後の縮小は、2回目の`ftruncate`を受け付ける課題の完了を待つ（`docs/deferred-decisions.md`の同じ行）。マップ中に大きくする向きには手を付けない。
+
+**確かめ。** `linux-programs/m3a-memfd-shrink-rust.rs`（`memfd_create`→2ページの`ftruncate`→`mmap`→2ページ目に書く→1ページへ縮める`ftruncate`→読み戻す）を`memfd-shrink-test`のビルドだけが起動時に起こし、`--critical-test memfd-shrink-refused`が、イメージの行（`returned -22`、`still reads back 0x5a = true`）とカーネルの名指しの行で見る。Linuxと結果が違うので、Linuxの参照とは突き合わせない。破壊は`shm-ftruncate-shrinks-mapped-test`（縮める向きならマップ中でも末尾のフレームを返して縮める）。
+

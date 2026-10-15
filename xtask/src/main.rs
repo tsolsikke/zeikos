@@ -761,6 +761,34 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         ],
         wait_for_full_timeout: false,
         min_heartbeats: None,
+    },    // **マップ中の memfd を縮める ftruncate を断る確かめ**（2026-10-15。`ADR-0065` の Addendum）。ZeikOS は 2 回目の
+    // ftruncate を向きにかかわらず -EINVAL で断るので、Linux の参照とは突き合わせず、この構成だけでイメージを起こす。
+    CriticalTest {
+        name: "memfd-shrink-refused",
+        feature: "memfd-shrink-test",
+        expected_markers: &[
+            "m3a-memfd-shrink-rust: ftruncate to 1 page while mapped returned -22",
+            "shm: ftruncate refused: shm 0 already has 2 page(s)",
+            "m3a-memfd-shrink-rust: the second page still reads back 0x5a = true",
+            "linux-check: /bin/linux/m3a-memfd-shrink-rust ended Ok(Exited(4))",
+        ],
+        forbidden_markers: &[
+            "[ERROR]",
+            "ftruncate to 1 page while mapped returned 0",
+        ],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    // 破壊: 縮める向きならマップ中でも縮める。落ち方は実測で決めた。
+    CriticalTest {
+        name: "shm-ftruncate-shrinks-mapped",
+        feature: "memfd-shrink-test,shm-ftruncate-shrinks-mapped-test",
+        expected_markers: &[
+            "m3a-memfd-shrink-rust: ftruncate to 1 page while mapped returned 0",
+        ],
+        forbidden_markers: &["shm: ftruncate refused", "zash: ready"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
     },
 ];
 
@@ -34390,7 +34418,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 64,
-    full: 526,
+    full: 528,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

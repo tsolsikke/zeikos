@@ -2951,9 +2951,29 @@ fn ftruncate_from_ring3(fd: u64, size: u64, bkl: &mut Option<crate::bkl::BklGuar
         crate::shm::TruncateOutcome::TooLarge | crate::shm::TruncateOutcome::NoRoom => {
             (-ENOMEM) as u64
         }
-        crate::shm::TruncateOutcome::AlreadySet => (-EINVAL) as u64,
+        crate::shm::TruncateOutcome::AlreadySet => report_second_ftruncate_refused(shm, size),
         crate::shm::TruncateOutcome::NoShm => (-EBADF) as u64,
     }
+}
+
+/// 2 回目の `ftruncate` を名指しして断る（2026-10-15。`ADR-0065` の Addendum）。**向きにかかわらず `-EINVAL`**——表は
+/// マップの数を持たないので、マップ中かどうかで分けられない。縮める向きを断ることで「マップ中の memfd を縮めない」は
+/// 守られ、大きくする向きと、マップしていない memfd を縮めることは、2 回目の `ftruncate` を受け付ける課題の後である。
+#[inline(never)]
+#[cold]
+fn report_second_ftruncate_refused(shm: u8, size: u64) -> u64 {
+    let (pages, refs) = crate::shm::size_and_refs(shm).unwrap_or((0, 0));
+    let direction = if crate::shm::pages_for(size) < pages {
+        "shrink"
+    } else {
+        "grow"
+    };
+    serial_line(format_args!(
+        "shm: ftruncate refused: shm {shm} already has {pages} page(s) ({refs} reference(s)); the {direction} to {size} \
+         byte(s) is -EINVAL, as every second ftruncate is, so a mapped memfd is never shrunk (growing, and shrinking an \
+         unmapped memfd, come with the work that accepts a second ftruncate)"
+    ));
+    (-EINVAL) as u64
 }
 
 /// [`SYS_MMAP`] の本体。**共有メモリの fd を自分の空間の `MMAP_BASE` から上へマップする。**

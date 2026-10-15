@@ -168,14 +168,31 @@ pub fn set_size(
     allocator: &mut crate::frame_allocator::FrameAllocator,
 ) -> TruncateOutcome {
     let index = shm as usize;
-    {
+    let already = {
         let shms = SHMS.lock();
         if index >= MAX_SHM || !shms[index].live() {
             return TruncateOutcome::NoShm;
         }
-        if shms[index].pages != 0 {
-            return TruncateOutcome::AlreadySet;
+        shms[index].pages
+    };
+    if already != 0 {
+        // 破壊テスト (2026-10-15, shm-ftruncate-shrinks-mapped-test): 縮める向きなら、マップ中でも末尾のフレームを
+        // アロケータへ返して縮める。マップしたままのページがアロケータに戻る（直す前に無かった形を、わざと作る）。
+        #[cfg(feature = "shm-ftruncate-shrinks-mapped-test")]
+        {
+            let want = pages_for(size);
+            if want < already {
+                let mut shms = SHMS.lock();
+                for frame in &shms[index].frames[want..already] {
+                    let _ = allocator.deallocate_frame(*frame);
+                }
+                shms[index].pages = want;
+                shms[index].len = size;
+                SHARED_FRAMES_HELD.fetch_sub((already - want) as u64, Ordering::Relaxed);
+                return TruncateOutcome::Pages(want);
+            }
         }
+        return TruncateOutcome::AlreadySet;
     }
     let want = pages_for(size);
     if want > MAX_SHM_PAGES {
@@ -216,6 +233,16 @@ pub fn set_size(
     }
     SHARED_FRAMES_HELD.fetch_add(want as u64, Ordering::Relaxed);
     TruncateOutcome::Pages(want)
+}
+
+/// 据えたページ数と参照の数（2 回目の `ftruncate` を名指しして断る行のため。2026-10-15）。無ければ `None`。
+pub fn size_and_refs(shm: u8) -> Option<(usize, u32)> {
+    let index = shm as usize;
+    let shms = SHMS.lock();
+    if index >= MAX_SHM || !shms[index].live() {
+        return None;
+    }
+    Some((shms[index].pages, shms[index].refs))
 }
 
 /// `mmap` のために、フレームの物理アドレスと大きさをコピーして返す。**マップするのは呼び出し側。**
