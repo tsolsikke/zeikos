@@ -1800,3 +1800,21 @@ Linuxも次のカーネルへの入口で止める。`deferred-decisions.md`の�
 **直し。** アイドルの経路が返した本数を数え（`IDLE_RELEASED`）、窓の前に控えて差を`consumed`へ足し戻す
 （`released_by_idle`）。`spawn:`の行に`idle returned N of earlier destroys meanwhile`を添えた。
 
+## 2026-10-15 チャネルの像の`mapped by request`のページ数が起動ごとに3か2になり、page permissionsと起動ログのdigestが揺れた（M3aの検証のイメージ）
+
+**症状。** 6255393の全検査で、page permissionsの参照3本が「14件の差」で落ちた。差は`m3a-channel-tls-rust`と
+`m3a-exit-with-waiting-thread-rust`の行が参照に無い（採り直し忘れ。2度目）だけだったが、採り直す前に揺れを確かめると、
+チャネルの像の`mapped by request`の行の`pages`が50回の起動で47回は3、3回は2だった。`page-perms:`のdigestも
+`a20f3db794c69e5b`と`831476ae89d7543a`の2つが出て、起動ログの参照（伏せていない行）も同じ割合で落ちる形だった。
+
+**原因。** Linuxの`strace -f`で、muslのmallocngが`clone`の直後に`mmap`する1ページを、主スレッドが取る回（ワーカーが
+`munmap`して終わる）と、ワーカーが取る回（誰も返さない）が在ると分かった。終わりに残るRWのページが2か3になり、
+ZeikOSの`user-mmap:`の行の「3 mapping(s) / 3 anonymous」と「4 / 4」はこの2つの形そのものである。順序はティックで決まる。
+
+**直し。** `report_user_mappings`に、`mmap`の範囲のページ数を比べない像の名前の一覧（`MMAP_PAGES_NOT_COMPARED`）を持ち、
+その行を`pages=~3`の形で出す（`xtask`は比べず、digestにも入らない）。参照4本（page permissions 3本と起動ログのsmp2）を
+採り直した。採り直し忘れは、基本の検査が名前で見る形にした。本体は`verification-coverage.md`の「スレッドの順序で終わりに
+残るページ数が変わるイメージ」にある。
+
+**教訓。** 参照を採り直す前に、足した像の行が起動ごとに同じかを、残っている`serial.log`のdigestで見る。起動ログの差の
+道具は最初の1行しか出さないので、先に出る差（`user-mmap:`の行）を伏せると、次の差（digestの行）が初めて見える。

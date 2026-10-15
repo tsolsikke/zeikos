@@ -1563,6 +1563,8 @@ pub fn load_user_program_with(
 /// **領域は、像の区画（`PT_LOAD`）・スタック・ヒープ・`mmap` の範囲である。** 区画の範囲は像を読み直して得る
 /// （読み込みが通った像だけを見る。区画の並びを受け付けられない像は、何も写していないので出さない）。
 /// **歩くのはユーザーの側の添字だけである**（カーネルと共有している側は、カーネルの表の一覧が見る）。
+/// **`mmap` の範囲のページ数を比べないイメージは、中の `MMAP_PAGES_NOT_COMPARED` に名前で挙げる**（終わりに残るページ数が
+/// スレッドの順序で変わるイメージ。2026-10-15）。
 fn report_user_mappings(
     logger: &mut Logger<Serial>,
     image: &dyn common::image_source::ImageSource,
@@ -1642,11 +1644,24 @@ fn report_user_mappings(
         regions[count] = Region::mapped("heap", heap, layout.heap_limit, true);
         count += 1;
     }
+    // **`mmap` の範囲のページ数を、比べないイメージ**（2026-10-15）。`counted` を偽にすると、行は `pages=~3` の形で出て、
+    // `xtask` はその行のページ数を比べず、起動ログの `page-perms:` の digest にも入らない。権限（w/u/x）は今までどおり比べる。
+    // ページ数は、起動ログの `user-mmap:` の行の「anonymous page(s)」の範囲（`xtask` の `BOOT_LOG_RANGES`）で見ている。
+    //
+    // - `m3a-channel-tls-rust`: musl の mallocng が `clone` の直後に mmap する 1 ページを、主スレッドとワーカーのどちらが
+    //   持つかがティックで決まる。主が持つとワーカーが `munmap` し、ワーカーが持つと誰も返さないので、終わりに残る
+    //   ページ数が 2 か 3 になる（50 回の起動で 3 回が 2。Linux の `strace` でも同じ 2 つの形が出る）。
+    //
+    // **一覧の名前が `kernel/build.rs` の `LINUX_PROGRAMS` に在り、起動のたびに起こす像であることは、基本の検査が見る。**
+    const MMAP_PAGES_NOT_COMPARED: &[&str] = &["m3a-channel-tls-rust"];
+    let mmap_pages_compared = !MMAP_PAGES_NOT_COMPARED
+        .iter()
+        .any(|name| process.name.strip_prefix("/bin/linux/") == Some(*name));
     regions[count] = Region::mapped(
         "mapped by request",
         layout.mmap_base,
         layout.mmap_limit,
-        true,
+        mmap_pages_compared,
     );
     count += 1;
 

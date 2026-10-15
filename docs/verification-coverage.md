@@ -2554,9 +2554,35 @@ Linux向けのプログラムは、スレッドローカルの領域（TLS）を
 
 以前は、途中で止まった回の一覧でも参照として書いていた。カーネルが起動の途中で止まった回に取り直して、118行の参照が29行で上書きされたことが在る（実測。短い参照との比べは、通ってしまう）。
 
-**起動時に起こす像を足したら、page permissionsの3つの参照（`xtask/reference/page-permissions.txt`・`page-permissions-heap.txt`・`page-permissions-screen.txt`）も採り直すこと**（運用者の決定。2026-10-15）。この3項目は全検査でしか走らないので、基本の検査と`--commit`では気づけない——M3aで像を9本足したとき採り直しておらず、3ec447cの全検査で70件の差として落ちた（8aa15a3で採り直した）。
+**起動時に起こす像を足したら、page permissionsの3つの参照（`xtask/reference/page-permissions.txt`・`page-permissions-heap.txt`・`page-permissions-screen.txt`）も採り直すこと**（運用者の決定。2026-10-15）。この3項目は全検査でしか走らないので、基本の検査と`--commit`では気づけない——M3aで像を9本足したとき採り直しておらず、3ec447cの全検査で70件の差として落ちた（8aa15a3で採り直した）。**同じ日に2度目を踏んだ**（d3e80beで2本足して採り直さず、6255393の全検査で14件の差として落ちた）ので、**基本の検査が機械で見る**——起動のたびに起こすイメージの名前（`xtask`の`LINUX_PROGRAMS_IN_THE_BOOT_LOG`）が`kernel/build.rs`の`LINUX_PROGRAMS`と3つの参照に全部在ること。`LINUX_PROGRAMS`に在っても起動時に起こさないイメージ（`m3a-memfd-shrink-rust`。`memfd-shrink-test`のビルドだけが起こす）は、参照に行が無くてよい。
 
 ほかの参照の取り直しは、もともと同じ確かめを持っている。
+
+### スレッドの順序で終わりに残るページ数が変わるイメージは、page permissionsの`mmap`の行のページ数を比べない（2026-10-15）
+
+**症状。** `m3a-channel-tls-rust`の`mapped by request`の行の`pages`が、起動ごとに3か2になる（50回の起動で3回が2）。
+`page-perms:`のdigestはその行のページ数を含むので、起動ログの参照（`boot-log-smp2.txt`）の同じイメージのdigestの行も
+同じ割合で違い、基本の検査の起動ログの突き合わせが落ちる。`--commit`は3回起動するので、1回の`--commit`が落ちる確率は
+1割から2割ほどだった（d3e80beからの間、たまたま踏まなかった回が多い。74d1783のhookが起動ログの差で落ちた回は、
+`user-mmap:`の行の差が先に出たので、digestの差は見えなかった）。
+
+**原因。** muslのmallocngが`clone`の直後に1ページを`mmap`する。主スレッドが先に取るとワーカーがそれを`munmap`して終わり、
+ワーカーが先に取ると誰も返さない。どちらになるかはティックの順序で決まる。Linuxの`strace -f`でも同じ2つの形が出る。
+ZeikOSのバグではなく、ページ数を固定の値として比べる判定の側が、このイメージには当たらない。
+
+**直し。** `kernel/src/userland.rs`の`report_user_mappings`に、`mmap`の範囲のページ数を比べないイメージの名前の一覧
+（`MMAP_PAGES_NOT_COMPARED`）を持ち、その行は`pages=~3`の形で出す（既に在る仕組み。カーネルの像の区画とCPUごとの
+スタックと同じ。`xtask`はページ数を比べず、digestにも入らない）。権限（w/u/x）は今までどおり比べる。ページ数そのものは
+`user-mmap:`の行の「anonymous page(s)」の範囲（`BOOT_LOG_RANGES`。3..=4）で見ている。
+
+**同じ形の揺れを探すとき。** `target/runs/*/serial.log`の`page-perms: user program …: … digest=`の行を、イメージごとに
+`uniq`する。同じビルドで2つ以上のdigestが出るイメージが在れば、それが揺れである（破壊テストの起動を除くこと。`run.txt`の
+`what:`が`marker-test`の回は、プロセスが途中で終わるのでdigestが違って当然である）。終わりに`munmap`が無いイメージ
+（`m3a-exit-with-waiting-thread-rust`。144回とも同じ）は揺れない。
+
+**機械の検査。** 基本の検査が、起動のたびに起こすLinuxのイメージの名前が`kernel/build.rs`の`LINUX_PROGRAMS`と
+page permissionsの3つの参照に在ること、`MMAP_PAGES_NOT_COMPARED`の名前がその中に在ることを見る（下の「起動時に起こす像を
+足したら」の決まりを機械にしたもの）。
 
 | 参照 | 取り直すときの確かめ |
 |---|---|

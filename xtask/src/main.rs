@@ -20742,14 +20742,17 @@ const BOOT_LOG_VOLATILE_FIELDS: &[VolatileField] = &[
         before: " woke ",
         after: " waiter(s)",
     },
-    // チャネルのイメージの「次に mmap する番地」（2026-10-15）。ワーカーの 2 MiB のスタックを `join` が munmap した後の値で、
-    // そのスタックが一番上のマップだったかどうか（ワーカーの exit と主スレッドの munmap の順。ティックで変わる）で 2 通りになる。
+    // チャネルのイメージの「次に mmap する番地」（2026-10-15）。musl の mallocng が `clone` の直後に mmap する 1 ページ
+    // （ワーカーのスタックの上に置かれる）を、主スレッドが持つとワーカーが munmap して終わり、ワーカーが持つと誰も返さない。
+    // どちらになるかはティックで決まり、終わりに残る一番上のマップが変わる（Linux の `strace -f` でも同じ 2 つの形が出る。
+    // 2026-10-15 に 50 回起動して 3 回が前者。`docs/verification-coverage.md` の「スレッドの順序で終わりに残るページ数が
+    // 変わるイメージ」）。
     VolatileField {
         line: "user-mmap: /bin/linux/m3a-channel-tls-rust had its first mmap",
         before: " would map next at ",
         after: " (every process",
     },
-    // 同じ行の「まだ持っているマップの数」も同じ競合で 3 か 4 になる（スタックとガードの 2 つが外れたか）。
+    // 同じ行の「まだ持っているマップの数」と「無名のページの数」も同じ競合で 3 か 4 になる（その 1 ページが残ったか）。
     VolatileField {
         line: "user-mmap: /bin/linux/m3a-channel-tls-rust had its first mmap",
         before: "another process); ",
@@ -20759,6 +20762,23 @@ const BOOT_LOG_VOLATILE_FIELDS: &[VolatileField] = &[
         line: "user-mmap: /bin/linux/m3a-channel-tls-rust had its first mmap",
         before: " mapping(s) still held, ",
         after: " anonymous page(s)",
+    },
+    // 同じ競合で、チャネルのイメージの空間が取ったフレームの数も 206 か 207 になる（その 1 ページの分）。spawn の行の
+    // 「返した数」「取った数」「集めた数」の 3 欄が同じ値で動く。
+    VolatileField {
+        line: "spawn: /bin/linux/m3a-channel-tls-rust ended (Exited(4))",
+        before: "left the allocator; ",
+        after: " returned at once",
+    },
+    VolatileField {
+        line: "spawn: /bin/linux/m3a-channel-tls-rust ended (Exited(4))",
+        before: "the space took ",
+        after: " frame(s) and the destroy collected",
+    },
+    VolatileField {
+        line: "spawn: /bin/linux/m3a-channel-tls-rust ended (Exited(4))",
+        before: "and the destroy collected ",
+        after: " (match=",
     },
     // sched_yield で回り続けるスレッドが、主スレッドの exit のときにカーネルの中（yield の切り替え）に居たか Ring 3 に居たか
     // （ティックが Ring 3 のスレッドを止めて主スレッドが走った回は 0。2026-10-15 に --commit の hook で 1 回踏んだ）。
@@ -21121,7 +21141,7 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         after: " (every process",
         min: 0x1000_6000,
         max: 0x1020_a000,
-        what: "the next mmap address after m3a-channel-tls-rust (measured 0x10006000 and 0x1020a000: the worker's 2 MiB stack is unmapped by the join, and the next address rewinds only when that stack was the topmost mapping; which it is depends on the order of the worker's exit and the main thread's join, a tick)",
+        what: "the next mmap address after m3a-channel-tls-rust (measured 0x10006000 and 0x1020a000: musl's mallocng maps one page right after the clone; when the main thread maps it the worker unmaps it and the top mapping is gone at the end, when the worker maps it nobody returns it; which thread gets there first is a tick, and Linux shows both shapes under strace)",
     },
     BootLogRange {
         line: "user-mmap: /bin/linux/m3a-channel-tls-rust had its first mmap",
@@ -21129,7 +21149,7 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         after: " mapping(s) still held",
         min: 3,
         max: 4,
-        what: "the mappings m3a-channel-tls-rust still held at its end (measured 3 and 4: the worker's stack and its guard are unmapped by the join in one order and still counted in the other; the same tick as the next-mmap address)",
+        what: "the mappings m3a-channel-tls-rust still held at its end (measured 3 and 4: the mallocng page of the next-mmap address above is returned in one order and kept in the other; the same tick)",
     },
     BootLogRange {
         line: "user-mmap: /bin/linux/m3a-channel-tls-rust had its first mmap",
@@ -21138,6 +21158,30 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         min: 3,
         max: 4,
         what: "the anonymous pages m3a-channel-tls-rust still held at its end (measured 3 and 4, moving with the mapping count above)",
+    },
+    BootLogRange {
+        line: "spawn: /bin/linux/m3a-channel-tls-rust ended (Exited(4))",
+        before: "left the allocator; ",
+        after: " returned at once",
+        min: 206,
+        max: 207,
+        what: "the frames m3a-channel-tls-rust's space returned at once (measured 206 and 207 over 176 boots: one more when the worker's mallocng page is still mapped at the end; the same tick as the mapping count)",
+    },
+    BootLogRange {
+        line: "spawn: /bin/linux/m3a-channel-tls-rust ended (Exited(4))",
+        before: "the space took ",
+        after: " frame(s) and the destroy collected",
+        min: 206,
+        max: 207,
+        what: "the frames m3a-channel-tls-rust's space took (measured 206 and 207, moving with the returned count above)",
+    },
+    BootLogRange {
+        line: "spawn: /bin/linux/m3a-channel-tls-rust ended (Exited(4))",
+        before: "and the destroy collected ",
+        after: " (match=",
+        min: 206,
+        max: 207,
+        what: "the frames the destroy of m3a-channel-tls-rust collected (measured 206 and 207, moving with the returned count above)",
     },
     BootLogRange {
         line: "thread: 1 thread(s) of /bin/linux/m3a-exit-while-spinning-rust were still runnable",
@@ -37413,7 +37457,7 @@ thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack
 [INFO] futex: /bin/linux/m3a-nested-clone-rust slept 1 time(s) and woke 1 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] futex: /bin/linux/m3a-spawn-from-thread-rust slept 1 time(s) and woke 1 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] futex: /bin/linux/m3a-exit-group-spin-rust slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
-[INFO] spawn: /bin/linux/m3a-channel-tls-rust ended (Exited(4)) after 46 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
+[INFO] spawn: /bin/linux/m3a-channel-tls-rust ended (Exited(4)) after 46 syscall(s) (0 with a number the kernel does not know; the last such number was 0); its kernel entries ran on RSP 0xffffffff80401f50 (inside its own excursion stack 0xffffffff803f2000..0xffffffff80402000 = true); the space was destroyed (0 frame(s) left the allocator; 207 returned at once, 0 still quarantined (0 its own + 0 from what it spawned), match=true leaked=0, idle returned 0 of earlier destroys meanwhile); the space took 207 frame(s) and the destroy collected 207 (match=true); the global difference was checked (checked 35 time(s) so far)
 [INFO] spawn: /bin/linux/m3a-exit-with-waiting-thread-rust ended (Exited(5)) after 49 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
 [INFO] futex: /bin/linux/m3a-channel-tls-rust slept 1 time(s) and woke 1 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] futex: /bin/linux/m3a-exit-with-waiting-thread-rust slept 1 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
@@ -37422,7 +37466,7 @@ thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack
 ";
         let (findings, seen) = super::check_boot_log_ranges("t", good);
         assert!(findings.is_empty(), "{findings:?}");
-        assert_eq!(seen, 45);
+        assert_eq!(seen, 48);
         let bad = good
             .replace("after 106 syscall", "after 300 syscall")
             .replace("used 3112 of", "used 40000 of");
