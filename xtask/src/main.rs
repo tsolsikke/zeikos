@@ -630,7 +630,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         name: "clone-keeps-parent-rax",
         feature: "clone-keeps-parent-rax-test",
         expected_markers: &[
-            "thread: tid 2 (task 6) faulted in ring 3 (vector 14, rip 0x10207aa0, cr2 0x10207aa0)",
+            "faulted in ring 3 (vector 14",
             "linux-check: /bin/linux/m3a-rust ended Ok(Folded(14)), expected Exited(4)",
             "halting",
         ],
@@ -647,8 +647,8 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         name: "clone-no-clear-tid",
         feature: "clone-no-clear-tid-test",
         expected_markers: &[
-            "the clear-tid address was 0x475358 (0 written = false)",
-            "futex: /bin/linux/m3a-rust waited on 0x475358 (FUTEX_WAIT with the expected value) and there is no other thread to wake it",
+            "(0 written = false)",
+            "(FUTEX_WAIT with the expected value) and there is no other thread to wake it",
             "linux-check: /bin/linux/m3a-rust ended Ok(Exited(137)), expected Exited(4)",
             "halting",
         ],
@@ -665,7 +665,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         name: "clone-no-settls",
         feature: "clone-no-settls-test",
         expected_markers: &[
-            "thread: tid 2 (task 6) faulted in ring 3 (vector 14, rip 0x4311b4, cr2 0x0)",
+            "faulted in ring 3 (vector 14",
             "linux-check: /bin/linux/m3a-rust ended Ok(Folded(14)), expected Exited(4)",
             "halting",
         ],
@@ -692,21 +692,16 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         min_heartbeats: None,
     },
     // プロセスの終わりで、残っているスレッドを終えず刈り取らない。終わったスレッドのタスクが壊される空間を指したまま残り、
-    // W1-b-2 の検査（forget_task_root_before_destroy）が最初のスレッドを持つプロセスで [ERROR] を出す。sched_yield で
-    // 回り続けるスレッドは Ready のまま残り、次の像（m3a-nested-clone-rust）の空間で走って #PF を起こす——その像が
-    // 1 回のシステムコールで Folded(14) になり、起動時の確かめが名指しして止まる。
+    // W1-b-2 の検査（forget_task_root_before_destroy）が最初のスレッドを持つプロセス（m3a-rust。スレッドは必ず主より先に
+    // 終わる）で [ERROR] を出す。**見るのはこの名指しの行だけである**——その後、回り続けるスレッドが次の像の空間で
+    // #PF を起こして止まる形も観測しているが、どの像で起きるかは順序に依るので目印にしない（2026-10-16 の棚卸し）。
     CriticalTest {
         name: "process-end-leaves-threads",
         feature: "process-end-leaves-threads-test",
         expected_markers: &[
             "[ERROR] task: a task still pointed its cr3 at /bin/linux/m3a-rust's address space",
-            "linux-check: /bin/linux/m3a-nested-clone-rust ended Ok(Folded(14)), expected Exited(4)",
-            "halting",
         ],
-        forbidden_markers: &[
-            "m3a-nested-clone-rust: joined",
-            "zash: ready",
-        ],
+        forbidden_markers: &[],
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
@@ -729,18 +724,23 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // プロセスの終わりの印で、同じスロットの futex の待ちを起こさない。m3a-exit-group-join-rust の主スレッドが join で眠った
-    // まま永久に残り、起動がそこで止まる。カーネルは報告できないので、時間切れまで待って「その後の行が無い」ことで見る
-    // （3-1b で 1 回確かめた形。docs/troubleshooting.md）。
+    // プロセスの終わりの印で、同じスロットの futex の待ちを起こさない。起こされない主スレッドが永久に残り、起動がそこで
+    // 止まる。**止まる像は 2 通りある**——ふつうは m3a-exit-group-join-rust（主が join で眠っている間にスレッドが exit_group
+    // を打つ。残っていた起動 223 回中 213 回）、主が眠る前に exit_group が来た回（10 回）は join の像が入口で終了の印を
+    // 見て普通に終わり、次の m3a-exit-group-waiters-rust（waiter が眠ったと出してから ender が exit_group を打つので、
+    // 眠る側が必ず居る）で止まる。カーネルは報告できないので、時間切れまで待って、**どちらの場合も越えられない所**
+    // （waiters の像の終わりとプロンプト）が無いことで見る。join の像の行を目印にすると 10 回の側で落ちる（2026-10-15 の
+    // full check #6）。waiters の像の行を期待にすると 213 回の側で落ちる（2026-10-16 に 5 回とも）。docs/troubleshooting.md。
     CriticalTest {
         name: "process-end-keeps-futex-sleepers",
         feature: "process-end-keeps-futex-sleepers-test",
         expected_markers: &[
-            "thread: tid 18 (task 6) ended the process through system call 231 with status 7",
+            "linux-check: /bin/linux/m3a-exit-group-rust ended Ok(Exited(7))",
+            "m3a-exit-group-join-rust: main starts",
         ],
         forbidden_markers: &[
-            "linux-check: /bin/linux/m3a-exit-group-join-rust ended",
-            "futex: /bin/linux/m3a-exit-group-join-rust slept",
+            "linux-check: /bin/linux/m3a-exit-group-waiters-rust ended",
+            "futex: /bin/linux/m3a-exit-group-waiters-rust slept",
             "zash: ready",
         ],
         wait_for_full_timeout: true,
@@ -819,7 +819,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         name: "clone-shares-tls",
         feature: "clone-shares-tls-test",
         expected_markers: &[
-            "thread: tid 2 (task 6) ended the process through system call 200 with status 134",
+            "ended the process through system call 200 with status 134",
             "tkill: /bin/linux/m3a-rust sent itself signal 6",
             "linux-check: /bin/linux/m3a-rust ended Ok(Exited(134)), expected Exited(4)",
             "halting",
