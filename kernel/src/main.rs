@@ -6701,8 +6701,25 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
         b"m3a-exit-group-spin-rust\0/etc/motd\0a\0b\0",
         kernel::userland::SpawnOutcome::Exited(7),
     );
+    // **ZEIKOS-107 のイメージ（2026-10-15）。** チャネルと TLS（`std::sync::mpsc`・`thread_local!`）、チャネルで待ち続ける
+    // スレッドを残したまま主スレッドが `exit(5)` で終わる形（`Exited(5)`）。
+    verify_linux_program(
+        logger,
+        b"/bin/linux/m3a-channel-tls-rust",
+        b"m3a-channel-tls-rust\0/etc/motd\0a\0b\0",
+    );
+    verify_linux_program_ending(
+        logger,
+        b"/bin/linux/m3a-exit-with-waiting-thread-rust",
+        b"m3a-exit-with-waiting-thread-rust\0/etc/motd\0a\0b\0",
+        kernel::userland::SpawnOutcome::Exited(5),
+    );
     #[cfg(feature = "linux-c-test")]
     verify_linux_program(logger, b"/bin/linux/m1-c", b"m1-c\0/etc/motd\0a\0b\0");
+    // **musl の pthread（`pthread_create`・`pthread_join`）の C のイメージ**（ZEIKOS-107 の 3。2026-10-15）。`m1-c` と同じく
+    // `linux-c-test` のビルドだけが持つ。
+    #[cfg(feature = "linux-c-test")]
+    verify_linux_program(logger, b"/bin/linux/m3a-c", b"m3a-c\0/etc/motd\0a\0b\0");
 }
 
 /// [`verify_linux_programs`] の、終わり方を名指しする形（M3a の 3-1b。2026-10-14）。**`spawn` の結果が `wanted` と違えば

@@ -20653,6 +20653,44 @@ const BOOT_LOG_VOLATILE_FIELDS: &[VolatileField] = &[
         before: " woke ",
         after: " waiter(s)",
     },
+    // ZEIKOS-107 のイメージ（2026-10-15）のシステムコールの数と futex の眠り・起こし。
+    VolatileField {
+        line: "spawn: /bin/linux/m3a-channel-tls-rust ended",
+        before: " after ",
+        after: " syscall(s)",
+    },
+    VolatileField {
+        line: "futex: /bin/linux/m3a-channel-tls-rust slept",
+        before: " slept ",
+        after: " time(s)",
+    },
+    VolatileField {
+        line: "futex: /bin/linux/m3a-channel-tls-rust slept",
+        before: " woke ",
+        after: " waiter(s)",
+    },
+    VolatileField {
+        line: "spawn: /bin/linux/m3a-exit-with-waiting-thread-rust ended",
+        before: " after ",
+        after: " syscall(s)",
+    },
+    VolatileField {
+        line: "futex: /bin/linux/m3a-exit-with-waiting-thread-rust slept",
+        before: " slept ",
+        after: " time(s)",
+    },
+    VolatileField {
+        line: "futex: /bin/linux/m3a-exit-with-waiting-thread-rust slept",
+        before: " woke ",
+        after: " waiter(s)",
+    },
+    // チャネルのイメージの「次に mmap する番地」（2026-10-15）。ワーカーの 2 MiB のスタックを `join` が munmap した後の値で、
+    // そのスタックが一番上のマップだったかどうか（ワーカーの exit と主スレッドの munmap の順。ティックで変わる）で 2 通りになる。
+    VolatileField {
+        line: "user-mmap: /bin/linux/m3a-channel-tls-rust had its first mmap",
+        before: " would map next at ",
+        after: " (every process",
+    },
     // プロセスの終わりの印が起こした futex の待ちの本数（ティックでスレッドが先に走ると、主スレッドはまだ眠っていない）。
     VolatileField {
         line: "futex: /bin/linux/m3a-exit-group-join-rust slept",
@@ -20954,6 +20992,62 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         what: "m3a-exit-group-spin-rust's futex wakes (measured 0 in 40 boots)",
     },
     BootLogRange {
+        line: "spawn: /bin/linux/m3a-channel-tls-rust ended",
+        before: " after ",
+        after: " syscall(s)",
+        min: 44,
+        max: 51,
+        what: "m3a-channel-tls-rust's system calls (measured 44..=49 in 33 boots: 44 when neither recv sleeps, +1 or +2 per futex sleep and wake of the worker's recv and the main thread's reply recv; room for musl's thread-list-lock window, +2)",
+    },
+    BootLogRange {
+        line: "spawn: /bin/linux/m3a-exit-with-waiting-thread-rust ended",
+        before: " after ",
+        after: " syscall(s)",
+        min: 48,
+        max: 52,
+        what: "m3a-exit-with-waiting-thread-rust's system calls (measured 48..=50 in 33 boots: 49, moved by the sched_yield loop that waits for the thread's flag; room for musl's thread-list-lock window, +2)",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-channel-tls-rust slept",
+        before: " slept ",
+        after: " time(s)",
+        min: 0,
+        max: 3,
+        what: "m3a-channel-tls-rust's futex sleeps (measured 0..=2 in 33 boots: the worker's recv and the main thread's reply recv sleep when the other side has not sent yet; +1 for musl's thread-list-lock window)",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-channel-tls-rust slept",
+        before: " woke ",
+        after: " waiter(s)",
+        min: 0,
+        max: 3,
+        what: "m3a-channel-tls-rust's futex wakes (measured 0..=2 in 33 boots, paired with the sleeps)",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-exit-with-waiting-thread-rust slept",
+        before: " slept ",
+        after: " time(s)",
+        min: 1,
+        max: 2,
+        what: "m3a-exit-with-waiting-thread-rust's futex sleeps (measured 1 in 33 boots: the thread's recv; +1 for musl's thread-list-lock window)",
+    },
+    BootLogRange {
+        line: "futex: /bin/linux/m3a-exit-with-waiting-thread-rust slept",
+        before: " woke ",
+        after: " waiter(s)",
+        min: 0,
+        max: 1,
+        what: "m3a-exit-with-waiting-thread-rust's futex wakes (measured 0 in 33 boots: nobody sends; 1 for musl's thread-list-lock window)",
+    },
+    BootLogRange {
+        line: "user-mmap: /bin/linux/m3a-channel-tls-rust had its first mmap",
+        before: " would map next at ",
+        after: " (every process",
+        min: 0x1000_6000,
+        max: 0x1020_a000,
+        what: "the next mmap address after m3a-channel-tls-rust (measured 0x10006000 and 0x1020a000: the worker's 2 MiB stack is unmapped by the join, and the next address rewinds only when that stack was the topmost mapping; which it is depends on the order of the worker's exit and the main thread's join, a tick)",
+    },
+    BootLogRange {
         line: "user-destroy: /bin/linux/m3a-exit-group-waiters-rust returned",
         before: " in ",
         after: " cycle(s)",
@@ -20972,7 +21066,21 @@ fn volatile_field_span(line: &str, before: &str, after: &str) -> Option<(usize, 
         start + line[start..].find(after)?
     };
     let digits = &line[start..end];
-    (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())).then_some((start, end))
+    // **10 進の数か、`0x` の付いた 16 進の番地**（2026-10-15。スレッドを持つイメージの `user-mmap:` の「次に mmap する番地」は、
+    // ワーカーのスタックを munmap する順で変わる）。
+    let hex = digits
+        .strip_prefix("0x")
+        .is_some_and(|rest| !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_hexdigit()));
+    let decimal = !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit());
+    (hex || decimal).then_some((start, end))
+}
+
+/// [`volatile_field_span`] が切り出した値を読む（10 進か、`0x` の 16 進）。読めなければ `u64::MAX`（範囲の外になる）。
+fn volatile_field_value(text: &str) -> u64 {
+    match text.strip_prefix("0x") {
+        Some(hex) => u64::from_str_radix(hex, 16).unwrap_or(u64::MAX),
+        None => text.parse().unwrap_or(u64::MAX),
+    }
 }
 
 /// [`BOOT_LOG_VOLATILE_FIELDS`] の値を `<n>` に置く。
@@ -21002,7 +21110,7 @@ fn check_boot_log_ranges(label: &str, serial: &str) -> (Vec<String>, usize) {
             };
             found = true;
             seen += 1;
-            let value: u64 = line[start..end].parse().unwrap_or(u64::MAX);
+            let value: u64 = volatile_field_value(&line[start..end]);
             if value < range.min || value > range.max {
                 findings.push(format!(
                     "{label}: {} = {value} is outside {}..={} ({})",
@@ -21897,6 +22005,8 @@ const LINUX_PROGRAMS_IN_THE_BOOT_LOG: &[&str] = &[
     "m3a-nested-clone-rust",
     "m3a-spawn-from-thread-rust",
     "m3a-exit-group-spin-rust",
+    "m3a-channel-tls-rust",
+    "m3a-exit-with-waiting-thread-rust",
 ];
 
 /// `linux-programs/reference/<name>.txt`（Linux 上で控えた stdout と終了の状態）の各行が、`output` に順に在るか
@@ -23123,7 +23233,7 @@ fn cmd_linux_c_test() -> Result<()> {
     if !built.is_file() {
         println!(
             "{context}: skipped (m1-c is not built at {}; run tools/build-linux-programs.sh, which \
-             needs musl-gcc)",
+             needs musl-gcc; m3a-c comes from the same script)",
             built.display()
         );
         note_skipped_item("linux-c test (m1-c is not built at target/linux-programs; tools/build-linux-programs.sh needs musl-gcc)");
@@ -23160,7 +23270,8 @@ fn cmd_linux_c_test() -> Result<()> {
         PIPE_TEST_TIMEOUT,
         launch::Deadline::Failure,
     ))?;
-    let ended = "spawn: /bin/linux/m1-c ended";
+    // **`m3a-c`（musl の pthread。ZEIKOS-107 の 3）も同じ起動で走り、`m1-c` の後に終わる**（2026-10-15）。待つのは後の方である。
+    let ended = "spawn: /bin/linux/m3a-c ended";
     let deadline = Instant::now() + PIPE_TEST_TIMEOUT;
     loop {
         if child.was_cut() {
@@ -23176,32 +23287,41 @@ fn cmd_linux_c_test() -> Result<()> {
     let _ = child.wait();
     let serial = read_lossy(&serial_log);
 
-    let ran = serial.contains("spawn: /bin/linux/m1-c ended (Exited(4))");
-    let matched = linux_program_output_matches(
-        &workspace_root,
-        "m1-c",
-        &serial,
-        LinuxReferenceEnvironment::ExactCount,
-    )?;
-    let unknown_free = serial
-        .lines()
-        .find(|line| line.contains(ended))
-        .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
+    let mut all_ok = true;
+    for name in ["m1-c", "m3a-c"] {
+        let ended_line = format!("spawn: /bin/linux/{name} ended");
+        let ran = serial.contains(&format!("spawn: /bin/linux/{name} ended (Exited(4))"));
+        let matched = linux_program_output_matches(
+            &workspace_root,
+            name,
+            &serial,
+            LinuxReferenceEnvironment::ExactCount,
+        )?;
+        let unknown_free = serial
+            .lines()
+            .find(|line| line.contains(&ended_line))
+            .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
+        println!("{context}: {name} ended with status 4 = {ran}");
+        println!(
+            "{context}: {name} printed what Linux prints (linux-programs/reference/{name}.txt) = {matched}"
+        );
+        println!("{context}: {name} hit no number the kernel does not know = {unknown_free}");
+        all_ok &= ran && matched && unknown_free;
+    }
+    // **`m3a-c` のスレッドが起きて終わったこと**（`thread:` の行。ZEIKOS-107 の 3）。
+    let thread_ran = serial.contains("thread: task 6 started as tid")
+        && serial.contains("(task 6) exited with status 0");
+    println!("{context}: m3a-c's pthread was started and exited on a pool task = {thread_ran}");
     let no_error = !serial.contains("[ERROR]");
-    println!("{context}: m1-c ended with status 4 = {ran}");
-    println!(
-        "{context}: m1-c printed what Linux prints (linux-programs/reference/m1-c.txt) = {matched}"
-    );
-    println!("{context}: m1-c hit no number the kernel does not know = {unknown_free}");
     println!("{context}: no [ERROR] line = {no_error}");
-    if ran && matched && unknown_free && no_error {
+    if all_ok && thread_ran && no_error {
         println!("{context}: PASS");
         return Ok(());
     }
     for line in serial
         .lines()
-        .filter(|l| l.contains("m1-c") || l.contains("[ERROR]"))
-        .take(12)
+        .filter(|l| l.contains("m1-c") || l.contains("m3a-c") || l.contains("[ERROR]"))
+        .take(16)
     {
         println!("{context}: (info) {}", line.trim_end());
     }
@@ -37150,6 +37270,22 @@ mod tests {
         );
     }
 
+    /// 伏せる欄は 10 進の数か `0x` の 16 進の番地で、どちらも読めて範囲に入る（2026-10-15）。
+    #[test]
+    fn volatile_fields_take_decimal_numbers_and_hex_addresses() {
+        let line = "user-mmap: /bin/x had its first mmap at 0x10000000 and would map next at 0x1020a000 (every process starts";
+        let span =
+            super::volatile_field_span(line, " would map next at ", " (every process").unwrap();
+        assert_eq!(&line[span.0..span.1], "0x1020a000");
+        assert_eq!(super::volatile_field_value("0x1020a000"), 0x1020_a000);
+        assert_eq!(super::volatile_field_value("46"), 46);
+        assert_eq!(super::volatile_field_value("0xzz"), u64::MAX);
+        assert!(super::volatile_field_span("next at 0x (every", " next at ", " (every").is_none());
+        assert!(
+            super::volatile_field_span("next at 12ab (every", " next at ", " (every").is_none()
+        );
+    }
+
     /// 伏せた値の範囲（M3a）——範囲の中なら何も言わず、外なら名指しし、行が無ければそれも名指しする。
     #[test]
     fn boot_log_ranges_name_the_values_outside_and_the_missing_lines() {
@@ -37177,10 +37313,15 @@ thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack
 [INFO] futex: /bin/linux/m3a-nested-clone-rust slept 1 time(s) and woke 1 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] futex: /bin/linux/m3a-spawn-from-thread-rust slept 1 time(s) and woke 1 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] futex: /bin/linux/m3a-exit-group-spin-rust slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
+[INFO] spawn: /bin/linux/m3a-channel-tls-rust ended (Exited(4)) after 46 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
+[INFO] spawn: /bin/linux/m3a-exit-with-waiting-thread-rust ended (Exited(5)) after 49 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
+[INFO] futex: /bin/linux/m3a-channel-tls-rust slept 1 time(s) and woke 1 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
+[INFO] futex: /bin/linux/m3a-exit-with-waiting-thread-rust slept 1 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
+[INFO] user-mmap: /bin/linux/m3a-channel-tls-rust had its first mmap at 0x10000000 and would map next at 0x1020a000 (every process starts at 0x10000000; a first address above it means the addresses were shared with another process); 6 mapping(s) still held
 ";
         let (findings, seen) = super::check_boot_log_ranges("t", good);
         assert!(findings.is_empty(), "{findings:?}");
-        assert_eq!(seen, 35);
+        assert_eq!(seen, 42);
         let bad = good
             .replace("after 106 syscall", "after 300 syscall")
             .replace("used 3112 of", "used 40000 of");

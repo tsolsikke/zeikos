@@ -246,6 +246,9 @@ pub const PATH_RULES: &[PathRule] = &[
             "linux-programs/m3a-nested-clone-rust.rs",
             "linux-programs/m3a-spawn-from-thread-rust.rs",
             "linux-programs/m3a-exit-group-spin-rust.rs",
+            // **ZEIKOS-107 のイメージ**（チャネルと TLS、チャネルで待つスレッドを残した exit）。
+            "linux-programs/m3a-channel-tls-rust.rs",
+            "linux-programs/m3a-exit-with-waiting-thread-rust.rs",
             "kernel/userland/chello.c",
             "kernel/userland/dbfault.c",
             "kernel/userland/fp*.c",
@@ -375,7 +378,11 @@ pub const PATH_RULES: &[PathRule] = &[
     // **Linux 向けのプログラムの、手で作る側と Linux 上の参照**（2026-10-06）。`m1-c` は既定の像に入らず、参照は
     // ZeikOS の出力と突き合わせる側が読む。
     PathRule {
-        patterns: &["linux-programs/m1-c.c", "linux-programs/reference/**"],
+        patterns: &[
+            "linux-programs/m1-c.c",
+            "linux-programs/m3a-c.c",
+            "linux-programs/reference/**",
+        ],
         reach: Reach::Families(&[Family::Process]),
     },
     // **ページの権限の一覧を読んで比べる側と、その参照**——**一覧の道具の項目（メモリの組）だけが通る。**

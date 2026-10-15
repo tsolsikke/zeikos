@@ -1,0 +1,4 @@
+m3a-exit-with-waiting-thread-rust: main starts with 4 argument(s)
+m3a-exit-with-waiting-thread-rust: the thread waits on the channel from now on
+m3a-exit-with-waiting-thread-rust: main exits with 5 while the thread is waiting on the channel
+exit status: 5

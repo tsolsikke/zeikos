@@ -1,0 +1,4 @@
+m3a-channel-tls-rust: main starts with 4 argument(s)
+m3a-channel-tls-rust: the worker summed the channel to 10 = true
+m3a-channel-tls-rust: tls kept apart (main 1, worker 2) = true
+exit status: 4

@@ -1,0 +1,4 @@
+m3a-c: 4 argument(s)
+m3a-c: the worker runs with argument 35 and sets shared to 42
+m3a-c: joined, the worker returned 42; the worker was a different thread = true
+exit status: 4

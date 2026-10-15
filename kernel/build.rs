@@ -629,6 +629,8 @@ const LINUX_PROGRAMS: &[&str] = &[
     "m3a-nested-clone-rust",
     "m3a-spawn-from-thread-rust",
     "m3a-exit-group-spin-rust",
+    "m3a-channel-tls-rust",
+    "m3a-exit-with-waiting-thread-rust",
 ];
 
 /// Linux 向けのプログラム（`linux-programs/`。musl で静的リンクした、`std` を使う Rust）を `rustc` でビルドする
@@ -1444,14 +1446,17 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
     // **C の Linux 向けのプログラムは、`linux-c-test` のビルドだけが入れる**（2026-10-06）。`musl-gcc` で手で作った
     // もの（`tools/build-linux-programs.sh`）で、版が配布物に依るので既定の像には入れない。無ければ名指しして止まる。
     if std::env::var("CARGO_FEATURE_LINUX_C_TEST").is_ok() {
-        let built = format!("{manifest_dir}/../target/linux-programs/m1-c");
-        println!("cargo:rerun-if-changed={built}");
-        std::fs::copy(&built, format!("{staging}/bin/linux/m1-c")).unwrap_or_else(|e| {
-            panic!(
-                "linux-c-test needs {built} (build it with tools/build-linux-programs.sh, which \
-                 needs musl-gcc): {e}"
-            )
-        });
+        // `m3a-c`（musl の pthread。ZEIKOS-107 の 3）も同じ扱いである（2026-10-15）。
+        for name in ["m1-c", "m3a-c"] {
+            let built = format!("{manifest_dir}/../target/linux-programs/{name}");
+            println!("cargo:rerun-if-changed={built}");
+            std::fs::copy(&built, format!("{staging}/bin/linux/{name}")).unwrap_or_else(|e| {
+                panic!(
+                    "linux-c-test needs {built} (build it with tools/build-linux-programs.sh, which \
+                     needs musl-gcc): {e}"
+                )
+            });
+        }
     }
 
     // **単一間接ブロックの境界を挟む 2 本。** 直接ブロックは 12 個なので、
