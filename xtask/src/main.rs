@@ -779,26 +779,34 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // 破壊: 縮める向きならマップ中でも縮める。落ち方は実測で決めた。
+    // 破壊: 縮める向きならマップ中でも縮める。イメージは縮める `ftruncate` が 0 を返すと 97 で終わり、起動時の確かめが
+    // 「expected Exited(4)」と名指しして止まる（2026-10-15 の full check #5 で、止まらない形のまま `zash: ready` を禁止に
+    // していて落ちた——期待の目印がそろった直後に来るプロンプトを読むかどうかが競合だった。`docs/troubleshooting.md`）。
     CriticalTest {
         name: "shm-ftruncate-shrinks-mapped",
         feature: "memfd-shrink-test,shm-ftruncate-shrinks-mapped-test",
         expected_markers: &[
             "m3a-memfd-shrink-rust: ftruncate to 1 page while mapped returned 0",
+            "linux-check: /bin/linux/m3a-memfd-shrink-rust ended Ok(Exited(97)), expected Exited(4)",
+            "halting",
         ],
         forbidden_markers: &["shm: ftruncate refused", "zash: ready"],
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },    // **スレッドの破壊テスト 2 件（スレッドの検証の5。2026-10-15）。** 目印は実測で決めた。
-    // FUTEX_WAKE で誰も起こさない。m3a-mutex-rust のスレッドが Mutex の futex で眠ったまま、主スレッドの unlock が起こせず、
-    // 主スレッドの join が眠る場面で「起こしうるタスクが無い」と判定され、137 で終わる。起動時の確かめが名指しして止まる。
+    // FUTEX_WAKE で誰も起こさない。主スレッドが futex で眠る場面で「起こしうるタスクが無い」と判定され、137 で終わり、
+    // 起動時の確かめが名指しして止まる。**どのイメージで捕まるかはティックで変わる**——musl は clone の clear-tid の番地に
+    // `__thread_list_lock` を渡すので、その取り合いに入った回（`m3a-rust` が futex で 1 回眠る回。残っている起動の
+    // 約 19%）は、落とした FUTEX_WAKE の分で先に走る `m3a-rust` が行き詰まる。そうでない回は `m3a-mutex-rust` の
+    // `Mutex` の unlock が起こせず、主の join で行き詰まる。目印はイメージの名前と番地を持たない（2026-10-15 の
+    // full check #5 で、`m3a-mutex-rust` の名前で書いていて落ちた。`docs/troubleshooting.md`）。
     CriticalTest {
         name: "futex-wake-dropped",
         feature: "futex-wake-dropped-test",
         expected_markers: &[
-            "futex: task 0 would sleep on 0x10207b70 in slot 0 with no one to wake it",
-            "futex: /bin/linux/m3a-mutex-rust waited on 0x10207b70 (FUTEX_WAIT with the expected value) and there is no other thread to wake it",
-            "linux-check: /bin/linux/m3a-mutex-rust ended Ok(Exited(137)), expected Exited(4)",
+            "in slot 0 with no one to wake it",
+            "(FUTEX_WAIT with the expected value) and there is no other thread to wake it; the process was ended with status 137",
+            "ended Ok(Exited(137)), expected Exited(4)",
             "halting",
         ],
         forbidden_markers: &["m3a-mutex-rust: joined", "zash: ready"],

@@ -1818,3 +1818,23 @@ ZeikOSの`user-mmap:`の行の「3 mapping(s) / 3 anonymous」と「4 / 4」は�
 
 **教訓。** 参照を採り直す前に、足した像の行が起動ごとに同じかを、残っている`serial.log`のdigestで見る。起動ログの差の
 道具は最初の1行しか出さないので、先に出る差（`user-mmap:`の行）を伏せると、次の差（digestの行）が初めて見える。
+
+## 2026-10-15 破壊テスト2件が、破壊は捕まっているのに判定の書き方で落ちた（full check #5。M3aの検証のイメージ）
+
+**症状。** 1af7cd7のfull checkで、`critical-test shm-ftruncate-shrinks-mapped`と`critical-test futex-wake-dropped`が落ちた。
+どちらも6255393のfull checkと単独の実行では通っていた。
+
+**原因1（shm-ftruncate-shrinks-mapped）。** この破壊ではイメージが`Exited(4)`で普通に終わり、bootはプロンプトまで進む。
+それなのに禁止の目印に`zash: ready`を入れていた。期待の目印がそろった時点で読むのをやめる（`wait_for_full_timeout: false`）ので、
+その直後に来る`zash: ready`を読むかどうかはタイミングで決まり、通っていた回はたまたま読まなかった回である。
+**直し。** イメージが、縮める`ftruncate`が0を返したら97で終わる。起動時の確かめが`expected Exited(4)`と名指しして
+止まるので、破壊が止まる形になり、`zash: ready`は本当に出なくなる。
+
+**原因2（futex-wake-dropped）。** 目印を`m3a-mutex-rust`の名前で書いていたが、捕まるイメージはティックで変わる。muslは
+`clone`のclear-tidの番地に`__thread_list_lock`を渡すので、その取り合いに入った回（`m3a-rust`がfutexで1回眠る回。残っていた
+起動223回のうち43回）は、落とした`FUTEX_WAKE`の分で先に走る`m3a-rust`が行き詰まる。**直し。** 目印からイメージの名前と
+番地を外し、行き詰まりの名指しと`Exited(137), expected Exited(4)`と`halting`で見る。
+
+**教訓。** 破壊テストの目印は、落ち方の判定（名指しの行）で書き、どのイメージ・どの番地で捕まるかに寄りかからない。
+止まらない破壊に「プロンプトが出ない」を禁止の目印として足してはならない——止まる形に直すか、止まらないことを認めて
+戻り値の行だけで見る。

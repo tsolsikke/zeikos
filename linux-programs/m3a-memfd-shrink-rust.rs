@@ -7,7 +7,10 @@
 //! 2. マップしたまま、1 ページへ縮める `ftruncate` を打ち、戻り値を出す。ZeikOS は 2 回目の `ftruncate` を向きにかかわらず
 //!    `-EINVAL` で断る（マップ中の memfd は縮めない）。Linux は 0 を返して縮め、縮めた先に触ると SIGBUS になる。
 //!    **この差のため、このイメージは Linux の参照と突き合わせない**（`memfd-shrink-test` のビルドだけが起こす）。
-//! 3. 2 ページ目を読み戻して出す（断られていれば 0x5a のまま）。終了の状態は引数の数。
+//! 3. 2 ページ目を読み戻して出す（断られていれば 0x5a のまま）。終了の状態は引数の数。**縮める `ftruncate` が 0 を返したら
+//!    （ZeikOS では起きてはならない形。破壊テスト `shm-ftruncate-shrinks-mapped-test` が作る）、97 で終わる**——カーネルの
+//!    起動時の確かめは引数の数を期待しているので、名指しして止まる。Linux で走らせれば 97 で終わる（上の理由で、Linux の
+//!    参照とは突き合わせない）。
 //!
 //! # crate ではない
 //!
@@ -78,5 +81,9 @@ fn main() {
         "m3a-memfd-shrink-rust: the second page still reads back 0x5a = {}",
         read_back == 0x5a
     );
+    if shrunk == 0 {
+        // ZeikOS が縮めてしまった（破壊テストの形）。引数の数ではない状態で終わり、起動時の確かめに名指しさせる。
+        std::process::exit(97);
+    }
     std::process::exit(argument_count as i32);
 }
