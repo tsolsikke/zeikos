@@ -236,7 +236,7 @@ Hello, ZeikOS!
 [INFO] virtio-blk: handshake: ACKNOWLEDGE -> DRIVER; capacity=65536 sector(s)
 [INFO] virtio-blk: request limit: 1048576 byte(s) in one data segment (the device declares size_max=None seg_max=Some(254); None means the device does not declare a limit; ours is 1048576)
 [INFO] virtio-blk: queue 0: size 256; ring at phys 0x3c000..0x40000 (4 page(s), 4096-aligned=true); zeroed 16384 byte(s) (0 were nonzero before)
-[INFO] virtio-blk: read sector 2: 512 byte(s) requested, status=0 (OK); checksum=0x0009e0ac first bytes=[00, 04, 00, 00, 00, 20, 00, 00]
+[INFO] virtio-blk: read sector 2: 512 byte(s) requested, status=0 (OK); checksum=0x000a37be first bytes=[00, 04, 00, 00, 00, 20, 00, 00]
 [INFO] smp: mapped per-CPU stacks for slot 1 at 0xffff81000003a000 (PML4[258], not [257] which a sabotage VA depends on): kernel top 0xffff81000005b000, IST1 top 0xffff810000060000, IST2 top 0xffff810000065000, IST3 top 0xffff81000006a000, IST4 top 0xffff81000006f000, IST5 top 0xffff810000074000; 55 frame(s) consumed (pages plus page tables), guards left unmapped
 [INFO] nx-probe: mapped a probe page at 0xffff828000000000 -> 0x77000 with the execute-disable bit (entry 0x8000000000077001, bit 63 set = true) [read back from the live table]
 [INFO] nx-probe: cpu 0 read the probe page: value=0x4e585f50524f4245 (expected 0x4e585f50524f4245), EFER.NXE=1 (expected 1)
@@ -358,7 +358,7 @@ task: cooperative switch verified
 [INFO] ext2: /data/direct-max inode=72 size=49152 blocks=12 single indirect=0 last byte=0xce (expected 0xce)
 [INFO] ext2: /data/indirect-first inode=73 size=49153 blocks=13 single indirect=2052 last byte=0xcf (expected 0xcf)
 [INFO] fs-image-source: root_filesystem reads from virt 0xffff800001c00000 (phys 0x1c00000)
-[INFO] fs-image-copy: copied 33554432 byte(s) to phys 0x1c00000..0x3c00000 (8192 frame(s), 2MiB-aligned=true), checksum=0x13aeb7a9; the checksum covers the first 282624 byte(s) (the superblock through the inode table of group 0); the kernel image is 0x100000..0x43bc18
+[INFO] fs-image-copy: copied 33554432 byte(s) to phys 0x1c00000..0x3c00000 (8192 frame(s), 2MiB-aligned=true), checksum=0x13b1aebb; the checksum covers the first 282624 byte(s) (the superblock through the inode table of group 0); the kernel image is 0x100000..0x43bc18
 [INFO] fs-sparse: /data/sparse-hole reads block 1 as a full block of zeros = true (the blocks around it have content: head=true tail=true); i_size=12288 i_blocks_512=16
 [INFO] fs-bitmap: allocated one block (number 2155); free counts are now blocks=6036 group0=6036
 [INFO] fs-write: append 1 wrote 200 byte(s) to inode 78; free blocks are now 6036
@@ -1141,8 +1141,8 @@ thread: task 6 (tid 34) reaped; it used <n> of 65536 byte(s) of its kernel stack
 [INFO] spawn: /bin/linux/m3a-exit-group-spin-rust is 475776 byte(s) at inode 35; entering at depth 1 (the parent runs on its task's kernel stack, which has a guard page)
 [INFO] user-load: /bin/linux/m3a-exit-group-spin-rust is position-independent; placed at 0x400000 (image 0x400000..0x475360, entry 0x40a4eb)
 [INFO] user-load: /bin/linux/m3a-exit-group-spin-rust mapped PT_LOAD 0x400000..0x404298 (filesz=0x4298 memsz=0x4298 w=false) pages 0x400000..0x404000
-[INFO] user-load: /bin/linux/m3a-exit-group-spin-rust mapped PT_LOAD 0x405000..0x45a5e6 (filesz=0x555e6 memsz=0x555e6 w=false) pages 0x405000..0x45a000
-[INFO] user-load: /bin/linux/m3a-exit-group-spin-rust mapped PT_LOAD 0x45b000..0x46f9d0 (filesz=0x149d0 memsz=0x149d0 w=false) pages 0x45b000..0x46f000
+[INFO] user-load: /bin/linux/m3a-exit-group-spin-rust mapped PT_LOAD 0x405000..0x45a786 (filesz=0x55786 memsz=0x55786 w=false) pages 0x405000..0x45a000
+[INFO] user-load: /bin/linux/m3a-exit-group-spin-rust mapped PT_LOAD 0x45b000..0x46fa0c (filesz=0x14a0c memsz=0x14a0c w=false) pages 0x45b000..0x46f000
 [INFO] user-load: /bin/linux/m3a-exit-group-spin-rust mapped PT_LOAD 0x470680..0x475360 (filesz=0x3460 memsz=0x4ce0 w=true) pages 0x470000..0x475000
 [INFO] user-load: /bin/linux/m3a-exit-group-spin-rust PT_LOAD segments: declared=4 mapped=4 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7ffffbf000..0x7ffffff000 (w=true)
@@ -1153,7 +1153,7 @@ m3a-exit-group-spin-rust: main starts with 4 argument(s) and spins without syste
 thread: task 6 started as tid 38 (pool index 0, generation 9) for ring3 slot 0 at depth 1, owned by cpu 0 like its parent task 0; user stack 0x10207a98, tls 0x10207b38, clear-tid address 0x475358
 m3a-exit-group-spin-rust: the thread calls exit_group(7) now
 thread: tid 38 (task 6) ended the process through system call 231 with status 7; the process ends at the main thread's next system call
-[INFO] user-stack: /bin/linux/m3a-exit-group-spin-rust used 1592 of 262144 byte(s) (0%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
+[INFO] user-stack: /bin/linux/m3a-exit-group-spin-rust used 1624 of 262144 byte(s) (0%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: /bin/linux/m3a-exit-group-spin-rust slept <n> time(s) and woke <n> waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] ring3: /bin/linux/m3a-exit-group-spin-rust used 6512 of 65536 byte(s) of the depth-0 excursion stack (9%), which has a guard page below it
 [INFO] vfs: /bin/linux/m3a-exit-group-spin-rust opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input

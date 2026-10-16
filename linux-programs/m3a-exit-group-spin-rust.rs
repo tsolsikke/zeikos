@@ -30,10 +30,17 @@
 //!   フラグを見た時にスレッドが `exit_group` の手前に居ても、次のティックでスレッドへ戻り、スレッドが先に
 //!   `exit_group` へ入る。**
 //! - Linux でも長さは同じ形で測れる（`rdtsc` と `nanosleep`）。出力と終了ステータスは変わらない。
-//! - **別の道が 1 つある**（-smp 1 で約 7%）。`clone` の直後にティックが来ると、スレッドが先に走って `exit_group` まで
-//!   進み、主スレッドは `pthread_create` の後始末の `rt_sigprocmask` の入口で終わる（`join` にも `futex` にも届かない。
-//!   システムコールの数が 1 本少ない）。こちらも `futex` では眠らない。2026-10-17 に一時的な計測で、システムコールの
-//!   並びを見て確かめた。
+//!
+//! # スレッドは、主スレッドが spawn から戻るのを待つ（2026-10-17）
+//!
+//! **`clone` の直後にティックが来ると、スレッドが先に走って `exit_group` まで進んでいた**（-smp 1 で約 7%）。主スレッドは
+//! `pthread_create` の後始末の `rt_sigprocmask` の入口で終わり、`join` にも `futex` にも届かなかった（システムコールの数が
+//! 1 本少ない）。入口の印を見ない破壊テストでは、この回は `rt_sigprocmask` の戻りで印を見て `Exited(7)` で終わり、
+//! 捕まらなかった。2026-10-17 に一時的な計測で、システムコールの並びを見て確かめた。
+//!
+//! **スレッドは最初に、主スレッドが `spawn` から戻ったことを示すフラグを、システムコールを打たずに待つ。** 主スレッドは
+//! `spawn` から戻った直後にそれを立てる。`rt_sigprocmask` は `spawn` の中なので、スレッドが `exit_group` へ進むのは
+//! 必ずその後になる。
 //!
 //! # crate ではない
 //!
@@ -61,11 +68,18 @@ fn main() {
     let spin_after_flag = tsc().wrapping_sub(before_sleep);
     let flagged = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&flagged);
+    // 主スレッドが spawn から戻ったことを示すフラグ（モジュールの doc の「スレッドは、主スレッドが spawn から戻るのを待つ」）。
+    let returned = Arc::new(AtomicBool::new(false));
+    let returned_seen = Arc::clone(&returned);
     let handle = std::thread::spawn(move || {
+        while !returned_seen.load(Ordering::SeqCst) {
+            std::hint::spin_loop();
+        }
         println!("m3a-exit-group-spin-rust: the thread calls exit_group(7) now");
         flag.store(true, Ordering::SeqCst);
         std::process::exit(7);
     });
+    returned.store(true, Ordering::SeqCst);
     while !flagged.load(Ordering::SeqCst) {
         std::hint::spin_loop();
     }
