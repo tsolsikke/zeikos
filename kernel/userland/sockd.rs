@@ -48,7 +48,7 @@ const QUIT: &[u8] = b"quit";
 const BACKLOG: u64 = 2;
 /// 共有メモリの模様の長さ（`sockc` と同じ。`ADR-0065`）。
 const SHM_LEN: usize = 6000;
-/// 模様の種（`sockc` と同じ。**251 は素数で境で繰り返さない**）。
+/// 模様の seed （`sockc` と同じ。**251 は素数で境で繰り返さない**）。
 const BIG_SEED: usize = 7;
 
 fn big_byte(index: usize) -> u8 {

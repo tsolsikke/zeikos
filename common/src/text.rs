@@ -355,7 +355,7 @@ mod tests {
 
     /// **`write` をまたいでも 1 字になる**（`ADR-0054` の Decision 3）。
     ///
-    /// **台本でこの形は作れない**（`zi` も `less` も 1 画面を 1 回で送る）。
+    /// **スクリプトでこの形は作れない**（`zi` も `less` も 1 画面を 1 回で送る）。
     /// **配線の側は読んで気づくしかないので、復号器の側をここで固定する。**
     #[test]
     fn a_character_split_across_two_writes_is_one_char() {

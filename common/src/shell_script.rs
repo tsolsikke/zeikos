@@ -1,13 +1,13 @@
-//! `--shell-test` の台本と、それをバイトへ写す規則（`ADR-0063` の (b3) の (b)）。
+//! `--shell-test` のスクリプトと、それをバイトへ写す規則（`ADR-0063` の (b3) の (b)）。
 //!
 //! # なぜここに在るのか
 //!
-//! **同じ台本を 2 つの駆動で使う**——**`xtask` が QEMU monitor の `sendkey` で打つ形と、
-//! カーネルが台本として `read(0)` へ差し込む形である。** **打つ側と読む側の両方が同じ
+//! **同じスクリプトを 2 つの駆動で使う**——**`xtask` が QEMU monitor の `sendkey` で打つ形と、
+//! カーネルがスクリプトとして `read(0)` へ差し込む形である。** **打つ側と読む側の両方が同じ
 //! 一覧を見るので、`common` に置く**（`xtask` と `kernel` の両方が依存している）。
 //!
-//! **目的は `--full` の余裕である**——**打鍵を見ない破壊テストを、1 本あたり約 50 秒縮む台本のグループへ
-//! 移す**（`--shell-test` の破壊テストは 58 秒、台本のグループは 8.5 秒。実測。`ADR-0063` の決定 4）。
+//! **目的は `--full` の余裕である**——**打鍵を見ない破壊テストを、1 本あたり約 50 秒縮むスクリプトのグループへ
+//! 移す**（`--shell-test` の破壊テストは 58 秒、スクリプトのグループは 8.5 秒。実測。`ADR-0063` の決定 4）。
 //!
 //! # 写す規則
 //!
@@ -17,25 +17,25 @@
 //! （`--shell-test` の既定と同じ）。
 //!
 //! **キーごとに 1 回の `read` を空にする**（[`PAUSE`]）。**`sendkey` は 32 ミリ秒おきに打つので、
-//! シェルは「1 バイト、待ち、1 バイト」と読む**——**台本でも同じ形にしないと、Esc の確定
+//! シェルは「1 バイト、待ち、1 バイト」と読む**——**スクリプトでも同じ形にしないと、Esc の確定
 //! （次の `read` が空なら単体の Esc）が変わる。**
 //!
-//! # 台本では打てない行
+//! # スクリプトでは打てない行
 //!
-//! **Ctrl+C の終了処理は IRQ の経路である**（フラグを立てるのは IRQ1 のハンドラで、台本は割り込みを
-//! 起こさない）。**`spin` と、それを止める `ctrl-c` の 2 行は台本から外す**（[`Line::keystrokes_only`]）。
-//! **外した行に寄りかかる判定は、判定の側が「台本では見ない」と目印を付ける**
+//! **Ctrl+C の終了処理は IRQ の経路である**（フラグを立てるのは IRQ1 のハンドラで、スクリプトは割り込みを
+//! 起こさない）。**`spin` と、それを止める `ctrl-c` の 2 行はスクリプトから外す**（[`Line::keystrokes_only`]）。
+//! **外した行に寄りかかる判定は、判定の側が「スクリプトでは見ない」と目印を付ける**
 //! （`xtask` の `judge_shell_session`）。
 //!
-//! **`tab` は何も出さない**——**実打鍵では入力の輪が捨てる**（`ADR-0050`）**ので、台本でも
+//! **`tab` は何も出さない**——**実打鍵では入力の輪が捨てる**（`ADR-0050`）**ので、スクリプトでも
 //! 届けない。** **`ctrl_r-c`（右 Ctrl の C）は `0x03` のバイトだけである**——**深さ 1 の
-//! シェルはバイトで行を捨てるので、台本でも同じに動く。**
+//! シェルはバイトで行を捨てるので、スクリプトでも同じに動く。**
 
-/// 台本の 1 行。
+/// スクリプトの 1 行。
 pub struct Line {
     /// QEMU monitor のキー名の並び。
     pub keys: &'static [&'static str],
-    /// 実打鍵でしか意味を持たない行（IRQ の経路が要る）。**台本では外す。**
+    /// 実打鍵でしか意味を持たない行（IRQ の経路が要る）。**スクリプトでは外す。**
     pub keystrokes_only: bool,
 }
 
@@ -331,13 +331,13 @@ pub const LINES: &[Line] = &[
 /// 1 回の `read` を空にする目印（`kernel/src/input.rs` の `SCRIPT_PAUSE` と同じ値）。
 pub const PAUSE: u8 = 0x04;
 
-/// 台本の終わりの目印（`kernel/src/input.rs` の `OBSERVE_DONE` と同じ値）。
+/// スクリプトの終わりの目印（`kernel/src/input.rs` の `OBSERVE_DONE` と同じ値）。
 pub const DONE: u8 = 0x0c;
 
 /// 「次のバイトは字である」の逃げ（`kernel/src/input.rs` の `SCRIPT_LITERAL` と同じ値）。
 ///
-/// **台本の観測記号は 0x01 や 0x0c など制御のバイトで、Ctrl+英字のバイトと衝突する**
-/// （`ctrl-a` は 0x01、`ctrl-l` は 0x0c）。**実測で `ctrl-l` が「台本の終わり」と読まれて途中で
+/// **スクリプトの観測記号は 0x01 や 0x0c など制御のバイトで、Ctrl+英字のバイトと衝突する**
+/// （`ctrl-a` は 0x01、`ctrl-l` は 0x0c）。**実測で `ctrl-l` が「スクリプトの終わり」と読まれて途中で
 /// 切れた。** **どのキーも 0xFF は作らない**（非 ASCII の字は届けない）**ので、これを逃げにする。**
 pub const LITERAL: u8 = 0xff;
 
@@ -497,7 +497,7 @@ pub const fn bytes_for_key(name: &str) -> KeyBytes {
     panic!("a key name in shell_script::LINES has no byte mapping");
 }
 
-/// 台本をバイトへ写す。**`keystrokes_only` の行は外し、キーごとに [`PAUSE`] を置き、
+/// スクリプトをバイトへ写す。**`keystrokes_only` の行は外し、キーごとに [`PAUSE`] を置き、
 /// 末尾に [`DONE`] を置く。**
 pub const fn render() -> ([u8; SCRIPT_CAP], usize) {
     let mut out = [0u8; SCRIPT_CAP];
@@ -535,7 +535,7 @@ pub const fn render() -> ([u8; SCRIPT_CAP], usize) {
 
 const RENDERED: ([u8; SCRIPT_CAP], usize) = render();
 
-/// 写した台本の長さ。
+/// 写したスクリプトの長さ。
 pub const SCRIPT_LEN: usize = RENDERED.1;
 
 /// 長さちょうどの配列へもう一度コピーする（**const の中では `split_at` が使えない**）。
@@ -549,7 +549,7 @@ const SCRIPT_EXACT: [u8; SCRIPT_LEN] = {
     out
 };
 
-/// 写した台本。**カーネルが `shell-script-test` の `SCRIPT` として読む。**
+/// 写したスクリプト。**カーネルが `shell-script-test` の `SCRIPT` として読む。**
 pub const SCRIPT: &[u8] = &SCRIPT_EXACT;
 
 #[cfg(test)]

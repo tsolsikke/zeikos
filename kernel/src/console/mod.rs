@@ -25,7 +25,7 @@
 pub mod backbuffer;
 pub mod dirty;
 // **画面の実物を見る観測（ES-d）。** **判定のためだけに在る**ので、
-// 台本が在る構成（`zi-test`）にしか置かない。
+// スクリプトが在る構成（`zi-test`）にしか置かない。
 #[cfg(any(
     feature = "zi-test",
     feature = "view-test",

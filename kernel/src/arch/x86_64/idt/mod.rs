@@ -2231,7 +2231,7 @@ pub const FOLDABLE_VECTOR_COUNT: usize = 6;
 #[cfg(not(feature = "fp-mf-not-foldable-test"))]
 const FOLDABLE_VECTORS_VALUE: [u8; FOLDABLE_VECTOR_COUNT] = [0, 1, 6, 13, 14, 16, 19];
 /// 破壊テストでの確認: `#MF` でプログラムを終了させられなくする（`ADR-0058`）。**Ring 3 の浮動小数点の
-/// 例外で、カーネルが止まる形へ戻る**——**台本が最後まで進まない。**
+/// 例外で、カーネルが止まる形へ戻る**——**スクリプトが最後まで進まない。**
 #[cfg(feature = "fp-mf-not-foldable-test")]
 const FOLDABLE_VECTORS_VALUE: [u8; FOLDABLE_VECTOR_COUNT] = [0, 1, 6, 13, 14, 19];
 

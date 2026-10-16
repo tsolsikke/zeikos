@@ -301,7 +301,7 @@ impl<'a> Elf<'a> {
     }
 }
 
-/// 像の種類（[`ElfHeaders`]）。
+/// 像の seed 類（[`ElfHeaders`]）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElfKind {
     /// 決まった番地へ載せる実行ファイル（`ET_EXEC`）。
@@ -412,7 +412,7 @@ impl<'a> ElfHeaders<'a> {
         Ok(headers)
     }
 
-    /// 像の種類。
+    /// 像の seed 類。
     pub fn kind(&self) -> ElfKind {
         self.kind
     }
@@ -549,7 +549,7 @@ pub struct LoadPolicy {
 /// 載せる位置の計画（[`ElfHeaders::plan`] が返す）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LoadPlan {
-    /// 像の種類。
+    /// 像の seed 類。
     pub kind: ElfKind,
     /// 区画の `p_vaddr` に足す量（`ET_EXEC` では 0）。
     pub bias: u64,

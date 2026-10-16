@@ -1244,7 +1244,7 @@ fn parse_symbol(script: &str, name: &str) -> Option<u64> {
 /// | 人 | 潰した | uid 1000（手元）と uid 0（コンテナ）でビルドし、md5 が一致した |
 /// | 順序 | 依っていない | 下記 |
 ///
-/// **順序は潰していない。依っていないことを測った。** **`mke2fs -d` は種の
+/// **順序は潰していない。依っていないことを測った。** **`mke2fs -d` は seed の
 /// ディレクトリを名前の順で読む**——**tmpfs の上に、readdir の順が互いに逆に
 /// なる 2 つのツリーを作り**（`ls -U` で確かめた）**、割り当てられた inode 番号が
 /// 両方とも名前の順で一致した**（e2fsprogs 1.47.0）。**上の 3 つの確かめ方では
@@ -1322,8 +1322,8 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
     let seed = format!("{manifest_dir}/fsimage/seed");
     println!("cargo:rerun-if-changed={seed}");
 
-    // 種を OUT_DIR へコピーし、生成するファイルを足す。**リポジトリへバイナリを
-    // 置かない**（種はテキストだけで、大きいものはここで作る）。
+    // seed を OUT_DIR へコピーし、生成するファイルを足す。**リポジトリへバイナリを
+    // 置かない**（ seed はテキストだけで、大きいものはここで作る）。
     let staging = format!("{out_dir}/fsimage-root");
     let _ = std::fs::remove_dir_all(&staging);
     copy_tree(std::path::Path::new(&seed), std::path::Path::new(&staging));
@@ -1472,7 +1472,7 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
     std::fs::create_dir_all(format!("{staging}/tmp"))
         .expect("failed to create /tmp in the staging");
     // **`/tmp/seinas` を作る（`ADR-0087`。2026-10-16）。** **Seinas の listen のソケットとロックファイルの置き場で、
-    // `/etc/environment` の `XDG_RUNTIME_DIR` が指す。** 中身は置かない（`/tmp` と同じ）。種で作るのは、起動の順に
+    // `/etc/environment` の `XDG_RUNTIME_DIR` が指す。** 中身は置かない（`/tmp` と同じ）。seed で作るのは、起動の順に
     // 依らないため（`/etc/profile` の `mkdir` では、プロファイルより先に走るものが置けない）。
     std::fs::create_dir_all(format!("{staging}/tmp/seinas"))
         .expect("failed to create /tmp/seinas in the staging");
@@ -1489,10 +1489,10 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
     // **2 本目が来たら、そのとき名前で分ける**（`/lib/font.ttf` は既定のまま
     // 残せる）。
     //
-    // # 種のツリーを通らない
+    // # seed のツリーを通らない
     //
     // **`kernel/fsimage/seed` はテキストだけである**（イメージの ASCII の検査が
-    // 種のツリーを見る）。**フォントは `third_party/` から直接ここへコピーする**ので、
+    // seed のツリーを見る）。**フォントは `third_party/` から直接ここへコピーする**ので、
     // **あの検査の範囲に入らない**（`docs/verification-coverage.md` の
     // 「追跡下を走る道具が、バイナリをどう扱うか」）。
     std::fs::create_dir_all(format!("{staging}/lib"))
@@ -1504,7 +1504,7 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
 
     // **`/root` を作る（f-1。`ADR-0042` と `ADR-0052`）。** **中身は置かない**
     // ——**`root` のホームであって、イメージに焼くものではない。**
-    // **`git` は空のディレクトリを追跡しないので、種ではなくここで作る**
+    // **`git` は空のディレクトリを追跡しないので、seed ではなくここで作る**
     // （`/tmp` と同じ理由）。
     std::fs::create_dir_all(format!("{staging}/root"))
         .expect("failed to create /root in the staging");
@@ -1515,7 +1515,7 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
     //
     // **`/data/writable` を使わない**——あちらは S12-c の検算が中身を
     // 固定しており、**1 行（改行を含まないバイト列）なので、上下の移動が
-    // 起きない。** `zi` の台本は行を移るので、**移る先が要る。**
+    // 起きない。** `zi` のスクリプトは行を移るので、**移る先が要る。**
     std::fs::write(
         format!("{staging}/data/lines"),
         b"alpha\nbravo\ncharlie\ndelta\n" as &[u8],
@@ -1524,7 +1524,7 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
 
     // **多バイトの字の判定に使う（`ADR-0054`）。**
     //
-    // **種のツリーへは置かない**——**`kernel/fsimage/seed/` は ASCII だけと決めてある**
+    // **seed のツリーへは置かない**——**`kernel/fsimage/seed/` は ASCII だけと決めてある**
     // （`docs/coding-standards.md` の「像へ入れるテキストはASCIIに限る」）。
     // **ここは `build.rs` が書くので、あの検査の範囲の外である。**
     //
@@ -1630,7 +1630,7 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
     check_staging_root(manifest_dir, &staging);
     check_staging_data(&staging);
 
-    // **種の権限を、写した元によらず決める**（2026-10-08）。`fs::copy` は権限を写し、`mke2fs -d` はそれを inode へ入れる。
+    // **seed の権限を、写した元によらず決める**（2026-10-08）。`fs::copy` は権限を写し、`mke2fs -d` はそれを inode へ入れる。
     // 写しの置き場の当たりは読み取り専用の写しのハードリンクなので、決めないと、当たりと外れで像のバイトが変わる。
     set_staging_modes(std::path::Path::new(&staging));
 
@@ -2006,13 +2006,13 @@ fn cc_version() -> String {
     }
 }
 
-/// 種のディレクトリを丸ごとコピーする。**シンボリックリンクは扱わない**
+/// seed のディレクトリを丸ごとコピーする。**シンボリックリンクは扱わない**
 /// （`roadmap.md` の S10 が symlink を範囲外と書いている）。
-/// 像の種の権限を決める（2026-10-08）。ディレクトリは 0755、`/bin` の下のファイルは 0755、ほかのファイルは 0644。
+/// 像の seed の権限を決める（2026-10-08）。ディレクトリは 0755、`/bin` の下のファイルは 0755、ほかのファイルは 0644。
 ///
-/// **像のバイトは、ホストのファイルの権限に依ってはならない。** `mke2fs -d` は種のファイルの権限をそのまま inode に入れる。
-/// 種へ置くファイルは、コンパイラの出力（0755）、写しの置き場の当たり（読み取り専用の写しへのハードリンク。0444）、
-/// 種のツリー（git が置いた権限）、`fs::write` で書いたもの（umask に依る）から来る。時刻と所有者は
+/// **像のバイトは、ホストのファイルの権限に依ってはならない。** `mke2fs -d` は seed のファイルの権限をそのまま inode に入れる。
+/// seed へ置くファイルは、コンパイラの出力（0755）、写しの置き場の当たり（読み取り専用の写しへのハードリンク。0444）、
+/// seed のツリー（git が置いた権限）、`fs::write` で書いたもの（umask に依る）から来る。時刻と所有者は
 /// [`zero_image_build_traces`] が 0 にするので、残るのは権限だけである。値は、権限を決める前の像（写しの外れで作ったもの）
 /// と同じにした——起動ログの参照が覚えている像のバイトが変わらない。`lost+found` は `mke2fs` が作るので、ここでは触らない。
 fn set_staging_modes(root: &std::path::Path) {
@@ -2072,7 +2072,7 @@ fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
 ///
 /// # 所有者は「誰が建てたか」である（2026-09-06 に足した）
 ///
-/// **`mke2fs -d` は種のファイルの所有者をそのままイメージへコピーする。** **手元では
+/// **`mke2fs -d` は seed のファイルの所有者をそのままイメージへコピーする。** **手元では
 /// uid 1000、CI では別の uid になるので、像のバイトが建てた人で変わる。**
 /// **実測で見つけた**——CI が失敗し、コンテナで再現し、`cmp -l` の位置が
 /// 全 inode の 2 と 24 に揃っていた（`docs/troubleshooting.md` の 2026-09-06）。

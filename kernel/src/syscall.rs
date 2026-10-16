@@ -1519,7 +1519,7 @@ fn open_input_from_ring3() -> u64 {
 /// 入力の生イベントを読む（`ADR-0066` の Y-a）。**`read` が `File::Input` に当たったときの経路。**
 ///
 /// **端末の `read(0)` と同じ踊り**——**溜まっていなければ `Wait::Keyboard` で待つ。** **待つ条件も
-/// 端末と同じ**（前景が据えられ、台本が駆動していないとき）。**違うのは、復号済みバイトではなく
+/// 端末と同じ**（前景が据えられ、スクリプトが駆動していないとき）。**違うのは、復号済みバイトではなく
 /// `struct input_event` を返すことだけである。**
 ///
 /// # Safety
@@ -1556,8 +1556,8 @@ unsafe fn read_input_events(
         if got != 0 {
             break got;
         }
-        // **待つ条件は端末と同じ**（`sys_read` の端末分岐の doc）。**据えられていない・台本が
-        // 駆動している間は待たない**——**起動シーケンスと台本のグループが止まらないように。**
+        // **待つ条件は端末と同じ**（`sys_read` の端末分岐の doc）。**据えられていない・スクリプトが
+        // 駆動している間は待たない**——**起動シーケンスとスクリプトのグループが止まらないように。**
         if !crate::console::foreground_installed() {
             return (-EAGAIN) as u64;
         }
@@ -2025,8 +2025,8 @@ unsafe fn poll_from_ring3(
             return 0;
         }
         // **待つ条件は端末の `read(0)` と同じである**（`sys_read` の端末分岐の doc）。
-        // **対話の口が据えられていない間と、台本が入力を駆動している間は待たない**
-        // ——**起動シーケンスと台本のグループが止まらないようにするためである。**
+        // **対話の口が据えられていない間と、スクリプトが入力を駆動している間は待たない**
+        // ——**起動シーケンスとスクリプトのグループが止まらないようにするためである。**
         // **呼ぶ側は `-EAGAIN` を回して待つ**（`polld` と `inputd` の形）。
         if !crate::console::foreground_installed() || crate::input::script_drives_input() {
             return (-EAGAIN) as u64;
@@ -3415,7 +3415,7 @@ unsafe fn recvmsg_from_ring3(
     // データが読めるなら fd は既に置かれている。**
     //
     // 破壊テスト (2026-09-23, socket-recvmsg-takes-fd-first): 待たずに取る（直す前の形）。**受け手が先に
-    // 待つ台本（`sockc shmlate`）で fd が届かず、`shm-ok` が返らない。**
+    // 待つスクリプト（`sockc shmlate`）で fd が届かず、`shm-ok` が返らない。**
     #[cfg(not(feature = "socket-recvmsg-takes-fd-first"))]
     wait_until_readable(conn, side, bkl);
     // **渡された fd が在れば、自分の表へ据え、cmsghdr を書き戻す。**
@@ -4444,13 +4444,13 @@ unsafe fn sys_read(
                 if !crate::console::foreground_installed() {
                     return (-EAGAIN) as u64;
                 }
-                // **台本が入力を駆動している間も待たない（W2-c-2 で踏んで足した）。**
+                // **スクリプトが入力を駆動している間も待たない（W2-c-2 で踏んで足した）。**
                 //
-                // **台本が 0 を返す場面は 3 つある**——**出し切った・休み・作動前**。
+                // **スクリプトが 0 を返す場面は 3 つある**——**出し切った・休み・作動前**。
                 // **どれも「もう入力は無い」であって、`-EAGAIN` がその答えだった**
                 // （`crate::input::script_drives_input` の doc）。
                 // **待つ形にしたら、誰も打たないので待ちが終わらず、`--full` が上限に
-                // 当たった**（実測。台本のグループの 6 項目が落ちた。`docs/troubleshooting.md`）。
+                // 当たった**（実測。スクリプトのグループの 6 項目が落ちた。`docs/troubleshooting.md`）。
                 //
                 // **待ちを見るのは、本物の打鍵を使う `--shell-test` のグループだけである**
                 // （`docs/verification-coverage.md` の「待ちの経路を通る項目」）。

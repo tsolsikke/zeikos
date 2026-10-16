@@ -13,7 +13,7 @@
 //! 読めないので、**再描画の誤り（CUP の位置が 1 つずれる等）はこの判定では
 //! 検出されない**——ファイルの中身が正しいまま画面だけが崩れる形が作れる。
 //!
-//! **したがって「台本が緑だから画面も正しい」とは読めない。**
+//! **したがって「スクリプトが緑だから画面も正しい」とは読めない。**
 //! ANSI の解釈そのもの（CUP・ED・EL がセルへどう効くか）は
 //! `ansi-test` が別に固定しており（ADR-0029 の Addendum）、
 //! **`zi` が意図した列を出しているかは目視の補助に委ねてある**
@@ -1151,7 +1151,7 @@ fn redraw(view: &View, buffer: &Buffer, window: &mut Window, status: &Status) {
 /// # それでも検査の構成でしか出さない
 ///
 /// **画面は壊れなくなったが、通常の起動のシリアルに判定行を混ぜる理由は無い。**
-/// 台本で駆動する構成（kernel の `zi-test` feature が `zi_diagnostics` として
+/// スクリプトで駆動する構成（kernel の `zi-test` feature が `zi_diagnostics` として
 /// 届く）でだけ出す。**判定はその構成で走るので、主張は保たれる。**
 #[cfg(zi_diagnostics)]
 fn report_cursor(buffer: &Buffer, window: &Window, row: usize, col: usize, tag: &[u8]) {
@@ -1419,7 +1419,7 @@ pub unsafe extern "sysv64" fn zeikos_main(stack: *const u64) -> ! {
             // 破壊テスト (e-2, zi-esc-needs-second-key): ここで確定しない。
             // **溜めた Esc は次の 1 バイトが来るまで残る**ので、
             // **使う人は Esc を 2 回押すことになる**（e-2 で直した当の形である）。
-            // **落ちるのは「Esc 1 回で戻る」判定だけである**——台本の残りは
+            // **落ちるのは「Esc 1 回で戻る」判定だけである**——スクリプトの残りは
             // 次のバイトで確定するので、往復も本数も変わらない。
             #[cfg(not(zi_esc_needs_second_key))]
             if escape == Escape::Esc {
@@ -1491,7 +1491,7 @@ pub unsafe extern "sysv64" fn zeikos_main(stack: *const u64) -> ! {
                 let moved = match direction {
                     // 破壊テスト (zi-d-1, zi-cursor-ignore-updown): 上下を捨てる。
                     // **カーソルが行を移らないので、編集が別の行に入る**——
-                    // 台本の判定（row の推移）が検出する。
+                    // スクリプトの判定（row の推移）が検出する。
                     #[cfg(not(zi_cursor_ignore_updown))]
                     b'A' => move_up(buffer, &mut row, &mut col),
                     #[cfg(not(zi_cursor_ignore_updown))]

@@ -2492,7 +2492,7 @@ fn run_init(logger: &mut Logger<Serial>, console: Option<&mut Console>) -> ! {
     // 子を起動できない**（`MAX_EXCURSION_DEPTH` = 2。**実測で `-EAGAIN` を見た**）。
     // **ここは深さ 0 なので、`fptest` が 1、その子が 2 に収まる。**
     //
-    // **台本の側でも 1 度起動する**（`input.rs` の `SCRIPT`）——**あちらは
+    // **スクリプトの側でも 1 度起動する**（`input.rs` の `SCRIPT`）——**あちらは
     // 「起こされた時点の XMM が 0」を、この 1 回目が残した目印に対して見る。**
     #[cfg(feature = "fp-test")]
     {
@@ -2582,7 +2582,7 @@ fn run_init(logger: &mut Logger<Serial>, console: Option<&mut Console>) -> ! {
         // 預けるので、借用検査がそれを見る。**「書き手は 1 つ」はそこが保証する。**
         // **外すタイミングは `spawn` が戻った直後である**（この束の終わり）。
         // その後の `init` の行は、また `init` が書く。
-        // **台本を作動させる（zi-d。`zi-test` のときだけ効く）。**
+        // **スクリプトを作動させる（zi-d。`zi-test` のときだけ効く）。**
         // **起動シーケンスの検算より後である**（`kernel::input::arm_input_script`）。
         // **セッションの開始のティックを控える（W2-d+）。** **終わった後との差を計測に出す。**
         let clock_at_start = kernel::arch::x86_64::idt::monotonic_ticks();
@@ -2687,7 +2687,7 @@ fn run_init(logger: &mut Logger<Serial>, console: Option<&mut Console>) -> ! {
                     kernel::interrupts::depth_one_not_folded() - depth_one_folds_at_start
                 ));
                 // **パイプの計測（`ADR-0063` の (b3)）。** **既定の起動では全部 0 である**
-                // ——**`|` を打つ者が居ない。** **台本のグループ（`pipe-test`）が読む。**
+                // ——**`|` を打つ者が居ない。** **スクリプトのグループ（`pipe-test`）が読む。**
                 logger.info(format_args!(
                     "pipe: created {}, readers waited {} time(s) and were woken by a write {} \
                      time(s), writers waited {} time(s), writes without a reader {}, \
@@ -2708,7 +2708,7 @@ fn run_init(logger: &mut Logger<Serial>, console: Option<&mut Console>) -> ! {
                     kernel::syscall::spawn_allocator_waits().0,
                     kernel::syscall::spawn_allocator_waits().1
                 ));
-                // **ソケットの計測（`ADR-0064`）。** **台本のグループ（`socket-test`）が読む。**
+                // **ソケットの計測（`ADR-0064`）。** **スクリプトのグループ（`socket-test`）が読む。**
                 //
                 // **計測は大域である**——**起動時の `syscall-test`（65・66 番）の分も乗る。**
                 // **66 番が無い名前へ `connect` するので、既定の起動でも `connect refused` は 1 で、
@@ -2740,7 +2740,7 @@ fn run_init(logger: &mut Logger<Serial>, console: Option<&mut Console>) -> ! {
                     kernel::socket::eof_seen()
                 ));
                 // **共有メモリの計測（`ADR-0065`）。** **既定の起動では `syscall-test` の
-                // mmap の検査の分だけ動く。** **台本のグループ（`socket-test`）が読む。**
+                // mmap の検査の分だけ動く。** **スクリプトのグループ（`socket-test`）が読む。**
                 logger.info(format_args!(
                     "shm: created {}, released {}, mapped pages {}; fds sent {}, received {}",
                     kernel::shm::created(),
@@ -2749,7 +2749,7 @@ fn run_init(logger: &mut Logger<Serial>, console: Option<&mut Console>) -> ! {
                     kernel::shm::fds_sent(),
                     kernel::shm::fds_received()
                 ));
-                // **`socket-test` のサーバーをハンドルで待って回収する（`ADR-0064`）。** **台本は
+                // **`socket-test` のサーバーをハンドルで待って回収する（`ADR-0064`）。** **スクリプトは
                 // `quit` を打ってから `exit` するので、ここでは既に終わっている。** **終わっていない
                 // なら（破壊テスト）永久に待ち、`xtask` の「出力が伸びない」上限が落とす。**
                 #[cfg(feature = "socket-test")]
@@ -7134,7 +7134,7 @@ fn exercise_file_append(
     // **以前は止めていた**——**「抱えた像と建てた像が別物である」と読んで
     // いた**が、**像が持ち越されるようになった今、Ring 3 の利用者が
     // このファイルを編集して保存すれば、次の起動が普通に止まる。**
-    // **実際に踏んだ**——`zi-test` の台本が `/data/writable` を書き換え、
+    // **実際に踏んだ**——`zi-test` のスクリプトが `/data/writable` を書き換え、
     // それが装置へ残り、2 度目の起動が止まった（実測。2026-08-30）。
     //
     // **飛ばしても黙らない。** **既定の起動では `fs-write: append 1` から
@@ -7644,11 +7644,11 @@ enum FsReadCheckError {
     },
     /// `/etc/motd` が名前で引けない。
     MotdDoesNotResolve { error: common::ext2::Ext2Error },
-    /// `/etc/motd` の大きさかブロック数が種と食い違う。
+    /// `/etc/motd` の大きさかブロック数が seed と食い違う。
     MotdShapeMismatch { size: u64, span: u64 },
     /// `/etc/motd` の中身が読めない。
     MotdNotReadable { error: common::ext2::Ext2Error },
-    /// `/etc/motd` の中身が種と一致しない。
+    /// `/etc/motd` の中身が seed と一致しない。
     MotdDoesNotMatchSeed,
     /// ルート inode が読めない。
     RootInodeNotReadable { error: common::ext2::Ext2Error },
@@ -7922,12 +7922,12 @@ const fn fs_inode_at(inode_table_at: usize, ino: usize) -> usize {
     inode_table_at + (ino - 1) * FS_INODE_SIZE
 }
 
-/// 種のファイルと同じツリーにある `/etc/motd` の中身（S10-a）。
+/// seed のファイルと同じツリーにある `/etc/motd` の中身（S10-a）。
 ///
 /// **イメージの中の `/etc/motd` は、このファイルを `mke2fs -d` がコピーしたものである。**
-/// **写しを 2 つ持たない**——期待値をカーネルへ書き写すと、種を変えたときに
+/// **写しを 2 つ持たない**——期待値をカーネルへ書き写すと、seed を変えたときに
 /// 片方だけが古くなる（**単一間接の期待値を `build.rs` から出したのと同じ理由**）。
-/// `kernel/build.rs` が種のツリーに `rerun-if-changed` を張っているので、
+/// `kernel/build.rs` が seed のツリーに `rerun-if-changed` を張っているので、
 /// **この定数とイメージは同じ 1 本のファイルから来る。**
 static MOTD_SEED: &[u8] = include_bytes!(concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -7942,7 +7942,7 @@ static MOTD_SEED: &[u8] = include_bytes!(concat!(
 /// **写しを 2 つ持たないためであって、意味は変わっていない。**
 const MOTD_PATH: &str = "/etc/motd";
 
-/// 名前でファイルへ届き、中身が種と一致することを主張する（S10-a）。
+/// 名前でファイルへ届き、中身が seed と一致することを主張する（S10-a）。
 ///
 /// # `hello` の `write` と同じ形の主張である
 ///
@@ -8055,8 +8055,8 @@ fn verify_root_inode(
 ///
 /// # 残りの名前をここで固定しない
 ///
-/// **`lost+found` は `mke2fs` が作り、`bin`・`data`・`etc` は種のツリーが決めている。**
-/// カーネルへ書き写すと、種を変えたときに片方だけが古くなる（**単一間接の
+/// **`lost+found` は `mke2fs` が作り、`bin`・`data`・`etc` は seed のツリーが決めている。**
+/// カーネルへ書き写すと、seed を変えたときに片方だけが古くなる（**単一間接の
 /// 期待値を `build.rs` から出したのと同じ理由**）。**一覧を固定しているのは
 /// 起動ログの参照である**——`xtask/reference/boot-log-smp2.txt` が行単位で
 /// 突き合わせるので、並びが変われば `--boot-log-diff` が落ちる。
@@ -8562,7 +8562,7 @@ enum CorruptFsCheckError {
         what: &'static str,
         error: common::ext2::Ext2Error,
     },
-    /// 壊したのに、種のファイルと同じものが読めた。
+    /// 壊したのに、seed のファイルと同じものが読めた。
     MismatchStillSeed { what: &'static str },
     /// 壊し方を戻した後、健全な対照が通らない。**前の壊し方が、作業領域に残っている。**
     ControlBrokenAfterCase {
@@ -12251,7 +12251,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "utf8-test",
         cfg!(feature = "utf8-test"),
-        "多バイトの字を画面と zi で見る台本を流す（破壊ではない）",
+        "多バイトの字を画面と zi で見るスクリプトを流す（破壊ではない）",
     ),
     (
         "console-drop-invalid-chunk-test",
@@ -12291,7 +12291,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "profile-test",
         cfg!(feature = "profile-test"),
-        "起動時の設定が走ったことを見る台本を流す（破壊ではない）",
+        "起動時の設定が走ったことを見るスクリプトを流す（破壊ではない）",
     ),
     (
         "shell-profile-order-swapped-test",
@@ -12311,7 +12311,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "history-test",
         cfg!(feature = "history-test"),
-        "履歴がファイルで持ち越されることを見る台本を流す（破壊ではない）",
+        "履歴がファイルで持ち越されることを見るスクリプトを流す（破壊ではない）",
     ),
     (
         "shell-history-not-saved-test",
@@ -12326,12 +12326,12 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "complete-test",
         cfg!(feature = "complete-test"),
-        "Tab の補完を見る台本を流す（破壊ではない）",
+        "Tab の補完を見るスクリプトを流す（破壊ではない）",
     ),
     (
         "fp-test",
         cfg!(feature = "fp-test"),
-        "FP の状態を見る台本を流す（破壊ではない。ADR-0058）",
+        "FP の状態を見るスクリプトを流す（破壊ではない。ADR-0058）",
     ),
     (
         "concurrent-test",
@@ -12431,12 +12431,12 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "pipe-test",
         cfg!(feature = "pipe-test"),
-        "シェルの | を台本で回す",
+        "シェルの | をスクリプトで回す",
     ),
     (
         "socket-test",
         cfg!(feature = "socket-test"),
-        "unix ドメインのストリームソケットを台本で回す",
+        "unix ドメインのストリームソケットをスクリプトで回す",
     ),
     (
         "socket-accept-does-not-wait",
@@ -12651,7 +12651,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "shell-script-test",
         cfg!(feature = "shell-script-test"),
-        "--shell-test の台本を台本の族で回す",
+        "--shell-test のスクリプトをスクリプトの族で回す",
     ),
     (
         "pipe-write-does-not-wake-reader",
@@ -12811,7 +12811,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "ttf-test",
         cfg!(feature = "ttf-test"),
-        "フォントを読んで 1 文字ラスタライズする台本を流す（破壊ではない）",
+        "フォントを読んで 1 文字ラスタライズするスクリプトを流す（破壊ではない）",
     ),
     (
         "serial-stress-test",
@@ -13026,12 +13026,12 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "zi-test",
         cfg!(feature = "zi-test"),
-        "打鍵の代わりに決定的な台本を read_bytes から返す",
+        "打鍵の代わりに決定的なスクリプトを read_bytes から返す",
     ),
     (
         "ram-disk-write-test",
         cfg!(feature = "ram-disk-write-test"),
-        "RAM ディスクの上で zi が書いて保存し、cat で読み直す台本（ADR-0068 の HW-d）",
+        "RAM ディスクの上で zi が書いて保存し、cat で読み直すスクリプト（ADR-0068 の HW-d）",
     ),
     (
         "env-ignore-file-test",
@@ -13041,17 +13041,17 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "keymap-rewrite-test",
         cfg!(feature = "keymap-rewrite-test"),
-        "持ち越しの 1 度目で /etc/environment へ KEYMAP=us を足す台本を返す",
+        "持ち越しの 1 度目で /etc/environment へ KEYMAP=us を足すスクリプトを返す",
     ),
     (
         "env-rewrite-test",
         cfg!(feature = "env-rewrite-test"),
-        "持ち越しの 1 度目で /etc/environment の TERM を書き換える台本を返す",
+        "持ち越しの 1 度目で /etc/environment の TERM を書き換えるスクリプトを返す",
     ),
     (
         "persist-check-test",
         cfg!(feature = "persist-check-test"),
-        "持ち越しの 2 度目で /data/lines を cat するだけの台本を返す",
+        "持ち越しの 2 度目で /data/lines を cat するだけのスクリプトを返す",
     ),
     (
         "zi-edit-redraws-everything-test",
@@ -13111,7 +13111,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "view-test",
         cfg!(feature = "view-test"),
-        "less を駆動する台本を read_bytes から返す（zi-test と別の台本）",
+        "less を駆動するスクリプトを read_bytes から返す（zi-test と別のスクリプト）",
     ),
     (
         "stack-overflow-before-guard-test",

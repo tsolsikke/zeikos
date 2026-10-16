@@ -139,7 +139,7 @@ shell-skip-expansion-test = []
 # `export` した名前が子へ届かなくなるので、`--shell-test` の「子が見る envc」の
 # 判定だけが落ちる。シェルの表は引けるままなので、`echo $NAME` と `set` は緑である。
 shell-export-not-pushed-test = []
-# 台本（f-2 の後。ADR-0054）: 多バイトの字を画面と zi で見る回。破壊ではない。
+# スクリプト（f-2 の後。ADR-0054）: 多バイトの字を画面と zi で見る回。破壊ではない。
 utf8-test = []
 # 破壊（ADR-0054）: 不正なバイトを含む write を丸ごと落とす（ADR-0054 の前の形）。
 # 画面から 1 行が消えるので、utf8-test の「壊れたバイトが行を消さない」判定が落ちる。
@@ -166,11 +166,11 @@ zi-escape-by-byte-test = []
 zi-status-stale-column-test = []
 # 破壊（PR-1）: zash が ~/.profile を /etc/profile より先に読む。どちらも走るので
 # 置いた名前は全部見えるが、「後のほうが勝つ」判定だけが落ちる。
-# 台本（PR-1）: 起動時の設定が走ったことを見る回。破壊ではない。
+# スクリプト（PR-1）: 起動時の設定が走ったことを見る回。破壊ではない。
 profile-test = []
-# 台本（HI-1）: 履歴がファイルで持ち越されることを見る回。破壊ではない。
+# スクリプト（HI-1）: 履歴がファイルで持ち越されることを見る回。破壊ではない。
 history-test = []
-# 台本（TAB-1）: Tab の補完を見る回。破壊ではない。
+# スクリプト（TAB-1）: Tab の補完を見る回。破壊ではない。
 complete-test = []
 # 破壊（TAB-1）: 共通接頭辞まで伸ばさず、候補が1本のときだけ補完する。
 # 「共通接頭辞まで伸びる」判定だけが落ちる。
@@ -228,7 +228,7 @@ zi-status-freeze-mode-test = []
 # 数のままなので、受けた側だけでは気づけない——カーネルが出す値との突き合わせが捕まえる。
 ioctl-winsize-swap-test = []
 # 破壊（e-2）: zi が -EAGAIN で Esc を確定しない。使う人は Esc を2回押すことになる
-# ——「Esc 1回で戻る」判定だけが落ちる（台本の残りは次のバイトで確定する）。
+# ——「Esc 1回で戻る」判定だけが落ちる（スクリプトの残りは次のバイトで確定する）。
 zi-esc-needs-second-key-test = []
 # 破壊（e-3）: 代替画面から戻るとき、面は戻すが画面を描き直さない。セルは元の画面で
 # ピクセルは代替画面のまま——状態と画面が食い違う。画面の実物を読む判定が捕まえる。
@@ -282,7 +282,7 @@ write-file-wrong-inode-test = []
 # 破壊（zi-c）: O_TRUNC の切り詰めを落とす。古い中身の後ろへ追記され、
 # 読み戻しが「古い+新しい」の連結になる——読み戻しの検算（58 番）が捕まえる。
 open-skip-truncate-test = []
-# 検証（zi-d）: 打鍵の代わりに決定的な台本を read_bytes から返す。壊す経路では
+# 検証（zi-d）: 打鍵の代わりに決定的なスクリプトを read_bytes から返す。壊す経路では
 # ない（ansi-test と同じ検証用フック）。sendkey と違い時間に依存しない。
 # 破壊（PERF-h）: 代替画面から戻る描き直しが、塗った色のままの空白も描く。
 # PERF-h の前の形そのもので、出る絵は同じで描くセルが 1,180 から 8,000 へ増える。
@@ -293,23 +293,23 @@ repaint-blank-cells-test = []
 # 打って出る字が変わることを見る判定が捕まえる。
 keymap-always-jis-test = []
 zi-test = []
-# 検証（P-c-3）: 持ち越しの2度目で /data/lines を cat するだけの台本。
-# zi-test の台本はあの回で /data/lines を編集するので、2度目には使えない。
+# 検証（P-c-3）: 持ち越しの2度目で /data/lines を cat するだけのスクリプト。
+# zi-test のスクリプトはあの回で /data/lines を編集するので、2度目には使えない。
 persist-check-test = []
-# 検証（f-1）: 持ち越しの1度目で zi が /etc/environment の TERM を書き換える台本。
+# 検証（f-1）: 持ち越しの1度目で zi が /etc/environment の TERM を書き換えるスクリプト。
 env-rewrite-test = []
-# シェルの `|` を台本で回す（ADR-0063 の (b3)）。判定は xtask の pipe-test が読む。
+# シェルの `|` をスクリプトで回す（ADR-0063 の (b3)）。判定は xtask の pipe-test が読む。
 pipe-test = []
-# --shell-test の台本をそのまま台本の族で回す（ADR-0063 の (b3) の (b)）。打鍵を見ない破壊を
-# ここへ移す。台本は common::shell_script が写す。
+# --shell-test のスクリプトをそのままスクリプトの族で回す（ADR-0063 の (b3) の (b)）。打鍵を見ない破壊を
+# ここへ移す。スクリプトは common::shell_script が写す。
 shell-script-test = []
-# unix ドメインのストリームソケットを台本で回す（ADR-0064）。init が /bin/sockd を起こしっぱなしで
-# 起こし、台本が /bin/sockc の 6 つの形を打つ。判定は xtask の socket-test が読む。
+# unix ドメインのストリームソケットをスクリプトで回す（ADR-0064）。init が /bin/sockd を起こしっぱなしで
+# 起こし、スクリプトが /bin/sockc の 6 つの形を打つ。判定は xtask の socket-test が読む。
 socket-test = []
-# 検証（f-1b）: 持ち越しの1度目で zi が /etc/environment へ KEYMAP=us を足す台本。
+# 検証（f-1b）: 持ち越しの1度目で zi が /etc/environment へ KEYMAP=us を足すスクリプト。
 keymap-rewrite-test = []
 # 破壊（f-1）: 環境の源を読まず、常に既定へ落ちる。ADR-0052 の Decision 1 を
-# 直接否定する形で、出る環境は種と同じなので値を見る判定は落ちない。
+# 直接否定する形で、出る環境は seed と同じなので値を見る判定は落ちない。
 env-ignore-file-test = []
 # 破壊（zi-d-1）: zi が上下の矢印を捨てる。カーソルが行を移らないので、
 # 編集が別の行に入る——zi-test の判定行（row の推移）が捕まえる。
@@ -319,9 +319,9 @@ zi-cursor-ignore-updown-test = []
 zi-write-skip-body-test = []
 # 破壊（zi-d-2）: 挿入の最初の 1 字を落とす。読み戻しが 1 字短くなる。
 zi-insert-drop-first-test = []
-# 検証（VIEW-b）: less を駆動する台本を read_bytes から返す。zi-test と同じ
-# 仕組みで、台本だけが違う。zi-test は 21 秒で破壊19構成に掛かるので、
-# less の台本を混ぜずに別へ立てた。
+# 検証（VIEW-b）: less を駆動するスクリプトを read_bytes から返す。zi-test と同じ
+# 仕組みで、スクリプトだけが違う。zi-test は 21 秒で破壊19構成に掛かるので、
+# less のスクリプトを混ぜずに別へ立てた。
 view-test = []
 # 破壊（VIEW-b）: less が窓を動かさない。打鍵は届いており状態行も描き直される
 # ので、雑に見ると気づけない。「窓の外に在った行が見えるようになった」判定が
@@ -581,7 +581,7 @@ corrupt-fs-skips-restore = []
 # `#MF`（ベクタ16）を畳めなくする（`ADR-0058`）。Ring 3 の浮動小数点の
 # 例外で、カーネルが止まる形へ戻る。
 fp-mf-not-foldable-test = []
-# FP の状態の台本を流す（`ADR-0058`）。`/bin/fptest` を 2 回起こす。
+# FP の状態のスクリプトを流す（`ADR-0058`）。`/bin/fptest` を 2 回起こす。
 fp-test = []
 # 2 本の Ring 3 を同時に走らせる（W1-c-4。`ADR-0060`）。`init` がシェルより前に、
 # `/bin/tickera` を起こしっぱなしで、`/bin/tickerb` を `spawn` で起こす。破壊ではない。
@@ -747,11 +747,11 @@ pit-calibration-ticks-queued = []
 # 破壊（ADR-0068 の HW-d）: ブートローダが渡した RAM ディスクの像を見ない。virtio-blk を外した
 # 構成で、装置も像も無い形になり、読む源が 1 つも無いと言って止まる。
 fs-ram-image-ignored = []
-# 台本（ADR-0068 の HW-d）: RAM ディスクの上で zi で書いて保存し、cat で読み直す。書き戻しの入口を
+# スクリプト（ADR-0068 の HW-d）: RAM ディスクの上で zi で書いて保存し、cat で読み直す。書き戻しの入口を
 # 1 度通る。装置が無い構成で待たないことを見る。
 ram-disk-write-test = []
 # 破壊（ADR-0068 の HW-d）: 装置が無いのに書き戻しの完了を待つ（待ちを残した形）。締切でpanicして
-# 止まる。保存の操作が要るので台本を伴う。
+# 止まる。保存の操作が要るのでスクリプトを伴う。
 flush-waits-without-device = ["ram-disk-write-test"]
 # 構成（ADR-0068 の HW-e-2。破壊ではない）: MADT の I/O APIC の ID を 1 つずらして比べる。VirtualBox の
 # 形（ID レジスタ 0、MADT は別の値）を QEMU で作る。[WARN] が出て止まらず、打鍵が届くことを見る。
@@ -854,7 +854,7 @@ cpu-state-sees-an-unclassified-bit-test = []
 cpu-state-sees-ffxsr-test = []
 # cpu-state の判定の後で BSP の CR4.MCE を落とす（2026-09-24）。注入した機械チェックが shutdown になる。
 mce-off-after-the-check-test = []
-# フォントの台本を流す（B-d）。`/bin/ttfglyph` を 1 回起こす。
+# フォントのスクリプトを流す（B-d）。`/bin/ttfglyph` を 1 回起こす。
 ttf-test = []
 # シリアルの排他の演習（シリアルの排他の段）。BSP と AP が合図で揃えてから、
 # 既知の行を 200 本ずつ同時に書く。破壊ではない。
