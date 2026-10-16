@@ -43,10 +43,10 @@ use crate::abi::linux::x86_64::SYS_CLOCK_NANOSLEEP;
 use crate::abi::linux::x86_64::{
     stat_bytes, ARCH_GET_FS, ARCH_GET_GS, ARCH_SET_FS, ARCH_SET_GS, STAT_LEN, SYS_ACCEPT,
     SYS_ARCH_PRCTL, SYS_BIND, SYS_BRK, SYS_CLOCK_GETTIME, SYS_CLONE, SYS_CLOSE, SYS_CONNECT,
-    SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FSTAT, SYS_FTRUNCATE, SYS_FUTEX, SYS_GETDENTS64,
-    SYS_GETPID, SYS_GETRANDOM, SYS_GETTID, SYS_IOCTL, SYS_LISTEN, SYS_LSEEK, SYS_MADVISE,
-    SYS_MEMFD_CREATE, SYS_MKDIR, SYS_MMAP, SYS_MPROTECT, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPEN,
-    SYS_POLL, SYS_PRLIMIT64, SYS_READ, SYS_READLINK, SYS_READV, SYS_RECVMSG, SYS_RMDIR,
+    SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FLOCK, SYS_FSTAT, SYS_FTRUNCATE, SYS_FUTEX,
+    SYS_GETDENTS64, SYS_GETPID, SYS_GETRANDOM, SYS_GETTID, SYS_IOCTL, SYS_LISTEN, SYS_LSEEK,
+    SYS_MADVISE, SYS_MEMFD_CREATE, SYS_MKDIR, SYS_MMAP, SYS_MPROTECT, SYS_MUNMAP, SYS_NANOSLEEP,
+    SYS_OPEN, SYS_POLL, SYS_PRLIMIT64, SYS_READ, SYS_READLINK, SYS_READV, SYS_RECVMSG, SYS_RMDIR,
     SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SCHED_YIELD, SYS_SENDMSG, SYS_SENDTO,
     SYS_SET_TID_ADDRESS, SYS_SIGALTSTACK, SYS_SOCKET, SYS_STAT, SYS_TKILL, SYS_UNAME, SYS_UNLINK,
     SYS_WRITE, SYS_WRITEV,
@@ -67,8 +67,8 @@ use crate::abi::linux::{
 use crate::abi::linux::{
     E2BIG, EACCES, EADDRINUSE, EAFNOSUPPORT, EAGAIN, EBADF, EBUSY, ECHILD, ECONNREFUSED, EEXIST,
     EFAULT, EINVAL, EIO, EISCONN, EISDIR, EMFILE, EMSGSIZE, ENAMETOOLONG, ENOBUFS, ENODEV, ENOENT,
-    ENOEXEC, ENOMEM, ENOSPC, ENOSYS, ENOTCONN, ENOTDIR, ENOTEMPTY, ENOTSOCK, ENOTTY, EPERM, EPIPE,
-    EPROTONOSUPPORT, EROFS, ESPIPE, ESRCH,
+    ENOEXEC, ENOLCK, ENOMEM, ENOSPC, ENOSYS, ENOTCONN, ENOTDIR, ENOTEMPTY, ENOTSOCK, ENOTTY, EPERM,
+    EPIPE, EPROTONOSUPPORT, EROFS, ESPIPE, ESRCH,
 };
 use crate::abi::private::{
     zdiag_text_len, DETACHED_STDOUT_TO_PIPE, FBIOZPRESENT, PROBE_NUMBER, SPAWN_FOLDED_FLAG,
@@ -996,6 +996,7 @@ unsafe fn dispatch(
         // `spawn` の経路には載っていない**——**`mmap` は `brk` と同じ `map_4kib` を使う。**
         SYS_MEMFD_CREATE => memfd_create_from_ring3(),
         SYS_FTRUNCATE => ftruncate_from_ring3(args[0], args[1], bkl),
+        SYS_FLOCK => sys_flock(args[0], args[1], bkl),
         // SAFETY: 呼び出し元契約により direct_map は有効で、遠征の中なので CR3 はこのプロセスのもの。
         SYS_MMAP => unsafe { mmap_from_ring3(args, direct_map, bkl) },
         // SAFETY: 同上。
@@ -6190,6 +6191,64 @@ fn sleep_on_futex(slot: usize, uaddr: u64, bkl: &mut Option<crate::bkl::BklGuard
 /// 終わった」と見せる値で、`exit` が返しうる 0 から 255 の値とは、判定の行の文言で区別する。
 pub const FUTEX_DEADLOCK_STATUS: u64 = 137;
 
+/// `flock(fd, operation)`（`ADR-0087` の決定 4。2026-10-16）。本体は `crate::flock`。
+///
+/// - `LOCK_SH`・`LOCK_EX`: 衝突が無ければその場で取る（同じ持ち主の取り直しも）。衝突したら、`LOCK_NB` なら
+///   `-EWOULDBLOCK`（`-EAGAIN`）、無ければ `Wait::FileLock` で眠って取り直す。表が尽きれば `-ENOLCK`。
+/// - `LOCK_UN`: 放す。持っていなくても 0。
+/// - 普通のファイル以外は `-EINVAL`（Linux はソケットやパイプにも付けられるが、要る利用者が居ない）。
+///
+/// **眠るときは BKL を解く**（[`sleep_on_futex`] と同じ形。鍵と `Waiting` を書くまでは BKL の内側である）。
+#[inline(never)]
+fn sys_flock(fd: u64, operation: u64, bkl: &mut Option<crate::bkl::BklGuard>) -> u64 {
+    use crate::flock::{Outcome, LOCK_EX, LOCK_NB, LOCK_SH, LOCK_UN};
+    let nonblocking = operation & LOCK_NB != 0;
+    let exclusive = match operation & !LOCK_NB {
+        LOCK_SH => false,
+        LOCK_EX => true,
+        LOCK_UN => {
+            return crate::vfs::with_current_files(|files| match files.get_mut(fd as usize) {
+                Ok(crate::vfs::File::Regular { lock, .. }) => {
+                    crate::flock::release(*lock);
+                    *lock = 0;
+                    0
+                }
+                Ok(_) => (-EINVAL) as u64,
+                Err(error) => (-errno_for_file_table(error)) as u64,
+            });
+        }
+        _ => return (-EINVAL) as u64,
+    };
+    loop {
+        let attempt = crate::vfs::with_current_files(|files| match files.get_mut(fd as usize) {
+            Ok(crate::vfs::File::Regular { inode, lock, .. }) => {
+                let number = inode.number();
+                let outcome = crate::flock::acquire(number, exclusive, *lock);
+                if let Outcome::Acquired(token) = outcome {
+                    *lock = token;
+                }
+                Ok((number, outcome))
+            }
+            Ok(_) => Err((-EINVAL) as u64),
+            Err(error) => Err((-errno_for_file_table(error)) as u64),
+        });
+        match attempt {
+            Err(errno) => return errno,
+            Ok((_, Outcome::Acquired(_))) => return 0,
+            Ok((_, Outcome::NoRoom)) => return (-ENOLCK) as u64,
+            Ok((inode, Outcome::Conflict)) => {
+                if nonblocking {
+                    return (-EAGAIN) as u64;
+                }
+                crate::task::set_current_waiting(crate::task::Wait::FileLock { inode });
+                drop(bkl.take());
+                crate::task::yield_now();
+                *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
+            }
+        }
+    }
+}
+
 /// `prlimit64` の資源の番号（`asm-generic/resource.h`）。
 const RLIMIT_STACK: u64 = 3;
 const RLIMIT_NOFILE: u64 = 7;
@@ -6394,10 +6453,15 @@ fn sys_fcntl(fd: u64, cmd: u64, arg: u64) -> u64 {
             })
         }
         F_DUPFD | F_DUPFD_CLOEXEC => crate::vfs::with_current_files(|files| {
-            let copy = match files.get(fd) {
+            let mut copy = match files.get(fd) {
                 Ok(file) => *file,
                 Err(error) => return (-errno_for_file_table(error)) as u64,
             };
+            // **`flock` のロックは写しに渡さない**（`ADR-0087`。写しは別の持ち主。Linux は open file description を共有
+            // するので違う——Seinas は dup しない）。
+            if let crate::vfs::File::Regular { lock, .. } = &mut copy {
+                *lock = 0;
+            }
             match files.insert_at_or_above(copy, arg as usize) {
                 Ok(new_fd) => new_fd as u64,
                 Err(error) => (-errno_for_file_table(error)) as u64,

@@ -93,6 +93,9 @@ pub const SYS_MMAP: u64 = 9;
 /// `ftruncate` の番号（`ADR-0065`。`asm/unistd_64.h` の `__NR_ftruncate`）。
 pub const SYS_FTRUNCATE: u64 = 77;
 
+/// `flock(fd, operation)` の番号（`ADR-0087`。`asm/unistd_64.h` の `__NR_flock`）。
+pub const SYS_FLOCK: u64 = 73;
+
 /// `sendmsg` の番号（`ADR-0065`。`asm/unistd_64.h` の `__NR_sendmsg`）。
 pub const SYS_SENDMSG: u64 = 46;
 

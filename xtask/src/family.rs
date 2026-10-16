@@ -285,6 +285,7 @@ pub const PATH_RULES: &[PathRule] = &[
         patterns: &[
             "kernel/src/socket.rs",
             "kernel/src/shm.rs",
+            "kernel/src/flock.rs",
             "kernel/userland/poll*.rs",
             "kernel/userland/sock*.rs",
             "kernel/userland/comp*.rs",

@@ -291,6 +291,9 @@ pub enum File {
         inode: Inode,
         offset: u64,
         writable: bool,
+        /// `flock` で持っているロックの番号（`crate::flock` の表の添字 + 1。0 なら持っていない。`ADR-0087`）。
+        /// `close` で放す。**`F_DUPFD` の写しには渡さない**（写しは別の持ち主）。
+        lock: u8,
     },
     /// 端末（S11-10）。**0 / 1 / 2 に据えてある。**
     ///
@@ -385,10 +388,11 @@ impl File {
             // 終われば表ごと解放されるので、`close` を忘れて落ちたプログラムでも文字の画面へ戻る。**
             // **`/dev/fb0` で開いていたなら、最後に 1 回転送してから抜ける**（2026-10-07。`ADR-0083`）。
             Self::Screen => crate::console::close_screen_fd(),
+            // **`flock` のロックは `close` で放す**（`ADR-0087`。プロセスの終わりも fd の表の `Drop` からここへ来る）。
+            Self::Regular { lock, .. } => crate::flock::release_on_close(*lock),
             Self::Socket {
                 state: SocketState::Unbound,
             }
-            | Self::Regular { .. }
             | Self::Terminal { .. }
             | Self::Input => {}
         }
@@ -410,6 +414,7 @@ impl File {
             inode,
             offset: 0,
             writable: false,
+            lock: 0,
         }
     }
 
@@ -423,6 +428,7 @@ impl File {
             inode,
             offset: 0,
             writable: true,
+            lock: 0,
         }
     }
 

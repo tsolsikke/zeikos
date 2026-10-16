@@ -75,6 +75,9 @@ pub const EAGAIN: i64 = 11;
 /// 32 である。**`SIGPIPE` は送らない**——**シグナルを持たない**（`crate::pipe` の doc）。
 pub const EPIPE: i64 = 32;
 
+/// `-ENOLCK`（ロックの表が尽きた）の errno（`ADR-0087`。`flock`）。値は Linux と同じ 37 である。
+pub const ENOLCK: i64 = 37;
+
 /// `-ECHILD`（そのハンドルの子は居ない）の errno（`ADR-0063` の (b3)）。値は Linux と同じ 10 である。
 /// **終わった後の二重待ちも同じ値である**（ハンドルの世代が合わない。`crate::task::ring3_task_handle`）。
 pub const ECHILD: i64 = 10;

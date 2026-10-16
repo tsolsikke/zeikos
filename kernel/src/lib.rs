@@ -39,6 +39,7 @@ pub mod arch;
 pub mod bkl;
 pub mod boot;
 pub mod console;
+pub mod flock;
 pub mod frame_allocator;
 pub mod graphics;
 pub mod heap;

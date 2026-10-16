@@ -426,6 +426,7 @@ kernel::console::screen::tests::the_baseline_is_zero_before_any_flush
 kernel::console::screen::tests::the_percentage_compares_against_full_screen_transfers
 kernel::console::screen::tests::transferring_everything_every_time_shows_as_one_hundred_percent
 kernel::console::tests::the_grid_can_hold_the_widest_glyph_in_the_font
+kernel::flock::tests::conflicts_follow_the_flock_rules
 kernel::frame_allocator::tests::adjacent_free_regions_are_coalesced_into_one_range
 kernel::frame_allocator::tests::aligned_allocation_consuming_the_whole_range
 kernel::frame_allocator::tests::aligned_allocation_fails_when_only_the_alignment_is_missing
