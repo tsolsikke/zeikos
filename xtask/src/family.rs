@@ -431,7 +431,7 @@ pub const PATH_RULES: &[PathRule] = &[
             "xtask/reference/host-tests.txt",
             "xtask/reference/kernel-layout.txt",
             "xtask/reference/x86-words.txt",
-            // **外のリポジトリの写し**（2026-10-07。Seinas を release のタグに固定した submodule）。**ZeikOS の検査は
+            // **外のリポジトリのコピーし**（2026-10-07。Seinas を release のタグに固定した submodule）。**ZeikOS の検査は
             // 中を見ない**——成果物は release から取り、ここは原本を指すためのものである。
             ".gitmodules",
             "external/**",

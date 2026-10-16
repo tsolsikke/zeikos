@@ -33,7 +33,7 @@ Linuxディストリビューションや実用品の代替を目指すもので
 
 ## 主な実装済み機能
 
-- UEFIブート。自前のbootloaderが`kernel.elf`を読み、higher-halfへ写して制御を渡す
+- UEFIブート。自前のbootloaderが`kernel.elf`を読み、higher-halfへコピーして制御を渡す
 - 物理フレームアロケータ、自前のページテーブル、カーネルヒープ
 - マルチコア（SMP）。BKLで守り、プリエンプティブに切り替える。IPIとTLB shootdown
 - プロセスごとのアドレス空間と、Ring 3のユーザープログラム
@@ -129,12 +129,12 @@ cargo xtask run --gui --manual
 
 **ディスクイメージの扱いに注意** 起動ごとに、回ごとの置き場`target/runs/<番号>/`を取り、ログをそこに置く
 （番号は実行の出力の`(info) run`の行に出る）。ESPと`disk0.img`は、その回だけの使い捨てのファイルとして
-tmpfs（`/dev/shm`）に置き、起動が終わったら`disk0.img`だけを回の置き場へ写す。
+tmpfs（`/dev/shm`）に置き、起動が終わったら`disk0.img`だけを回の置き場へコピーする。
 （SSDへ書く量を減らすため。[ADR-0078](docs/adr/0078-check-scratch-files-on-tmpfs.md)）
 フラグを付けない実行と`--rebuild-disk`は、ビルドしたばかりのイメージから始める。
 （前の起動で書いたものは、その回の置き場に残るが、持ち越さない）
 検査は毎回同じイメージから始めたいので、これが既定動作。
-残したいものが在るときは`--manual`か`--keep-disk`を使うこと。（直前の回の`disk0.img`を写して起動する）
+残したいものが在るときは`--manual`か`--keep-disk`を使うこと。（直前の回の`disk0.img`をコピーして起動する）
 
 ディスクのイメージは32MiBのext2である。
 

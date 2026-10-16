@@ -2,7 +2,7 @@
 # Linux 向けのプログラム（linux-programs/）を手で作る。
 #
 # - m1-rust・m3a-*: 既定のイメージにも入る（kernel/build.rs が rustc を直に呼ぶ）。ここでは、Linux の上で走らせて参照を控える
-#   ための写しを作る。版は rust-toolchain.toml のもので、イメージの中身と同じバイトになる。
+#   ためのコピーを作る。版は rust-toolchain.toml のもので、イメージの中身と同じバイトになる。
 # - m1-c: musl-gcc で作る。版が配布物（Ubuntu の musl）に依るので、既定のイメージには入れない。道具が無ければ名指しで飛ばす。
 #
 # 使い方: tools/build-linux-programs.sh [出力先]   （既定は target/linux-programs）

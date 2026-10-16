@@ -13,17 +13,17 @@
 //! **cargo は、組によらず同じ置き場（`target/x86_64-unknown-none/debug/kernel`）へ ELF を書く。** **全検査の QEMU の
 //! 区間では、kernel のビルドをこの流れだけが行う**（項目は結果を受け取るだけ）。**基本の検査の区間では、表 `CHECKS` の
 //! `build kernel (none)` と `tools/frame-sizes.py` も作業ツリーで kernel を作る**——流れはそのとき何も作っていない
-//! （先に作り始める前で、項目も求めていない）。**作った直後、次のビルドを始める前に、ELF を組ごとの置き場へ写し、
+//! （先に作り始める前で、項目も求めていない）。**作った直後、次のビルドを始める前に、ELF を組ごとの置き場へコピー、
 //! 同じ cargo の出力から取った `OUT_DIR` と対にして返す**——`KernelBuild` の doc の「ビルドした側と載せる側を対にして
 //! 持つ」を保つ。
 //!
-//! **写した後、その組の features で作った cargo の成果物と同じ中身かを確かめ、違えば失敗にする**（[`confirm_the_copy`]。
+//! **コピーした後、その組の features で作った cargo の成果物と同じ中身かを確かめ、違えば失敗にする**（[`confirm_the_copy`]。
 //! 2026-09-29。運用者の決定）。**上の前提は、読んで確かめたものでしかない**——この先、QEMU の区間でほかの cargo が
-//! kernel を作る項目が入ると、写す前に ELF が書き換わりうる。**そのとき、組と違う kernel で試験が走り、しかも通る、
+//! kernel を作る項目が入ると、コピーする前に ELF が書き換わりうる。**そのとき、組と違う kernel で試験が走り、しかも通る、
 //! という気づけない形にしない。** 比べる相手は、組ごとに名前の違う成果物（`deps/kernel-<hash>`）で、同じ hash の
 //! fingerprint が有効だった features を持つ（[`Artifacts`]）。
 //!
-//! **ブートローダも、全検査の間は組ごとに 1 回だけ作って写しを使う**（[`bootloader`]）。**項目ごとに cargo を
+//! **ブートローダも、全検査の間は組ごとに 1 回だけ作ってコピーを使う**（[`bootloader`]）。**項目ごとに cargo を
 //! 呼ぶと、裏のビルドが持つ `target/` の鍵を待たされる**（2026-09-29 の実測で 7.84 秒）。
 //!
 //! # 順番
@@ -151,7 +151,7 @@ impl Service {
         self.changed.notify_all();
     }
 
-    /// 裏の流れ（止めるまで回る）。**1 度に 1 つだけ作る**——cargo の置き場の ELF を写し終えてから次を始める。
+    /// 裏の流れ（止めるまで回る）。**1 度に 1 つだけ作る**——cargo の置き場の ELF をコピーし終えてから次を始める。
     pub fn run(&self, build: &Builder) {
         loop {
             let (key, asked) = {
@@ -433,7 +433,7 @@ pub fn order_to_write(
     (render_order(&requests, &previous), dropped)
 }
 
-/// 組の写しの置き場の名前（**空は `default`**。純粋な論理）。
+/// 組のキャッシュの名前（**空は `default`**。純粋な論理）。
 pub fn directory_name(key: &Key) -> String {
     if key.is_empty() {
         "default".to_string()
@@ -546,7 +546,7 @@ fn order_by_time(mut found: Vec<(SystemTime, Vec<String>)>, window: Duration) ->
 }
 
 /// cargo が組ごとに名前を変えて残す kernel の成果物の索引（`deps/kernel-<hash>`。同じ hash の fingerprint の
-/// `bin-kernel.json` が、有効だった features を持つ。2026-09-29）。**写しを確かめるのに使う**（[`confirm_the_copy`]）。
+/// `bin-kernel.json` が、有効だった features を持つ。2026-09-29）。**コピーを確かめるのに使う**（[`confirm_the_copy`]）。
 ///
 /// **1 つの組に成果物が 2 つ以上在ることがある**——rustc を上げる前に作ったものが残る（2026-09-29 に、隣の作業ツリーで
 /// 約 340 組に 672 個）。**どれか 1 つと同じ中身なら、その組の features で作ったものである。**
@@ -610,7 +610,7 @@ impl Artifacts {
     }
 }
 
-/// 写しが、その組の features で作った成果物のどれかと同じ中身かを確かめ、同じだった成果物を返す（2026-09-29。
+/// コピーが、その組の features で作った成果物のどれかと同じ中身かを確かめ、同じだった成果物を返す（2026-09-29。
 /// 運用者の決定）。`features` は、その組で cargo が有効にする features の全部（`default` とそこから辿れるものを含む）。
 pub fn confirm_the_copy(
     artifacts: &Artifacts,
@@ -660,7 +660,7 @@ struct Handle {
 
 static RUNNING: Mutex<Option<Handle>> = Mutex::new(None);
 
-/// ブートローダの写し（組ごと。**全検査の間だけ**）。
+/// ブートローダのコピーし（組ごと。**全検査の間だけ**）。
 static BOOTLOADERS: Mutex<Vec<(Key, PathBuf)>> = Mutex::new(Vec::new());
 
 /// 流れを始める（全検査の入口。**先に作り始めるのは [`build_ahead`] の後**）。**`normalize` は、先に作る順と、
@@ -708,8 +708,8 @@ pub fn kernel(features: &[&str]) -> Option<Received> {
     service().map(|service| service.ask_features(features))
 }
 
-/// ブートローダの組を、全検査の間は 1 回だけ作る（`build` が作り、組ごとの写しの置き場を返す。**写しは `build` が
-/// ビルドと同じ錠の中で取る**——案 B の ①から。ここで写し直すと同じファイルへの写しになる）。
+/// ブートローダの組を、全検査の間は 1 回だけ作る（`build` が作り、組ごとのキャッシュを返す。**コピーは `build` が
+/// ビルドと同じ錠の中で取る**——案 B の ①から。ここでコピーし直すと同じファイルへのコピーになる）。
 /// **流れが動いていなければ、毎回 `build` を呼ぶ**（今までどおり）。
 pub fn bootloader(
     features: &[&str],
@@ -816,7 +816,7 @@ mod tests {
         reached
     }
 
-    /// **写しが、その組の features で作った成果物のどれかと同じ中身なら通し、違えば落とす。**
+    /// **コピーが、その組の features で作った成果物のどれかと同じ中身なら通し、違えば落とす。**
     /// **後から作った組も、fingerprint を読み足して見つける。**
     #[test]
     fn a_copy_is_accepted_only_when_it_is_a_build_of_its_set() {
@@ -870,7 +870,7 @@ mod tests {
             confirm_the_copy(&artifacts, &with_x, &copy),
             Ok(debug.join("deps").join("kernel-aaa"))
         );
-        // **既定の構成の ELF を x-test の組として写したら、落とす。**
+        // **既定の構成の ELF を x-test の組としてコピーしたら、落とす。**
         write(copy.clone(), "default build");
         let error = confirm_the_copy(&artifacts, &with_x, &copy).unwrap_err();
         assert!(

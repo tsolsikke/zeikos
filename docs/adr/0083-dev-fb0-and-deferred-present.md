@@ -11,14 +11,14 @@ Accepted（2026-10-06に運用者がM2の設計案を承認し、2026-10-07に�
 ## Context
 
 - M2（`ADR-0074`の順序の1）は、Seinasの共通の描画（pixman）の結果を、fbdevの裏側（`seinas-fbdev`）を通してZeikOSの画面に出すことである。`seinas-fbdev`はLinuxのfbdevのABIに従う——`/dev/fb0`を開き、`FBIOGET_VSCREENINFO`・`FBIOGET_FSCREENINFO`で形を訊き、面を`mmap`して書く。**書いた後に何かを打つことはしない**（Linuxのfbdevは、書けばそのまま映るため。`Presenter`という差し替えの口は在るが、Linux向けの`WriteThrough`は何もしない）。
-- ZeikOSの画面のfdは、`SYS_OPEN_SCREEN`（ZeikOS独自の番号）で開き、**裏バッファ**を`mmap`し、`FBIOZPRESENT`（ZeikOS独自の`ioctl`）で矩形を画面へ写す形だった（`ADR-0066`のY-c）。MMIOをRing 3へ出さない（Q1）ので、どこかで転送が要る。
+- ZeikOSの画面のfdは、`SYS_OPEN_SCREEN`（ZeikOS独自の番号）で開き、**裏バッファ**を`mmap`し、`FBIOZPRESENT`（ZeikOS独自の`ioctl`）で矩形を画面へコピーする形だった（`ADR-0066`のY-c）。MMIOをRing 3へ出さない（Q1）ので、どこかで転送が要る。
 - Linuxのプログラムをそのまま動かす方針（`ADR-0074`）では、`seinas-fbdev`に手を入れずに映る形が要る。
 
 ## Decision
 
 ### 1. `/dev/fb0`は、`open`の中で名前で分け、画面のfdに落とす
 
-- `sys_open`が道を写した直後、フラグの規則の前に、`/dev/fb0`を名前で分ける（`readlink`の`/proc/self/exe`と同じ形。ext2に`/dev`は作らない——イメージを変えずに済み、装置の種類はカーネルの側で決まる）。開き方（`O_RDWR`・`O_RDONLY`）は見ない。
+- `sys_open`が道をコピーした直後、フラグの規則の前に、`/dev/fb0`を名前で分ける（`readlink`の`/proc/self/exe`と同じ形。ext2に`/dev`は作らない——イメージを変えずに済み、装置の種類はカーネルの側で決まる）。開き方（`O_RDWR`・`O_RDONLY`）は見ない。
 - 中身は`SYS_OPEN_SCREEN`と同じ`File::Screen`で、同じ関所（前景の系統だけ。図形モードの持ち主は1つ）を通る。`fstat`は文字装置（`S_IFCHR`）。`close`で図形モードを抜ける。
 - `SYS_OPEN_SCREEN`は残す（`gfxd`・`compd`と、その破壊テストのため）。`/dev/fb0`へ寄せて消すのは別の課題（`docs/deferred-decisions.md`）。
 
@@ -28,13 +28,13 @@ Accepted（2026-10-06に運用者がM2の設計案を承認し、2026-10-07に�
 - 間隔は50 ms（20 Hz。`kernel/src/syscall.rs`の`FB0_PRESENT_INTERVAL_TICKS`）。利用者が見る遅れは最大でこの間隔。
 - **転送する所は2つで、どちらも割り込みの外でBKLを持つ**——システムコールの戻り（Ring 3から入った道の出口）と、BSPのアイドルの定常ループ（前景のプロセスが`nanosleep`で眠っている間は、ここしか走らない。BKLを取ってから転送し、放してから`hlt`する。開いていなければBKLを取らずに通る）。**割り込みの中では転送しない**——全面の転送は数ミリ秒で、割り込みの中に置く長さではない。
 - `close`で、最後に1回転送してから図形モードを抜ける（間隔の途中で書いたものを捨てない）。
-- `SYS_OPEN_SCREEN`で開いた図形モードでは転送しない（利用者が`FBIOZPRESENT`で矩形を写す。今までどおり）。
-- 回数とサイクルを数え、判定の行（`fb0: N deferred present(s) …`）に出す。**利用者の`ioctl`の回数（`presented`）とは分けて数える**——どちらが写したかが読めるように。
+- `SYS_OPEN_SCREEN`で開いた図形モードでは転送しない（利用者が`FBIOZPRESENT`で矩形をコピーする。今までどおり）。
+- 回数とサイクルを数え、判定の行（`fb0: N deferred present(s) …`）に出す。**利用者の`ioctl`の回数（`presented`）とは分けて数える**——どちらがコピーしたかが読めるように。
 
-### 3. 間隔ごとの転送は、全体を写す。書いたページだけを写す形は後で
+### 3. 間隔ごとの転送は、全体をコピーする。書いたページだけをコピーする形は後で
 
 - 1280×800の全面の転送は、TCGで約5.3Mサイクル（実測。`fb-test`の31回で平均5,332,420）。20 Hzなら約107Mサイクル/秒で、3.5 GHzのCPUの約3%。
-- 書いたページだけを写す形（`fb_deferred_io`の本来の形。マッピングを書けない形にして、最初の書き込みの#PFで印を付ける）は、ユーザーの#PFを畳む今の形に「許して印を付ける」道が要るので、別の課題にする（`docs/deferred-decisions.md`）。
+- 書いたページだけをコピーする形（`fb_deferred_io`の本来の形。マッピングを書けない形にして、最初の書き込みの#PFで印を付ける）は、ユーザーの#PFを畳む今の形に「許して印を付ける」道が要るので、別の課題にする（`docs/deferred-decisions.md`）。
 
 ## Alternatives Considered
 

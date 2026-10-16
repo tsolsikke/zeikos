@@ -63,7 +63,7 @@ stdout に出していたが、`exit 0` の stdout は読み手に届かない**
 
 
 **全部拒むようになったときの抜け方は `docs/coding-standards.md` の
-「hookが全部拒むようになったときの抜け方」にある。** **ここに写さない。**
+「hookが全部拒むようになったときの抜け方」にある。** **ここにコピーしない。**
 """
 import json
 import os
@@ -75,7 +75,7 @@ import time
 # **`.pyc` を書かせない**（隣を import すると `.claude/hooks/__pycache__/` ができ、`git status` に出る）。
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-# **引用と heredoc を落とす道具と、前に置けるものの並びは隣の hook が持っている。** **写さない。**
+# **引用と heredoc を落とす道具と、前に置けるものの並びは隣の hook が持っている。** **コピーしない。**
 from deny_dangerous_bash import PREFIX, executable_part  # noqa: E402
 
 # **実行の形（引用と heredoc を落とした後）に当てる**（2026-09-25）。**前に置けるもの（代入・`env`・

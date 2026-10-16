@@ -68,7 +68,7 @@
 
 
 **全部拒むようになったときの抜け方は `docs/coding-standards.md` の
-「hookが全部拒むようになったときの抜け方」にある。** **ここに写さない。**
+「hookが全部拒むようになったときの抜け方」にある。** **ここにコピーしない。**
 """
 import json
 import os
@@ -81,10 +81,10 @@ import time
 # ができ、`git status` に未追跡として出る**（実測。2026-09-06）。
 sys.dont_write_bytecode = True
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-# **引用と heredoc を落とす道具は隣の hook が持っている。** **写さない**
+# **引用と heredoc を落とす道具は隣の hook が持っている。** **コピーしない**
 # ——**2 つ持つと、片方だけが「文書の言及まで拒む」形へ戻る。**
 from deny_dangerous_bash import PREFIX, executable_part  # noqa: E402
-# **緑の知らせと、harness の上限の読み方は隣の hook が持っている。** **写さない。**
+# **緑の知らせと、harness の上限の読み方は隣の hook が持っている。** **コピーしない。**
 from check_after_commit import announce, announce_payload, registered_timeout  # noqa: E402
 
 # **`(` も始まりに数える**（隣の hook が `( ... &)` で穴を踏んだのと同じ形）。

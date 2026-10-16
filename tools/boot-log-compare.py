@@ -55,7 +55,7 @@
 
 **`--boot-log-diff` が行ごと落とす揺れる行**（`BOOT_LOG_VOLATILE_MARKERS`）
 **は、こちらでも落とす。** **落とす一覧は `xtask/src/main.rs` から読む**
-——**写すと片方だけが古くなる。**
+——**コピーすると片方だけが古くなる。**
 
 # 比べられないとき——**そう言って降りる**（2026-09-16 に足した）
 
@@ -96,7 +96,7 @@ HEX = re.compile(r"0x0*[1-9a-fA-F][0-9a-fA-F]*")
 
 
 def volatile_markers() -> list[str]:
-    """`xtask` が行ごと落としている標識を読む。**写さない。**"""
+    """`xtask` が行ごと落としている標識を読む。**コピーしない。**"""
     source = (ROOT / "xtask" / "src" / "main.rs").read_text(encoding="utf-8")
     start = source.find("const BOOT_LOG_VOLATILE_MARKERS: &[&str] = &[")
     if start < 0:

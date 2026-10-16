@@ -36,7 +36,7 @@ pub struct Row {
     pub moment: String,
     /// 領域の名前。
     pub region: String,
-    /// ページの大きさ（`4K`・`2M`・`1G`）。何も写っていない領域の行は `absent`。
+    /// ページの大きさ（`4K`・`2M`・`1G`）。何もマップされていない領域の行は `absent`。
     pub size: String,
     /// 権限の欄（名前と値）。途中の階層の分は `tables.w` のように名前の頭に `tables.` が付く。
     pub fields: Vec<(String, String)>,
@@ -139,7 +139,7 @@ pub fn parse(listing: &str) -> Result<Vec<Row>, String> {
     Ok(rows)
 }
 
-/// 権限の欄を、名前と値の並びにする。何も写っていない領域の行は、欄を持たない。
+/// 権限の欄を、名前と値の並びにする。何もマップされていない領域の行は、欄を持たない。
 fn fields_of(text: &str) -> Option<Vec<(String, String)>> {
     if !text.contains('=') {
         return Some(Vec::new());
@@ -167,7 +167,7 @@ fn fields_of(text: &str) -> Option<Vec<(String, String)>> {
 ///
 /// # 行の突き合わせ方
 ///
-/// **同じ「時点・領域・大きさ」の行が、権限の違いで 2 つ以上在ることがある**（恒等の中の、キャッシュ無効で写した
+/// **同じ「時点・領域・大きさ」の行が、権限の違いで 2 つ以上在ることがある**（恒等の中の、キャッシュ無効でマップした
 /// 範囲など）。そこで、同じ「時点・領域・大きさ」の組の中で、
 ///
 /// 1. 権限が全部同じ行どうしを先に対にする（対になった行は、ページ数だけを比べる）
@@ -292,7 +292,7 @@ user program hello | stack | 4K | w=1 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=
         assert!(rows[2].starts_with("user program hello | stack"));
     }
 
-    /// 行を読む——権限の欄、途中の階層の欄（`tables.` が付く）、ページ数、比べないページ数（`~`）、何も写っていない領域。
+    /// 行を読む——権限の欄、途中の階層の欄（`tables.` が付く）、ページ数、比べないページ数（`~`）、何もマップされていない領域。
     #[test]
     fn a_listing_is_read_into_rows() {
         let rows = parse(LISTING).unwrap();
@@ -354,7 +354,7 @@ user program hello | stack | 4K | w=1 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=
     }
 
     /// **ページ数は、比べる行でだけ違いになる。** 片方にだけ在る行は `gone` と `new` で出る——見張りのページに
-    /// 何か写った形は、「何も写っていない」の行が消え、写っている行が増える。
+    /// 何かマップされた形は、「何もマップされていない」の行が消え、マップされている行が増える。
     #[test]
     fn page_counts_and_rows_on_one_side_only_are_reported() {
         let before = parse(LISTING).unwrap();

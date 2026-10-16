@@ -21,9 +21,9 @@ SeinasはSmithay（0.7.0）の上のWaylandコンポジタで、musl（1.2.5）�
 
 今のプロセスの形は、タスクの上に入れ子で乗る「遠征」である（`ADR-0022`。`kernel/src/arch/x86_64/ring3.rs`の`run_excursion`）。状態の置き場は4通りある。
 
-- タスクごと（`kernel/src/task.rs`の`Task`。6つ）——カーネルスタック、保存したRSP、状態と待つ理由の集合、TSSへ載せるRSP0の値、遠征の深さ、CR3の写し、回復点の写し、担当のCPU（`owner`）。FP・FSベース・GSベースの保存域（`USER_REGISTER_AREAS`）もタスクごとである。
+- タスクごと（`kernel/src/task.rs`の`Task`。6つ）——カーネルスタック、保存したRSP、状態と待つ理由の集合、TSSへ載せるRSP0の値、遠征の深さ、CR3のコピー、回復点のコピー、担当のCPU（`owner`）。FP・FSベース・GSベースの保存域（`USER_REGISTER_AREAS`）もタスクごとである。
 - スロットごと（`USER_TASK_SLOTS`は2。スロット0は普通のタスク、スロット1は切り離したタスク）——`ExcursionState`（深さ、Ring 3に居るか、畳んだときの記録）、`SyscallState`（ユーザーの窓、終了の状態、futexの記録、診断の記録）、`CURRENT_FILES`、`CURRENT_HEAP`。
-- スロットと深さごと（`MAX_EXCURSION_DEPTH`は2。シェルが深さ1、その子が深さ2）——`ProcessState`（sigactionの表、シグナルのマスク、代替スタック、`tid_address`、実行ファイルの名前）、`MemoryMap`（マッピングテーブル）、遠征のスタック、回復点、`spawn`の引数の写し。
+- スロットと深さごと（`MAX_EXCURSION_DEPTH`は2。シェルが深さ1、その子が深さ2）——`ProcessState`（sigactionの表、シグナルのマスク、代替スタック、`tid_address`、実行ファイルの名前）、`MemoryMap`（マッピングテーブル）、遠征のスタック、回復点、`spawn`の引数のコピー。
 - 読み込んだ側のスタックフレームの上（`kernel/src/userland.rs`の`UserProcess`）——アドレス空間、入口、イメージの底、ユーザースタックの上端、ヒープ、fdの表、走ったCPUの印（`ran_on`）。走っている間だけ、スロットごとの欄へ入れ替える。
 
 ユーザーのタスクはすべてBSPの上で走る。`Task::owner`の既定はBSPで、APの担当に書き換えるのは`init_ap_idle_task`だけである。`pick_next`は担当の違うタスクを選ばない。この前提に依っている所は、下の「「全部BSP」の前提に依っている所」に並べた。
@@ -47,7 +47,7 @@ Linuxと同じ分け方である。今の置き場からの移し方は、下の
 - **池が尽きたら、`clone`は`-EAGAIN`を返し、名前付きの行（`thread:`）をシリアルへ出す**（Linuxの`EAGAIN`は、スレッドの数の上限に当たったときの値である。`ADR-0084`の`spawn`と同じ）。
 - スレッドのタスクは、作ったスレッドのプロセス（スロットと深さ）に属する。スロットはタスクの番号から決める今の形（`ring3_slot_of`）をやめ、`Task`の欄で持つ。スロットごとの欄（`CURRENT_FILES`・`CURRENT_HEAP`・`MemoryMap`・`ProcessState`のプロセス側）は、同じスロットのスレッドが共有する。
 - `clone`で受けるフラグは、muslの`pthread_create`が使う組（`CLONE_VM`・`CLONE_FS`・`CLONE_FILES`・`CLONE_SIGHAND`・`CLONE_THREAD`・`CLONE_SYSVSEM`・`CLONE_SETTLS`・`CLONE_PARENT_SETTID`・`CLONE_CHILD_CLEARTID`、必要なら`CLONE_DETACHED`）だけである。それ以外の組（`fork`の形）は`-ENOSYS`で断る（`fork`は今までどおり無い。`ADR-0074`）。
-- 新しいスレッドは、親と同じアドレス（`clone`の戻り）から、渡されたスタックとTLSで、RAX=0でRing 3へ入る。FPの状態は親の写しである（Linuxと同じ）。
+- 新しいスレッドは、親と同じアドレス（`clone`の戻り）から、渡されたスタックとTLSで、RAX=0でRing 3へ入る。FPの状態は親のコピーである（Linuxと同じ）。
 - `clone`が失敗する（池が空、スタックやTLSのアドレスが窓の外）ときは、共有の資源に触れる前に断る（`-EAGAIN`か`-EINVAL`）。巻き戻すものは無い。
 
 ### 3. 寿命
@@ -98,7 +98,7 @@ Linuxと同じ分け方である。今の置き場からの移し方は、下の
 | 今の置き場 | 欄 | 行き先 | 備考 |
 |---|---|---|---|
 | `Task` | `saved_stack_pointer`・`stack_top`・`stack_bottom`・`state`・`kernel_entry_stack_top`・`excursion_depth`・`current_recovery`・`owner` | スレッド（そのまま） | スレッドのタスクも同じ欄を持つ。`excursion_depth`はスレッドでは固定 |
-| `Task` | `page_table_root` | スレッド（写し） | プロセスの値の写し。`forget_page_table_root_if`は全タスクを見るので、そのまま効く |
+| `Task` | `page_table_root` | スレッド（コピー） | プロセスの値のコピー。`forget_page_table_root_if`は全タスクを見るので、そのまま効く |
 | `Task` | （新）`process` | スレッド | 属するプロセス（スロットと深さ）。`ring3_slot_of`を置き換える |
 | `Task` | （新）`tid` | スレッド | 第8項 |
 | `USER_REGISTER_AREAS` | `fp`・`fs_base`・`gs_base` | スレッド（そのまま） | doc（`user_registers.rs`）が既にそう書いている |
@@ -112,7 +112,7 @@ Linuxと同じ分け方である。今の置き場からの移し方は、下の
 | `ProcessState`［スロット］［深さ］ | `blocked`・`alt_stack`・`tid_address` | スレッド | Linuxではスレッドごと。シグナルのマスクと代替スタックの課題で移す |
 | `MemoryMap`［スロット］［深さ］ | （全部） | プロセス（そのまま） | |
 | `CURRENT_FILES`・`CURRENT_HEAP`［スロット］ | （全部） | プロセス（そのまま） | 同じスロットのスレッドが共有する。第3項の入れ子の`spawn`の制約の理由 |
-| `IOV_COPIES`［スロット］ | （全部） | 確かめる | `writev`がパイプで待つなら、スレッドごとか、眠る前に写し終える形が要る |
+| `IOV_COPIES`［スロット］ | （全部） | 確かめる | `writev`がパイプで待つなら、スレッドごとか、眠る前にコピーし終える形が要る |
 | `UserProcess`（読み込んだ側のフレーム） | `space`・`entry`・`image_base`・`stack_top`・`heap`・`kind`・`ran_on`・`name`・`files` | プロセス（そのまま） | 主スレッドのフレームに置いたまま。`stack_top`は主スレッドのユーザースタックの上端で、スレッドのスタックはmuslが持つ |
 | `SPAWN_*`［スロット］［深さ］・`INHERITED_ENDS`・`PENDING_STDIN`［スロット］ | （全部） | プロセス（そのまま） | 第3項の制約で、スレッドからは触らない |
 | `DETACHED_REQUEST`・`DETACHED_STATUS`・`RING3_TASK_GENERATION` | （全部） | そのまま | 切り離したタスクの仕組み。スレッドとは別 |
@@ -178,7 +178,7 @@ M3aの実装は、次の順で分ける。大きさは、1つの課題でfull ch
 
 `clone`（後の課題の順の1）は、池と欄（1段目）、回復点と遠征の状態の置き場（2段目）、`clone`の入口（3段目）に分けて入れた。3段目はさらに、正常の道（入口・スレッドの`exit`・刈り取り）と異常の道（スレッドの中の例外・池のタスクからの`exit_group`・Ctrl+C）に分けた。正常の道で決めたことを書く。
 
-- **池のタスクは、最初の文脈から直にRing 3へ入る（案A）。** `clone`が、親の文脈（`IrqContext`）の写しにRAX=0・RSP=渡されたスタック・CSとSS=ユーザーのセレクタを入れたものを、池のカーネルスタックの上端に積む。最初の切り替えで、復元経路（15本のpopと`iretq`）がそのままRing 3へ落とす——タイマで止めたRing 3のタスクへ戻るのと同じ経路で、新しいasmは無い。`run_excursion`の枠は無く、回復点も無い（`THREAD_RECOVERIES`の欄は0のまま）。**Ring 3を出る道は切り替えである**——スレッドの`exit`は`Finished`にして`yield_now`で切り替え、二度と戻らない。捨てるカーネルスタックの枠に`Drop`の要るものを残さないことを、docと`debug_assert!`（BKLと`InterruptGuard`を持っていない）で示す。却下した案Bは、足した1本と同じ`run_excursion`の形で、回復点へlongjmpで戻るもの。親の汎用レジスタを積んで`iretq`するasmの別版と、入場のスタックの分け方（同じ64 KiBを分けるか、池ごとに遠征スタックを足すか）が要る。
+- **池のタスクは、最初の文脈から直にRing 3へ入る（案A）。** `clone`が、親の文脈（`IrqContext`）のコピーにRAX=0・RSP=渡されたスタック・CSとSS=ユーザーのセレクタを入れたものを、池のカーネルスタックの上端に積む。最初の切り替えで、復元経路（15本のpopと`iretq`）がそのままRing 3へ落とす——タイマで止めたRing 3のタスクへ戻るのと同じ経路で、新しいasmは無い。`run_excursion`の枠は無く、回復点も無い（`THREAD_RECOVERIES`の欄は0のまま）。**Ring 3を出る道は切り替えである**——スレッドの`exit`は`Finished`にして`yield_now`で切り替え、二度と戻らない。捨てるカーネルスタックの枠に`Drop`の要るものを残さないことを、docと`debug_assert!`（BKLと`InterruptGuard`を持っていない）で示す。却下した案Bは、足した1本と同じ`run_excursion`の形で、回復点へlongjmpで戻るもの。親の汎用レジスタを積んで`iretq`するasmの別版と、入場のスタックの分け方（同じ64 KiBを分けるか、池ごとに遠征スタックを足すか）が要る。
 - **受けるフラグ。** muslの`pthread_create`の組（`CLONE_VM|FS|FILES|SIGHAND|THREAD|SYSVSEM|SETTLS|PARENT_SETTID|CHILD_CLEARTID` = 0x3d0f00）を受け、`CLONE_DETACHED`（0x400000。Linuxが無視するフラグ。muslは付け、glibcは付けない）の有無は見ない。**下位8ビット（`CSIGNAL`）も見ない**——Linuxのlegacyの`clone`は、`CLONE_THREAD`のとき`exit_signal`を-1にして、この8ビットを使わない（`kernel/fork.c`の`copy_process`）。Linuxが`-EINVAL`で断る組（`CLONE_THREAD`に`CLONE_SIGHAND`が無い、`CLONE_SIGHAND`に`CLONE_VM`が無い、など）はそのまま`-EINVAL`で、Linuxでは通るがここに無い組（`fork`の形）は決定2のとおり`-ENOSYS`。アドレスは、スタックが窓の外なら`-EINVAL`、TLSがユーザーの範囲の正準なアドレスでなければ`-EPERM`（`arch_prctl`と同じ）、`parent_tid`と`child_tid`に書けなければ`-EFAULT`。
 - **`tid_address`はスレッドごとに持つ**（後の課題の順の4から前倒し）。`CLONE_CHILD_CLEARTID`のアドレスを池のタスクの欄に控え、スレッドの`exit`がそこへ0を書き、そのアドレスで待つ者を1本起こす（`FUTEX_WAKE`と同じ。futexの最小は`ADR-0081`の2026-10-14のAddendum）。池のタスクからの`set_tid_address`も同じ欄に書く。主スレッドのものは今までどおりプロセスの表に控えるだけである。`blocked`と`alt_stack`は順の4のまま（プロセスに1つ。配送が無いので動きは変わらない。`docs/deferred-decisions.md`）。
 - **深さの欄は1つの意味にした。** 池のタスクの`Task::excursion_depth`と`ring3`側の`ExcursionState::depth`は、どちらも属するプロセスの深さ（親が`clone`を打ったときの深さ）で、同じ値である。切り替えの検算は、池のタスクなら深さに依らず自分のカーネルスタックを期待する。2段目で「池のタスクの深さは0だけ」としていたのを直した。

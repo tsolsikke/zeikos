@@ -24,7 +24,7 @@ Seinas（wayland-server）は起動時に、ソケットのパスの隣にロッ
 
 1. **ソケットとロックファイルの置き場は `/tmp` の下にする**（`/tmp/seinas/` のような 1 段のディレクトリ。環境変数
    `XDG_RUNTIME_DIR=/tmp/seinas` を `/etc/environment` で渡す。`ADR-0052`）。`/run` は作らない——`ADR-0042` の場所の表に
-   `/run` は無く、`/tmp` は在る。メモリの上の別のファイルシステム（tmpfs）は作らない——ext2 のイメージは RAM の写しで、
+   `/run` は無く、`/tmp` は在る。メモリの上の別のファイルシステム（tmpfs）は作らない——ext2 のイメージは RAM のコピーで、
    書きは `close` で装置へ届く（`ADR-0037`・`ADR-0051`）。`/tmp` が起動をまたいで残る（deferred の「`/tmp` を誰が消すか」）
    ことは、ロックファイルの扱い（決定 4）で吸収する。
 
@@ -44,8 +44,8 @@ Seinas（wayland-server）は起動時に、ソケットのパスの隣にロッ
    開いたファイル（`File::Regular` の 1 つ）である。`LOCK_EX|LOCK_NB` は、別の開いたファイルが取っていれば
    `-EWOULDBLOCK`（`-EAGAIN`）、同じ開いたファイルなら取り直しとして 0。`LOCK_NB` の無い形で取れないときは、
    `Wait::FileLock { inode }` で眠り、放されたら取り直す。**放すのは `LOCK_UN` と `close`**——プロセスの終わりは
-   fd を全部閉じるので、そこで放される（Linux と同じ）。`F_DUPFD` で写した fd は、Linux では同じ open file description を
-   共有してロックも共有するが、ZeikOS の `File` は写しごとに別なので、**写しは別の持ち主として扱う**（Seinas は
+   fd を全部閉じるので、そこで放される（Linux と同じ）。`F_DUPFD` でコピーした fd は、Linux では同じ open file description を
+   共有してロックも共有するが、ZeikOS の `File` はコピーしごとに別なので、**コピーは別の持ち主として扱う**（Seinas は
    ロックファイルの fd を dup しない。文書に書く）。表は 8 本（listener 4 本 × 2 の余裕）。
 
 5. **`open` の書きの形を広げる**——`O_RDWR`（`O_CREAT`・`O_TRUNC`・`O_CLOEXEC` の有無にかかわらず）を受け、
@@ -70,7 +70,7 @@ Seinas（wayland-server）は起動時に、ソケットのパスの隣にロッ
   `/proc`・大きなファイルシステムで、ソケットの名前の置き場は含まない。ただし「数千のファイルと大きなファイルを扱える
   ファイルシステム」へ替えるときに、名前を inode へ移す選択は残る。
 - **メモリの上の tmpfs を足す**——却下。ファイルシステムを 1 つ増やす（VFS の mount の概念が要る。`ADR-0025` は
-  `inode`/`file` まで）。`/tmp` が RAM の写しの上に在るので、速さの差も無い。
+  `inode`/`file` まで）。`/tmp` が RAM のコピーの上に在るので、速さの差も無い。
 - **`flock` を「常に 0 を返す」で済ます**——却下。Seinas は 2 重起動の検出にこれを使い、ZeikOS でも 2 つ目の Seinas が
   同じロックを取れてしまうと、ソケットの名前の `-EADDRINUSE` が先に出るだけで、ロックの意味が無くなる。実装は小さい
   （表 8 本と `Wait` の 1 種類）。
@@ -87,7 +87,7 @@ Seinas（wayland-server）は起動時に、ソケットのパスの隣にロッ
   （seedに `/tmp/seinas` が増える。ディスクのチェックサムが変わる）。Linux 向けの確かめのイメージ（musl の Rust）を
   1 本足し、Linux の参照を控える（`flock` と `bind` の一連）。
 - 持ち越し: `SOCK_NONBLOCK`・`O_NONBLOCK` の待たない形（`F_SETFL` は受けて無視している）、`F_ADD_SEALS`（zeyes が
-  memfd に打つ。`sys_fcntl` は `-EINVAL`）、`/tmp` を誰が消すか、`F_DUPFD` の写しのロックの共有。
+  memfd に打つ。`sys_fcntl` は `-EINVAL`）、`/tmp` を誰が消すか、`F_DUPFD` のコピーのロックの共有。
 - セルフホスティングの条件（`ADR-0086`の「これからの設計で守る条件」）に照らした——`SYS_SPAWN`の族を増やさず、Linuxの番号
   （41・43・49・50・73・288）の形で足す。ソケットの名前の置き場は条件に含まれない。ファイルシステムを替えるときに
   名前をinodeへ移す選択は残す。

@@ -67,8 +67,8 @@ pub const WRITE_LAYOUT_SINCE_UNIX: u64 = 1_791_200_681;
 /// 緑の回が残る。
 pub const KEEP_FULL_CHECK_LOGS: usize = 10;
 
-/// 残したカーネルとブートローダの写し（`target/kernel-builds/`）のうち、これより長く触られていないものは、全検査を
-/// 始めるときに消す（2026-10-05）。**写しは組ごとに 1 つで、使うたびに書き直される。** 7 日触られていない組は、
+/// 残したカーネルとブートローダのコピーし（`target/kernel-builds/`）のうち、これより長く触られていないものは、全検査を
+/// 始めるときに消す（2026-10-05）。**コピーは組ごとに 1 つで、使うたびに書き直される。** 7 日触られていない組は、
 /// もう使われていない組（消えた破壊テストの構成など）である。
 pub const KEPT_BUILD_MAX_AGE: std::time::Duration =
     std::time::Duration::from_secs(7 * 24 * 60 * 60);
@@ -105,7 +105,7 @@ pub fn logs_to_remove(names: &[String], keep: usize) -> Vec<String> {
         .collect()
 }
 
-/// 古いログと、長く触られていないカーネルの写しを消す（全検査を始めるとき）。**失敗は無視する**（片付けは検査の
+/// 古いログと、長く触られていないカーネルのコピーを消す（全検査を始めるとき）。**失敗は無視する**（片付けは検査の
 /// 結果に効かない）。
 fn prune_before_the_run(main: &Path, worktree: &Path) {
     let logs = main.join("target").join("full-check").join("logs");
@@ -121,7 +121,7 @@ fn prune_before_the_run(main: &Path, worktree: &Path) {
         let _ = fs::remove_file(logs.join(name));
     }
     for tree in [main, worktree] {
-        // **ユーザープログラムの写しの置き場**（`kernel/build.rs` の `ProgramCache`。2026-10-07）。**7 日触られていない
+        // **ユーザープログラムのキャッシュ**（`kernel/build.rs` の `ProgramCache`。2026-10-07）。**7 日触られていない
         // ものを消す**——当たるたびに触った時刻が進むので、残るのは使われなくなった鍵（消えた cfg・古い原本）のものである。
         let cache = tree.join("target").join("user-program-cache");
         if let Ok(entries) = fs::read_dir(&cache) {
@@ -1596,7 +1596,7 @@ fn refuse_if_a_previous_run_is_alive(worktree: &Path) -> Result<()> {
 }
 
 /// 作業ツリーの置き場が、メインの作業ツリーと同じファイルシステムに在ることを確かめる（2026-09-27。運用者の
-/// 決定）。**以前の置き場から移すのが名前の変更で済み、ビルドの控えを写さずに残せるのは、同じファイルシステムの
+/// 決定）。**以前の置き場から移すのが名前の変更で済み、ビルドの控えをコピーせずに残せるのは、同じファイルシステムの
 /// ときだけである。** **置き場の親（メインの作業ツリーの親）は作らない**——**リポジトリの外に勝手に場所を作らない。**
 fn same_filesystem(main: &Path, worktree: &Path) -> Result<()> {
     let parent = worktree
@@ -1663,10 +1663,10 @@ fn prepare_worktree(main: &Path, worktree: &Path, commit: &str) -> Result<()> {
     Ok(())
 }
 
-/// Seinas の成果物（`seinas-fbdev` と第三者の表示）を、メインの置き場（`target/linux-programs/`）から作業ツリーへ写す
+/// Seinas の成果物（`seinas-fbdev` と第三者の表示）を、メインの置き場（`target/linux-programs/`）から作業ツリーへコピーする
 /// （2026-10-07。運用者の決定）。**SHA-256 が合うものだけで、ネットワークへは行かない**（`tools/fetch-seinas.sh` の
-/// `ZEIKOS_SEINAS_SOURCE`）。**無ければ写さず、その項目は今までどおり名指しで飛ぶ**——飛んだ項目は全検査のまとめに
-/// 数と名前で出る（`!SKIPPED`）。**以前は写していなかったので、作業ツリーの全検査では Seinas の項目がいつも飛んでいた**
+/// `ZEIKOS_SEINAS_SOURCE`）。**無ければコピーせず、その項目は今までどおり名指しで飛ぶ**——飛んだ項目は全検査のまとめに
+/// 数と名前で出る（`!SKIPPED`）。**以前はコピーしていなかったので、作業ツリーの全検査では Seinas の項目がいつも飛んでいた**
 /// （実測。2026-10-07 の 504 項目の回）。失敗しても全検査は止めない。
 fn copy_seinas_artifacts(main: &Path, worktree: &Path) {
     let source = main.join("target").join("linux-programs");
@@ -1700,7 +1700,7 @@ fn copy_seinas_artifacts(main: &Path, worktree: &Path) {
     }
 }
 
-/// 作業ツリーで Linux 向けのプログラム（`m1-rust` の写しと、`musl-gcc` の `m1-c`）を作る（2026-10-07。運用者の決定）。
+/// 作業ツリーで Linux 向けのプログラム（`m1-rust` のコピーと、`musl-gcc` の `m1-c`）を作る（2026-10-07。運用者の決定）。
 /// **`musl-gcc` が無ければ作らず、`linux-c` の項目は今までどおり名指しで飛ぶ**（`!SKIPPED` に出る）。
 /// **作業ツリーの `tools/build-linux-programs.sh` を、作業ツリーの `target/linux-programs/` へ走らせる**——
 /// 同じ道具・同じ版なら、メインの作業ツリーで作ったものと同じバイトになる。**以前は作っていなかったので、
@@ -1925,7 +1925,7 @@ fn run(target: &str) -> Result<()> {
         append_full_record(&main, &commit, &tree, "refused", &message);
         return Err(anyhow::Error::new(HarnessFault(message)));
     }
-    // **古いログと、使われていないカーネルの写しを片付ける**（2026-10-05。残す数は [`KEEP_FULL_CHECK_LOGS`] と
+    // **古いログと、使われていないカーネルのコピーを片付ける**（2026-10-05。残す数は [`KEEP_FULL_CHECK_LOGS`] と
     // [`KEPT_BUILD_MAX_AGE`]）。
     prune_before_the_run(&main, &worktree);
     let disk_start = sectors_written(&main);

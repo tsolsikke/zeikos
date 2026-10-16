@@ -584,7 +584,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
     },
     // **壊した ext2 のイメージの検査が、借りた作業領域のフレームを返さない。** 借りる前と返した後の、空きフレームの
     // 枚数の見張りが止める。**止まらなければ、後ろの「all … refused」の行まで進む。**
-    // **壊した ext2 のイメージの検査が、壊し方を戻さずに次へ進む**（2026-10-05）。**写すのを 1 回にしたので、
+    // **壊した ext2 のイメージの検査が、壊し方を戻さずに次へ進む**（2026-10-05）。**コピーするのを 1 回にしたので、
     // 戻し忘れは、前の壊し方を次へ持ち越す。** 壊し方ごとの健全な対照が、名指しして止める。
     CriticalTest {
         name: "corrupt-fs-skips-restore",
@@ -1394,7 +1394,7 @@ const STACK_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // **遠征スタックの見張りのページを張らない**（以前の形）。張った直後の確かめが、写ったままのページを名指しして
+    // **遠征スタックの見張りのページを張らない**（以前の形）。張った直後の確かめが、マップされたままのページを名指しして
     // 止まること。
     CriticalTest {
         name: "excursion-unguarded",
@@ -1623,12 +1623,12 @@ const RING3_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // **セグメントの並びの確かめを通さずに写す（2026-10-01）。** 起動の途中の壊したイメージの検査は、並びの確かめが
-    // 断るはずの 4 つのイメージのうち、最初の 1 つ（2 本目が 1 本目の中身の内側から始まる）が写す途中で断られるのを
+    // **セグメントの並びの確かめを通さずにマップする（2026-10-01）。** 起動の途中の壊したイメージの検査は、並びの確かめが
+    // 断るはずの 4 つのイメージのうち、最初の 1 つ（2 本目が 1 本目の中身の内側から始まる）がマップする途中で断られるのを
     // 見て、「違う場所で断られた」と止まる。**残りの 3 つは、この確かめが無いと読み込まれるか、引き算の
     // あふれでカーネルが止まる**（直す前の形で実測した）。
     //
-    // **写す途中で断るのは `map_user_4kib` の「既に写っているリーフは上書きしない」の判定である。** 並びの確かめを
+    // **マップする途中で断るのは `map_user_4kib` の「既にマップされているリーフは上書きしない」の判定である。** 並びの確かめを
     // 入れた後は、イメージからこの判定へ届く道がここだけになったので、**断った理由の行も求める**（2 枚目の守りが
     // 効いていることの確かめを兼ねる）。
     CriticalTest {
@@ -1657,7 +1657,7 @@ const RING3_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // **ローダーが、書けないセグメントを、フラグに依らず実行できる形で写す形**（2026-10-03）。自分の `.rodata` へ跳ぶ
+    // **ローダーが、書けないセグメントを、フラグに依らず実行できる形でマップする形**（2026-10-03）。自分の `.rodata` へ跳ぶ
     // プログラムが、跳んだ先の `ud2` を実行して、ベクタ 6 で終わる。**起動時の Ring 3 の試しは通る**（あちらは
     // ローダーを通らない）ので、止めるのは、プログラムの終わり方の判定である。
     CriticalTest {
@@ -1925,7 +1925,7 @@ const SYSCALL_TESTS: &[CriticalTest] = &[
         min_heartbeats: None,
     },
     // **`munmap` と `MAP_FIXED` の置き換えが、`PROT_NONE` でフレームを持ったまま残したリーフを外さない**（2026-10-08。直す前の形）。
-    // 同じアドレスへ写し直すと `map_4kib` が断り、`syscall-test` が 124 番で止まる。
+    // 同じアドレスへマップし直すと `map_4kib` が断り、`syscall-test` が 124 番で止まる。
     CriticalTest {
         name: "munmap-skips-retained",
         feature: "munmap-skips-retained-test",
@@ -4598,9 +4598,9 @@ fn build_bootloader_with_features_unwrapped(
     workspace_root: &Path,
     features: &[&str],
 ) -> Result<PathBuf> {
-    // **全検査の間は、組ごとに 1 回だけ作って写しを使う**（2026-09-29。案 A。項目ごとに cargo を呼ぶと、
-    // 裏の流れが持つ `target/` の鍵を待たされる）。**写しは [`build_bootloader_now`] が錠の中で作る**（案 B の ①）
-    // ——**ここでもう一度写すと、写し元と写し先が同じファイルになる**（[`keep_a_copy`] が断る）。
+    // **全検査の間は、組ごとに 1 回だけ作ってコピーを使う**（2026-09-29。案 A。項目ごとに cargo を呼ぶと、
+    // 裏の流れが持つ `target/` の鍵を待たされる）。**コピーは [`build_bootloader_now`] が錠の中で作る**（案 B の ①）
+    // ——**ここでもう一度コピーすると、コピーし元とコピーし先が同じファイルになる**（[`keep_a_copy`] が断る）。
     kernel_builds::bootloader(features, || build_bootloader_now(workspace_root, features))
 }
 
@@ -4623,7 +4623,7 @@ fn build_bootloader_now(workspace_root: &Path, features: &[&str]) -> Result<Path
         args.push(&joined);
     }
 
-    // **組ごとの写しから取る**（2026-09-29。案 B の ①。kernel と同じ理由。[`with_build_lock`]）。
+    // **組ごとのコピーしから取る**（2026-09-29。案 B の ①。kernel と同じ理由。[`with_build_lock`]）。
     with_build_lock(workspace_root, "bootloader", || {
         let status = status_into_item_log(
             Command::new("cargo")
@@ -5440,7 +5440,7 @@ const WRITE_KEEP_FEATURE: &str = "fs-write-keep-test";
 ///
 /// **`build.rs` とカーネルが同じ規則で埋めている**——位置から決まる形にしてある
 /// （定数の並びだと、書けていない箇所と元から同じ箇所が見分けにくい）。
-/// **ここは同じ規則で期待値を組み立てるだけで、値を書き写さない。**
+/// **ここは同じ規則で期待値を組み立てるだけで、値をコピーしない。**
 const WRITABLE_SEED_BYTES: usize = 100;
 const WRITABLE_APPENDED_BYTES: usize = 200 + 4000;
 
@@ -5455,7 +5455,7 @@ fn expected_writable_content() -> Vec<u8> {
 /// カーネルが作るファイルの名前と中身の長さ（S12-e）。
 ///
 /// **`WRITABLE_*` と同じ作法である**——**同じ規則で組み立てるだけで、
-/// 値を書き写さない。**
+/// 値をコピーしない。**
 const CREATED_PATH: &str = "/data/created";
 const CREATED_BYTES: usize = 300;
 
@@ -5802,7 +5802,7 @@ enum ShellTestMode {
     ///
     /// **中断の破壊テストは 5 つあり、落ちる判定が 1 本ずつ違う**
     /// （子が止まらない / シェルが余分に起動し直される / `^C` が 2 つ出る）。
-    /// **5 通りの裏返しを書くと、破壊テストごとに期待を書き写すことになり、
+    /// **5 通りの裏返しを書くと、破壊テストごとに期待をコピーすることになり、
     /// 「どれか 1 本が落ちる」を 5 回別々に述べる形になる。**
     ///
     /// **主張しているのは「この破壊は `--shell-test` が捕まえる」である。**
@@ -6953,7 +6953,7 @@ fn stop_sign_in(serial: &str, qemu_debug_tail: &str) -> Option<String> {
 
 /// 止まったマーカーを 2 周続けて見たら、待つのをやめる（5.b。2026-09-25。運用者の決定）。
 ///
-/// **1 周だけ置くのは、同じ書き込みの続き（レジスタの写しの残り）を取りこぼさないためである。**
+/// **1 周だけ置くのは、同じ書き込みの続き（レジスタのコピーの残り）を取りこぼさないためである。**
 /// **止まった後は何も出ない**——**CPU は 1 つで、`cli` と `hlt` で止まるか、三重フォルトで
 /// 機械ごと止まる**（2026-09-25 に測った構成）。**だから期限まで待っても判定は変わらない。**
 #[derive(Default)]
@@ -11336,7 +11336,7 @@ fn cmd_seinas_fbdev_test() -> Result<()> {
 /// **判定は 4 本**——
 ///
 /// 1. 四隅の色が画面に届いた（`ioctl` の `present` は 0 回のまま。`fb0:` の行で見る）
-/// 2. 間隔ごとの転送の回数が、眠った長さから導ける上限の内（間隔を見ずに写す形を捕まえる）
+/// 2. 間隔ごとの転送の回数が、眠った長さから導ける上限の内（間隔を見ずにコピーする形を捕まえる）
 /// 3. 文字コンソールが戻った（閉じた後の `screendump` で、四隅が置いた色でない）
 /// 4. `[ERROR]` が無い
 fn cmd_fb_test(features: &[&str], ending: FbTestEnding, expect_pass: bool) -> Result<()> {
@@ -12741,20 +12741,20 @@ fn cmd_image(contents: MediaContents) -> Result<()> {
     Ok(())
 }
 
-/// 基本の検査の項目——**ext2 のイメージのバイトが、写しの置き場の当たり・外れ・使わないの 3 通りで同じこと**（2026-10-08）。
+/// 基本の検査の項目——**ext2 のイメージのバイトが、キャッシュの当たり・外れ・使わないの 3 通りで同じこと**（2026-10-08）。
 ///
 /// # なぜ在るのか
 ///
-/// **イメージのバイトは起動ログの参照（巻の名前と、superblock のセクタの検査値）に出る。** 写しの置き場の当たりは読み取り専用の
-/// 写しへのハードリンクで、`fs::copy` が権限を写し、`mke2fs -d` がそれを inode へ入れていたので、当たりだけ `/bin` の
+/// **イメージのバイトは起動ログの参照（巻の名前と、superblock のセクタの検査値）に出る。** キャッシュの当たりは読み取り専用の
+/// キャッシュへのハードリンクで、`fs::copy` が権限をコピーし、`mke2fs -d` がそれを inode へ入れていたので、当たりだけ `/bin` の
 /// プログラムが 0444 になり、参照と食い違った（`docs/troubleshooting.md` の 2026-10-08 の項）。いまは `build.rs` が seed の
-/// 権限を決める。**この項目は、決め忘れや、権限のほかに写し元から混ざるものを、全検査を待たずに捕まえる。**
+/// 権限を決める。**この項目は、決め忘れや、権限のほかにコピーし元から混ざるものを、全検査を待たずに捕まえる。**
 ///
 /// # 形
 ///
-/// 既定の構成で `cargo check` を 3 回回す——写しの置き場を使わない回、空の置き場で全部が外れる回、同じ置き場で全部が
-/// 当たる回。`cargo` の置き場と写しの置き場はこの回の使い捨ての置き場（tmpfs）に置き、メインの `target/` と本物の
-/// 写しの置き場には触らない。`cargo check` でもビルドスクリプトは走るので、イメージは同じものができる（コード生成をしない分速い）。
+/// 既定の構成で `cargo check` を 3 回回す——キャッシュを使わない回、空の置き場で全部が外れる回、同じ置き場で全部が
+/// 当たる回。`cargo` の置き場とキャッシュはこの回の使い捨ての置き場（tmpfs）に置き、メインの `target/` と本物の
+/// キャッシュには触らない。`cargo check` でもビルドスクリプトは走るので、イメージは同じものができる（コード生成をしない分速い）。
 fn check_image_determinism(workspace_root: &Path) -> Result<String> {
     let run = RunDir::create(workspace_root, "image-determinism")?;
     let target = run.scratch_file("target");
@@ -12836,7 +12836,7 @@ fn image_check_cargo_args() -> Vec<String> {
     args
 }
 
-/// 写しの置き場の数の行（`hits: N` と `misses: N`）を読む（純粋な論理）。
+/// キャッシュの数の行（`hits: N` と `misses: N`）を読む（純粋な論理）。
 fn cache_tally(tally: &str) -> Option<(usize, usize)> {
     let field = |name: &str| {
         tally
@@ -14505,7 +14505,7 @@ fn host_cc_version() -> String {
 ///
 /// **同じソースをホストと ZeikOS でビルドし、出るビットマップがバイト単位で一致する。**
 ///
-/// **これは外の道具に判定させる形である**——**期待値を手で書き写さない。**
+/// **これは外の道具に判定させる形である**——**期待値を手でコピーしない。**
 /// **設計の前に成立を測った**（2026-09-10）——**`-O2` / `-Os` × ホストの
 /// `libm` / 自前の数学の 4 通り × 4 つの字で、16 通りとも一致した。**
 ///
@@ -14795,7 +14795,7 @@ fn cmd_serial_test(features: &[&str], expect_pass: bool) -> Result<()> {
     // 数え上げは何も主張しない。**
     let both_finished = stripped.contains("serial-stress: done;");
 
-    // **期待する行を組み立てる。** **手で書き写さない**——**カーネル側と
+    // **期待する行を組み立てる。** **手でコピーしない**——**カーネル側と
     // 同じ形をここで作る。**
     let mut expected: Vec<String> = Vec::with_capacity(LINES_PER_CPU * 2);
     for cpu in 0..2 {
@@ -15173,12 +15173,12 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
     // どちらも落とした後の内容なので、一致してしまう
     // （`docs/verification-coverage.md`）。
     // **スクリプトが送る挿入は 3 字である**（`kernel/src/input.rs` の `SCRIPT` の
-    // `iZY` と `aQ`）。**この数はスクリプトの写しで、スクリプトを変えたらここも変わる。**
+    // `iZY` と `aQ`）。**この数はスクリプトのコピーで、スクリプトを変えたらここも変わる。**
     //
     // **実際に変わった（e-4）。** **スクリプトへ `a` の挿入を 1 字足したとき、
     // ここが 2 のままだったので、1 字落とす破壊テストが検出されなくなった**
     // （落としても 2 字残るため）。**`--full` が「破壊が捕まらない」と
-    // 出して分かった**——**写しは、写した先が変わった瞬間に古くなる。**
+    // 出して分かった**——**コピーは、コピーした先が変わった瞬間に古くなる。**
     //
     // **数え直した（H-b-2）。** **数えているのはスクリプトぜんたいの `typed` の本数で、
     // `/data/lines` の回だけではない**——**実測で 16 本である**
@@ -15390,7 +15390,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
     // （`kernel/src/input.rs` の `SCRIPT_PAUSE`）。**休みは `read` を空に
     // するので、`zi` は「入力が途切れた」を見る。** 直後の観測点で札を読む。
     //
-    // **札の文字列を写さない。** **3 つ目が 1 つ目と同じで、2 つ目と違う**
+    // **札の文字列をコピーしない。** **3 つ目が 1 つ目と同じで、2 つ目と違う**
     // ことを見る——ノーマル、インサート、ノーマル、の並びである。
     let status_labels: Vec<&str> = serial
         .lines()
@@ -15690,7 +15690,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
     // `zi` が返し忘れていれば、フレームは減り続ける。**
     //
     // **スクリプトは `zi` を 3 回起動する**（`/data/lines`・`/data/fresh`・
-    // `/data/edited`）。**回数を写さない**——**1 回でも取り忘れ・返し忘れが
+    // `/data/edited`）。**回数をコピーしない**——**1 回でも取り忘れ・返し忘れが
     // あれば落ちる形にする。** **`> 0` も要る**——**取っていなければ
     // 「0 と 0」で一致してしまい、ヒープを使わなくなった形が通る。**
     let zi_heap_lines: Vec<&str> = plain
@@ -15722,7 +15722,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
     // 回では 1 回の要求が 2 ページを越える。** **越えた回が 1 つも無ければ、
     // 複数ページをマップする道は 2 ページまでしか通っていないことになる。**
     //
-    // **数を写さない**——**「2 より大きい」だけを見る。** 容量の決め方を
+    // **数をコピーしない**——**「2 より大きい」だけを見る。** 容量の決め方を
     // 変えれば実際の値は動くが、**主張は「2 ページを越える要求が通る」である。**
     let zi_largest_take = zi_heap_pairs
         .iter()
@@ -15758,7 +15758,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
     //
     // **期待値をホストが持たない。** **編集の前と後で `cat` を撮り、
     // 差が編集の分だけであることを見る**——**イメージの中身を定数として持たない。**
-    // **`64` と `128` はイメージの写しではなく、b-1 まで在った上限そのものである**
+    // **`64` と `128` はイメージのコピーではなく、b-1 まで在った上限そのものである**
     // ——**「その上限を越えている」ことがこの判定の示したいことである。**
     let big_before = program_output(
         plain
@@ -15804,7 +15804,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
     //
     // **期待値をホストが持たない。** **2 つが違うことと、後のほうが
     // `cat` の出した並びの中で後ろに在ることを見る**——**イメージの中身も、
-    // ウィンドウの高さも、動いた量も、写していない。**
+    // ウィンドウの高さも、動いた量も、コピーしていない。**
     //
     // **読むのは画面の行 0 である（ADR-0046 で戻した）。** **VIEW-a では
     // 行 1 を読んでいた**——**診断行が行 0 を上書きしていたための迂回で、
@@ -15866,7 +15866,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
     //
     // **期待値をホストが持たない**とは言えない——**文言は `zi` の側にある。**
     // **`zi` の断り書きであることが分かる形で見る**（`zi:` で始まり、
-    // `writing` を含む）。**丸ごと写すと、文言を直すたびにここも直す。**
+    // `writing` を含む）。**丸ごとコピーすると、文言を直すたびにここも直す。**
     let echo_line = serial
         .lines()
         .find_map(|line| line.split("screen-echo: ").nth(1))
@@ -15911,7 +15911,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
     // **スクリプトは `i`（そのまま）と `a`（1 つ右）を両方通す。** `zi` は
     // 判定行の札を分けている（`insert` と `append`）ので、**直前の報告の桁と
     // 比べる**——`i` は同じ桁、`a` は 1 つ右である。
-    // **期待値を写していない**（数はどちらも `zi` の報告から取る）。
+    // **期待値をコピーしていない**（数はどちらも `zi` の報告から取る）。
     let cursor_reports: Vec<(u32, &str)> = serial
         .lines()
         .filter(|line| line.contains("zi: cursor"))
@@ -15984,7 +15984,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
     //
     // **`less` と同じ形の判定である**（あちらは上限 200 字）。**`zi` の実測は
     // 51 字で、全部描き直すと 944 字である**——**上限は `zi` の実測から
-    // 決めた**（`less` の値を写さない）。**字の数は揺れない。**
+    // 決めた**（`less` の値をコピーしない）。**字の数は揺れない。**
     let zi_moves_one_line = zi_move_cost
         .as_ref()
         .and_then(|values| values.get(3).copied())
@@ -16029,7 +16029,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
     //
     // **実測**——**1 行だけ描くと 232 字、全面だと 1,125 字である。**
     // **上限を 500 字に置くと、両側に 2 倍以上の余裕がある。**
-    // **ウィンドウの移動の上限（200）を写していない**——**`zi` は状態行と
+    // **ウィンドウの移動の上限（200）をコピーしていない**——**`zi` は状態行と
     // コマンド行の 2 本を毎回描くので、下限がそのぶん高い。**
     let insert_draws_one_line = zi_insert_cost
         .as_ref()
@@ -16306,7 +16306,7 @@ fn program_output(segment: &str) -> String {
 /// 「抜けたら元の画面へ戻ること」で、どちらも画面を読む。**
 ///
 /// **期待値をホストが持たない**——**`cat` の出した並びの中で、画面に出た行が
-/// どこに在るかで見る。** **イメージの中身も、ウィンドウの高さも、動いた量も写していない。**
+/// どこに在るかで見る。** **イメージの中身も、ウィンドウの高さも、動いた量もコピーしていない。**
 fn cmd_view_test(features: &[&str]) -> Result<()> {
     let workspace_root = workspace_root()?;
     let run = RunDir::create(&workspace_root, "view-test")?;
@@ -16483,7 +16483,7 @@ fn cmd_view_test(features: &[&str]) -> Result<()> {
     //
     // **期待値をホストが持たない**——**画面の下 3 行のどれかが、`cat` の出した
     // 並びの中に在ることを見る。** **どの行かは書かない**（**画面の高さと
-    // ファイルの長さの関係を写すことになる**）。
+    // ファイルの長さの関係をコピーすることになる**）。
     let more_rows: Vec<String> = serial
         .lines()
         .filter_map(|line| line.split("screen-more: row ").nth(1))
@@ -17532,7 +17532,7 @@ fn cmd_shell_test(mode: ShellTestMode) -> Result<()> {
     cmd_shell_test_with_disk(mode, None)
 }
 
-/// [`cmd_shell_test`] の本体。**`previous` は、ディスクを持ち越す回（`KEYMAP=us`）が写す、前の起動のイメージ**
+/// [`cmd_shell_test`] の本体。**`previous` は、ディスクを持ち越す回（`KEYMAP=us`）がコピーする、前の起動のイメージ**
 /// である（2026-09-29。回ごとの置き場にしたので、渡す形にした）。**渡されなければ、直前の回のイメージを使う**
 /// （以前の決まった置き場と同じ振る舞い）。
 fn cmd_shell_test_with_disk(mode: ShellTestMode, previous: Option<&Path>) -> Result<()> {
@@ -17974,7 +17974,7 @@ fn judge_shell_session(
     // 行末のままで、Delete は消す字を持たない**——走るのは `ij` である。
     // **実測でここを踏んだ**（2026-08-28。スクリプトへ左を足した回で
     // `keyboard-drop-arrows` の実行が落ちた）。**スクリプトを変えるときは、
-    // スクリプトを写している判定を数え直すこと。**
+    // スクリプトをコピーしている判定を数え直すこと。**
     let delete_removed = after_shell.contains("zash: i: cannot run");
     let delete_left_the_csi = after_shell.contains("zash: i3~j: cannot run");
     let delete_left_the_line_alone = after_shell.contains("zash: ij: cannot run");
@@ -27061,7 +27061,7 @@ const SMP_AP_TESTS: &[CriticalTest] = &[
         min_heartbeats: None,
     },
     // AP の CPU ごとのスタックのページに置いた 1 バイト（ret）を実行する（2026-10-02）。**イメージの `.data` とは別の経路
-    // （稼働中の表へ 1 枚ずつ足す経路）で写したページの実行禁止を見る。** 実行するのは BSP で、AP を起こす前である。
+    // （稼働中の表へ 1 枚ずつ足す経路）でマップしたページの実行禁止を見る。** 実行するのは BSP で、AP を起こす前である。
     CriticalTest {
         name: "kernel-executes-stack",
         feature: "kernel-executes-stack-test",
@@ -28066,7 +28066,7 @@ const COMMON_ITEMS_FOR_HOMES: &[CommonItemsForHomes] = &[
     CommonItemsForHomes {
         module: "kernel::page_survey",
         items: &["register", "register_absent"],
-        reason: "写した範囲を、名前つきの領域として登録する（ページの権限の一覧。見張りのページ・CPU ごとのスタック・割り込みコントローラのレジスタは、写す所が置き場の中に在る）",
+        reason: "マップした範囲を、名前つきの領域として登録する（ページの権限の一覧。見張りのページ・CPU ごとのスタック・割り込みコントローラのレジスタは、マップする所が置き場の中に在る）",
     },
     CommonItemsForHomes {
         module: "kernel",
@@ -29666,7 +29666,7 @@ fn check_image_has_no_build_traces(workspace_root: &Path) -> Result<String> {
 
     // --- 建てた人 ---
     // **inode の位置の引き方は `kernel/build.rs` の `zero_image_build_traces`
-    // と同じである。** **写しではあるが、片方が壊れたときにもう片方が落ちる
+    // と同じである。** **コピーではあるが、片方が壊れたときにもう片方が落ちる
     // 形なので、同じ出所から引いてはならない。**
     let u16_at = |o: usize| u16::from_le_bytes([bytes[o], bytes[o + 1]]);
     let u32_at =
@@ -29750,7 +29750,7 @@ fn check_image_has_no_build_traces(workspace_root: &Path) -> Result<String> {
 /// # 検査ではない。読み出しである
 ///
 /// **この関数は値を判定しない。** 期待値を持てば、それは
-/// **`build.rs` が測った値を `xtask` へ書き写すことになり、e-4 が消した
+/// **`build.rs` が測った値を `xtask` へコピーすることになり、e-4 が消した
 /// 手作業が戻る。** **人が読んで気づく側**であって、機械で止める側ではない
 /// （**止める側は同じ検査の `e2fsck` である**。`mke2fs` の版と対にしたのと
 /// 同じ分担である）。
@@ -29953,7 +29953,7 @@ fn run_e2fsck(image: &Path) -> Result<String> {
 /// **cargo の JSON 出力から引く。** `serde` は入れない——見るのは
 /// `build-script-executed` の行 1 種類で、必要な欄は 2 つだけである。
 fn kernel_build_out_dir(workspace_root: &Path) -> Result<PathBuf> {
-    // **全検査の間は裏の流れから受け取る**（2026-09-29。案 A）。**その場で cargo を呼ぶと、裏の流れが写す前の
+    // **全検査の間は裏の流れから受け取る**（2026-09-29。案 A）。**その場で cargo を呼ぶと、裏の流れがコピーする前の
     // ELF を既定の構成で書き換えうる**（cargo は組によらず同じ置き場へ書く）。
     if kernel_builds::is_running() {
         return run_kernel_build(workspace_root, &[]).map(|build| build.out_dir);
@@ -32529,7 +32529,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
         }
 
         // **わざと 1 つの権限を変えると、道具が違いを名前つきで示すこと。** ユーザーの側は、`hello` の
-        // 読みと実行のセグメントを書き込み可で写す形（`AddressSpace::map_user_4kib` の経路）。
+        // 読みと実行のセグメントを書き込み可でマップする形（`AddressSpace::map_user_4kib` の経路）。
         total += 1;
         begin_item(
             Family::Memory,
@@ -32548,7 +32548,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
             &mut failed,
         );
 
-        // カーネルの側は、CPU ごとのスタックをキャッシュ無効で写す形（`ActivePageTable::map_4kib` の経路）。
+        // カーネルの側は、CPU ごとのスタックをキャッシュ無効でマップする形（`ActivePageTable::map_4kib` の経路）。
         total += 1;
         begin_item(
             Family::Memory,
@@ -32567,7 +32567,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
             &mut failed,
         );
 
-        // カーネルのイメージの読むだけのセグメントの 1 ページを、書き込み可で写す形（2026-10-02。イメージをセグメントごとに写す経路）。
+        // カーネルのイメージの読むだけのセグメントの 1 ページを、書き込み可でマップする形（2026-10-02。イメージをセグメントごとにマップする経路）。
         total += 1;
         begin_item(
             Family::Memory,
@@ -35625,7 +35625,7 @@ impl Failures {
     /// もの**（呼んでいなければ実行の記録から分ける。検査装置の故障は見分けられない）。
     fn push(&mut self, name: String) {
         FAILED_SO_FAR.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        // **この項目は失敗した**（2026-10-05）——項目の終わりに、使い捨ての置き場のイメージを SSD へ写す（`run_dir` の
+        // **この項目は失敗した**（2026-10-05）——項目の終わりに、使い捨ての置き場のイメージを SSD へコピーする（`run_dir` の
         // `finish_item`）。
         ITEM_FAILED.with(|slot| slot.set(true));
         let category = ITEM_FAILURE_CATEGORY
@@ -36041,7 +36041,7 @@ fn over_the_time_limit() -> bool {
 /// 走っている項目の所要を出す（VIEW-b の後）。**走っていなければ何もしない。**
 fn finish_item() {
     // **使い捨ての置き場（tmpfs）を片付ける**（2026-10-05。`run_dir` の型の doc）。**項目が失敗していれば、
-    // 装置のイメージと取り出したイメージを SSD の置き場へ写してから消す。**
+    // 装置のイメージと取り出したイメージを SSD の置き場へコピーしてから消す。**
     run_dir::finish_item(ITEM_FAILED.with(|slot| slot.replace(false)));
     let taken = item_clock(|clock| clock.take());
     if let Some((started, label, family)) = taken {
@@ -36770,8 +36770,8 @@ fn received_kernel_build(
 }
 
 /// 裏の流れが kernel を 1 つ作る（2026-09-29。案 A）。**作った直後、次のビルドの前に、cargo の置き場の ELF を
-/// 組ごとの置き場へ写す**——同じ cargo の出力の `OUT_DIR` と対にして返す。**`nice` で優先度を下げる**
-/// （QEMU の試験の邪魔をしない）。**写した後、その組の features で作った成果物と同じ中身かを確かめる**
+/// 組ごとの置き場へコピーする**——同じ cargo の出力の `OUT_DIR` と対にして返す。**`nice` で優先度を下げる**
+/// （QEMU の試験の邪魔をしない）。**コピーした後、その組の features で作った成果物と同じ中身かを確かめる**
 /// （[`kernel_builds::confirm_the_copy`]。違えば、この組は失敗として項目に渡る）。
 fn build_kernel_in_the_background(
     workspace_root: &Path,
@@ -36806,7 +36806,7 @@ fn build_kernel_in_the_background(
         KERNEL_PACKAGE,
     )
     .map_err(|error| format!("{stderr}{error:#}\n"))?;
-    // **違えば写しを消す**——組の置き場に、その組ではない ELF を残さない。
+    // **違えばコピーを消す**——組の置き場に、その組ではない ELF を残さない。
     kernel_builds::confirm_the_copy(artifacts, &kernel_features.resolved(key), &elf).map_err(
         |error| {
             let _ = fs::remove_file(&elf);
@@ -36835,11 +36835,11 @@ fn status_into_item_log(command: &mut Command) -> std::io::Result<std::process::
     Ok(output.status)
 }
 
-/// ビルドしてから組ごとの写しを取るまでを、同じ種類のほかのビルドと重ねない錠（2026-09-29。案 B の ①）。
+/// ビルドしてから組ごとのコピーを取るまでを、同じ種類のほかのビルドと重ねない錠（2026-09-29。案 B の ①）。
 ///
 /// **cargo は組によらず同じ置き場へ成果物を書き直す**ので、同時に走るほかのプロセスが別の組をビルドすると、
-/// ビルドしてから写すまでの間に写すものが入れ替わりうる。**錠を持つ間にビルドと写しを済ませる**（プロセスが終われば、
-/// 殺された場合も、カーネルが錠を放す）。錠のファイルは写しの置き場（`target/kernel-builds/`）に置く。
+/// ビルドしてからコピーするまでの間にコピーするものが入れ替わりうる。**錠を持つ間にビルドとコピーを済ませる**（プロセスが終われば、
+/// 殺された場合も、カーネルが錠を放す）。錠のファイルはキャッシュ（`target/kernel-builds/`）に置く。
 fn with_build_lock<T>(
     workspace_root: &Path,
     kind: &str,
@@ -36862,7 +36862,7 @@ fn with_build_lock<T>(
     result
 }
 
-/// ビルドの成果物を、組ごとの置き場（`target/kernel-builds/<種類>/<組>/`）へ写す（案 A）。
+/// ビルドの成果物を、組ごとの置き場（`target/kernel-builds/<種類>/<組>/`）へコピーする（案 A）。
 fn keep_a_copy(
     workspace_root: &Path,
     kind: &str,
@@ -36884,8 +36884,8 @@ fn keep_a_copy(
     fs::create_dir_all(&directory)
         .with_context(|| format!("failed to create {}", directory.display()))?;
     let copy = directory.join(file_name);
-    // **写し元と写し先が同じファイルなら、写さずに落ちる**（2026-09-29）。**`fs::copy` は写し先を空にしてから
-    // 写す**ので、同じファイルへ写すと、誤りを出さずに中身が空になる（案 B の ①の後の全検査では、空のブートローダを
+    // **コピーし元とコピーし先が同じファイルなら、コピーせずに落ちる**（2026-09-29）。**`fs::copy` はコピーし先を空にしてから
+    // コピーする**ので、同じファイルへコピーすると、誤りを出さずに中身が空になる（案 B の ①の後の全検査では、空のブートローダを
     // 積んだ QEMU の項目が、どれも起動せずに落ち続けた）。
     if is_same_file(built, &copy) {
         bail!(
@@ -36894,8 +36894,8 @@ fn keep_a_copy(
             key.join(",")
         );
     }
-    // **別の名前へ写してから置き換える**（2026-09-29。案 B の ②）——**同時に走るほかの実行が、同じ組の写しを
-    // ESP へ写している途中でも、書きかけを読ませない**（写しを ESP へ写すのは錠の外である）。rename は同じ
+    // **別の名前へコピーしてから置き換える**（2026-09-29。案 B の ②）——**同時に走るほかの実行が、同じ組のコピーを
+    // ESP へコピーしている途中でも、書きかけを読ませない**（コピーを ESP へコピーするのは錠の外である）。rename は同じ
     // ディレクトリの中なので、置き換えは一度に起きる。
     let partial = directory.join(format!(".{file_name}.{}.partial", std::process::id()));
     fs::copy(built, &partial).with_context(|| {
@@ -36962,7 +36962,7 @@ impl KernelFeatures {
     }
 
     /// その組で cargo が有効にする kernel の feature の全部（`default` とそこから辿れるものを含む。並べ替えたもの）。
-    /// **cargo の fingerprint の `features` と同じ形**——写しの確かめに使う（[`kernel_builds::confirm_the_copy`]）。
+    /// **cargo の fingerprint の `features` と同じ形**——コピーの確かめに使う（[`kernel_builds::confirm_the_copy`]）。
     fn resolved(&self, key: &kernel_builds::Key) -> Vec<String> {
         let mut enabled: Vec<String> = std::iter::once("default")
             .chain(key.iter().map(String::as_str))
@@ -37169,9 +37169,9 @@ fn run_kernel_build_unwrapped(workspace_root: &Path, features: &[&str]) -> Resul
     if let Some(received) = kernel_builds::kernel(features) {
         return received_kernel_build(features, received);
     }
-    // **組ごとの写しから取る**（2026-09-29。案 B の ①。案 A の写しの守りと同じ考え方）——**同時に走るほかの
-    // プロセスが、組によらず同じ置き場の ELF を別の組で書き直しても取り違えない。** ビルドと写しは錠の中で行い
-    // （[`with_build_lock`]）、写しがその組の cargo の成果物と同じかを確かめる（[`kernel_builds::confirm_the_copy`]）。
+    // **組ごとのコピーしから取る**（2026-09-29。案 B の ①。案 A のコピーの守りと同じ考え方）——**同時に走るほかの
+    // プロセスが、組によらず同じ置き場の ELF を別の組で書き直しても取り違えない。** ビルドとコピーは錠の中で行い
+    // （[`with_build_lock`]）、コピーがその組の cargo の成果物と同じかを確かめる（[`kernel_builds::confirm_the_copy`]）。
     let table = KernelFeatures::read(workspace_root)?;
     let key = kernel_builds::canonical_key(features, &|feature: &str| table.reached(feature));
     let (output, elf) = with_build_lock(workspace_root, "kernel", || {
@@ -37337,18 +37337,18 @@ fn stage_ram_image(esp_dir: &Path, kernel: &KernelBuild) -> Result<()> {
 /// ディスクのイメージの、0 だけのブロックを見分ける単位（バイト）。ext2 のブロックと同じ大きさにしてある。
 const SPARSE_COPY_BLOCK: usize = 4096;
 
-/// ディスクのイメージを、**0 だけのブロックを書かずに**写す（2026-10-05。`ADR-0077` の決定 6）。
+/// ディスクのイメージを、**0 だけのブロックを書かずに**コピーする（2026-10-05。`ADR-0077` の決定 6）。
 ///
 /// # なぜ要るか
 ///
 /// **イメージの大半は、使っていない 0 のブロックである**（32 MiB のイメージで、使っているのは約 3 MiB）。`fs::copy` は
-/// 0 も書くので、写しの 1 つ 1 つが、イメージの大きさだけディスクを取る。回ごとの置き場に装置のイメージが 1 つずつ残るので、
+/// 0 も書くので、コピーの 1 つ 1 つが、イメージの大きさだけディスクを取る。回ごとの置き場に装置のイメージが 1 つずつ残るので、
 /// イメージを大きくすると、そのままホストのディスクに効いた（実測。全検査の木が 8.2 GiB 増えた）。
 ///
 /// # 守ること
 ///
 /// **ファイルの長さは変えない。** QEMU も検査も、イメージを長さで見ている（装置の容量、書き戻したバイト数、
-/// 取り出したイメージとの比べ）。**写した後の長さが元と同じであることを、ここで確かめる**——違えば、写しを使わせずに
+/// 取り出したイメージとの比べ）。**コピーした後の長さが元と同じであることを、ここで確かめる**——違えば、コピーを使わせずに
 /// 落ちる。中身は、どのバイトも元と同じである（書かなかった所は、ファイルシステムが 0 として読ませる）。
 fn copy_image_sparse(from: &Path, to: &Path) -> Result<()> {
     let bytes = fs::read(from).with_context(|| format!("failed to read {}", from.display()))?;
@@ -37466,7 +37466,7 @@ fn stage_esp_with_disk_unwrapped(
     // （[`KernelBuild`] の doc）。**別の構成のイメージを載せると、カーネルの
     // 突き合わせが落ちて、シェルが起動する前に停止する。**
     let built = kernel.out_dir.join(FS_IMAGE_NAME);
-    // **持ち越す起動では、前の起動が書いたイメージを、この回の置き場へ写す（P-a）。**
+    // **持ち越す起動では、前の起動が書いたイメージを、この回の置き場へコピーする（P-a）。**
     // **無ければ作り直す**——1 度目の起動はここを通る。
     match (disk, previous) {
         (DiskImage::Keep, Some(previous)) if previous.is_file() => {
@@ -37496,7 +37496,7 @@ fn stage_esp_with_disk_unwrapped(
 }
 
 /// ESP に積んだファイルを確かめる（2026-09-29。案 B の ①の後の全検査では、空のブートローダを積んだ QEMU の項目が
-/// どれも「起動しない」で落ち、ログは環境のせいと言っていた）。**外れたら、どのファイルがどうだったかと写し元を
+/// どれも「起動しない」で落ち、ログは環境のせいと言っていた）。**外れたら、どのファイルがどうだったかとコピーし元を
 /// 出して落とす**——**環境ではなく、作ったものの不具合として**（誤りは [`stage_esp_with_disk`] が検査装置の故障に
 /// 包む）。**読むのは大きさと先頭の数バイトだけである。**
 fn check_staged_file(staged: &Path, magic: &[u8], form: &str, source: &Path) -> Result<()> {
@@ -37919,7 +37919,7 @@ thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack
 
     use super::*;
 
-    /// 写しの置き場の数の行を読む（2026-10-08）。
+    /// キャッシュの数の行を読む（2026-10-08）。
     #[test]
     fn the_cache_tally_is_read_from_its_lines() {
         assert_eq!(
@@ -37959,7 +37959,7 @@ thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack
             .contains("did not miss and then hit"));
     }
 
-    /// イメージを穴の在るファイルとして写しても、**長さと中身は元と同じである**（2026-10-05）。0 だけのブロックが
+    /// イメージを穴の在るファイルとしてコピーしても、**長さと中身は元と同じである**（2026-10-05）。0 だけのブロックが
     /// 参照を取り直してよいのは、場面の終わりまで届き、カーネルが止まっていない回だけである（2026-10-05）。
     #[test]
     fn a_reference_is_written_only_from_a_boot_that_reached_the_end() {
@@ -38000,7 +38000,7 @@ thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack
             let from = dir.join(format!("{name}.img"));
             let to = dir.join(format!("{name}.copy"));
             fs::write(&from, &bytes).unwrap();
-            // 写し先に、長い前の中身を置いておく。**作り直すので、残らない。**
+            // コピーし先に、長い前の中身を置いておく。**作り直すので、残らない。**
             fs::write(&to, vec![0x55u8; bytes.len() + 5000]).unwrap();
             copy_image_sparse(&from, &to).unwrap();
             assert_eq!(
@@ -39113,7 +39113,7 @@ warning: `kernel` (lib doc) generated 1 warning
         assert_eq!(block, "to-stdout\nto-stderr\n");
     }
 
-    /// **写しは別の名前へ写してから置き換える**——**書き終えた中身だけが写しの名前に現れ、途中の名前は残らない**
+    /// **コピーは別の名前へコピーしてから置き換える**——**書き終えた中身だけがコピーの名前に現れ、途中の名前は残らない**
     /// （2026-09-29。案 B の ②）。
     #[test]
     fn a_copy_is_written_aside_and_then_put_in_place() {
@@ -39136,8 +39136,8 @@ warning: `kernel` (lib doc) generated 1 warning
         assert_eq!(names, vec!["bootloader.efi".to_string()]);
     }
 
-    /// **写し元と写し先が同じファイルなら、写さずに落ちる。中身は残る**（2026-09-29。`fs::copy` は同じファイルへ
-    /// 写すと中身を空にする）。
+    /// **コピーし元とコピーし先が同じファイルなら、コピーせずに落ちる。中身は残る**（2026-09-29。`fs::copy` は同じファイルへ
+    /// コピーすると中身を空にする）。
     #[test]
     fn a_copy_onto_itself_is_refused_and_the_file_is_kept() {
         let root = std::env::temp_dir().join(format!("zeikos-keep-a-copy-{}", std::process::id()));

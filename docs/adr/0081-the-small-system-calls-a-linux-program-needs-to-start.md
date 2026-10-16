@@ -32,7 +32,7 @@ Accepted（2026-10-06に運用者が設計案を承認し、同じ日に実装�
 | `uname` | 下の4 |
 | `readlink` | `/proc/self/exe`だけ、載せたときの名前を返す。ext2にシンボリックリンクは無いので、ほかは`-EINVAL`か`-ENOENT` |
 | `fstat` | `stat`と同じ欄をfdから。開いたファイルはinodeの値、共有メモリは普通のファイル、ソケットとパイプはそれぞれの型、端末・入力・画面は文字装置 |
-| `fcntl` | `F_GETFD`/`F_SETFD`/`F_GETFL`/`F_SETFL`は受けて0（`FD_CLOEXEC`も`O_NONBLOCK`も持たない——`exec`は無く、ソケットの読みはもとから待たない）。`F_DUPFD`/`F_DUPFD_CLOEXEC`は`arg`以上の最小の空き番号へ写す。`F_ADD_SEALS`/`F_GET_SEALS`は共有メモリにだけ、受けて0 |
+| `fcntl` | `F_GETFD`/`F_SETFD`/`F_GETFL`/`F_SETFL`は受けて0（`FD_CLOEXEC`も`O_NONBLOCK`も持たない——`exec`は無く、ソケットの読みはもとから待たない）。`F_DUPFD`/`F_DUPFD_CLOEXEC`は`arg`以上の最小の空き番号へコピーする。`F_ADD_SEALS`/`F_GET_SEALS`は共有メモリにだけ、受けて0 |
 | `sendto` | `addr`が無ければ`write`と同じ。在れば`-EISCONN`。`flags`は見ない |
 
 ### 2. シグナルは、登録と問い合わせだけを受ける。配送はしない

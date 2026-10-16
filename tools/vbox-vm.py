@@ -33,7 +33,7 @@
     2. storageattach ... --medium none  （VDI を外す。付けたまま消すと登録が残る）
     3. closemedium disk <VDI> --delete  （登録から外し、ファイルを消す）
     4. unregistervm <名前> --delete     （.vbox と VM フォルダを消す）
-    5. 道具が置いたもの（シリアルの写し・画面）を消す
+    5. 道具が置いたもの（シリアルのコピーし・画面）を消す
     6. 残ったフォルダが空なら消す。空でなければ、残ったものの名前を出す
 
 **`create` で VDI を作り直すときも 3 を先に行う**——**同じパス・同じ名前の媒体が
@@ -67,7 +67,7 @@
 - `record.txt`——git の HEAD、未コミットの変更が在るか、`git diff HEAD` の sha256、今のイメージの sha256、
   作ったときの記録（`create` が残す `latest-create.txt`）、VirtualBox の版
 - `showvminfo.txt`——`showvminfo --machinereadable`（VM の設定）
-- `serial.log`——シリアルの写し。**起こす前に古いものを消す**（前の走行と混ざらない）
+- `serial.log`——シリアルのコピー。**起こす前に古いものを消す**（前の走行と混ざらない）
 - `counters-before.txt` / `counters-after.txt`——打鍵の前後の APIC のベクタごとの計数
   （`debugvm statistics`。**VM の外から数えた証拠**）
 - `keys.txt`——送った打鍵（PS/2 のスキャンコード）
@@ -419,7 +419,7 @@ def run(vm, image, timeout):
     """1 回の走行を記録する（2-2）。**判定はしない**——`cargo xtask judge-vbox` が行う。
 
     起こす → プロンプトを待つ → 計数を読む → 打鍵を送る → シェルの答えを待つ → 計数を読む → 止める
-    → 写す。**待ちには上限がある**（`timeout` 秒。出なければ、そこまでの記録を残して止める）。
+    → コピーする。**待ちには上限がある**（`timeout` 秒。出なければ、そこまでの記録を残して止める）。
     """
     # **ロックを先に見る**——**全検査の間は、`VBoxManage` を 1 度も呼ばずに 75 で断る**（2026-09-25）。
     # **走る間はロックを持つ**（プロセスが終わるまで）。

@@ -1,7 +1,7 @@
 //! 回ごとの置き場（案 B の ①。2026-09-29）。
 //!
-//! **1 回の QEMU の実行が読み書きするもの**——ESP・`disk0.img`・OVMF の変数の写し・シリアルのログ・`qemu-debug.log`・
-//! 画面の写し・一時ファイル・monitor のソケット——**を、回ごとの置き場 `target/runs/<回の番号>/` に置く。**
+//! **1 回の QEMU の実行が読み書きするもの**——ESP・`disk0.img`・OVMF の変数のコピーし・シリアルのログ・`qemu-debug.log`・
+//! 画面のコピーし・一時ファイル・monitor のソケット——**を、回ごとの置き場 `target/runs/<回の番号>/` に置く。**
 //! 以前は `target/` の下の決まった名前に置いていたので、2 つの実行を同時に走らせると、互いの ESP やログを
 //! 書き換えた。**置き場の名前を組み立てるのは、この型（[`RunDir`]）だけである**——基本の検査が、ほかの所に
 //! 決まった名前が無いことを数える（`fixed_run_names`）。
@@ -74,14 +74,14 @@ const ALLOCATION_ATTEMPTS: u64 = 1000;
 /// SSD に置いていたときは、全検査 1 回で 100 GiB ほどを書いていた（実測。`docs/verification-coverage.md` の
 /// 「全検査が SSD に書く量」）。**ログ（シリアルと `-D` の記録）と `run.txt` は、今までどおり SSD の置き場に置く。**
 ///
-/// **使い捨ての置き場は、値を落とすときに消す。** その前に、**後で要るものだけを SSD の置き場へ写す**（0 だけの
+/// **使い捨ての置き場は、値を落とすときに消す。** その前に、**後で要るものだけを SSD の置き場へコピーする**（0 だけの
 /// ブロックは書かない）。
 ///
 /// - **項目の中で作った置き場**（全検査と、検査の項目）——項目が終わるまで残し（同じ項目の次の起動が、前の起動の
-///   装置のイメージを読む）、**項目が失敗したときだけ**、装置のイメージと取り出したイメージを写す（[`finish_item`]）。
-/// - **項目の外で作った置き場**（手で打つ起動）——落とすときに、装置のイメージと取り出したイメージを写す。次の起動が前の
+///   装置のイメージを読む）、**項目が失敗したときだけ**、装置のイメージと取り出したイメージをコピーする（[`finish_item`]）。
+/// - **項目の外で作った置き場**（手で打つ起動）——落とすときに、装置のイメージと取り出したイメージをコピーする。次の起動が前の
 ///   装置のイメージを持ち越す流れ（`--keep-disk`・`--manual`）が、今までどおり動く。
-/// - **既定のイメージとして示した置き場**（[`RunDir::publish_as_default_image`]）——ESP も写す（道具が読む）。
+/// - **既定のイメージとして示した置き場**（[`RunDir::publish_as_default_image`]）——ESP もコピーする（道具が読む）。
 ///
 /// **tmpfs が使えないか、空きが少ないか、検査が置いている量が上限（[`SCRATCH_BUDGET_BYTES`]）を越えそうなときは、
 /// 使い捨ての置き場も SSD の置き場と同じ所になる**（今までの形）。**その回は、理由を `run.txt` と端末に出す。**
@@ -91,7 +91,7 @@ pub struct RunDir {
     path: PathBuf,
     /// 使い捨ての置き場。**tmpfs に置けなかった回は、`path` と同じである。**
     scratch: PathBuf,
-    /// 既定のイメージとして示したか（落とすときに、ESP も写す）。
+    /// 既定のイメージとして示したか（落とすときに、ESP もコピーする）。
     published: std::cell::Cell<bool>,
     _lock: Option<File>,
 }
@@ -110,8 +110,8 @@ pub fn begin_item() {
     ITEM_SCRATCH.with(|slot| *slot.borrow_mut() = Some(Vec::new()));
 }
 
-/// 項目が終わった。**失敗していれば、装置のイメージと取り出したイメージを SSD の置き場へ写してから、使い捨ての置き場を消す。**
-/// 通っていれば、写さずに消す。
+/// 項目が終わった。**失敗していれば、装置のイメージと取り出したイメージを SSD の置き場へコピーしてから、使い捨ての置き場を消す。**
+/// 通っていれば、コピーせずに消す。
 pub fn finish_item(failed: bool) {
     let pending = ITEM_SCRATCH.with(|slot| slot.borrow_mut().take());
     for (scratch, path, published) in pending.unwrap_or_default() {
@@ -119,8 +119,8 @@ pub fn finish_item(failed: bool) {
     }
 }
 
-/// 使い捨ての置き場を片付ける。`keep_images` なら、装置のイメージと取り出したイメージを SSD の置き場へ写す。`keep_esp` なら
-/// ESP も写す。**写しは、0 だけのブロックを書かない。** 失敗は無視する（片付けは検査の結果に効かない）。
+/// 使い捨ての置き場を片付ける。`keep_images` なら、装置のイメージと取り出したイメージを SSD の置き場へコピーする。`keep_esp` なら
+/// ESP もコピーする。**コピーは、0 だけのブロックを書かない。** 失敗は無視する（片付けは検査の結果に効かない）。
 fn retire_scratch(scratch: &Path, path: &Path, keep_images: bool, keep_esp: bool) {
     if scratch == path {
         return;
@@ -139,7 +139,7 @@ fn retire_scratch(scratch: &Path, path: &Path, keep_images: bool, keep_esp: bool
     let _ = fs::remove_dir_all(scratch);
 }
 
-/// ディレクトリを丸ごと写す（既定のイメージとして示した置き場の ESP。小さいので、そのまま写す）。
+/// ディレクトリを丸ごとコピーする（既定のイメージとして示した置き場の ESP。小さいので、そのままコピーする）。
 fn copy_tree(from: &Path, to: &Path) {
     let Ok(entries) = fs::read_dir(from) else {
         return;
@@ -155,7 +155,7 @@ fn copy_tree(from: &Path, to: &Path) {
     }
 }
 
-/// ファイルを、0 だけの 4 KiB のブロックを書かずに写す。**長さは変えない。**
+/// ファイルを、0 だけの 4 KiB のブロックを書かずにコピーする。**長さは変えない。**
 fn copy_sparse(from: &Path, to: &Path) -> std::io::Result<()> {
     use std::io::{Seek, SeekFrom};
 
@@ -400,12 +400,12 @@ impl RunDir {
         self.scratch.join(EXTRACTED_IMAGE)
     }
 
-    /// その回だけの大きなファイル（起動媒体のイメージなど）。**使い捨ての置き場に在り、SSD へは写さない。**
+    /// その回だけの大きなファイル（起動媒体のイメージなど）。**使い捨ての置き場に在り、SSD へはコピーしない。**
     pub fn scratch_file(&self, name: &str) -> PathBuf {
         self.scratch.join(name)
     }
 
-    /// OVMF の変数の写し（毎回テンプレートから作り直す）。
+    /// OVMF の変数のコピーし（毎回テンプレートから作り直す）。
     pub fn ovmf_vars(&self) -> PathBuf {
         self.path.join("OVMF_VARS_4M.fd")
     }
@@ -420,7 +420,7 @@ impl RunDir {
         self.path.join("qemu-debug.log")
     }
 
-    /// そのほかのファイル（画面の写し・取り出したイメージなど）。**名前は置き場の中だけで意味を持つ。**
+    /// そのほかのファイル（画面のコピーし・取り出したイメージなど）。**名前は置き場の中だけで意味を持つ。**
     pub fn file(&self, name: &str) -> PathBuf {
         self.path.join(name)
     }
@@ -449,7 +449,7 @@ impl RunDir {
         // **置き換えは rename で 1 度に行う**——読む側が、印の無い瞬間を見ない。
         fs::rename(&staged, &link)
             .with_context(|| format!("failed to replace {}", link.display()))?;
-        // **落とすときに、ESP も SSD の置き場へ写す**（道具は、SSD の置き場を読む）。
+        // **落とすときに、ESP も SSD の置き場へコピーする**（道具は、SSD の置き場を読む）。
         self.published.set(true);
         Ok(())
     }
@@ -465,7 +465,7 @@ impl RunDir {
             .collect();
         numbers.sort_unstable_by(|a, b| b.cmp(a));
         // **使い捨ての置き場に残っていれば、そちらを先に見る**（同じ項目の中の、前の起動）。無ければ、SSD の置き場
-        // （落とすときに写したもの）を見る。
+        // （落とすときにコピーしたもの）を見る。
         let base = scratch_base(runs);
         numbers
             .into_iter()
@@ -485,7 +485,7 @@ impl Drop for RunDir {
         if self.scratch == self.path {
             return;
         }
-        // **既定のイメージとして示した回の ESP と装置のイメージは、ここで写す**（項目の終わりを待たない）——同じ項目の中で、
+        // **既定のイメージとして示した回の ESP と装置のイメージは、ここでコピーする**（項目の終わりを待たない）——同じ項目の中で、
         // すぐ後に走る道具（`tools/stack-deepest.py`）が、SSD の置き場の ELF と `disk0.img` を読む。項目の終わりまで
         // 待つと、道具が読む時点でまだ無い（全検査で 2 度落ちた。1 度目は ELF、2 度目は装置のイメージ）。
         if self.published.get() {
@@ -696,8 +696,8 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
     }
 
-    /// 使い捨ての置き場を片付けるとき、**残すと決めた回だけ、装置のイメージと取り出したイメージを SSD の置き場へ写す。**
-    /// 写しは長さと中身が同じである。どちらの場合も、使い捨ての置き場は消える。
+    /// 使い捨ての置き場を片付けるとき、**残すと決めた回だけ、装置のイメージと取り出したイメージを SSD の置き場へコピーする。**
+    /// コピーは長さと中身が同じである。どちらの場合も、使い捨ての置き場は消える。
     #[test]
     fn retiring_scratch_copies_the_images_only_when_asked() {
         let root = std::env::temp_dir().join(format!("zeikos-scratch-{}", std::process::id()));
@@ -724,7 +724,7 @@ mod tests {
                 assert_eq!(fs::read(path.join(DISK_IMAGE)).unwrap(), image);
             }
         }
-        // 既定のイメージとして示した回は、ESP も写す。
+        // 既定のイメージとして示した回は、ESP もコピーする。
         let scratch = root.join("published").join("scratch");
         let path = root.join("published").join("run");
         fs::create_dir_all(scratch.join(ESP).join("zeikos")).unwrap();
