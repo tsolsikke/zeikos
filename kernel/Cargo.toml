@@ -126,7 +126,7 @@ keyboard-drop-esc-test = []
 keyboard-drop-home-end-test = []
 # 破壊（SE-a。ADR-0050）: Ctrl+英字の一般化を外し、Ctrl+C だけに戻す。
 # `--shell-test` の「Ctrl+A と Ctrl+E が挿入点を端へ動かした」判定が落ちる。
-# 止めた子の判定は緑のまま——中断の旗は割り込み側の別経路である。
+# 止めた子の判定は緑のまま——中断のフラグは割り込み側の別経路である。
 keyboard-drop-ctrl-letters-test = []
 # 破壊（SE-b。ADR-0050）: zash が知らない制御バイトを捨てず、行へ入れる。
 # Tab の `0x09` と Ctrl+D の `0x04` が語に混ざるので、`--shell-test` の
@@ -204,7 +204,7 @@ shell-drop-history-test = []
 # 黙って飛ばされる。`--zi-test` の「保存が装置へ届いた」判定が落ちる。
 virtio-skip-install-test = []
 # 破壊（SE-f）: zash が消す範囲の先頭を1つ後ろへずらす。消える字が1つ減るので、
-# 消す鍵の判定が同時に落ちる。届くことではなく、範囲の計算を守る破壊である。
+# 消すキーの判定が同時に落ちる。届くことではなく、範囲の計算を守る破壊である。
 shell-shift-delete-range-test = []
 # 検証（zi-b）: 起動シーケンスで ANSI の解釈を前景経路ごと実演し、判定行を
 # 出す。壊す経路ではない（exception-test 等と同じ検証用フック）。
@@ -373,13 +373,13 @@ ext2-sparse-as-error-test = ["common/ext2-sparse-as-error"]
 # 破壊（ADR-0039）: セグメントを memsz ではなく filesz で張る。.bss が張られず、
 # /bin/bss-test がゼロを読もうとして落ちる。
 user-load-filesz-only = []
-# 破壊（S12 前の手当て、C）: 中断（Ctrl+C）の旗を立てない。走っている子が
+# 破壊（S12 前の手当て、C）: 中断（Ctrl+C）のフラグを立てない。走っている子が
 # 止まらなくなる。
 kill-ignore-interrupt-test = []
 # 破壊（S12 前の手当て、C）: 深さ 1 でも畳む。シェル自身が Ctrl+C で死に、
 # `init` が起こし直す。
 kill-fold-at-depth-one-test = []
-# 破壊（S12 前の手当て、C）: 子を起こす前に中断の旗を降ろさない。
+# 破壊（S12 前の手当て、C）: 子を起こす前に中断のフラグを降ろさない。
 # 直前の Ctrl+C が次の子へ持ち越され、起きた瞬間に止まる。
 kill-keep-stale-interrupt-test = []
 # 破壊（S12 前の手当て、C）: BKL を解かずに畳む。次に BKL を取る者が、
@@ -859,7 +859,7 @@ ttf-test = []
 # シリアルの排他の演習（シリアルの排他の段）。BSP と AP が合図で揃えてから、
 # 既知の行を 200 本ずつ同時に書く。破壊ではない。
 serial-stress-test = []
-# 破壊（シリアルの排他の段）: UART の錠を取らない。上の演習で行が混ざる。
+# 破壊（シリアルの排他の段）: UART のロックを取らない。上の演習で行が混ざる。
 serial-no-lock-test = ["serial-stress-test", "common/serial-no-lock"]
 # 上の演習の、AP の側が 1 行ごとにシリアルを直に開く形（2026-10-01）。開くたびに UART の設定を
 # 書き直していないことを見る。破壊ではない。

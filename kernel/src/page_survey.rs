@@ -490,7 +490,7 @@ pub unsafe fn report_kernel(
     root: PhysAddr,
     direct_map: DirectMap,
 ) {
-    // **錠の中ではコピーするだけにする**（歩く間と出す間は持たない）。
+    // **ロックの中ではコピーするだけにする**（歩く間と出す間は持たない）。
     let (regions, refused) = {
         let regions = KERNEL_REGIONS.lock();
         (regions.list(), regions.refused())

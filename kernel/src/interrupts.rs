@@ -1457,7 +1457,7 @@ const fn ap_tick_summary() -> ApTickSummary {
 ///
 /// **合図を立て、AP と同時に既知の行を書き、AP が書き終えるのを待つ。**
 /// **待つのは、演習の途中でこの先の起動シーケンスが混ざらないようにするため
-/// である**——**混ざると、判定が「錠が効いていない」と「起動の行が挟まった」を
+/// である**——**混ざると、判定が「ロックが効いていない」と「起動の行が挟まった」を
 /// 区別できなくなる。**
 #[cfg(feature = "serial-stress-test")]
 fn run_serial_stress_on_bsp(logger: &mut Logger<Serial>) {

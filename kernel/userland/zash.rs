@@ -469,7 +469,7 @@ static mut SAVE_COMPLAINED: bool = false;
 ///
 /// # なぜこの破壊テストが要るのか
 ///
-/// **`keyboard-drop-ctrl-letters-test` が覆っているのは「鍵が届くこと」であって、
+/// **`keyboard-drop-ctrl-letters-test` が覆っているのは「キーが届くこと」であって、
 /// 「範囲の計算が正しいこと」ではない。** **`Ctrl+K` が誤って行頭まで消す形は、
 /// キーが届いているので、あの破壊テストでは検出されない。**
 ///

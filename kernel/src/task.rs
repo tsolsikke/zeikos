@@ -399,7 +399,7 @@ pub enum Wait {
         /// 待っている側。
         side: crate::socket::Side,
     },
-    /// futex のアドレスで待っている（`ADR-0081` の Addendum。2026-10-14。`ADR-0085` の決定 4）。**鍵はプロセス（スロット）と
+    /// futex のアドレスで待っている（`ADR-0081` の Addendum。2026-10-14。`ADR-0085` の決定 4）。**キーはプロセス（スロット）と
     /// ユーザーのアドレスの組である**——同じアドレスでも別のスロットのプロセスは起こさない。**起こすのは `FUTEX_WAKE` と、
     /// スレッドの終わり（`CLONE_CHILD_CLEARTID` のアドレス）である。**
     Futex {
@@ -409,7 +409,7 @@ pub enum Wait {
         /// ユーザーのアドレス（4 バイト境界）。
         address: u64,
     },
-    /// `flock` の取り直し待ち（`ADR-0087`。2026-10-16）。鍵は ext2 の inode 番号。放した側が起こす（空振りを許す）。
+    /// `flock` の取り直し待ち（`ADR-0087`。2026-10-16）。キーは ext2 の inode 番号。放した側が起こす（空振りを許す）。
     FileLock { inode: u32 },
 }
 
@@ -2156,7 +2156,7 @@ pub(crate) fn wake_up_to_tasks_waiting_on(on: Wait, limit: usize) -> usize {
 /// 起きた主スレッドは `futex` の戻りで印を見て出る。起きた側が別のスレッドなら、同じ出口で印を見て `Finished` になる。
 /// **パイプ・キーボード・タイマの待ちは起こさない**（起こしても眠り直す。`docs/deferred-decisions.md`）。
 ///
-/// **BKL の内側（IF=0）で呼ぶ。** 合図で引く形は `wake_tasks_waiting_on` と同じで、鍵がスロットだけである。
+/// **BKL の内側（IF=0）で呼ぶ。** 合図で引く形は `wake_tasks_waiting_on` と同じで、キーがスロットだけである。
 pub fn wake_futex_waiters_of_slot(slot: usize) -> usize {
     debug_assert!(crate::bkl::held_by_this_cpu());
     // 破壊テスト (M3a の 3-2, process-end-keeps-futex-sleepers-test): 起こさない。`join` で眠る主スレッドが永久に残り、
@@ -4762,7 +4762,7 @@ mod tests {
         ));
     }
 
-    /// futex の鍵はスロットとアドレスの組である——同じアドレスでも別のスロットは起こさない。
+    /// futex のキーはスロットとアドレスの組である——同じアドレスでも別のスロットは起こさない。
     #[test]
     fn a_futex_wait_matches_only_the_same_slot_and_address() {
         use super::{Wait, WaitSet};

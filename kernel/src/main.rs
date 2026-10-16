@@ -5772,7 +5772,7 @@ static NX_DATA_ELF: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/nx-data.el
 static NX_BRK_ELF: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/nx-brk.elf"));
 static NX_RODATA_ELF: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/nx-rodata.elf"));
 
-/// 埋め込んだユーザープログラム `debug-trap` の ELF（2026-10-04）。**単発の実行の旗を立てて、終了させられる**
+/// 埋め込んだユーザープログラム `debug-trap` の ELF（2026-10-04）。**単発の実行のフラグを立てて、終了させられる**
 /// （`kernel/userland/debug-trap.rs`）。
 static DEBUG_TRAP_ELF: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/debug-trap.elf"));
 
@@ -9718,7 +9718,7 @@ enum UserProgramOutcome {
         /// 跳ぶ先のアドレス。**止まるアドレスでもある。**
         target: u64,
     },
-    /// 単発の実行の旗を自分で立て、命令を 1 つ実行した所で終了させられる（2026-10-04）。
+    /// 単発の実行のフラグを自分で立て、命令を 1 つ実行した所で終了させられる（2026-10-04）。
     ///
     /// **判定は CPU の置き場が持つ**（`kernel::arch::x86_64::ring3::stopped_after_one_step_at`）。ここに書くのは、
     /// 止まる位置だけである。
@@ -9864,7 +9864,7 @@ const USER_PROGRAMS: &[UserProgram] = &[
         argv: &[b"nx-brk"],
         enters_with_direction_flag: None,
     },
-    // **単発の実行の旗を立てて、その例外で終了させられる**（2026-10-04）。**この例外は専用のスタックで配送される。**
+    // **単発の実行のフラグを立てて、その例外で終了させられる**（2026-10-04）。**この例外は専用のスタックで配送される。**
     // 畳む前の確かめ（処理が、その例外のゲートが指すスタックの上で走っていること）を通るので、畳まれて終われば、
     // 専用のスタックの上で配送されたことになる（`kernel/userland/debug-trap.rs`）。
     UserProgram {
@@ -9912,7 +9912,7 @@ const USER_PROGRAMS: &[UserProgram] = &[
         enters_with_direction_flag: Some(kernel::arch::x86_64::idt::EntryPath::Syscall),
     },
     // **`syscall` 命令の入口**（2026-10-04）。**同じ呼び出しを両方の入口で打って、結果が同じことを見る。** 6 つの引数が
-    // 届くこと、戻った後の汎用の値、旗を立てたまま呼んでも止まらないことも見る（`kernel/userland/syscall-insn.rs`）。
+    // 届くこと、戻った後の汎用の値、フラグを立てたまま呼んでも止まらないことも見る（`kernel/userland/syscall-insn.rs`）。
     UserProgram {
         name: "syscall-insn",
         image: SYSCALL_INSN_ELF,
@@ -9923,11 +9923,11 @@ const USER_PROGRAMS: &[UserProgram] = &[
         probes_abi: true,
         status_meanings: SYSCALL_INSN_STATUS,
         argv: &[b"syscall-insn"],
-        // **方向の旗を立てたまま、命令の入口から入る。**
+        // **方向のフラグを立てたまま、命令の入口から入る。**
         enters_with_direction_flag: Some(kernel::arch::x86_64::EntryPath::Syscall),
     },
-    // **単発の実行の旗を立ててから、命令の入口でカーネルへ入る**（2026-10-04）。**例外は、戻った後のユーザーの側で
-    // 起きる**（入るときに、その旗を落とす）。カーネルの中で起きていれば、畳まれずに止まる。
+    // **単発の実行のフラグを立ててから、命令の入口でカーネルへ入る**（2026-10-04）。**例外は、戻った後のユーザーの側で
+    // 起きる**（入るときに、そのフラグを落とす）。カーネルの中で起きていれば、畳まれずに止まる。
     UserProgram {
         name: "debug-trap-syscall",
         image: DEBUG_TRAP_SYSCALL_ELF,
@@ -12821,7 +12821,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "serial-no-lock-test",
         cfg!(feature = "serial-no-lock-test"),
-        "UART の錠を取らない。上の演習で行が混ざる",
+        "UART のロックを取らない。上の演習で行が混ざる",
     ),
     (
         "serial-stress-reopen-test",
@@ -13151,7 +13151,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "kill-ignore-interrupt-test",
         cfg!(feature = "kill-ignore-interrupt-test"),
-        "中断の旗を立てず、Ctrl+C で子が止まらないようにする",
+        "中断のフラグを立てず、Ctrl+C で子が止まらないようにする",
     ),
     (
         "kill-fold-at-depth-one-test",
@@ -13161,7 +13161,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "kill-keep-stale-interrupt-test",
         cfg!(feature = "kill-keep-stale-interrupt-test"),
-        "子を起こす前に中断の旗を降ろさず、次の子へ持ち越す",
+        "子を起こす前に中断のフラグを降ろさず、次の子へ持ち越す",
     ),
     (
         "kill-fold-keep-bkl-test",
@@ -13521,7 +13521,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "sfmask-keeps-nt-test",
         cfg!(feature = "sfmask-keeps-nt-test"),
-        "命令の入口で、入れ子のタスクの旗を落とさない",
+        "命令の入口で、入れ子のタスクのフラグを落とさない",
     ),
     (
         "syscall-stub-keeps-user-stack-test",

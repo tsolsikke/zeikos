@@ -863,25 +863,25 @@ fn build_c_programs(manifest_dir: &str, out_dir: &str, script: &str, cache: &Pro
 /// # 形
 ///
 /// **入力の中身で引くキャッシュ**（cargo の `target/` の下の `user-program-cache/`。feature の組をまたいで共有する）。
-/// 鍵は、道具の版（`rustc -vV`・`cc --version`）・渡す引数（出力の道は除く）・原本と取り込むファイルの中身
+/// キーは、道具の版（`rustc -vV`・`cc --version`）・渡す引数（出力の道は除く）・原本と取り込むファイルの中身
 /// （[`ProgramInputs`] が原本から辿った一覧。`rerun-if-changed` と cfg の判定も同じ一覧を使う）のハッシュである。**在ればハードリンクで置き（書かない）、無ければ作って
 /// からキャッシュへ入れる。** rustc も cc も同じ入力から同じバイトを出す（イメージのバイトを機械で変えないために、既にそれに依っている）。
 ///
 /// **`--cfg` は、そのプログラムの原本か取り込むファイルに名前が出るものだけ渡す**——出ない cfg は読まれないので、渡しても
-/// 同じ中身になる。渡さなければ鍵が同じになり、キャッシュが当たる。
+/// 同じ中身になる。渡さなければキーが同じになり、キャッシュが当たる。
 ///
 /// # 書く量
 ///
-/// 当たれば 1 バイトも書かない。外れた分だけ、作ったものを 1 度キャッシュへ入れる（プログラムは 10〜500 KiB）。置き場は育つが、
+/// ヒットすれば 1 バイトも書かない。ミスした分だけ、作ったものを 1 度キャッシュへ入れる（プログラムは 10〜500 KiB）。置き場は育つが、
 /// 組み合わせは少ない（プログラム × cfg の違い）。**7 日触られていないものは全検査の始めに消す**（`xtask` の
 /// `prune_before_the_run`。当たるたびに触った時刻を進める）。`cargo clean` でも消える。
-/// **`ZEIKOS_USER_PROGRAM_CACHE=off` で止められる**（当たりと外れの中身が同じことを確かめるため）。置き場の場所は
+/// **`ZEIKOS_USER_PROGRAM_CACHE=off` で止められる**（ヒットとミスの中身が同じことを確かめるため）。置き場の場所は
 /// `ZEIKOS_USER_PROGRAM_CACHE_DIR` で差し替えられる。
 ///
 /// # ハードリンク越しに置き場を書き換えない
 ///
-/// **`OUT_DIR` のファイルは置き場と同じ実体である。** 外れたとき、`OUT_DIR` に前の当たりのハードリンクが残っていると、
-/// コンパイラがその道へ書いて置き場の実体（別の鍵のもの）を書き換える——**作る前に出力の道を外す**（`remove_file`）。
+/// **`OUT_DIR` のファイルは置き場と同じ実体である。** ミスしたとき、`OUT_DIR` に前のヒットのハードリンクが残っていると、
+/// コンパイラがその道へ書いて置き場の実体（別のキーのもの）を書き換える——**作る前に出力の道を外す**（`remove_file`）。
 /// さらに**置き場のファイルは読み取り専用にする**（その場で書き換えようとする処理が在れば、黙って通らずに失敗する）。
 /// このビルドスクリプトは、作った後にプログラムの道へ書き戻す処理（strip・objcopy の類）を持たない（2026-10-07 に読んで
 /// 確かめた。`strip=symbols` はリンクのときの指定で、イメージへは `fs::copy` でコピーする）。
@@ -900,7 +900,7 @@ impl ProgramCache {
         let enabled = std::env::var("ZEIKOS_USER_PROGRAM_CACHE")
             .ok()
             .is_none_or(|value| value != "off");
-        // **置き場は `ZEIKOS_USER_PROGRAM_CACHE_DIR` で差し替えられる**（2026-10-08。イメージのバイトが当たりと外れで同じことを
+        // **置き場は `ZEIKOS_USER_PROGRAM_CACHE_DIR` で差し替えられる**（2026-10-08。イメージのバイトがヒットとミスで同じことを
         // 確かめる検査が、空の置き場で全部を外すために使う。本物の置き場は触らない）。
         println!("cargo:rerun-if-env-changed=ZEIKOS_USER_PROGRAM_CACHE_DIR");
         let chosen =
@@ -934,9 +934,9 @@ impl ProgramCache {
         }
     }
 
-    /// キャッシュが在ればそれを置き、無ければ `command` で作ってからキャッシュへ入れる。`inputs` は鍵に入れる中身（原本と取り込む
-    /// ファイル）。`command` の引数も鍵に入れる（`output` だけは除く——`OUT_DIR` は組ごとに違う）。`command` に置いた
-    /// 環境変数も鍵に入れる（2026-10-09。`env!` で読む値が変われば、出力も変わる）。
+    /// キャッシュが在ればそれを置き、無ければ `command` で作ってからキャッシュへ入れる。`inputs` はキーに入れる中身（原本と取り込む
+    /// ファイル）。`command` の引数もキーに入れる（`output` だけは除く——`OUT_DIR` は組ごとに違う）。`command` に置いた
+    /// 環境変数もキーに入れる（2026-10-09。`env!` で読む値が変われば、出力も変わる）。
     fn build(
         &self,
         what: &str,
@@ -978,7 +978,7 @@ impl ProgramCache {
                 if std::fs::hard_link(cached, output).is_ok()
                     || std::fs::copy(cached, output).is_ok()
                 {
-                    // **触った時刻を進める**（片付けが「7 日触られていない」で見るため）。失敗しても当たりは当たり。
+                    // **触った時刻を進める**（片付けが「7 日触られていない」で見るため）。失敗してもヒットはヒット。
                     if let Ok(file) = std::fs::File::open(cached) {
                         let _ = file.set_modified(std::time::SystemTime::now());
                     }
@@ -987,7 +987,7 @@ impl ProgramCache {
                 }
             }
         }
-        // **作る前に出力の道を外す**——前の当たりのハードリンクが残っていると、置き場の実体を書き換えてしまう。
+        // **作る前に出力の道を外す**——前のヒットのハードリンクが残っていると、置き場の実体を書き換えてしまう。
         let _ = std::fs::remove_file(output);
         let status = command
             .status()
@@ -1010,7 +1010,7 @@ impl ProgramCache {
         }
     }
 
-    /// 当たりと外れの数を `OUT_DIR` へ書く（人が読むため。cargo の出力には出さない）。
+    /// ヒットとミスの数を `OUT_DIR` へ書く（人が読むため。cargo の出力には出さない）。
     fn write_tally(&self, out_dir: &str) {
         let _ = std::fs::write(
             format!("{out_dir}/user-program-cache.txt"),
@@ -1043,7 +1043,7 @@ impl ProgramCache {
 /// - C: `#include "…"`（取り込む側の置き場、次に `-I` と同じ置き場）。`<…>` は道具のものなので見ない。
 ///
 /// 辿った先が無ければ止まる（コンパイラも同じ所で落ちる）。同じファイルは 1 度だけ読む。
-/// リンカスクリプトは取り込みではないので [`ProgramInputs::passing`] で足す（合図と鍵には入り、cfg の判定には入らない）。
+/// リンカスクリプトは取り込みではないので [`ProgramInputs::passing`] で足す（合図とキーには入り、cfg の判定には入らない）。
 struct ProgramInputs {
     /// 原本と、そこから辿った取り込み（道と中身）。
     sources: Vec<(String, Vec<u8>)>,
@@ -1081,7 +1081,7 @@ impl ProgramInputs {
             }
             sources.push((canonical, bytes));
         }
-        // **並びを決める**（鍵が辿った順に依らないように）。
+        // **並びを決める**（キーが辿った順に依らないように）。
         sources.sort_by(|a, b| a.0.cmp(&b.0));
         ProgramInputs {
             sources,
@@ -1122,7 +1122,7 @@ impl ProgramInputs {
     }
 }
 
-/// 1 つのファイルが取り込むファイルの道（[`ProgramInputs`] の「辿るもの」。純粋な論理）。
+/// 1 つのファイルが取り込むファイルのパス（[`ProgramInputs`] の「辿るもの」。純粋な論理）。
 fn included_files(path: &str, text: &str) -> Vec<String> {
     let is_c = path.ends_with(".c") || path.ends_with(".h");
     let mut found = Vec::new();
@@ -1180,7 +1180,7 @@ fn quoted(text: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
-/// 鍵に入れるファイルの中身を読む（無ければ止まる——その場で作っても落ちる入力である）。
+/// キーに入れるファイルの中身を読む（無ければ止まる——その場で作っても落ちる入力である）。
 fn input_bytes(path: &str) -> Vec<u8> {
     std::fs::read(path).unwrap_or_else(|e| panic!("failed to read {path}: {e}"))
 }
@@ -1631,7 +1631,7 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
     check_staging_data(&staging);
 
     // **seed の権限を、コピーした元によらず決める**（2026-10-08）。`fs::copy` は権限をコピー、`mke2fs -d` はそれを inode へ入れる。
-    // キャッシュの当たりは読み取り専用のキャッシュのハードリンクなので、決めないと、当たりと外れでイメージのバイトが変わる。
+    // キャッシュのヒットは読み取り専用のキャッシュのハードリンクなので、決めないと、ヒットとミスでイメージのバイトが変わる。
     set_staging_modes(std::path::Path::new(&staging));
 
     // イメージの器を作る（ゼロ埋め）。
@@ -2011,9 +2011,9 @@ fn cc_version() -> String {
 /// イメージの seed の権限を決める（2026-10-08）。ディレクトリは 0755、`/bin` の下のファイルは 0755、ほかのファイルは 0644。
 ///
 /// **イメージのバイトは、ホストのファイルの権限に依ってはならない。** `mke2fs -d` は seed のファイルの権限をそのまま inode に入れる。
-/// seed へ置くファイルは、コンパイラの出力（0755）、キャッシュの当たり（読み取り専用のコピーへのハードリンク。0444）、
+/// seed へ置くファイルは、コンパイラの出力（0755）、キャッシュのヒット（読み取り専用のコピーへのハードリンク。0444）、
 /// seed のツリー（git が置いた権限）、`fs::write` で書いたもの（umask に依る）から来る。時刻と所有者は
-/// [`zero_image_build_traces`] が 0 にするので、残るのは権限だけである。値は、権限を決める前のイメージ（キャッシュの外れで作ったもの）
+/// [`zero_image_build_traces`] が 0 にするので、残るのは権限だけである。値は、権限を決める前のイメージ（キャッシュのミスで作ったもの）
 /// と同じにした——起動ログの参照が覚えているイメージのバイトが変わらない。`lost+found` は `mke2fs` が作るので、ここでは触らない。
 fn set_staging_modes(root: &std::path::Path) {
     set_modes_below(root, true, false);

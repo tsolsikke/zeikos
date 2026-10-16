@@ -1631,7 +1631,7 @@ enum ScreenOpenedBy {
     DevFb0,
 }
 
-/// Linux の fbdev の装置の道。
+/// Linux の fbdev の装置のパス。
 const DEV_FB0: &[u8] = b"/dev/fb0";
 
 /// `/dev/fb0` のバックバッファを画面へ転送する間隔（タイマの刻み。50 ms = 20 Hz。2026-10-07。`ADR-0083`）。
@@ -6258,12 +6258,12 @@ fn end_process_on_futex_deadlock(uaddr: u64) {
 }
 
 /// `FUTEX_WAKE` の本体——同じプロセス（スロット）で `uaddr` を待つタスクを、多くても `limit` 本起こす。**別の関数に
-/// してあるのは、`sys_futex` の枠を広げないため**（鍵の一時値。あちらの枠は、`futex` を打ったプログラムの遠征スタックの
+/// してあるのは、`sys_futex` の枠を広げないため**（キーの一時値。あちらの枠は、`futex` を打ったプログラムの遠征スタックの
 /// 高水位にそのまま乗る）。
 #[inline(never)]
 fn wake_futex_waiters(slot: usize, uaddr: u64, limit: u64) -> u64 {
     let woken = crate::task::wake_up_to_tasks_waiting_on(
-        // **鍵のスロットは `u8` で持つ**（`Wait` の大きさを増やさないため。スロットは 2 つ）。
+        // **キーのスロットは `u8` で持つ**（`Wait` の大きさを増やさないため。スロットは 2 つ）。
         crate::task::Wait::Futex {
             slot: slot as u8,
             address: uaddr,
@@ -6274,7 +6274,7 @@ fn wake_futex_waiters(slot: usize, uaddr: u64, limit: u64) -> u64 {
     woken as u64
 }
 
-/// `FUTEX_WAIT` の眠る本体——鍵を欄に書き、BKL を解いて譲り、起こされたら BKL を取り直す。**別の関数にしてあるのは
+/// `FUTEX_WAIT` の眠る本体——キーを欄に書き、BKL を解いて譲り、起こされたら BKL を取り直す。**別の関数にしてあるのは
 /// [`wake_futex_waiters`] と同じ理由**（行き詰まりで終わる道しか通らないプログラムの高水位に、眠る道の枠を乗せない）。
 #[inline(never)]
 fn sleep_on_futex(slot: usize, uaddr: u64, bkl: &mut Option<crate::bkl::BklGuard>) {
@@ -6299,7 +6299,7 @@ pub const FUTEX_DEADLOCK_STATUS: u64 = 137;
 /// - `LOCK_UN`: 放す。持っていなくても 0。
 /// - 普通のファイル以外は `-EINVAL`（Linux はソケットやパイプにも付けられるが、要る利用者が居ない）。
 ///
-/// **眠るときは BKL を解く**（[`sleep_on_futex`] と同じ形。鍵と `Waiting` を書くまでは BKL の内側である）。
+/// **眠るときは BKL を解く**（[`sleep_on_futex`] と同じ形。キーと `Waiting` を書くまでは BKL の内側である）。
 #[inline(never)]
 fn sys_flock(fd: u64, operation: u64, bkl: &mut Option<crate::bkl::BklGuard>) -> u64 {
     use crate::flock::{Outcome, LOCK_EX, LOCK_NB, LOCK_SH, LOCK_UN};
