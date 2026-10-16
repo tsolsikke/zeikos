@@ -781,7 +781,7 @@ exception-entry-keeps-df-test = []
 irq-entry-keeps-df-test = []
 syscall-entry-keeps-df-test = []
 # 棚卸しの根拠の見張りの破壊（2026-09-24。ADR-0018 の Addendum 9）。
-# gs: を読む関数をイメージに残す（呼ばない）。基底の項目（逆アセンブルで fs:・gs: を数える）が捕まえる。
+# gs: を読む関数をイメージに残す（呼ばない）。基本の検査の項目（逆アセンブルで fs:・gs: を数える）が捕まえる。
 kernel-uses-gs-test = []
 # EFER.SCE が落ちているものとして判定する（MSR は書かない）。起動の途中の cpu-state の行で止まる。
 # 2026-10-04 に向きを逆にした（syscall 命令を入口に足して、SCE が「1 であるべき」になった）。
