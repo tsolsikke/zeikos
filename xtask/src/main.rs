@@ -378,7 +378,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // **権限の違反が #PF で止まること**（2026-10-02。カーネルの写像の W^X。`ADR-0071` の手順 4）。
+    // **権限の違反が #PF で止まること**（2026-10-02。カーネルのマッピングの W^X。`ADR-0071` の手順 4）。
     // **「落ちた」だけにしない**——触る前に、狙うページが在ること・権限を稼働中の表から読み戻した行と、誤りコード
     // （書き込みか命令の取り出しか、権限の違反か）と、CR2 が告げたアドレスと同じであることを見る。
     // 触った後に戻ってきた行（守りが効いていない）が出ないことも見る。
@@ -1123,7 +1123,7 @@ const PAGING_TESTS: &[CriticalTest] = &[
     },
     // 2026-09-27（`ADR-0071` の決定 5）: 起動の後に、カーネル側の PML4 の空いた添字（260）へマップしに行く。
     //
-    // **2026-10-03 からは、3 つ目の決まり（起動の後はカーネル側の写像を足さない。`refuse_kernel_mapping_change_after_boot`）
+    // **2026-10-03 からは、3 つ目の決まり（起動の後はカーネル側のマッピングを足さない。`refuse_kernel_mapping_change_after_boot`）
     // が、`ensure_child` の守りより先に、項目を 1 つも書かずに `KernelMappingFrozen` で断る。** **`ensure_child` の
     // 守りは 2 枚目になった**（2026-10-02 までは、こちらが「refused to create a kernel-half PML4 entry」で止めていた）。
     // **突き合わせ（`AddressSpace::new`）は後で見つける側で、こちらは書く前に止める側である。**
@@ -1152,7 +1152,7 @@ const PAGING_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // 2026-10-03（同上）: 起動の後に、直接写像の 2MiB のページを割りに行く。**既に在る写像を変える形で、権限を変える入口
+    // 2026-10-03（同上）: 起動の後に、直接マッピングの 2MiB のページを割りに行く。**既に在るマッピングを変える形で、権限を変える入口
     // （`set_huge_page_uncached`・`mark_leaf_execute_disable`）と同じ守りを通る。**
     CriticalTest {
         name: "kernel-mapping-change-after-boot-test",
@@ -1643,7 +1643,7 @@ const RING3_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // **権限の変換が、ユーザーの側のリーフに実行禁止のビットを立てない形**（2026-10-03。ユーザーの写像の W^X を
+    // **権限の変換が、ユーザーの側のリーフに実行禁止のビットを立てない形**（2026-10-03。ユーザーのマッピングの W^X を
     // 入れる前の形）。起動時の Ring 3 の試しで、読むだけのページへ跳ぶと、跳んだ先の `ud2` が実行されて、
     // ベクタが 14 ではなく 6 になる。
     CriticalTest {
@@ -1686,8 +1686,8 @@ const RING3_TESTS: &[CriticalTest] = &[
         min_heartbeats: None,
     },
     // **位置独立のイメージのセグメントを、ずらさずに載せる**（2026-10-06）。入口だけがずれたアドレスを指す。**捕まえるのは、載せた
-    // ものを写像の表へ登録する所である**——イメージの範囲が「ずらした始まり」から「ずらさないヒープの始まり」までとなって
-    // 逆さまになり、`BadRange` で名指しして止まる。写像の表（2026-10-06）の前は、入口のページフォルトで畳まれる形
+    // ものをマッピングテーブルへ登録する所である**——イメージの範囲が「ずらした始まり」から「ずらさないヒープの始まり」までとなって
+    // 逆さまになり、`BadRange` で名指しして止まる。マッピングテーブル（2026-10-06）の前は、入口のページフォルトで畳まれる形
     // （`spawn: /bin/pie-hello ended (Folded(14))`）で見ていた。そこへ届く前に止まるようになったので、印を替えた。
     CriticalTest {
         name: "pie-without-bias",
@@ -1880,7 +1880,7 @@ const RING3_TESTS: &[CriticalTest] = &[
 /// int 0x80 システムコールの破壊テストでの確認（M5-f-1-2）。いずれも probe の往復が verified に
 /// 到達しないことを確かめる。
 const SYSCALL_TESTS: &[CriticalTest] = &[
-    // **写像の表が、置くときに重なりを見ない**（2026-10-06）。`MAP_FIXED_NOREPLACE` が写像の上でも断らず、
+    // **マッピングテーブルが、置くときに重なりを見ない**（2026-10-06）。`MAP_FIXED_NOREPLACE` がマッピングの上でも断らず、
     // `syscall-test` が 103 番で止まる。
     CriticalTest {
         name: "mappings-overlap-skip",
@@ -11912,7 +11912,7 @@ const MACHINE_VARIANT_CHECKS: &[(&str, VariantExpect)] = &[
         VariantExpect::PromptAndLine("fs-image-load: copied"),
     ),
     // **打鍵が PS/2 から I/O APIC を通ってシェルまで届く**（HW-e-2）。**最初の打鍵が I/O APIC のベクタ
-    // 0x42 で届いた行と、写像の行が出て、ID の [WARN] も [ERROR] も 8259 のベクタ（0x21）も出ない。**
+    // 0x42 で届いた行と、マッピングの行が出て、ID の [WARN] も [ERROR] も 8259 のベクタ（0x21）も出ない。**
     (
         "pc-default",
         VariantExpect::PromptKeyAndLines {
@@ -12248,7 +12248,7 @@ fn judge_prompt_key_and_lines(
     ready && answered && missing.is_empty() && seen_forbidden.is_empty()
 }
 
-/// VirtualBox の PS/2 の VM で要る行（2-2）。**写像の行と配送の行である。**
+/// VirtualBox の PS/2 の VM で要る行（2-2）。**マッピングの行と配送の行である。**
 ///
 /// **`[WARN] apic:` を禁じない**——**VirtualBox は I/O APIC の ID レジスタを 0 のまま置く**ので、
 /// ID の `[WARN]` が出るのが正しい（`ADR-0068` の HW-e-2）。**QEMU の既定の変種とはそこだけが違う。**
@@ -28095,7 +28095,7 @@ const COMMON_ITEMS_FOR_HOMES: &[CommonItemsForHomes] = &[
     CommonItemsForHomes {
         module: "kernel::link_symbols",
         items: &["KERNEL_LOAD_ADDR", "KERNEL_VIRT_BASE"],
-        reason: "カーネルのイメージの先頭のアドレス（恒等の写像を外す前に、必ず残す領域として導く）",
+        reason: "カーネルのイメージの先頭のアドレス（恒等のマッピングを外す前に、必ず残す領域として導く）",
     },
     CommonItemsForHomes {
         module: "kernel::memory_map",
@@ -28107,7 +28107,7 @@ const COMMON_ITEMS_FOR_HOMES: &[CommonItemsForHomes] = &[
             "parse_entries",
             "type_name",
         ],
-        reason: "UEFI のメモリマップを読む（ACPI の表がどの種別の領域にあるかを出す。破壊テストが写像の無い所を選ぶ）",
+        reason: "UEFI のメモリマップを読む（ACPI の表がどの種別の領域にあるかを出す。破壊テストがマッピングの無い所を選ぶ）",
     },
     CommonItemsForHomes {
         module: "kernel::paging::permissions",

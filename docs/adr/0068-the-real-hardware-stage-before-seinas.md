@@ -420,7 +420,7 @@ ID レジスタを 0 のまま置き、MADT は CPU の数を ID にする**（�
 
 ### 既定の起動で動いたもの（定型の 5 形）
 
-- **起動ログ**——**判定の行が「写像の行」と「ID の行」の 2 行に分かれた**（`apic: I/O APIC MMIO decodes: …; 24 redirection
+- **起動ログ**——**判定の行が「マッピングの行」と「ID の行」の 2 行に分かれた**（`apic: I/O APIC MMIO decodes: …; 24 redirection
   entr(y/ies) from GSI 0` と `apic: the I/O APIC ID register reports 0, matching the MADT`）。**残りの差はカーネルが伸びてアドレスが
   動いた行だけである**（RIP・GDT の置き場・AP の入口。録り直した）。
 - **ホストのテストの名前は 691 本から 696 本（+5）。** **項目は `--full` が 377 → 380**（基本の検査は 37 のまま）。**380 は検査の組み立てを
