@@ -42,13 +42,13 @@ use crate::task::{self, Wait};
 pub const SOCKET_RING: usize = 1024;
 
 /// 同時に在れる listener の数。
-pub const MAX_LISTENERS: usize = 1;
+pub const MAX_LISTENERS: usize = 4;
 
 /// 同時に在れる接続の数（accept 前の待ち行列を含む）。
-pub const MAX_CONNECTIONS: usize = 2;
+pub const MAX_CONNECTIONS: usize = 8;
 
 /// 名前の最大長（バイト。NUL を含まない）。
-pub const NAME_MAX: usize = 31;
+pub const NAME_MAX: usize = 107;
 
 /// 接続のどちら側か。**輪の添字にも使う**——`rings[side]` は「その側へ流れるバイト」である。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -124,11 +124,10 @@ impl Connection {
     }
 }
 
-static LISTENERS: [Locked<Listener>; MAX_LISTENERS] = [Locked::new(Listener::EMPTY)];
-static CONNECTIONS: [Locked<Connection>; MAX_CONNECTIONS] = [
-    Locked::new(Connection::EMPTY),
-    Locked::new(Connection::EMPTY),
-];
+static LISTENERS: [Locked<Listener>; MAX_LISTENERS] =
+    [const { Locked::new(Listener::EMPTY) }; MAX_LISTENERS];
+static CONNECTIONS: [Locked<Connection>; MAX_CONNECTIONS] =
+    [const { Locked::new(Connection::EMPTY) }; MAX_CONNECTIONS];
 
 /// `bind` した回数（計測）。
 static BOUND: AtomicU64 = AtomicU64::new(0);
