@@ -12847,7 +12847,7 @@ fn cache_tally(tally: &str) -> Option<(usize, usize)> {
     Some((field("hits:")?, field("misses:")?))
 }
 
-/// 3 通りのイメージの食い違い（純粋な論理）。**同じで、外れの回と当たりの回が本当にそうなっていれば `None`。**
+/// 3 通りのイメージの食い違い（純粋な論理）。**同じで、ミスの回とヒットの回が本当にそうなっていれば `None`。**
 fn image_determinism_problem(images: &[(&str, Vec<u8>, String)]) -> Option<String> {
     let [(_, off, off_tally), (_, miss, miss_tally), (_, hit, hit_tally)] = images else {
         return Some(format!("expected 3 builds, got {}", images.len()));
@@ -31170,6 +31170,21 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
         }
     }
 
+    // **`docs/terminology.md` の「使わない語」が、追跡しているファイルに新しく入っていないこと**（2026-10-16。運用者の決定。
+    // `check_no_retired_terms` の doc）。
+    total += 1;
+    begin_item(
+        Family::Base,
+        "no retired term from docs/terminology.md remains in the tracked files",
+    );
+    match check_no_retired_terms(&workspace_root) {
+        Ok(message) => println!("--- retired terms: {message}"),
+        Err(error) => {
+            println!("--- retired terms: FAILED ({error})");
+            failed.push("retired terms".to_string());
+        }
+    }
+
     // **Git の pre-push の関門が入っていること**（2026-09-26。運用者の決定 1 の ③ の条件 3）。**hook の本体が
     // 追跡されて実行でき、WSL の中では `core.hooksPath` がそこを指していること。**
     total += 1;
@@ -34706,8 +34721,8 @@ fn count_elements(text: &str) -> usize {
 
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
-    base: 66,
-    full: 535,
+    base: 67,
+    full: 536,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` とスクリプトのグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。
@@ -35023,6 +35038,148 @@ fn longest_run(text: &str, ch: char) -> usize {
         }
     }
     best
+}
+
+/// `docs/terminology.md` の「使わない語」の表を読み、追跡しているファイルに「当たる形」が残っていないことを見る
+/// （2026-10-16。運用者の決定）。**語の一覧をコードに持たない**——表の「当たる形」と「除く形」が検査の入力で、
+/// 列の読み方は表の上に書いてある（seed の検査が `k` の数をスクリプトから読むのと同じ考え方）。
+///
+/// 見ないもの: `docs/terminology.md` そのもの、`.git-blame-ignore-revs`（言い換えたコミットの件名を並べている）、
+/// `third_party/`・`external/`・`kernel/fsimage/` の下、UTF-8 でないファイル。
+/// 当たる形の直後に「→」が続く所（言い換えの例）と、「除く形」の中に収まる所（一般の意味の語）は数えない。
+fn check_no_retired_terms(workspace_root: &Path) -> Result<String> {
+    let table_path = workspace_root.join("docs/terminology.md");
+    let table = fs::read_to_string(&table_path)
+        .with_context(|| format!("failed to read {}", table_path.display()))?;
+    let rules = parse_retired_terms(&table)?;
+    if rules.is_empty() {
+        bail!("docs/terminology.md has no row with a form to look for");
+    }
+    let mut findings = Vec::new();
+    let mut read = 0usize;
+    for relative in checked_files(workspace_root, &[])? {
+        if relative == "docs/terminology.md"
+            || relative == ".git-blame-ignore-revs"
+            || relative.starts_with("third_party/")
+            || relative.starts_with("external/")
+            || relative.starts_with("kernel/fsimage/")
+        {
+            continue;
+        }
+        let path = workspace_root.join(&relative);
+        if !path.is_file() {
+            continue;
+        }
+        let bytes =
+            fs::read(&path).with_context(|| format!("failed to read {}", path.display()))?;
+        let Ok(text) = String::from_utf8(bytes) else {
+            continue;
+        };
+        read += 1;
+        findings.extend(retired_term_findings(&relative, &text, &rules));
+    }
+    if !findings.is_empty() {
+        let shown: Vec<&str> = findings.iter().take(20).map(String::as_str).collect();
+        bail!(
+            "{} place(s) use a retired term (docs/terminology.md の「使わない語」): {}{}",
+            findings.len(),
+            shown.join("; "),
+            if findings.len() > shown.len() {
+                "; …"
+            } else {
+                ""
+            }
+        );
+    }
+    Ok(format!(
+        "OK ({} rule(s) read from docs/terminology.md; {read} file(s) read; no retired term)",
+        rules.len()
+    ))
+}
+
+/// 「使わない語」の表の 1 行（純粋な論理）。
+struct RetiredTerm {
+    /// 使う語（当たったときに示す言い換え先）。
+    replacement: String,
+    /// 当たる形（表の 3 列目のインラインコード）。
+    forms: Vec<String>,
+    /// 除く形（表の 4 列目のインラインコード。当たる形を含む、一般の意味の語）。
+    exclusions: Vec<String>,
+}
+
+/// `docs/terminology.md` の「使わない語」の節の表を読む（純粋な論理）。**当たる形が空の行は読まない**（別の行が当たる）。
+fn parse_retired_terms(markdown: &str) -> Result<Vec<RetiredTerm>> {
+    let section = markdown
+        .split("\n## ")
+        .find(|section| section.starts_with("使わない語"))
+        .context("docs/terminology.md has no section 「使わない語」")?;
+    let items = |cell: &str| -> Vec<String> {
+        cell.split('`')
+            .skip(1)
+            .step_by(2)
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+            .map(str::to_string)
+            .collect()
+    };
+    let mut rules = Vec::new();
+    for line in section
+        .lines()
+        .filter(|line| line.trim_start().starts_with('|'))
+    {
+        let cells: Vec<&str> = line
+            .trim()
+            .trim_matches('|')
+            .split('|')
+            .map(str::trim)
+            .collect();
+        if cells.len() < 4
+            || cells[0] == "使わない語"
+            || cells.iter().all(|cell| cell.chars().all(|c| c == '-'))
+        {
+            continue;
+        }
+        let forms = items(cells[2]);
+        if forms.is_empty() {
+            continue;
+        }
+        rules.push(RetiredTerm {
+            replacement: cells[1].to_string(),
+            forms,
+            exclusions: items(cells[3]),
+        });
+    }
+    Ok(rules)
+}
+
+/// 1 つのファイルの中で、使わない語の「当たる形」が在る所（純粋な論理）。直後が「→」の所と、「除く形」に収まる所は数えない。
+fn retired_term_findings(path: &str, text: &str, rules: &[RetiredTerm]) -> Vec<String> {
+    let mut findings = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        for rule in rules {
+            for form in &rule.forms {
+                for (at, _) in line.match_indices(form.as_str()) {
+                    let end = at + form.len();
+                    if line[end..].starts_with('→') {
+                        continue;
+                    }
+                    let excluded = rule.exclusions.iter().any(|exclusion| {
+                        line.match_indices(exclusion.as_str())
+                            .any(|(start, _)| start <= at && end <= start + exclusion.len())
+                    });
+                    if excluded {
+                        continue;
+                    }
+                    findings.push(format!(
+                        "{path}:{}: 「{form}」→「{}」",
+                        index + 1,
+                        rule.replacement
+                    ));
+                }
+            }
+        }
+    }
+    findings
 }
 
 /// seed の `/etc/environment` の文面が、スクリプトの前提を満たすか（純粋な論理。ホストの単体試験が固定する）。
@@ -37820,6 +37977,30 @@ mod tests {
         assert!(
             super::volatile_field_span("next at 12ab (every", " next at ", " (every").is_none()
         );
+    }
+
+    /// 使わない語の検査——表の読み方（当たる形・除く形・空の行）と、一般の意味の語・言い換えの例を数えないこと。
+    /// **語は作り物にしてある**——本物の語を書くと、この試しのソースが検査に当たる。
+    #[test]
+    fn retired_terms_are_read_from_the_table_and_general_senses_are_not_counted() {
+        let table = "# t\n\n## 使わない語\n\n| 使わない語 | 使う語 | 当たる形 | 除く形 | 備考 |\n| --- | --- | --- | --- | --- |\n\
+                     | ほげ | hoge | `ほげ` | `ぴよほげ` `ふがほげ` | |\n| ぴよほげ | piyo | `ぴよほげ` | | |\n| ほげ（GPTの） | hoge2 | | | 上の行 |\n\
+                     | ぽ（ファイルの） | po | `ファイルのぽ` `ぽの名前` | | |\n\n## 残す語\n\n| 語 | 意味 |\n| --- | --- |\n| 判定 | verdict |\n";
+        let rules = super::parse_retired_terms(table).unwrap();
+        assert_eq!(rules.len(), 3);
+        assert_eq!(rules[0].exclusions, vec!["ぴよほげ", "ふがほげ"]);
+        assert_eq!(rules[2].forms, vec!["ファイルのぽ", "ぽの名前"]);
+        let text = "ディスクのほげを読む\nふがほげどおりの結果\nぴよほげの表\n例: ほげ→hoge\n経路のぽを通る\nファイルのぽが長い\n";
+        let findings = super::retired_term_findings("a.md", text, &rules);
+        assert_eq!(
+            findings,
+            vec![
+                "a.md:1: 「ほげ」→「hoge」",
+                "a.md:3: 「ぴよほげ」→「piyo」",
+                "a.md:6: 「ファイルのぽ」→「po」",
+            ]
+        );
+        assert!(super::parse_retired_terms("# t\n\n## 残す語\n").is_err());
     }
 
     /// seed の `/etc/environment` と `zi` のスクリプトの前提——末尾の 3 行、`k` の数、最後の行の長さ、スクリプトの読み出し。

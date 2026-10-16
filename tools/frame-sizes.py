@@ -17,7 +17,7 @@ HW-b で 2 度読み違えた**（HW-a の +240 を最深の経路の上に無�
 # 使い方
 
     python3 tools/frame-sizes.py                          # HEAD と作業ツリーで、枠が動いた関数を並べる
-    python3 tools/frame-sizes.py --base f8f07a2           # 基底の版を選ぶ
+    python3 tools/frame-sizes.py --base f8f07a2           # ベースの版を選ぶ
     python3 tools/frame-sizes.py kernel::kernel_main      # 名前を挙げた関数は、動いていなくても出す
     python3 tools/frame-sizes.py --largest 20             # 作業ツリーで枠の大きい関数を 20 出す
     python3 tools/frame-sizes.py --working-tree-only --largest 3   # ベースの版を建てずに作業ツリーだけ見る
@@ -101,7 +101,7 @@ def matches(name, pattern):
 def main():
     parser = argparse.ArgumentParser(description="関数ごとの枠の大きさを、ベースの版と作業ツリーで並べる")
     parser.add_argument("names", nargs="*", help="動いていなくても出す関数（nm -C の名前。末尾 * で前方一致）")
-    parser.add_argument("--base", default="HEAD", help="基底の版（既定 HEAD）")
+    parser.add_argument("--base", default="HEAD", help="ベースの版（既定 HEAD）")
     parser.add_argument("--features", default="", help="両方の建てに渡す feature（既定は無し）")
     parser.add_argument("--top", type=int, default=30, help="動いた関数を大きい順にいくつ出すか（既定 30）")
     parser.add_argument("--largest", type=int, default=0, help="作業ツリーで枠の大きい関数をいくつ出すか")

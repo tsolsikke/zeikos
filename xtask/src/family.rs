@@ -414,6 +414,7 @@ pub const PATH_RULES: &[PathRule] = &[
             "*.md",
             "LICENSE",
             ".gitignore",
+            ".git-blame-ignore-revs",
             ".claude/**",
             ".github/**",
             "probes/**",

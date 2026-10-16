@@ -183,6 +183,8 @@ cargo xtask full
 pushの前の関門は、Git自身のhook（`.githooks/pre-push`）にも設けている。cloneにhookは含まれないので、
 チェックアウトしたら1度`git config core.hooksPath .githooks`を打つ（基本の検査がWSLの中で設定を確かめる）。
 
+言い換えだけのコミット（和語にしていたIT用語を一般の形へ戻したもの。2026-10-16）は`.git-blame-ignore-revs`に並べてある。`git blame`でそれらを飛ばすには、1度`git config blame.ignoreRevsFile .git-blame-ignore-revs`を打つ（GitHubのblameは自動で読む）。
+
 個別の回帰チェックは`cargo xtask run --<名前>-test`の形で単体でも走らせられる
 （`cargo xtask`を引数なしで実行すると、使い方の一覧が出る）。
 

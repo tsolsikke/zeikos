@@ -1,0 +1,59 @@
+# 言い換えだけのコミット（2026-10-16。docs/terminology.md の「使わない語」を一般の IT 用語へ戻した）。
+# git blame で飛ばすには、1 度だけ次を打つ: git config blame.ignoreRevsFile .git-blame-ignore-revs
+# GitHub の blame は、このファイルを自動で読む。
+# dd82a272 docs: 「台本」と「種」を、IT用語のスクリプトとseedに言い換える
+dd82a2725f3b094fe9166b8533e1f230ad6b3116
+# 0ce6b84a docs(xtask): seedの意味の「種」をseedに言い換える（前回の取りこぼし）
+0ce6b84a7fd2bc2318d061b379b3fbeb91f299dc
+# ae55b076 docs(kernel): 「台本」をスクリプトに、seedの意味の「種」をseedに言い換える（kernelとcommon）
+ae55b076a1b335a3902e47a3166a738d5eba1d7a
+# 1ad0455f docs(kernel): 「種類」を誤ってseedに変えた9行を戻す
+1ad0455f82a686d8b14ff675edc2525390dfd703
+# 0b937462 docs(kernel): 「像」をイメージに言い換える（kernelとcommon）
+0b937462343b6e7779d81670c36ceed361860714
+# 6e2acc99 docs: 「像」をイメージに言い換える（kernelとcommonの外）
+6e2acc99ef077ed0b55403df2202c5a580e3b845
+# e191ad53 docs(kernel): 「番地」をアドレスに言い換える（kernelとcommon）
+e191ad53f65b40fc366fe1794415152b08bdf793
+# da290b18 docs: 「番地」をアドレスに言い換える（kernelとcommonの外）
+da290b184040d0b6f8d3efb1835ed9310f16eaba
+# ee088c8f docs(kernel): 「葉」をリーフに、「区画」をセグメントに言い換える（kernelとcommon）
+ee088c8f05d5ef25476a0a468daa6245c6dc41e1
+# f6458a65 docs: 「葉」をリーフに、「区画」をセグメント・パーティション・セクションに言い換える（kernelとcommonの外）
+f6458a653f6dd83fffb98cc98886a9e0a792263e
+# 5d2f157b docs(kernel): 「写像」をマッピングに言い換える（kernelとcommon）
+5d2f157b7226bf3f69c1990dc28937e44c0ed629
+# 1217d137 docs: 「写像」をマッピングに言い換える（kernelとcommonの外）
+1217d137043a94a4dae4216142c5e6703eed3dfa
+# e964350c docs(kernel): 「写す」「写し」を、意味で分けてマップする・コピーに言い換える（kernelとcommon）
+e964350c258dd26e639d3154f5aeed4f9abe30e3
+# 58e92aa8 docs: 「写す」「写し」を、意味で分けてマップする・コピーに言い換える（kernelとcommonの外）
+58e92aa8a47c5d9c46dc4709abdded3bc9fb9712
+# 3de5bfaf docs(kernel): ページテーブルの意味の「表」をページテーブル・中間テーブルに言い換える（kernelとcommon）
+3de5bfafad584afffb670282c08a63ccb63191c7
+# cc8cf47c docs: ページテーブルの意味の「表」をページテーブル・中間テーブルに言い換える（kernelとcommonの外）
+cc8cf47c2dd9b20bb4b7a8fc39c30b0998effad6
+# ac088594 docs(kernel): 「画素」「裏バッファ」「窓」をピクセル・バックバッファ・ウィンドウに言い換える（kernelとcommon）
+ac088594b142172f203883fe647b28bf965b44d2
+# 8e8efad8 docs: 「画素」「裏バッファ」「窓」をピクセル・バックバッファ・ウィンドウに言い換える（kernelとcommonの外）
+8e8efad8bfa5602968075a283fd02f85823a7468
+# 23d4638c docs: 「写し元」「写し先」の言い換えを、コピー元・コピー先に直す
+23d4638ccdbb25c96837fd0d2548075ef2ba7352
+# dcee70b5 docs(kernel): 「錠」「鍵」「旗」「当たり・外れ」「道」をロック・キー・フラグ・ヒット・ミス・パスに言い換える（kernelとcommon）
+dcee70b5d366f01330b683b18d8fb36557d62e1c
+# cb289710 docs: 「錠」「鍵」「旗」「当たり・外れ」「道」「押す」をロック・キー・フラグ・ヒット・ミス・パス・pushに言い換える（kernelとcommonの外）
+cb28971019f2937e88b74fad87e97cd390f1f653
+# 5880c3fc docs(kernel): 見張りのページ・刻み・走行・計器・手当て・終了の状態・検査値・手形を、一般のIT用語に言い換える（kernelとcommon）
+5880c3fce4860bb144689ff1897c5fd7bb707c7c
+# 46e95710 docs: 見張りのページ・刻み・走行・計器・起動媒体・手当て・終了の状態・検査値・裏の流れ・時機を、一般のIT用語に言い換える（kernelとcommonの外）
+46e95710e2924be6ea9c6ad4a82370a217896a3d
+# ce41e8d6 docs(kernel): 「族」をfamilyに、「木」をツリーに言い換える（kernelとcommon）
+ce41e8d6db2c326fc9696daf23f40dbb935ac8fc
+# 41746e29 docs: 「族」をfamilyに、「木」をツリーに言い換える（kernelとcommonの外）
+41746e2996b23b28ce0d1054310842fa09c02fb5
+# 75890959 docs: 検査の意味の「基底」を基本の検査に、「基底の版」をベースの版に言い換える（kernelとcommonの外）
+75890959992dc36d0bb5d5b7b1077aa70090bbea
+# e818512e docs(hooks): 残っていた検査の意味の「基底」3行を基本の検査に言い換える
+e818512e73689133ab5b15e06cd4f929ab85e5b4
+# f7b08d38 docs(kernel): 残っていた検査の意味の「基底」1行を基本の検査に言い換える
+f7b08d384593cf380ff122216e0032b2188aa6b8
