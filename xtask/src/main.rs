@@ -4600,7 +4600,7 @@ fn build_bootloader_with_features_unwrapped(
 ) -> Result<PathBuf> {
     // **全検査の間は、組ごとに 1 回だけ作ってコピーを使う**（2026-09-29。案 A。項目ごとに cargo を呼ぶと、
     // 裏の流れが持つ `target/` の鍵を待たされる）。**コピーは [`build_bootloader_now`] が錠の中で作る**（案 B の ①）
-    // ——**ここでもう一度コピーすると、コピーし元とコピーし先が同じファイルになる**（[`keep_a_copy`] が断る）。
+    // ——**ここでもう一度コピーすると、コピー元とコピー先が同じファイルになる**（[`keep_a_copy`] が断る）。
     kernel_builds::bootloader(features, || build_bootloader_now(workspace_root, features))
 }
 
@@ -12748,7 +12748,7 @@ fn cmd_image(contents: MediaContents) -> Result<()> {
 /// **イメージのバイトは起動ログの参照（巻の名前と、superblock のセクタの検査値）に出る。** キャッシュの当たりは読み取り専用の
 /// キャッシュへのハードリンクで、`fs::copy` が権限をコピーし、`mke2fs -d` がそれを inode へ入れていたので、当たりだけ `/bin` の
 /// プログラムが 0444 になり、参照と食い違った（`docs/troubleshooting.md` の 2026-10-08 の項）。いまは `build.rs` が seed の
-/// 権限を決める。**この項目は、決め忘れや、権限のほかにコピーし元から混ざるものを、全検査を待たずに捕まえる。**
+/// 権限を決める。**この項目は、決め忘れや、権限のほかにコピー元から混ざるものを、全検査を待たずに捕まえる。**
 ///
 /// # 形
 ///
@@ -36884,7 +36884,7 @@ fn keep_a_copy(
     fs::create_dir_all(&directory)
         .with_context(|| format!("failed to create {}", directory.display()))?;
     let copy = directory.join(file_name);
-    // **コピーし元とコピーし先が同じファイルなら、コピーせずに落ちる**（2026-09-29）。**`fs::copy` はコピーし先を空にしてから
+    // **コピー元とコピー先が同じファイルなら、コピーせずに落ちる**（2026-09-29）。**`fs::copy` はコピー先を空にしてから
     // コピーする**ので、同じファイルへコピーすると、誤りを出さずに中身が空になる（案 B の ①の後の全検査では、空のブートローダを
     // 積んだ QEMU の項目が、どれも起動せずに落ち続けた）。
     if is_same_file(built, &copy) {
@@ -37496,7 +37496,7 @@ fn stage_esp_with_disk_unwrapped(
 }
 
 /// ESP に積んだファイルを確かめる（2026-09-29。案 B の ①の後の全検査では、空のブートローダを積んだ QEMU の項目が
-/// どれも「起動しない」で落ち、ログは環境のせいと言っていた）。**外れたら、どのファイルがどうだったかとコピーし元を
+/// どれも「起動しない」で落ち、ログは環境のせいと言っていた）。**外れたら、どのファイルがどうだったかとコピー元を
 /// 出して落とす**——**環境ではなく、作ったものの不具合として**（誤りは [`stage_esp_with_disk`] が検査装置の故障に
 /// 包む）。**読むのは大きさと先頭の数バイトだけである。**
 fn check_staged_file(staged: &Path, magic: &[u8], form: &str, source: &Path) -> Result<()> {
@@ -38000,7 +38000,7 @@ thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack
             let from = dir.join(format!("{name}.img"));
             let to = dir.join(format!("{name}.copy"));
             fs::write(&from, &bytes).unwrap();
-            // コピーし先に、長い前の中身を置いておく。**作り直すので、残らない。**
+            // コピー先に、長い前の中身を置いておく。**作り直すので、残らない。**
             fs::write(&to, vec![0x55u8; bytes.len() + 5000]).unwrap();
             copy_image_sparse(&from, &to).unwrap();
             assert_eq!(
@@ -39136,7 +39136,7 @@ warning: `kernel` (lib doc) generated 1 warning
         assert_eq!(names, vec!["bootloader.efi".to_string()]);
     }
 
-    /// **コピーし元とコピーし先が同じファイルなら、コピーせずに落ちる。中身は残る**（2026-09-29。`fs::copy` は同じファイルへ
+    /// **コピー元とコピー先が同じファイルなら、コピーせずに落ちる。中身は残る**（2026-09-29。`fs::copy` は同じファイルへ
     /// コピーすると中身を空にする）。
     #[test]
     fn a_copy_onto_itself_is_refused_and_the_file_is_kept() {
