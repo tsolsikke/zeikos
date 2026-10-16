@@ -377,7 +377,7 @@ static GRAPHICS_PRESENTS: AtomicU64 = AtomicU64::new(0);
 /// カーネルが間隔ごとにバックバッファの全体を画面へ転送する（Linux の `fb_deferred_io` と同じ考え）。**`SYS_OPEN_SCREEN`
 /// （ZeikOS 独自）で開いた図形モードでは立てない**——そちらは利用者が `FBIOZPRESENT` で矩形をコピーする。
 static FB0_OPEN: AtomicBool = AtomicBool::new(false);
-/// 最後に転送した時刻（タイマの刻み）。[`present_deferred_if_due`] が間隔を数える。
+/// 最後に転送した時刻（タイマのティック）。[`present_deferred_if_due`] が間隔を数える。
 static FB0_LAST_PRESENT_TICK: AtomicU64 = AtomicU64::new(0);
 /// 間隔ごとの転送の回数と、それに使ったサイクル（計測。判定の行に出す）。
 static FB0_DEFERRED_PRESENTS: AtomicU64 = AtomicU64::new(0);

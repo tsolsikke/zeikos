@@ -83,7 +83,7 @@ core::arch::global_asm!(
 //   5. 15 本を GPR_BUF へ書き出す
 //   6. IN_GPR_WINDOW を 0 にする
 //   7. verify_preemptive_gprs() で照合し進捗を数える
-//   8. 無限に繰り返す（締切で on_timer_tick がこのワーカーを走行不可にして
+//   8. 無限に繰り返す（締切で on_timer_tick がこのワーカーを実行不可にして
 //      スケジューラが選ばなくなることで止まる。自分では抜けない）
 // timer がこのビジーループを任意の瞬間にプリエンプトし、切り替えが 15 本を
 // 保存・復元する。set と store の間（IN_GPR_WINDOW=1）でプリエンプトした回が、

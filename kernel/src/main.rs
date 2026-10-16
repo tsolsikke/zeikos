@@ -506,7 +506,7 @@ extern "sysv64" fn kernel_main() -> ! {
 
     logger.info(format_args!("ZeikOS kernel: entered _start"));
 
-    // **どのイメージが走ったかを、起動ログの先頭で示す（S12 前の手当て）。**
+    // **どのイメージが走ったかを、起動ログの先頭で示す（S12 前の対策）。**
     //
     // **破壊テストの feature の項目が落ちたとき、判定行だけでは 2 つを分けられない**
     // ——「破壊が効かなかった」のか「破壊の無いイメージが走った」のか
@@ -1383,7 +1383,7 @@ extern "sysv64" fn kernel_main() -> ! {
     // 回帰チェックの判定行より前に止まる。通常運転（タイマループ以降）はこの後に
     // 始まるので、steady state は保護される。
     install_kernel_stack_guard_page(&mut logger, &mut allocator);
-    // **遠征スタックの下にも、見張りのページを張る**（2026-10-06）。最初の遠征（すぐ下の Ring 3 の試し）より前に張る。
+    // **遠征スタックの下にも、ガードページを張る**（2026-10-06）。最初の遠征（すぐ下の Ring 3 の試し）より前に張る。
     //
     // SAFETY: 自前のページテーブルへ切り替え済みで、起動時の単一の文脈である。遠征には、まだ 1 度も入っていない
     // （どの遠征スタックも使っていない）。
@@ -1840,7 +1840,7 @@ extern "sysv64" fn kernel_main() -> ! {
                 stats.transferred_percent()
             ),
         );
-        // 転送の所要（S12 前の手当て）。**画面へ書く経路を BKL の内側へ入れてよいかの
+        // 転送の所要（S12 前の対策）。**画面へ書く経路を BKL の内側へ入れてよいかの
         // 判断材料である。** サイクルは時刻ではなく回る量の目安として読む。
         log_both(
             &mut logger,
@@ -1875,7 +1875,7 @@ extern "sysv64" fn kernel_main() -> ! {
     // 協調的マルチタスクのデモと検証（M5-c）。2 本のワーカーが決定的に往復し、
     // 各タスクの全 GPR が切り替えを跨いで保たれることを確認する。戻ってくると
     // 起動シーケンスは続行する。
-    // **アロケータを渡す（S12 前の手当ての C の途中）。** ワーカーのガードページが
+    // **アロケータを渡す（S12 前の対策の C の途中）。** ワーカーのガードページが
     // 2MiB ページに載っていたら、設ける前に分割するために要る
     // （`kernel::arch::x86_64::stack::install_guard_page`）。
     kernel::task::run_cooperative_demo(&mut allocator);
@@ -2073,7 +2073,7 @@ extern "sysv64" fn kernel_main() -> ! {
     //
     // **ここから戻らない。**
     //
-    // **`console` を渡す（S12 前の手当て）。** メインループが抜けて画面の書き手が
+    // **`console` を渡す（S12 前の対策）。** メインループが抜けて画面の書き手が
     // 居なくなったので、**`init` が引き取る**（`run_init` の doc）。
     // **`.bss` がマップされていることを見る（ADR-0039 の到達条件 2）。**
     // **`init` へ入る前である**——あちらは戻らない。
@@ -2394,7 +2394,7 @@ const SHELL_AFTER_HEARTBEATS: u64 = if cfg!(feature = "keep-steady-loop") {
 /// 書いている。**起動し直しを選ぶのは、シェルが落ちても触り続けられるからである。**
 /// **起動できなくなったら止まる**——**同じ失敗を無限に繰り返さない。**
 ///
-/// # 画面への書き手は、ここから `init` 1 つである（S12 前の手当て）
+/// # 画面への書き手は、ここから `init` 1 つである（S12 前の対策）
 ///
 /// **`Console` を受け取り、判定行を [`log_both`] で画面にも出す。**
 ///
@@ -2435,7 +2435,7 @@ const SHELL_AFTER_HEARTBEATS: u64 = if cfg!(feature = "keep-steady-loop") {
 ///
 /// **`deferred-decisions.md` の行が、条件としてこの doc を指している。**
 ///
-/// # やり直した（S12 前の手当て）。**条件が発火した場所である**
+/// # やり直した（S12 前の対策）。**条件が発火した場所である**
 ///
 /// **[`Console`] を静的の側へ移した**——シェルの出力を画面へ出すためである
 /// （`crate::console::install_foreground`）。**上が名指しした場所に来た。**
@@ -2576,7 +2576,7 @@ fn run_init(logger: &mut Logger<Serial>, console: Option<&mut Console>) -> ! {
             LogLevel::Info,
             format_args!("init: starting {SHELL_PATH_TEXT} (restart {restarts} of {MAX_RESTARTS})"),
         );
-        // **シェルが走っている間だけ、画面をシェルへ渡す（S12 前の手当て）。**
+        // **シェルが走っている間だけ、画面をシェルへ渡す（S12 前の対策）。**
         //
         // **据えている間、この関数は画面へ書けない**——`&mut Console` をガードへ
         // 預けるので、借用検査がそれを見る。**「書き手は 1 つ」はそこが保証する。**
@@ -3537,7 +3537,7 @@ fn exercise_ansi_console(logger: &mut Logger<Serial>, console: &mut Console) {
     // (3) 列が 2 回の write に割れても解釈される（状態の持ち越し）。
     //
     // **`install_foreground` はパーサを reset する**ので、据えたまま
-    // 2 回に分けて送る（実際の `sys_write` の刻みと同じ形である）。
+    // 2 回に分けて送る（実際の `sys_write` のステップと同じ形である）。
     let foreground = kernel::console::install_foreground(console);
     kernel::console::write_foreground_bytes(b"\x1b[");
     kernel::console::write_foreground_bytes(b"5;1H");
@@ -4204,7 +4204,7 @@ fn report_idt(logger: &mut Logger<Serial>) {
     // 中身は CPU 固有の置き場に在る。載っていなければ、名指しして止まる。
     kernel::arch::x86_64::interrupt_readiness::verify_entry_stacks(logger);
 
-    // スタブ表の刻み幅と、IDT エントリがそれを指していることを検証する。IDT は
+    // スタブ表のステップ幅と、IDT エントリがそれを指していることを検証する。IDT は
     // base + n * STUB_SIZE でエントリを作るので、この前提が崩れると全エントリが誤った
     // アドレスを指す。同じ式で検算すると循環するので、アセンブラが付けた独立のラベルと
     // 突き合わせる。
@@ -5277,7 +5277,7 @@ fn demo_two_address_spaces(
     // 到達条件 5 の機構: 破棄して隔離へ入れ、退くまで配られないこと。
     //
     // **隔離は静的に置く**（2026-10-07）。**隔離の容量を 4096 にしたとき、ここの局所が 64 KiB になって、起動のカーネル
-    // スタックをあふれさせた**（実測。見張りのページが止めた）。**静的なら、容量をいくつにしてもスタックは 1 バイトも
+    // スタックをあふれさせた**（実測。ガードページが止めた）。**静的なら、容量をいくつにしてもスタックは 1 バイトも
     // 増えない。** 容量は同じ日に 256 へ戻したが、静的のままにする。
     static mut DEMO_QUARANTINE: kernel::quarantine::Quarantine =
         kernel::quarantine::Quarantine::new();
@@ -5452,7 +5452,7 @@ fn start_timer(
         cpu::halt_forever();
     }
 
-    // **割り込みを許す直前の、ページの権限の一覧**（`kernel::page_survey`）。恒等を外し、見張りのページを外し、
+    // **割り込みを許す直前の、ページの権限の一覧**（`kernel::page_survey`）。恒等を外し、ガードページを外し、
     // 割り込みコントローラのレジスタをコピー、起動時のユーザープログラムを走らせ終えた後の表である。
     survey_mappings(logger, "before interrupts are enabled");
 
@@ -6114,9 +6114,9 @@ fn copy_fs_image_to_frames(
     cpu::halt_forever();
 }
 
-/// イメージの検査値（P-e。`ADR-0034` の Addendum）。
+/// イメージのチェックサム（P-e。`ADR-0034` の Addendum）。
 ///
-/// **virtio の読みの検査値と同じ式である**——`byte * (index + 1)` の総和を
+/// **virtio の読みのチェックサムと同じ式である**——`byte * (index + 1)` の総和を
 /// ラップさせて足す。**位置を見るので、順序の入れ替えも検出する。**
 ///
 /// **ホストが `disk0.img` から同じ計算を独立に行い、突き合わせる。**
@@ -6163,7 +6163,7 @@ enum FsImageCopyError {
     RamImageWrongSize { handed: u64, expected: u64 },
     /// direct map が渡されたイメージを覆っていない（同）。**コピーする前に確かめる。**
     RamImageNotCovered { base: u64, last: u64 },
-    /// 渡されたイメージの検査値が、ビルドしたときの値と違う（同）。**長さが同じでも中身が古い形を検出する。**
+    /// 渡されたイメージのチェックサムが、ビルドしたときの値と違う（同）。**長さが同じでも中身が古い形を検出する。**
     RamImageChecksumMismatch {
         found: u32,
         found_bytes: usize,
@@ -6291,7 +6291,7 @@ fn try_copy_fs_image_to_frames(
     // 渡した RAM のイメージからコピーする。** **どちらも無ければ `NoSource` で止まる。**
     // **判定の側から見ると、行が違う**（`fs-image-load:` の文言）。
     let mut blk = blk;
-    // **どちらからコピーしたかを控える**（下の検査値の照合で見る）。
+    // **どちらからコピーしたかを控える**（下のチェックサムの照合で見る）。
     let copied_from_ram = blk.is_none();
     if let Some(blk) = blk.as_deref_mut() {
         // 破壊テスト (S13-c, virtio-load-skip-first-test): 先頭の 1 かたまりを読まない。
@@ -6386,7 +6386,7 @@ fn try_copy_fs_image_to_frames(
     // **「壊したつもりで壊れていない」を、破壊テストを走らせて検出した例である。**
     //
     // 破壊テスト (2026-10-05, fs-copy-corrupt-label): ボリュームの名前の欄の最後の 1 バイトを 0xFF にする。
-    // **管理用の部分の検査値が、ホストがファイルから計算した値と食い違う。** 解析は通る（名前は読まれない）。
+    // **管理用の部分のチェックサムが、ホストがファイルから計算した値と食い違う。** 解析は通る（名前は読まれない）。
     #[cfg(feature = "fs-copy-corrupt-label-test")]
     // SAFETY: 上と同じ範囲（イメージは superblock より長い）。破壊テストのために 1 バイトだけ変える。
     unsafe {
@@ -6407,7 +6407,7 @@ fn try_copy_fs_image_to_frames(
 
     // SAFETY: いま書いた範囲を読むだけである。
     let copied = unsafe { core::slice::from_raw_parts(destination as *const u8, bytes as usize) };
-    // **検査値を出す（P-e。`ADR-0034` の Addendum）。**
+    // **チェックサムを出す（P-e。`ADR-0034` の Addendum）。**
     //
     // **以前は埋め込みイメージとのバイト一致を見ていた。** **その埋め込みを外したので、
     // 突き合わせる相手をホストへ移した**——**ホストが `disk0.img` から同じ計算を
@@ -6415,16 +6415,16 @@ fn try_copy_fs_image_to_frames(
     // 読む側）。**持ち越しでも成立する**（毎回中身が変わってよい）。
     //
     // **ハッシュではない。重み付き和である**（`byte * (index + 1)` の総和）。
-    // **virtio の読みの検査値と同じ式で、式を 2 つに増やさない。**
+    // **virtio の読みのチェックサムと同じ式で、式を 2 つに増やさない。**
     //
     // **費用は前と同じ位である**——**前も 2MiB のスライス比較で 2MiB を歩いていた。**
     let timing_loaded = common::arch::x86_64::read_timestamp_counter();
-    // **検査値が覆うのは、管理用の部分だけである**（2026-10-05。先頭から、グループ 0 の inode の表の終わりまで。
+    // **チェックサムが覆うのは、管理用の部分だけである**（2026-10-05。先頭から、グループ 0 の inode の表の終わりまで。
     // `common::ext2` の `management_prefix_len`）。**以前はイメージの全体を歩いていた**——イメージの大きさに比例して延び、
-    // 32 MiB で約 2.5 秒かかった（実測）。**ファイルの中身の違いは、ボリュームの名前の欄に書いた全体の検査値を
+    // 32 MiB で約 2.5 秒かかった（実測）。**ファイルの中身の違いは、ボリュームの名前の欄に書いた全体のチェックサムを
     // 通して、この範囲の値に出る**（`kernel/build.rs`）。**イメージの全体のバイト一致は、イメージを取り出す検査が見る。**
     //
-    // **解析できないイメージでは、範囲が決まらない。** 0 バイトの検査値（0）を出して進む——すぐ下の確かめ
+    // **解析できないイメージでは、範囲が決まらない。** 0 バイトのチェックサム（0）を出して進む——すぐ下の確かめ
     // （`verify_root_fs_image`）が、解析の失敗を名指しして止める。
     let management_bytes = common::ext2::Ext2::parse(copied)
         .and_then(|fs| fs.management_prefix_len())
@@ -6432,7 +6432,7 @@ fn try_copy_fs_image_to_frames(
     let checksum = image_checksum(&copied[..management_bytes]);
     let timing_summed = common::arch::x86_64::read_timestamp_counter();
 
-    // **RAM のイメージからコピーした回は、検査値でも照合する**（`ADR-0068` の HW-d。レビューの 1 点）。
+    // **RAM のイメージからコピーした回は、チェックサムでも照合する**（`ADR-0068` の HW-d。レビューの 1 点）。
     //
     // **長さが同じで中身が古い `fs.img` は、長さでは検出されない**——**VDI の作り直し忘れや、
     // ESP の片方だけの差し替えで起きる**（HW-e で VirtualBox を実行し始めると起きやすい）。
@@ -6442,7 +6442,7 @@ fn try_copy_fs_image_to_frames(
     // 前の起動で書いた中身を持っており、ビルドしたときの値と違うのが正しい。** **そちらはホストが
     // `disk0.img` から独立に計算して突き合わせる**（上の doc）。
     //
-    // **比べるのは、管理用の部分の検査値である**（2026-10-05）。**ビルドのときに、イメージの全体の検査値をボリュームの
+    // **比べるのは、管理用の部分のチェックサムである**（2026-10-05）。**ビルドのときに、イメージの全体のチェックサムをボリュームの
     // 名前の欄へ書いてあるので、中身だけが古いイメージも、この値が違う。** 範囲の決め方が `build.rs` と食い違っても、
     // ここで止まる（範囲のバイト数も比べる）。
     if copied_from_ram
@@ -6622,14 +6622,14 @@ fn verify_bss_is_mapped(logger: &mut Logger<Serial>) {
     ));
 }
 
-/// **Linux 向けのイメージ（musl の静的 PIE。`ADR-0074` の M1）を `spawn` で起こし、終了の状態を判定の行に出す**（2026-10-06）。
+/// **Linux 向けのイメージ（musl の静的 PIE。`ADR-0074` の M1）を `spawn` で起こし、終了ステータスを判定の行に出す**（2026-10-06）。
 ///
 /// **起動時のプログラムの表と `bss-check` の後に置く**——`m1-rust` は `syscall` 命令を使い、`.bss` を持ち、`munmap` を打つので、
 /// 前に置くと、それらを狙った破壊テスト（`user-load-filesz-only`・`syscall-return-*`・`syscall-stub-keeps-user-stack`・
 /// `munmap-keeps-frames`）を先に捕まえてしまい、狙いの行が出ない（全検査で 5 項目が落ちた。2026-10-06）。
 ///
 /// **環境変数は空**——Linux 上で控えた参照（`env -i`）と出す行を揃えるため。**出力の中身はここでは見ない**——起動ログの参照に
-/// 入った行を、`linux-programs/reference/` と突き合わせる基本の検査が見る。終了の状態が引数の数（4）でなければ、名指しして止まる。
+/// 入った行を、`linux-programs/reference/` と突き合わせる基本の検査が見る。終了ステータスが引数の数（4）でなければ、名指しして止まる。
 /// C 版（`/bin/linux/m1-c`）は、`linux-c-test` のビルドだけがイメージに持つので、そのときだけ起こす。**`m3a-rust`（スレッドを
 /// 1 つ作るイメージ）も同じ形で起こす**（2026-10-14）。
 fn verify_linux_programs(logger: &mut Logger<Serial>) {
@@ -6786,7 +6786,7 @@ fn verify_linux_program_ending(
 
 /// 隔離の容量（256 フレーム）より多いフレームを持つプロセス（`/bin/frame-hog`。32 MiB の無名の `mmap`）を起こし、
 /// 壊した後に漏れが 0 で、取った数と集めた数が釣り合うことを見る（2026-10-07。`frame-hog-test`。`kernel::quarantine::Retire`）。
-/// **会計は `spawn` が見る**——釣り合わなければ `spawn` が `Err` を返すので、ここは終了の状態だけを見る。
+/// **会計は `spawn` が見る**——釣り合わなければ `spawn` が `Err` を返すので、ここは終了ステータスだけを見る。
 #[cfg(feature = "frame-hog-test")]
 fn verify_frame_hog(logger: &mut Logger<Serial>) {
     let outcome = kernel::userland::spawn(b"/bin/frame-hog", b"frame-hog\0", 1, None);
@@ -12411,7 +12411,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "wait-ignores-the-generation",
         cfg!(feature = "wait-ignores-the-generation"),
-        "待つ口が手形の世代を見ない",
+        "待つ口がハンドルの世代を見ない",
     ),
     (
         "finish-does-not-wake",
@@ -13381,22 +13381,22 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "excursion-overflow-depth0-test",
         cfg!(feature = "excursion-overflow-depth0-test"),
-        "深さ 0 の遠征スタックをあふれさせて見張りのページを踏む",
+        "深さ 0 の遠征スタックをあふれさせてガードページを踏む",
     ),
     (
         "excursion-overflow-depth1-test",
         cfg!(feature = "excursion-overflow-depth1-test"),
-        "深さ 1 の遠征スタックをあふれさせて見張りのページを踏む",
+        "深さ 1 の遠征スタックをあふれさせてガードページを踏む",
     ),
     (
         "excursion-guard-skip-test",
         cfg!(feature = "excursion-guard-skip-test"),
-        "遠征スタックの下の見張りのページを張らない",
+        "遠征スタックの下のガードページを張らない",
     ),
     (
         "excursion-guard-unrecorded-test",
         cfg!(feature = "excursion-guard-unrecorded-test"),
-        "遠征スタックの見張りのページを名指しの表に控えない",
+        "遠征スタックのガードページを名指しの表に控えない",
     ),
     (
         "pie-load-without-bias-test",
@@ -13931,7 +13931,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "sched-keep-workers-runnable",
         cfg!(feature = "sched-keep-workers-runnable"),
-        "AP 起動後にデモのワーカーを走行可能へ戻す（増幅器）",
+        "AP 起動後にデモのワーカーを実行可能へ戻す（増幅器）",
     ),
     (
         "ioapic-keyboard-broadcast-test",
@@ -15197,7 +15197,7 @@ fn install_kernel_stack_guard_page(
     allocator: &mut kernel::frame_allocator::FrameAllocator,
 ) {
     let guard_virt = stack::kernel_guard_page().bottom;
-    // **設ける手順は `kernel::arch::x86_64::stack::install_guard_page` が持つ**（S12 前の手当ての C で
+    // **設ける手順は `kernel::arch::x86_64::stack::install_guard_page` が持つ**（S12 前の対策の C で
     // 寄せた）。**ワーカースタック側と同じ 1 本を通る**——あちらの doc に、
     // 2 つに分かれていたときに対処が片側にしか入らなかった経緯がある。
     //
@@ -15312,8 +15312,8 @@ fn map_kernel_image<const CAP: usize>(
 /// （`kernel::arch::x86_64::paging::verify`）。見るのは、セグメントのページの全部について、4KiB のリーフであること、
 /// 書けるか、実行できるか、である。
 ///
-/// **マップされていないページは、スタックの見張りのページだけを認める**（`.bss` の中に在り、わざと外してある。
-/// ここまでに張ってあるのは、カーネルスタックの 1 枚と、遠征スタックの 4 枚である）。**見張りのページかどうかは、
+/// **マップされていないページは、スタックのガードページだけを認める**（`.bss` の中に在り、わざと外してある。
+/// ここまでに張ってあるのは、カーネルスタックの 1 枚と、遠征スタックの 4 枚である）。**ガードページかどうかは、
 /// 張った側の控えの表から引く**（`kernel::arch::x86_64::guarded_stack_at`）。それ以外に抜けが在れば、止まる。
 fn report_kernel_image_permissions(logger: &mut Logger<Serial>) {
     use kernel::arch::x86_64::paging::verify;
@@ -15347,7 +15347,7 @@ fn report_kernel_image_permissions(logger: &mut Logger<Serial>) {
             }
             address += frame_allocator::FRAME_SIZE;
         }
-        // 見張りのページを除いた、マップされているはずのページ数。
+        // ガードページを除いた、マップされているはずのページ数。
         let pages = section.pages() - guard_pages;
         // 破壊テスト `kernel-rodata-page-writable-test` は、読むだけのセグメントの 1 ページを書ける権限でマップする。その形でも
         // 起動を続け、ページの権限の一覧に違いを出させる（ここで止めると、一覧まで届かない）。
@@ -15901,7 +15901,7 @@ fn verify_page_tables(
     ));
 }
 
-/// 立っている feature を 1 行へ並べる（S12 前の手当て）。
+/// 立っている feature を 1 行へ並べる（S12 前の対策）。
 ///
 /// **区切りはカンマである。** `xtask` が渡す形（`--features a,b`）と同じにしておくと、
 /// ログから構成をそのまま貼り直せる。

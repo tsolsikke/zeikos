@@ -111,7 +111,7 @@ keyboard-handler-not-registered-test = []
 # 生のスキャンコードをシリアルへ出す。エコーと二重になって読みにくいので
 # 既定では無効。キーボード周りの切り分けが要るときだけ有効にする。
 keyboard-raw-log = []
-# 破壊（S12 前の手当て。zi-a で上下も同じ feature の下に入った）: 矢印を
+# 破壊（S12 前の対策。zi-a で上下も同じ feature の下に入った）: 矢印を
 # 未対応へ戻す。デコーダが `KeyEvent::Unsupported` を返すので前景へバイトが
 # 届かず、シェルの挿入点が動かない。`--shell-test` の「左へ動かしてから
 # 入れた」判定が落ちる。
@@ -351,7 +351,7 @@ zi-skip-cursor-flush-test = []
 # 画面を読む判定は1つも落ちない。
 frame-write-per-piece-test = []
 # 破壊（PERF-a）: write のたびに転送する。ADR-0047 の前の形そのもので、
-# 転送の回数と量が桁で増える。計器の判定（1回の移動で転送が1回）が捕まえる。
+# 転送の回数と量が桁で増える。メトリクスの判定（1回の移動で転送が1回）が捕まえる。
 flush-every-write-test = []
 # 破壊（PERF-a）: read の時点で転送しない。溜めたまま入力を待つので、画面が
 # 古いまま止まる。画面を読む判定が軒並み落ちる。
@@ -373,23 +373,23 @@ ext2-sparse-as-error-test = ["common/ext2-sparse-as-error"]
 # 破壊（ADR-0039）: セグメントを memsz ではなく filesz で張る。.bss が張られず、
 # /bin/bss-test がゼロを読もうとして落ちる。
 user-load-filesz-only = []
-# 破壊（S12 前の手当て、C）: 中断（Ctrl+C）のフラグを立てない。走っている子が
+# 破壊（S12 前の対策、C）: 中断（Ctrl+C）のフラグを立てない。走っている子が
 # 止まらなくなる。
 kill-ignore-interrupt-test = []
-# 破壊（S12 前の手当て、C）: 深さ 1 でも畳む。シェル自身が Ctrl+C で死に、
+# 破壊（S12 前の対策、C）: 深さ 1 でも畳む。シェル自身が Ctrl+C で死に、
 # `init` が起こし直す。
 kill-fold-at-depth-one-test = []
-# 破壊（S12 前の手当て、C）: 子を起こす前に中断のフラグを降ろさない。
+# 破壊（S12 前の対策、C）: 子を起こす前に中断のフラグを降ろさない。
 # 直前の Ctrl+C が次の子へ持ち越され、起きた瞬間に止まる。
 kill-keep-stale-interrupt-test = []
-# 破壊（S12 前の手当て、C）: BKL を解かずに畳む。次に BKL を取る者が、
+# 破壊（S12 前の対策、C）: BKL を解かずに畳む。次に BKL を取る者が、
 # 同じコアの再取得として捕まえる（`user-exit-keep-bkl` と同じ機序）。
 kill-fold-keep-bkl-test = []
 # 破壊（S12-a）: イメージの複製の末尾 1 バイトを 0xFF で潰す。読み戻しが落ちる。
 # 落とさなければ、取り出したイメージとのバイト一致がホスト側で落ちる。
 # **0 で潰す形は破壊にならない**——イメージの末尾は既に 0 である（実測）。
 fs-copy-corrupt-tail-test = []
-# イメージの複製の、ボリュームの名前の欄の最後の 1 バイトを 0xFF にする。管理用の部分の検査値が、ホストが
+# イメージの複製の、ボリュームの名前の欄の最後の 1 バイトを 0xFF にする。管理用の部分のチェックサムが、ホストが
 # ファイルから計算した値と食い違う。解析は通る。
 fs-copy-corrupt-label-test = []
 # 破壊（S12-b）: 空きブロック数の欄を 2 バイトずらして読む。common へ転送する。
@@ -439,7 +439,7 @@ ext2-alloc-skip-sb-count-test = ["common/ext2-alloc-skip-sb-count-break"]
 ext2-alloc-skip-bg-count-test = ["common/ext2-alloc-skip-bg-count-break"]
 ext2-alloc-ignore-bitmap-test = ["common/ext2-alloc-ignore-bitmap-break"]
 ext2-free-skip-bit-test = ["common/ext2-free-skip-bit-break"]
-# 破壊（S12 前の手当て、C）: 止めた後に溜まっている入力を捨てない。
+# 破壊（S12 前の対策、C）: 止めた後に溜まっている入力を捨てない。
 # 止めた打鍵そのものが残り、次のプロンプトに `^C` が余分に出る。
 kill-keep-typed-input-test = []
 # 破壊（2026-09-28）: 切り離したスロットも深さ 1 で弾く。`spin | cat` の `spin` が
@@ -526,14 +526,14 @@ stack-guard-test = []
 # M4-b-2 の代用（#PF ゲートの Present 落とし）とは別経路。`--stack-test df`。
 stack-overflow-df-test = ["stack-guard-test"]
 # 遠征スタックをあふれさせる（2026-10-06）。その深さの遠征スタックの上で、最初の write の入口から、戻らない再帰で
-# スタックを使い切る。見張りのページに当たり、#PF（IST2）のハンドラが、遠征スタックの名前を出して止まる。
+# スタックを使い切る。ガードページに当たり、#PF（IST2）のハンドラが、遠征スタックの名前を出して止まる。
 # `cargo xtask run --stack-test excursion-depth0`（深さ 1 は `excursion-depth1`）。
 excursion-overflow-depth0-test = []
 excursion-overflow-depth1-test = []
-# 遠征スタックの下の見張りのページを張らない（2026-10-06。以前の形）。張った直後の確かめが、マップされたままのページを
+# 遠征スタックの下のガードページを張らない（2026-10-06。以前の形）。張った直後の確かめが、マップされたままのページを
 # 名指しして止まる。`--stack-test excursion-unguarded`。
 excursion-guard-skip-test = []
-# 遠征スタックの見張りのページを、名指しの表に控えない（2026-10-06）。張った直後の確かめが、控えられていない
+# 遠征スタックのガードページを、名指しの表に控えない（2026-10-06）。張った直後の確かめが、控えられていない
 # ページを名指しして止まる。`--stack-test excursion-unrecorded`。
 excursion-guard-unrecorded-test = []
 # 深さ 0 の遠征スタックを、止まる線（容量の 4 分の 3）を越える深さまで使う（2026-10-06）。あふれはしない。
@@ -617,7 +617,7 @@ wake-ignores-the-reason = []
 timer-never-wakes = []
 # タイマが締切を見ずに毎ティック起こす（W2-d+）。眠った側は待ち直すので所要は変わらない。
 timer-wakes-before-deadline = []
-# 待つ口が手形の世代を見ない（ADR-0063 の (b2)）。終わった子の手形で次の子を待てる。
+# 待つ口がハンドルの世代を見ない（ADR-0063 の (b2)）。終わった子のハンドルで次の子を待てる。
 wait-ignores-the-generation = ["concurrent-test"]
 # 2 本目が終わっても待っている親を起こさない（ADR-0063 の (b2)）。親が永久に待つ。
 finish-does-not-wake = ["concurrent-test"]
@@ -702,7 +702,7 @@ screen-test = []
 # 既定のイメージには入れない——バイトが release に依るため。`cargo xtask run --seinas-fbdev-test`。
 seinas-test = []
 # /dev/fb0 を Linux の fbdev の形で開き、四隅に色を置いて、FBIOZPRESENT を打たずに画面へ出るのを待つ（2026-10-07。
-# ADR-0083。M2 の最初の刻み）。init が /bin/fb-test を前景で起こす。判定は xtask の fb-test が screendump を読んで行う。
+# ADR-0083。M2 の最初のステップ）。init が /bin/fb-test を前景で起こす。判定は xtask の fb-test が screendump を読んで行う。
 fb-test = []
 # fb-test が close を打たずに exit する（ADR-0083）。プロセスの終わりに表ごと閉じられ、最後の転送と文字の画面が戻ることを見る。
 # 破壊テストではない（判定は全部成り立つ）。`--fb-test --ending noclose`。
@@ -729,7 +729,7 @@ foreground-ignores-the-slot = []
 frame-allocator-hands-out-high-first = []
 # 検査の構成（ADR-0068 の HW-a。破壊ではない）: 自前のページテーブルへ切り替えた後から、フレームアロケータが
 # 最も高い空きから配る。6GiB の起動で、ヒープ・ユーザーのページ・ページテーブル・virtio のリングが 4GiB の上から
-# 取られる。アドレスを 32 ビットへ切り詰める箇所を表に出す。4GiB の上から配った枚数を計器に出す。
+# 取られる。アドレスを 32 ビットへ切り詰める箇所を表に出す。4GiB の上から配った枚数をメトリクスに出す。
 frame-allocator-high-after-switch = []
 # 破壊（ADR-0068 の HW-b）: i8042 を探って答えが無ければ止める（直す前の形）。pc の i8042=off
 # （FADT がリビジョン 1 で何も言わないので探る）で、プロンプトの前に止まる。

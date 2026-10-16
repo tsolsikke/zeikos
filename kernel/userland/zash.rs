@@ -168,7 +168,7 @@ const NOT_FOUND_HEAD: &[u8] = b"zash: ";
 /// 起動できなかったときの返事（後半）。
 const NOT_FOUND_TAIL: &[u8] = b": cannot run\n";
 
-/// 中断（Ctrl+C）で子が止まったときに `spawn` が返す値（S12 前の手当て、C）。
+/// 中断（Ctrl+C）で子が止まったときに `spawn` が返す値（S12 前の対策、C）。
 ///
 /// **カーネル側の `SPAWN_INTERRUPTED_FLAG` と同じ値である。**
 /// **ユーザープログラムはカーネルの定数を参照できない**ので、ここにコピーする
@@ -783,14 +783,14 @@ pub unsafe extern "sysv64" fn zeikos_main(stack: *const u64) -> ! {
 
     let mut line = [0u8; LINE_MAX];
     let mut length = 0usize;
-    // **挿入点（S12 前の手当て）。** 次に字を入れる位置で、**常に `length` 以下**である。
+    // **挿入点（S12 前の対策）。** 次に字を入れる位置で、**常に `length` 以下**である。
     //
     // **いまは常に行末（`length` と等しい）である**——動かす手段がまだ無い。
     // **それでも概念として先に置く。** 矢印を足す段階で増えるのは
     // 「動かす手段」だけになり、Backspace と挿入の側を書き直さずに済む。
     let mut cursor = 0usize;
     let mut overflowed = false;
-    // **エスケープの受け（S12 前の手当て）。** 矢印は 3 バイトで届く
+    // **エスケープの受け（S12 前の対策）。** 矢印は 3 バイトで届く
     // （`\x1b` `[` に `D`/`C`/`A`/`B`。`kernel/src/input.rs` が落とす形。
     // 上下は zi-a で増えた——このシェルでは読んで捨てる）。
     //
@@ -826,7 +826,7 @@ pub unsafe extern "sysv64" fn zeikos_main(stack: *const u64) -> ! {
         let was_completing = completing;
         completing = false;
 
-        // **3 バイトの状態機械を先に通す（S12 前の手当て）。**
+        // **3 バイトの状態機械を先に通す（S12 前の対策）。**
         //
         // **未完のまま別の字が来たら、そこで捨てて普通の字として扱う。**
         // 溜めた `\x1b` や `[` は**行へ入れない**——打っていない字を
@@ -960,7 +960,7 @@ pub unsafe extern "sysv64" fn zeikos_main(stack: *const u64) -> ! {
                 write_prompt();
             }
             CTRL_C => {
-                // **打ちかけの行を捨てる（S12 前の手当て、C）。**
+                // **打ちかけの行を捨てる（S12 前の対策、C）。**
                 //
                 // **子が走っていないときの Ctrl+C はここへ来る。**
                 // **走っているときはこのバイトが届かない**——カーネルが
@@ -1034,7 +1034,7 @@ pub unsafe extern "sysv64" fn zeikos_main(stack: *const u64) -> ! {
                 move_to_end(&line, &mut cursor, length);
             }
             BACKSPACE => {
-                // **挿入点の直前を消す（S12 前の手当て。SE-f で `delete_range` へ寄せた）。**
+                // **挿入点の直前を消す（S12 前の対策。SE-f で `delete_range` へ寄せた）。**
                 // **行頭では何もしない**——範囲が空になるので、あちらが返る。
                 let at = cursor;
                 delete_range(&mut line, &mut length, &mut cursor, at.saturating_sub(1), at);
@@ -1394,7 +1394,7 @@ fn expand_line(line: &[u8], out: &mut [u8]) -> Option<usize> {
 /// （`docs/vision.md` の「コマンドの実行を組み込みと外部で分ける」。
 /// **あそこが「コストがゼロで効く」として挙げている 2 点の 1 つである**）。
 ///
-/// # 何を組み込みにするかの基準（S12 前の手当ての 3 本目）
+/// # 何を組み込みにするかの基準（S12 前の対策の 3 本目）
 ///
 /// **Linux と同じ基準を採る。** 向こうで組み込みになる理由は 3 種類あり、
 /// **そのうち 1 つだけが ZeikOS で成り立つ。**
@@ -2580,7 +2580,7 @@ fn run_pipeline(line: &[u8], left: &[usize], right: &[usize]) {
 
 /// 子の終わり方を報せる。**止められた子は 1 行、0 以外は状態、0 は黙る。**
 fn report_status(status: i64) {
-    // **止められた子は、状態ではなく 1 行で報せる（S12 前の手当て、C）。**
+    // **止められた子は、状態ではなく 1 行で報せる（S12 前の対策、C）。**
     //
     // **子に落ち度が無いので、終了状態として数字を出さない。**
     // **打った人は自分で止めたことを知っている**ので、短くてよい。
@@ -2772,7 +2772,7 @@ fn redraw_tail_without_gap(tail: &[u8]) {
     }
 }
 
-/// エスケープの受けの状態（S12 前の手当て。SE-b で 4 バイトの形が増えた）。
+/// エスケープの受けの状態（S12 前の対策。SE-b で 4 バイトの形が増えた）。
 ///
 /// **2 つの形を受ける。** 矢印は `\x1b` `[` `D` / `C` / `A` / `B` の 3 バイトで、
 /// **Home / Delete / End は `\x1b` `[` 数 `~` の 4 バイトである**

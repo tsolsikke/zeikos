@@ -95,7 +95,7 @@ pub enum KeyEvent {
     /// 占有種別（全角の先頭 / 後続）を管理する必要があり、割り込みとは別の
     /// 仕事になる（`docs/deferred-decisions.md`）。キーとしては認識する。
     Backspace,
-    /// カーソル左（S12 前の手当て）。
+    /// カーソル左（S12 前の対策）。
     ///
     /// # なぜ `Unsupported` から出すのか
     ///
@@ -103,7 +103,7 @@ pub enum KeyEvent {
     /// 扱うようになったものを残すと、**呼び出し側が数えている「扱えなかった数」に
     /// 扱えたものが混ざる。** 種を分ける。
     ArrowLeft,
-    /// カーソル右（S12 前の手当て）。
+    /// カーソル右（S12 前の対策）。
     ArrowRight,
     /// カーソル上（zi-a）。
     ///
@@ -189,13 +189,13 @@ const SCANCODE_LEFT_SHIFT: u8 = 0x2A;
 const SCANCODE_RIGHT_SHIFT: u8 = 0x36;
 const SCANCODE_CAPS_LOCK: u8 = 0x3A;
 
-/// Ctrl のスキャンコード（S12 前の手当て、C）。
+/// Ctrl のスキャンコード（S12 前の対策、C）。
 ///
 /// **左右で同じ値である。** 右 Ctrl は `0xE0 0x1D` で、接頭辞が付くだけである。
 /// **接頭辞の有無を区別しない**ので、左右どちらでも Ctrl として効く。
 pub(crate) const SCANCODE_CTRL: u8 = 0x1D;
 
-/// `C` のスキャンコード（S12 前の手当て、C）。
+/// `C` のスキャンコード（S12 前の対策、C）。
 pub(crate) const SCANCODE_C: u8 = 0x2E;
 
 /// Ctrl+C が作る制御文字。**ASCII の ETX（`0x03`）である。**
@@ -421,7 +421,7 @@ pub struct Decoder {
     shift_left: bool,
     shift_right: bool,
     caps_lock: bool,
-    /// Ctrl が押されているか（S12 前の手当て、C）。
+    /// Ctrl が押されているか（S12 前の対策、C）。
     ///
     /// **左右を分けない。** Shift は左右を分けているが、あちらは
     /// **どちらが押されたかを数えるため**ではなく、**片方を離しても
@@ -484,10 +484,10 @@ impl Decoder {
             }
             Sequence::Extended => {
                 self.sequence = Sequence::Idle;
-                // 拡張キーのうち**左右の矢印だけを扱う**（S12 前の手当て）。
+                // 拡張キーのうち**左右の矢印だけを扱う**（S12 前の対策）。
                 // 残り（上下・Home・End・右 Ctrl/Alt など）は未対応のままである。
                 //
-                // 破壊テスト (S12 前の手当て, keyboard-drop-arrows): 矢印を未対応へ戻す。
+                // 破壊テスト (S12 前の対策, keyboard-drop-arrows): 矢印を未対応へ戻す。
                 // **シェルの挿入点が動かなくなる**ので、`--shell-test` の
                 // 「左へ動かしてから入れた」判定が落ちる。
                 #[cfg(not(feature = "keyboard-drop-arrows-test"))]
@@ -530,7 +530,7 @@ impl Decoder {
                 if code == SCANCODE_END {
                     return Some(KeyEvent::End);
                 }
-                // **右 Ctrl（`0xE0 0x1D`）も Ctrl として扱う（S12 前の手当て、C）。**
+                // **右 Ctrl（`0xE0 0x1D`）も Ctrl として扱う（S12 前の対策、C）。**
                 //
                 // **接頭辞の有無で左右を区別しない。** 区別すると、
                 // **右 Ctrl で Ctrl+C が効かない**という、押した人にしか

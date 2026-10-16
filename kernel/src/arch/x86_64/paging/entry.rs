@@ -641,7 +641,7 @@ mod tests {
         assert_eq!(table_entry(small, kernel), 0x0000_0012_3456_7000 | 0x003);
     }
 
-    /// 分割の基本。アドレスが 4KiB 刻みで並び、両端が正しいこと。
+    /// 分割の基本。アドレスが 4KiB ステップで並び、両端が正しいこと。
     #[test]
     fn split_produces_four_kib_pages_covering_the_same_range() {
         let base = 0x0000_0000_4020_0000; // 2MiB アライン

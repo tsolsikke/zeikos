@@ -57,7 +57,7 @@ static FOREGROUND: AtomicBool = AtomicBool::new(false);
 /// Ring 3 が受け取ったバイトの累計（判定行に出す）。
 static DELIVERED: AtomicU64 = AtomicU64::new(0);
 
-/// 中断（Ctrl+C）が要求されたか（S12 前の手当て、C）。
+/// 中断（Ctrl+C）が要求されたか（S12 前の対策、C）。
 ///
 /// # なぜ割り込みの側で立てるのか
 ///
@@ -78,7 +78,7 @@ static DELIVERED: AtomicU64 = AtomicU64::new(0);
 /// （前の中断要求を新しい子へ持ち越さない）。
 static INTERRUPT_REQUESTED: AtomicBool = AtomicBool::new(false);
 
-/// Ctrl が押されているか（割り込みの側の追跡。S12 前の手当て、C）。
+/// Ctrl が押されているか（割り込みの側の追跡。S12 前の対策、C）。
 ///
 /// **`Decoder` が持つものとは別である。** あちらは文字を作る側で、
 /// **`read` の文脈でしか動かない。** こちらは中断を見つける側で、
@@ -98,7 +98,7 @@ static EXTENDED_PENDING: AtomicBool = AtomicBool::new(false);
 /// `Decoder` が同じ罠を `PAUSE_PREFIX` の doc に書いている。
 static PAUSE_REMAINING: core::sync::atomic::AtomicU8 = core::sync::atomic::AtomicU8::new(0);
 
-/// 割り込みの側から 1 バイト与える（S12 前の手当て、C）。
+/// 割り込みの側から 1 バイト与える（S12 前の対策、C）。
 ///
 /// **デコーダではない。** 表も Shift も Caps Lock も見ない。
 /// **Ctrl の押下状態と、Ctrl+C の一致だけを見る。**
@@ -138,7 +138,7 @@ pub fn note_scancode_for_interrupt(code: u8) {
         return;
     }
 
-    // 破壊テスト (S12 前の手当て C, kill-ignore-interrupt): フラグを立てない。
+    // 破壊テスト (S12 前の対策 C, kill-ignore-interrupt): フラグを立てない。
     // **走っている子が Ctrl+C で止まらなくなる。**
     #[cfg(not(feature = "kill-ignore-interrupt-test"))]
     if !released && key == SCANCODE_C && CTRL_DOWN.load(Ordering::SeqCst) {
@@ -146,21 +146,21 @@ pub fn note_scancode_for_interrupt(code: u8) {
     }
 }
 
-/// 中断が要求されているかを見て、要求を降ろす（S12 前の手当て、C）。
+/// 中断が要求されているかを見て、要求を降ろす（S12 前の対策、C）。
 ///
 /// **`swap` なので消費は原子的である。** 二重に消費されない。
 pub fn take_interrupt_request() -> bool {
     INTERRUPT_REQUESTED.swap(false, Ordering::SeqCst)
 }
 
-/// 中断の要求を降ろす（S12 前の手当て、C）。
+/// 中断の要求を降ろす（S12 前の対策、C）。
 ///
 /// **子を起こす直前に呼ぶ。** 前の中断要求を新しい子へ持ち越さない。
 pub fn clear_interrupt_request() {
     INTERRUPT_REQUESTED.store(false, Ordering::SeqCst);
 }
 
-/// 溜まっている入力を捨てる（S12 前の手当て、C）。
+/// 溜まっている入力を捨てる（S12 前の対策、C）。
 ///
 /// # なぜ要るのか。**止めた打鍵そのものが残る**
 ///
@@ -252,7 +252,7 @@ pub fn claim_foreground() -> bool {
         .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
         .is_ok();
     if claimed {
-        // **取れた深さを控える（S12 前の手当て、C）。** 中断の判定行が、
+        // **取れた深さを控える（S12 前の対策、C）。** 中断の判定行が、
         // **持ち主（最も外側）と止めた相手（最も内側）を並べて出す。**
         FOREGROUND_DEPTH.store(crate::arch::x86_64::excursion_depth(), Ordering::SeqCst);
     }
@@ -267,7 +267,7 @@ pub fn foreground_refused_count() -> u64 {
     FOREGROUND_REFUSED.load(Ordering::SeqCst)
 }
 
-/// 前景を取った遠征の深さ（S12 前の手当て、C）。**判定行に出すためだけに持つ。**
+/// 前景を取った遠征の深さ（S12 前の対策、C）。**判定行に出すためだけに持つ。**
 static FOREGROUND_DEPTH: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
 /// 前景を取った遠征の深さ。**取られていないときの値は意味を持たない。**
@@ -530,7 +530,7 @@ pub(crate) enum DeliveredBytes {
 /// # Esc 単体と CSI の出し分け
 ///
 /// **Esc キーは素の 1 バイト（`\x1b`）、矢印は CSI の 3 バイト列である**
-/// （`\x1b[D` / `\x1b[C` / `\x1b[A` / `\x1b[B`。S12 前の手当てで左右、zi-a で
+/// （`\x1b[D` / `\x1b[C` / `\x1b[A` / `\x1b[B`。S12 前の対策で左右、zi-a で
 /// 上下）。**形は ANSI の CSI である**——`ADR-0029` が画面制御に ANSI を
 /// 選んでいるので、入力の側も同じ表現にしておくと後で噛み合う。
 /// **解釈するのはシェルや `zi` であって、コンソールではない**——この列が

@@ -42,7 +42,7 @@ pub struct FlushStats {
     pub transferred_bytes: u64,
     /// 全面転送 1 回分のバイト数。
     pub full_screen_bytes: u64,
-    /// 転送に費やした TSC サイクルの合計（S12 前の手当て）。
+    /// 転送に費やした TSC サイクルの合計（S12 前の対策）。
     ///
     /// **時刻ではなく、回る量の目安である**（`common::arch::x86_64::read_timestamp_counter`）。
     /// **測る理由は、転送が BKL を保持している区間へ入るかを判断するためである**
@@ -74,7 +74,7 @@ pub struct FlushStats {
     pub terminal_writes: u64,
     /// 前景の画面へバイト列が届いた回数（PERF）。**刻んだ後の回数である。**
     ///
-    /// **`sys_write` の刻み（64 バイト）ごとに 1 回である**（上の doc）。
+    /// **`sys_write` のステップ（64 バイト）ごとに 1 回である**（上の doc）。
     pub foreground_writes: u64,
     /// その `write` が運んだバイト数の合計（PERF）。
     pub foreground_bytes: u64,
@@ -798,7 +798,7 @@ impl Console {
             EraseScope::All => {
                 self.back.clear_all(self.background);
                 self.dirty.mark_all();
-                // **セルも空へ戻す（zi-e 前の手当て）。** **ピクセルだけ消すと、
+                // **セルも空へ戻す（zi-e 前の対策）。** **ピクセルだけ消すと、
                 // 状態と画面が食い違う**——`erase_cells`（`After` / `Before` が
                 // 使う側）は最初から両方を消しており、**ここだけが片方だった。**
                 //

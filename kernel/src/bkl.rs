@@ -554,7 +554,7 @@ fn report_recursive_acquire_and_halt(entry: KernelEntry) -> ! {
         "[ERROR]   the BKL is held with IF=0, so no interrupt can re-enter on the same core; \
          reaching here means that invariant is broken"
     );
-    // **破壊テストが待った長さを出す（S12 前の手当て）。**
+    // **破壊テストが待った長さを出す（S12 前の対策）。**
     // **上限よりはるかに短いことが、発火が時間に依存していないことの観測である。**
     #[cfg(feature = "bkl-hold-with-if-set-test")]
     {
@@ -705,7 +705,7 @@ pub unsafe fn sabotage_enable_interrupts_while_held() {
     }
 }
 
-/// 破壊テスト `bkl-hold-with-if-set` が待ち始めた TSC（S12 前の手当て）。
+/// 破壊テスト `bkl-hold-with-if-set` が待ち始めた TSC（S12 前の対策）。
 ///
 /// **発火したときに「どれだけ待ったか」を出すために持つ。**
 /// 待ちが上限よりはるかに短いことが、**時間に依存しなくなったことの観測である。**
@@ -725,7 +725,7 @@ static SABOTAGE_WAIT_START: AtomicU64 = AtomicU64::new(0);
 #[cfg(feature = "bkl-hold-with-if-set-test")]
 const SABOTAGE_TICK_WAIT_CYCLES: u64 = 1_000_000_000;
 
-/// 破壊テストが発火しなかったことを報告して停止する（S12 前の手当て）。
+/// 破壊テストが発火しなかったことを報告して停止する（S12 前の対策）。
 #[cfg(feature = "bkl-hold-with-if-set-test")]
 fn report_sabotage_did_not_fire_and_halt(waited: u64) -> ! {
     let mut serial = Serial::primary();

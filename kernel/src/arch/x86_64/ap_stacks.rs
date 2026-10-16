@@ -119,7 +119,7 @@ const AP_STACK_STRIDE: u64 = (crate::arch::x86_64::stack::GUARD_SIZE
 /// AP の 1 コアぶんに置く IST のスタックの本数（IST1 から IST5）。
 const AP_IST_COUNT: usize = 5;
 
-/// AP の 1 コアぶんに控える見張りのページの数（カーネルスタック 1 と IST の本数。2026-10-13）。
+/// AP の 1 コアぶんに控えるガードページの数（カーネルスタック 1 と IST の本数。2026-10-13）。
 /// **表（`stack::GUARD_PAGE_SLOTS`）に収まることは `crate::task` のコンパイル時の表明が固定する。**
 pub const GUARD_PAGES_PER_AP: usize = 1 + AP_IST_COUNT;
 

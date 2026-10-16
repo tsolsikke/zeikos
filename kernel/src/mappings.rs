@@ -15,8 +15,8 @@
 //! # 入っているもの
 //!
 //! 無名のマッピングを配る（first-fit。空いた所を使い直す）、マッピングの全体や一部を返す（分ける）、`MAP_FIXED` のために重なる
-//! マッピングを外す、共有メモリと画面のマッピングを同じ表で覚える、イメージ・スタック・見張りのページ・ヒープも表に載せる（2026-10-06。
-//! 2 つの刻みで入れた）。**`mprotect` は、まだ無い**（次の刻み）。
+//! マッピングを外す、共有メモリと画面のマッピングを同じ表で覚える、イメージ・スタック・ガードページ・ヒープも表に載せる（2026-10-06。
+//! 2 つのステップで入れた）。**`mprotect` は、まだ無い**（次のステップ）。
 
 use common::critical::Locked;
 
@@ -52,7 +52,7 @@ pub enum MappingKind {
     Image,
     /// スタック。**外せない。**
     Stack,
-    /// スタックの下の見張りのページ（マップしていない）。**外せないし、ここへは置けない。**
+    /// スタックの下のガードページ（マップしていない）。**外せないし、ここへは置けない。**
     Guard,
     /// `brk` のヒープ。終わりは `brk` が動かす。**`munmap` では外せないが、`MAP_FIXED` は上に置ける**（musl の見張り）。
     Heap,
@@ -69,7 +69,7 @@ impl MappingKind {
         matches!(self, MappingKind::Anonymous | MappingKind::Heap)
     }
 
-    /// `mprotect` で権限を変えてよい種類か。共有メモリと画面（フレームが自分のものでない）と、見張りのページは変えない。
+    /// `mprotect` で権限を変えてよい種類か。共有メモリと画面（フレームが自分のものでない）と、ガードページは変えない。
     pub const fn can_change_protection(self) -> bool {
         matches!(
             self,
@@ -223,7 +223,7 @@ impl MemoryMap {
     ///
     /// - 範囲がちょうど 1 つのマッピングなら、そのマッピングを外して返す。
     /// - 範囲にどのマッピングも掛かっていなければ `Ok(None)`（Linux の `munmap` は、マップしていない範囲でも 0 を返す）。
-    /// - 範囲がマッピングの一部にだけ掛かる、または複数のマッピングにまたがるなら、`PartOfAMapping`（この刻みでは断る）。
+    /// - 範囲がマッピングの一部にだけ掛かる、または複数のマッピングにまたがるなら、`PartOfAMapping`（このステップでは断る）。
     pub fn release_whole(&mut self, start: u64, bytes: u64) -> Result<Option<Mapping>, MapError> {
         if !self.active {
             return Err(MapError::NotActive);
@@ -458,7 +458,7 @@ impl MemoryMap {
     }
 
     /// `mprotect` に上下に伸びる印が付いたときの、範囲の始まり（2026-10-10。純粋な論理。Linux の `do_mprotect_pkey`）。
-    /// `[start, end)` に掛かるマッピングのうち、いちばん低いものを見る。**見張りのページは数えない**（Linux では、スタックの下の
+    /// `[start, end)` に掛かるマッピングのうち、いちばん低いものを見る。**ガードページは数えない**（Linux では、スタックの下の
     /// 隙間はマッピングではない）。
     ///
     /// - 掛かるマッピングが無ければ `NotMapped`（`-ENOMEM`）。
@@ -864,7 +864,7 @@ mod tests {
     }
 
     /// `mprotect` の上下に伸びる印（2026-10-10）。下へ伸びる印は、範囲に掛かるいちばん低いマッピングがスタックなら、その先頭まで
-    /// 広げる。スタックでなければ断り、掛かるマッピングが無ければ `NotMapped`。上へ伸びる印は、いつも断る。見張りのページは数えない。
+    /// 広げる。スタックでなければ断り、掛かるマッピングが無ければ `NotMapped`。上へ伸びる印は、いつも断る。ガードページは数えない。
     #[test]
     fn growing_protection_extends_only_to_the_start_of_the_stack() {
         let mut map = active();
@@ -878,7 +878,7 @@ mod tests {
         map.register(stack, stack + 4 * PAGE_SIZE, MappingKind::Stack, true, true)
             .unwrap();
         let top_page = stack + 3 * PAGE_SIZE;
-        // スタックの上のページから: スタックの先頭まで広がる。見張りのページから始まる範囲も、スタックの先頭からになる。
+        // スタックの上のページから: スタックの先頭まで広がる。ガードページから始まる範囲も、スタックの先頭からになる。
         assert_eq!(
             map.grown_start(top_page, top_page + PAGE_SIZE, true),
             Ok(stack)
@@ -987,7 +987,7 @@ mod tests {
             map.change_protection(start + 3 * PAGE_SIZE, 2 * PAGE_SIZE, true, true, &mut out),
             Err(MapError::NotMapped)
         );
-        // 見張りのページは変えられない。
+        // ガードページは変えられない。
         map.register(
             BASE + 0x100000,
             BASE + 0x101000,

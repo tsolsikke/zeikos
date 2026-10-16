@@ -142,7 +142,7 @@ fn handle_irq(_source: InterruptSource) {
     let code = unsafe { read_keyboard_data() };
 
     if has_data {
-        // **中断（Ctrl+C）を、積むより先に見る（S12 前の手当て、C）。**
+        // **中断（Ctrl+C）を、積むより先に見る（S12 前の対策、C）。**
         //
         // **リングは前景が取られている間ずっと溜まる一方である**——
         // **デコードするのは `input::read_bytes` だけで、あれは Ring 3 が

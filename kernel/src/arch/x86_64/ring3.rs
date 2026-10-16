@@ -84,16 +84,16 @@ const EXCURSION_STACK_SIZE: usize = 64 * 1024;
 /// 同じ考え方で、**偶然そうなる確率が低い値を選ぶ。**
 const EXCURSION_STACK_FILL: u8 = 0xE5;
 
-/// 遠征スタックの下に置く、見張りのページの大きさ（ほかのスタックと同じ 1 ページ）。
+/// 遠征スタックの下に置く、ガードページの大きさ（ほかのスタックと同じ 1 ページ）。
 const EXCURSION_GUARD_SIZE: usize = crate::arch::x86_64::stack::GUARD_SIZE;
 
-/// 遠征スタック 1 本（見張りのページと、スタックの本体）。
+/// 遠征スタック 1 本（ガードページと、スタックの本体）。
 ///
 /// **`align(4096)` で先頭をページの境界に載せ、下の 1 ページを起動時に外す**（[`install_excursion_guard_pages`]。
 /// 2026-10-06）。カーネルスタック・ワーカー・足した 1 本と同じ作りである。**あふれた瞬間にページフォルトになり、
 /// ハンドラが、どのスタックかを名指しして止まる。**
 ///
-/// **以前は 16 バイト境界の配列で、見張りのページを置けなかった。** 代わりに、最下部の 256 バイトを埋めた値で見て
+/// **以前は 16 バイト境界の配列で、ガードページを置けなかった。** 代わりに、最下部の 256 バイトを埋めた値で見て
 /// いた（戻ってから気づく形で、あふれた先の静的な領域は、もう書かれていた）。その区間と判定は消した。**埋めた値で
 /// 使用量を測る仕組みは残してある**（[`excursion_stack_high_water`]）。
 ///
@@ -101,7 +101,7 @@ const EXCURSION_GUARD_SIZE: usize = crate::arch::x86_64::stack::GUARD_SIZE;
 #[repr(C, align(4096))]
 #[allow(dead_code)]
 struct ExcursionStack {
-    /// 見張りのページ。**起動時に外す。** 外すまでは 0 のままで、誰も触らない。
+    /// ガードページ。**起動時に外す。** 外すまでは 0 のままで、誰も触らない。
     guard: [u8; EXCURSION_GUARD_SIZE],
     /// スタックの本体。
     stack: [u8; EXCURSION_STACK_SIZE],
@@ -148,7 +148,7 @@ struct ExcursionStack {
 /// - 共通の側は、遠征に入る前に今の深さと比べ、越えるなら入らない（`spawn` は断る）。
 pub const MAX_EXCURSION_DEPTH: usize = 2;
 
-/// 遠征専用のカーネルスタック（`.bss`）。**1 本ごとに、下に見張りのページを持つ**（[`ExcursionStack`]）。
+/// 遠征専用のカーネルスタック（`.bss`）。**1 本ごとに、下にガードページを持つ**（[`ExcursionStack`]）。
 ///
 /// **深さごとに 1 本持つ（S11-2）。** 入れ子のとき、**子がカーネルへ入るときに
 /// 親のスタックへ切り替わってはならない**——親はそのスタックの上で
@@ -327,7 +327,7 @@ struct ExcursionState {
     in_ring3: AtomicBool,
     /// 例外による終了処理が実際に起きたか（会計用。遠征後に true になっているはず）。
     folded: AtomicBool,
-    /// 中断（Ctrl+C）で遠征を出たか（S12 前の手当て、C）。
+    /// 中断（Ctrl+C）で遠征を出たか（S12 前の対策、C）。
     ///
     /// **`FOLDED` と分けてある。** あちらは「Ring 3 が例外を起こした」で、
     /// **こちらは「外から止めた」である。** 混ぜると、遠征から戻った側が
@@ -733,7 +733,7 @@ pub fn excursion_stack_range_of(slot: usize, depth: usize) -> (u64, u64) {
     (bottom, bottom + EXCURSION_STACK_SIZE as u64)
 }
 
-/// スロット `slot` の、深さ `depth` の遠征スタックの、見張りのページの先頭（スタックの本体は、この 1 ページ上から）。
+/// スロット `slot` の、深さ `depth` の遠征スタックの、ガードページの先頭（スタックの本体は、この 1 ページ上から）。
 ///
 /// **呼ぶ側が、添字を範囲の中にしてあること**（[`excursion_stack_range_of`] が確かめてから呼ぶ。張る側は、範囲を
 /// 回る）。
@@ -742,7 +742,7 @@ fn excursion_guard_page_of(slot: usize, depth: usize) -> u64 {
     (unsafe { addr_of!(EXCURSION_STACKS[slot][depth]) }) as u64
 }
 
-/// 張る見張りのページの、ログに出す名前（スロットと深さごと）。
+/// 張るガードページの、ログに出す名前（スロットと深さごと）。
 const EXCURSION_GUARD_NAMES: [[&str; MAX_EXCURSION_DEPTH]; USER_TASK_SLOTS] = [
     [
         "the guard page of the depth-0 excursion stack of slot 0",
@@ -754,7 +754,7 @@ const EXCURSION_GUARD_NAMES: [[&str; MAX_EXCURSION_DEPTH]; USER_TASK_SLOTS] = [
     ],
 ];
 
-/// 遠征スタックの全部（スロット × 深さ）の下の 1 ページを外し、見張りのページにする（2026-10-06）。
+/// 遠征スタックの全部（スロット × 深さ）の下の 1 ページを外し、ガードページにする（2026-10-06）。
 ///
 /// **手順は [`crate::arch::x86_64::stack::install_guard_page`] が持つ**——粒度を確かめ、2 MiB なら分け、外した後に
 /// 訳せないことを確かめ、名前を表に控える。ここは、4 本を順に渡すだけである。
@@ -762,7 +762,7 @@ const EXCURSION_GUARD_NAMES: [[&str; MAX_EXCURSION_DEPTH]; USER_TASK_SLOTS] = [
 /// # 契約（境界の関数。2026-10-06）
 ///
 /// - 今の根のページテーブルで、遠征スタックの下の 1 ページずつを外す。外したページは、ページの権限の一覧と、
-///   見張りのページの表に入る。
+///   ガードページの表に入る。
 /// - 外した後、4 本とも、マップされておらず、自分の名前で控えられていることを読んで確かめる。欠けていれば止まる。
 /// - 呼ぶのは、起動の経路で、最初の遠征より前である（`kernel_main`）。
 ///
@@ -774,7 +774,7 @@ pub unsafe fn install_excursion_guard_pages(
     allocator: &mut crate::frame_allocator::FrameAllocator,
     log: &mut dyn FnMut(core::fmt::Arguments),
 ) {
-    // 破壊テスト (2026-10-06, excursion-guard-skip-test): 見張りのページを張らない（以前の形）。**下の確かめが、
+    // 破壊テスト (2026-10-06, excursion-guard-skip-test): ガードページを張らない（以前の形）。**下の確かめが、
     // マップされたままのページを名指しして止まる。**
     let names_to_install: &[[&str; MAX_EXCURSION_DEPTH]] =
         if cfg!(feature = "excursion-guard-skip-test") {
@@ -822,7 +822,7 @@ unsafe fn fill_excursion_stack(depth: usize) {
     if depth >= MAX_EXCURSION_DEPTH {
         report_excursion_index_out_of_range(current_excursion_slot(), depth);
     }
-    // **埋めるのは、スタックの本体だけである**（下の見張りのページはマップされていない。触ると落ちる）。
+    // **埋めるのは、スタックの本体だけである**（下のガードページはマップされていない。触ると落ちる）。
     let (bottom, _) = excursion_stack_range_at(depth);
     // SAFETY: 呼び出し元契約により、このスタックは今誰も使っていない。`bottom` から `EXCURSION_STACK_SIZE`
     // バイトは、静的な配列の要素の、本体の欄である。
@@ -852,7 +852,7 @@ pub fn excursion_stack_high_water(depth: usize) -> usize {
     if depth >= MAX_EXCURSION_DEPTH {
         report_excursion_index_out_of_range(current_excursion_slot(), depth);
     }
-    // **読むのは、スタックの本体だけである**（下の見張りのページはマップされていない）。
+    // **読むのは、スタックの本体だけである**（下のガードページはマップされていない）。
     let stack = excursion_stack_range_at(depth).0 as *const u8;
     for offset in 0..EXCURSION_STACK_SIZE {
         // SAFETY: 読み取りのみ。添字は上で範囲内にしてあり、`offset` は本体の欄の中である。
@@ -874,13 +874,13 @@ pub fn excursion_stack_capacity() -> usize {
 
 /// 遠征スタックの使用量が、これを越えたら止まる線（バイト。容量の 4 分の 3。2026-10-06）。
 ///
-/// # 線の意味は、見張りのページが入って変わった
+/// # 線の意味は、ガードページが入って変わった
 ///
-/// **以前は容量の半分だった。** そのころ、このスタックには見張りのページが無く、あふれは静かに下の静的な領域を
-/// 書いた。半分の線は、「見張りのページを張るか、容量を上げるかを、ここで決める」ための合図だった（S11-6。実際に
+/// **以前は容量の半分だった。** そのころ、このスタックにはガードページが無く、あふれは静かに下の静的な領域を
+/// 書いた。半分の線は、「ガードページを張るか、容量を上げるかを、ここで決める」ための合図だった（S11-6。実際に
 /// 余りが 264 バイトまで来て、張ることに決めた。経緯は `ADR-0079`）。
 ///
-/// **今は、あふれた瞬間に見張りのページが止める。** この線は、その手前で「余りが減った」と知らせる役である。
+/// **今は、あふれた瞬間にガードページが止める。** この線は、その手前で「余りが減った」と知らせる役である。
 /// 4 分の 3 にしたのは、実測の最大（約 32.5 KiB。容量の半分）から 16 KiB ほどの伸びしろを残し、線を越えても
 /// まだ 16 KiB 残るからである。
 const EXCURSION_STACK_BUDGET: usize = EXCURSION_STACK_SIZE / 4 * 3;
@@ -909,7 +909,7 @@ pub fn excursion_stack_within_budget(depth: usize) -> bool {
     excursion_stack_high_water(depth) <= EXCURSION_STACK_BUDGET
 }
 
-/// 遠征スタックの下の見張りのページが、4 本とも、マップされておらず、自分の名前で控えられていることを確かめる。
+/// 遠征スタックの下のガードページが、4 本とも、マップされておらず、自分の名前で控えられていることを確かめる。
 ///
 /// **張った側の主張ではなく、今のページテーブルと控えの表を読んで確かめる。** 1 本でも欠けていれば、名指しして
 /// 止まる——欠けたまま進むと、あふれが黙って下を書くか、止まっても、どのスタックかが出ない。
@@ -961,7 +961,7 @@ unsafe fn verify_excursion_guard_pages(log: &mut dyn FnMut(core::fmt::Arguments)
 /// `is_write` は、今の呼び出しが `write` かどうかである（読み込んだプログラムが必ず 1 度は呼ぶので、目印にする）。
 ///
 /// - `excursion-overflow-depth0-test` / `excursion-overflow-depth1-test`: その深さの遠征スタックの上で、戻らない再帰で
-///   スタックをあふれさせる。**見張りのページに当たり、ページフォルトのハンドラが、遠征スタックの名前を出して止まる。**
+///   スタックをあふれさせる。**ガードページに当たり、ページフォルトのハンドラが、遠征スタックの名前を出して止まる。**
 /// - `excursion-budget-test`: 深さ 0 の遠征スタックを、止まる線を越える深さまで使ってから戻る。**あふれはしない。**
 ///   プログラムが終わった後の、使用量の判定が止める。
 #[cfg(any(
@@ -1147,7 +1147,7 @@ pub unsafe fn run_excursion(
     let previous_window = crate::syscall::set_user_window(user_window.0, user_window.1);
 
     state.folded.store(false, Ordering::SeqCst);
-    // **中断の記録も戻す（S12 前の手当て、C）。** 戻さないと、前の遠征を
+    // **中断の記録も戻す（S12 前の対策、C）。** 戻さないと、前の遠征を
     // 止めたことが次の遠征の判定行に出る（`FAULT_CS` を戻していなかった
     // S9-b-3-1 とまったく同じ形である）。
     state.interrupted.store(false, Ordering::SeqCst);
@@ -1488,7 +1488,7 @@ pub fn folded() -> bool {
     state().folded.load(Ordering::SeqCst)
 }
 
-/// 中断で出ることを記す（S12 前の手当て、C）。**`leave_user_mode` の直前に呼ぶ。**
+/// 中断で出ることを記す（S12 前の対策、C）。**`leave_user_mode` の直前に呼ぶ。**
 pub fn note_interrupted() {
     state().interrupted.store(true, Ordering::SeqCst);
 }
@@ -1518,7 +1518,7 @@ pub fn excursion_interrupted() -> bool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct FoldRecord {
     folded: bool,
-    /// 中断で出たか（S12 前の手当て、C）。**入れ子で持ち出すものに含める**——
+    /// 中断で出たか（S12 前の対策、C）。**入れ子で持ち出すものに含める**——
     /// 含めないと、子を止めたことが親の判定行に出る。
     interrupted: bool,
     vector: u64,

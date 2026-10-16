@@ -73,7 +73,7 @@ const USER_PROGRAM_STACK_BYTES: u64 = 4 * 4096;
 /// | `ET_EXEC`（今までの形） | リンクしたアドレス | イメージの末尾 〜 `0x7fb000` | `0x1000_0000` 〜 | `0x7fc000..0x800000`（4 ページ） |
 /// | `ET_DYN`（静的 PIE） | `0x400000` だけずらす | イメージの末尾 〜 `0x0fff_f000` | `0x1000_0000` 〜 スタックの見張りの下 | `0x7f_ffff_f000` の下の 256 KiB |
 ///
-/// **どちらの配置も、スタックの下にマップしないページを 1 枚置く**（見張りのページ。`ET_EXEC` は 2026-10-06 から。
+/// **どちらの配置も、スタックの下にマップしないページを 1 枚置く**（ガードページ。`ET_EXEC` は 2026-10-06 から。
 /// それまでは 1 ページのスタックのすぐ下がヒープの上限で、あふれるとヒープを黙って壊すおそれが在った）。スタックが
 /// 尽きると、そこを踏んでページフォルトになり、プロセスが終わる。`ET_DYN` の `mmap` は、そのページより下までしか配らない。
 ///
@@ -127,7 +127,7 @@ impl ProcessLayout {
         stack_guard: true,
         heap_limit: crate::syscall::MMAP_BASE - Self::PAGE,
         mmap_base: crate::syscall::MMAP_BASE,
-        // スタックの下端の、さらに 1 ページ下（見張りのページ）まで。
+        // スタックの下端の、さらに 1 ページ下（ガードページ）まで。
         mmap_limit: 0x0000_007f_ffff_f000 - 256 * 1024 - Self::PAGE,
     };
 
@@ -144,7 +144,7 @@ impl ProcessLayout {
         self.stack_top - self.stack_bytes
     }
 
-    /// 見張りのページのアドレス（置かない配置では `None`）。
+    /// ガードページのアドレス（置かない配置では `None`）。
     pub const fn stack_guard_page(&self) -> Option<u64> {
         if self.stack_guard {
             Some(self.stack_bottom() - Self::PAGE)
@@ -681,8 +681,8 @@ pub fn with_current_heap<R>(body: impl FnOnce(&mut Heap) -> R) -> R {
 
 /// ヒープが越えられない上端（H-a。ADR-0044 の決定 4）。
 ///
-/// **ユーザースタックの見張りのページの下端である**（2026-10-06 まではスタックの下端そのもので、見張りのページは
-/// 無かった）。ヒープはここで断られ、スタックは見張りのページで止まる——**どちらが尽きても、もう一方を黙って壊さない。**
+/// **ユーザースタックのガードページの下端である**（2026-10-06 まではスタックの下端そのもので、ガードページは
+/// 無かった）。ヒープはここで断られ、スタックはガードページで止まる——**どちらが尽きても、もう一方を黙って壊さない。**
 pub const HEAP_LIMIT: u64 = USER_PROGRAM_STACK_TOP - USER_PROGRAM_STACK_BYTES - HEAP_PAGE_SIZE;
 
 /// ユーザースタックの未使用部分を埋める既知のバイト（EV。ADR-0041）。
@@ -1117,7 +1117,7 @@ pub enum SpawnOutcome {
     Exited(u64),
     /// Ring 3 の違反が終了処理されて終わった。**ベクタを持つ。**
     Folded(u64),
-    /// 外から止められた（Ctrl+C。S12 前の手当て、C）。
+    /// 外から止められた（Ctrl+C。S12 前の対策、C）。
     ///
     /// **`Folded` と分けてある。** あちらは**子が違反した**で、
     /// **こちらは子に落ち度が無い。** 混ぜると、判定行から
@@ -1920,7 +1920,7 @@ fn note_position_independent_placement(
     ));
 }
 
-/// スタックの下の見張りのページを 1 行出す（[`note_position_independent_placement`] と同じ理由で、関数を分けてある）。
+/// スタックの下のガードページを 1 行出す（[`note_position_independent_placement`] と同じ理由で、関数を分けてある）。
 #[inline(never)]
 fn note_stack_guard_page(logger: &mut Logger<Serial>, guard: u64) {
     logger.info(format_args!(
@@ -2226,7 +2226,7 @@ fn load_segments_and_stack(
     logger.info(format_args!(
         "user-load: mapped the user stack {stack_bottom:#x}..{stack_top:#x} (w=true)"
     ));
-    // **見張りのページは、マップしないことで置く。** スタックが尽きると、ここを踏んでページフォルトになる。
+    // **ガードページは、マップしないことで置く。** スタックが尽きると、ここを踏んでページフォルトになる。
     if let Some(guard) = layout.stack_guard_page() {
         note_stack_guard_page(logger, guard);
     }
@@ -2388,7 +2388,7 @@ fn load_segments_and_stack(
 /// # 限界
 ///
 /// **プログラムが既知のバイトそのものを書いたら、使ったとは数えられない。** 下から数えるので、間に既知のバイトが
-/// 挟まっても影響しない。**壊れる側（見張りのページを踏む）は、そもそもその下がマップされていないので `#PF` になる。**
+/// 挟まっても影響しない。**壊れる側（ガードページを踏む）は、そもそもその下がマップされていないので `#PF` になる。**
 fn report_user_stack_high_water(logger: &mut Logger<Serial>, process: &UserProcess) {
     const PAGE_SIZE: u64 = 4096;
     let direct_map = common::addr::direct_map();
@@ -2442,7 +2442,7 @@ fn report_user_stack_high_water(logger: &mut Logger<Serial>, process: &UserProce
     ));
 }
 
-/// マッピングテーブルを据え、載せたイメージ・スタック・見張りのページ・ヒープを登録する（2026-10-06）。**`#[inline(never)]`** で、
+/// マッピングテーブルを据え、載せたイメージ・スタック・ガードページ・ヒープを登録する（2026-10-06）。**`#[inline(never)]`** で、
 /// 一時値を [`run_loaded_program`] のフレームへ乗せない。登録に失敗したら、名指しして止まる（載せたものどうしが
 /// 重なることは無いはずで、重なれば載せる側の誤りである）。
 #[inline(never)]
@@ -2634,14 +2634,14 @@ unsafe fn run_loaded_program(
     // **親が持ったままにして、子はその前景を通して読む**——
     // **持ち主は 1 人という不変条件は保たれる。**
     let claimed_foreground = crate::input::claim_foreground();
-    // **前の中断要求を持ち越さない（S12 前の手当て、C）。**
+    // **前の中断要求を持ち越さない（S12 前の対策、C）。**
     //
     // **深さ 1 で Ctrl+C を押すと、フラグは立つが誰も消費しない**——
     // **終了させる地点は深さ 2 以上でしか発火しない**（`crate::interrupts` の
     // `should_fold_excursion`）。**降ろさずに子を起動すると、その子が
     // 起動した瞬間に止まる。**
     //
-    // 破壊テスト (S12 前の手当て C, kill-keep-stale-interrupt): 降ろさない。
+    // 破壊テスト (S12 前の対策 C, kill-keep-stale-interrupt): 降ろさない。
     // **シェルで Ctrl+C を押した後、次に起動した子が即座に止まる。**
     #[cfg(not(feature = "kill-keep-stale-interrupt-test"))]
     crate::input::clear_interrupt_request();
@@ -2715,7 +2715,7 @@ unsafe fn run_loaded_program(
     }
     process.files = crate::vfs::swap_current_files(previous_files);
     process.heap = swap_current_heap(previous_heap);
-    // **止めたときは、前景の持ち主と止めた相手を両方出す（S12 前の手当て、C）。**
+    // **止めたときは、前景の持ち主と止めた相手を両方出す（S12 前の対策、C）。**
     //
     // **この 2 つは同じではない。** 前景を取るのは遠征の最も外側
     // （シェル）で、**止めるのは最も内側（子）である。**
@@ -2725,7 +2725,7 @@ unsafe fn run_loaded_program(
         // **止めた打鍵そのものを捨てる。** 残すと、次にシェルが読んだときに
         // `^C` がもう 1 つ出る（実測。[`crate::input::discard_typed_input`]）。
         //
-        // 破壊テスト (S12 前の手当て C, kill-keep-typed-input): 捨てない。
+        // 破壊テスト (S12 前の対策 C, kill-keep-typed-input): 捨てない。
         // **止めた直後のプロンプトに `^C` が余分に出る。**
         #[cfg(not(feature = "kill-keep-typed-input-test"))]
         crate::input::discard_typed_input();
@@ -2781,7 +2781,7 @@ unsafe fn run_loaded_program(
 
     // **この遠征で遠征スタックをどれだけ使ったかを出す（S11-5）。**
     //
-    // **あふれは、下の見張りのページが、その瞬間に止める**（2026-10-06。以前は見張りのページが無く、最下部の
+    // **あふれは、下のガードページが、その瞬間に止める**（2026-10-06。以前はガードページが無く、最下部の
     // 256 バイトを、戻ってから見ていた）。**ここで出すのは、あふれる前の、余りの推移である。**
     let used = crate::arch::x86_64::excursion_stack_high_water(entered_at_depth);
     let capacity = crate::arch::x86_64::excursion_stack_capacity();
@@ -2793,7 +2793,7 @@ unsafe fn run_loaded_program(
     ));
     // **使用量が、止まる線（容量の 4 分の 3）を越えたら止まる**（S11-6。線は 2026-10-06 に半分から移した）。
     //
-    // **あふれは、下の見張りのページが止める。ここで止まるのは、その手前である**——余りが減ったことを、次に何かを
+    // **あふれは、下のガードページが止める。ここで止まるのは、その手前である**——余りが減ったことを、次に何かを
     // 足す人が「前からそうだった」として扱う前に、判断を求める。線の意味と、移した経緯は、
     // `ring3` の `EXCURSION_STACK_BUDGET` の doc に在る。
     if !crate::arch::x86_64::excursion_stack_within_budget(entered_at_depth) {
@@ -3258,7 +3258,7 @@ pub fn spawn_with_loan(
     };
 
     // **子の終わり方をここで読む。** 戻す前に読まなければ、親のもので上書きされる。
-    // **中断を先に見る（S12 前の手当て、C）。** **`exit` も例外による終了処理も通っていない**
+    // **中断を先に見る（S12 前の対策、C）。** **`exit` も例外による終了処理も通っていない**
     // ので、先に見なければ `Folded(0)` に化ける。
     // **畳んだ印を終了の印より先に見る（M3a の 3-1b。2026-10-14）**——スレッドが Ring 3 で例外を起こすと、記録はこのスロットに
     // 書かれ、終了の印も立つ（主スレッドが出るための印）。終わり方は、主スレッドが同じ例外で終わるときと同じ
@@ -3583,7 +3583,7 @@ pub fn wait_for_ring3_task(handle: u64) -> ChildStatus {
         }
         crate::task::set_current_waiting(crate::task::Wait::Child { handle });
         // **譲る前に割り込みを戻す。** **据えた後のウィンドウは無害である**——**親は既に「待っている」
-        // ので、そこで起こされれば走行可能へ戻り、譲ってもすぐ選ばれる。**
+        // ので、そこで起こされれば実行可能へ戻り、譲ってもすぐ選ばれる。**
         #[cfg(not(feature = "wait-window-is-wide"))]
         drop(guard);
         crate::task::yield_now();
@@ -3664,7 +3664,7 @@ pub fn run_detached_request() {
     ));
 }
 
-/// 切り離したスロットの読み込みが、アロケータを待つ上限（タイマの刻み。2026-10-12）。システムコールの
+/// 切り離したスロットの読み込みが、アロケータを待つ上限（タイマのティック。2026-10-12）。システムコールの
 /// `borrow_allocator` と同じ 100 Hz で 1 秒である。
 const DETACHED_ALLOCATOR_WAIT_LIMIT_TICKS: u64 = 100;
 
@@ -3705,8 +3705,8 @@ mod tests {
             .any(|line| line.starts_with(b"HOME=")));
     }
 
-    /// 位置を決めてリンクしたイメージの配置（2026-10-06 に、スタックを 4 ページにして、下に見張りのページを置いた）。
-    /// **イメージのアドレスと `mmap` の始まりは、今までの定数と同じ値である。** ヒープの上端は、見張りのページの下端である。
+    /// 位置を決めてリンクしたイメージの配置（2026-10-06 に、スタックを 4 ページにして、下にガードページを置いた）。
+    /// **イメージのアドレスと `mmap` の始まりは、今までの定数と同じ値である。** ヒープの上端は、ガードページの下端である。
     #[test]
     fn the_executable_layout_has_a_four_page_stack_above_a_guard() {
         let layout = super::ProcessLayout::for_kind(common::elf::ElfKind::Executable);
@@ -3724,7 +3724,7 @@ mod tests {
         assert_eq!(policy.max_span, u64::MAX);
     }
 
-    /// 位置独立のイメージの配置。**イメージ・ヒープ・`mmap`・見張りのページ・スタックが、この順に並び、重ならない。**
+    /// 位置独立のイメージの配置。**イメージ・ヒープ・`mmap`・ガードページ・スタックが、この順に並び、重ならない。**
     #[test]
     fn the_position_independent_layout_keeps_its_regions_apart() {
         let layout = super::ProcessLayout::for_kind(common::elf::ElfKind::PositionIndependent);
@@ -3736,7 +3736,7 @@ mod tests {
         assert!(policy.window.0 + policy.max_span <= layout.heap_limit);
         // ヒープの上端は、mmap の始まりより下。
         assert!(layout.heap_limit < layout.mmap_base);
-        // mmap の終わりが見張りのページで、その 1 ページ上からスタック。
+        // mmap の終わりがガードページで、その 1 ページ上からスタック。
         let guard = layout
             .stack_guard_page()
             .expect("this layout has a guard page");

@@ -1634,7 +1634,7 @@ enum ScreenOpenedBy {
 /// Linux の fbdev の装置のパス。
 const DEV_FB0: &[u8] = b"/dev/fb0";
 
-/// `/dev/fb0` のバックバッファを画面へ転送する間隔（タイマの刻み。50 ms = 20 Hz。2026-10-07。`ADR-0083`）。
+/// `/dev/fb0` のバックバッファを画面へ転送する間隔（タイマのティック。50 ms = 20 Hz。2026-10-07。`ADR-0083`）。
 /// **全面の転送は KVM で約 5M サイクル（約 1.5 ms）、TCG ではその数倍**なので、20 Hz なら CPU 時間の数パーセントである
 /// （実測は `docs/verification-coverage.md`）。利用者が見る遅れは最大でこの間隔。
 pub const FB0_PRESENT_INTERVAL_TICKS: u64 = crate::machine::pc::timer_frequency_hz() as u64 / 20;
@@ -1844,7 +1844,7 @@ pub fn poll_waits() -> u64 {
 /// その fd を待つときの理由（`ADR-0066` の Y-b）。**`poll` が受ける fd はこの 3 種だけである。**
 ///
 /// **入力 fd → [`crate::task::Wait::Keyboard`]、接続 → `SocketReadable`、listener →
-/// `SocketAcceptable`。** **`Wait` の種類は減らない**（`ADR-0066` の刻みの注）——
+/// `SocketAcceptable`。** **`Wait` の種類は減らない**（`ADR-0066` のステップの注）——
 /// **対応づけるだけである。**
 ///
 /// **パイプと端末は v1 では受けない**（`None` を返して `-EBADF`）。**見直すきっかけ：パイプを待つ
@@ -2576,7 +2576,7 @@ const ANONYMOUS_MMAP_MAX: u64 = 16 * 1024 * 1024;
 ///
 /// - 範囲に掛かる無名のマッピングを外す。一部にだけ掛かるマッピングは、残る部分を分けて表に戻す。ページを外してフレームを返す。
 /// - 範囲にどのマッピングも掛かっていなければ 0（Linux と同じ）。
-/// - イメージ・スタック・見張りのページ・ヒープ・共有メモリ・画面に掛かる範囲は `-EINVAL`（何も変えない）。ヒープは `brk` が
+/// - イメージ・スタック・ガードページ・ヒープ・共有メモリ・画面に掛かる範囲は `-EINVAL`（何も変えない）。ヒープは `brk` が
 ///   持つので外さない。共有メモリと画面は、参照数とバックバッファの扱いが要る（`docs/deferred-decisions.md`）。
 ///
 /// # Safety
@@ -2639,7 +2639,7 @@ unsafe fn munmap_from_ring3(
 ///   断る。`PROT_EXEC` を付けない `mprotect` は、ページを実行できない形にする（Linux と同じ。実行を外す向きだけを許す）。
 /// - `PROT_NONE`: リーフの `P` を落とし、フレームは持ったままにする（`entry::PTE_RETAINED`）。**読める形へ戻すと、同じ中身が戻る。**
 ///   初めからマップしていなかった無名のマッピング（`mmap(PROT_NONE)`）を読める形にするときは、その時点で 0 のフレームをマップする。
-/// - 変えてよい種類は、無名・ヒープ・イメージ・スタック。見張りのページ・共有メモリ・画面は `-EINVAL`（`docs/deferred-decisions.md`）。
+/// - 変えてよい種類は、無名・ヒープ・イメージ・スタック。ガードページ・共有メモリ・画面は `-EINVAL`（`docs/deferred-decisions.md`）。
 /// - 変えたリーフは、この CPU の TLB から 1 本ずつ落とす（`invlpg`）。**プロセスは 1 つの CPU に留まるので、ほかの CPU は
 ///   見ない**——スレッドが入ると、この前提は崩れる（`docs/deferred-decisions.md`）。
 ///
@@ -2905,7 +2905,7 @@ enum FixedPlacement {
 
 /// `MAP_FIXED` のために、`addr` から `bytes` の範囲に掛かるマッピングを外す（2026-10-06）。
 ///
-/// 外してよいのは、無名のマッピングと `brk` のヒープである（`MappingKind::can_be_replaced`。イメージ・スタック・見張りのページ・
+/// 外してよいのは、無名のマッピングと `brk` のヒープである（`MappingKind::can_be_replaced`。イメージ・スタック・ガードページ・
 /// 共有メモリ・画面は `-EINVAL`）。**ヒープの上へ置けるのは、musl の `malloc` が `brk` の先頭に見張りを置くためである**
 /// （2026-10-04 の `strace`。`mmap(brk の先頭, 4096, PROT_NONE, MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS)`）。
 ///
@@ -6024,7 +6024,7 @@ unsafe fn exit_thread_from_ring3(
 /// 行き詰まりを打った側か、別のスレッドが立てた印を入口か戻りで見た側。M3a の 3-1b。2026-10-14。`ADR-0085` の Addendum）。
 /// **戻らない。**
 ///
-/// 印（`process_exited` と終了の状態）はスロットの表に在り、主スレッドが次のシステムコールの入口か戻りで見て出る
+/// 印（`process_exited` と終了ステータス）はスロットの表に在り、主スレッドが次のシステムコールの入口か戻りで見て出る
 /// （[`syscall_entry`] の同じ分岐）。ここではそのスレッドを `Finished` にして、BKL を解き、切り替えて二度と戻らない。
 /// **印を立てた側（`process_end_setter` が自分）は、同じスロットの futex の待ちを全部起こす**——主スレッドが `join` や `Mutex` の futex で
 /// 眠っていても、起きて `futex` の戻りで印を見て出る。**パイプ・キーボード・タイマで待っている主スレッドは起こさない**
@@ -6045,7 +6045,7 @@ fn end_thread_after_process_exit(number: u64, bkl: &mut Option<crate::bkl::BklGu
 }
 
 /// 池のスレッドのタスクが Ring 3 で例外を起こしたので、プロセスを終わらせる印を立てる（M3a の 3-1b。2026-10-14）。
-/// **終了の状態は触らない**——終わり方は `Folded(ベクタ)` で、スロットの遠征の状態の記録から読む（主スレッドが同じ例外で
+/// **終了ステータスは触らない**——終わり方は `Folded(ベクタ)` で、スロットの遠征の状態の記録から読む（主スレッドが同じ例外で
 /// 終わるときと同じ符号）。呼ぶのは `crate::task::finish_thread_task_on_fault`。
 pub fn mark_process_ended_by_thread_fault() {
     mark_process_exited();
@@ -6760,7 +6760,7 @@ unsafe fn sys_nanosleep(
     0
 }
 
-/// タイマの刻み `deadline` まで眠る（`nanosleep`・`clock_nanosleep` の本体。2026-10-07 に分けた）。**BKL を解いて譲り、
+/// タイマのティック `deadline` まで眠る（`nanosleep`・`clock_nanosleep` の本体。2026-10-07 に分けた）。**BKL を解いて譲り、
 /// 起きたら取り直す。** 早く起きたら数えて、もう 1 度眠る。
 fn sleep_until_ticks(deadline: u64, bkl: &mut Option<crate::bkl::BklGuard>) {
     while crate::arch::x86_64::monotonic_ticks() < deadline {
@@ -6775,10 +6775,10 @@ fn sleep_until_ticks(deadline: u64, bkl: &mut Option<crate::bkl::BklGuard>) {
     }
 }
 
-/// アロケータが借りられないときに待つ上限（タイマの刻み。2026-10-08）。100 Hz で 1 秒である。
+/// アロケータが借りられないときに待つ上限（タイマのティック。2026-10-08）。100 Hz で 1 秒である。
 const ALLOCATOR_WAIT_LIMIT_TICKS: u64 = 100;
 
-/// [`borrow_allocator`] が、借りられずに刻み 1 つ眠った回数（2026-10-08）。
+/// [`borrow_allocator`] が、借りられずにティック 1 つ眠った回数（2026-10-08）。
 static ALLOCATOR_WAITS: AtomicU64 = AtomicU64::new(0);
 /// [`borrow_allocator`] が、上限まで待っても借りられずに諦めた回数（2026-10-08）。
 static ALLOCATOR_GAVE_UP: AtomicU64 = AtomicU64::new(0);
@@ -6793,7 +6793,7 @@ pub fn allocator_waits() -> (u64, u64) {
 
 /// システムコールが状態（マッピングテーブル・ページテーブル・共有メモリの表）を変える前に、アロケータを借りる（2026-10-08）。
 ///
-/// 借りられなければ、刻み 1 つずつ眠って待つ（`nanosleep` と同じに、BKL を解いて譲る）。**上限
+/// 借りられなければ、ティック 1 つずつ眠って待つ（`nanosleep` と同じに、BKL を解いて譲る）。**上限
 /// （[`ALLOCATOR_WAIT_LIMIT_TICKS`]）まで待っても借りられなければ `None`**——呼び手は、何も変えずに失敗を返す。
 ///
 /// **借りる前に、プロセスの状態（マッピングテーブル・ページテーブル・ヒープ・fd の表・共有メモリの表）を読まない。**
@@ -6811,7 +6811,7 @@ fn borrow_allocator(
     borrow_allocator_counting(bkl).0
 }
 
-/// [`borrow_allocator`] の本体。**借りたもの（借りられなければ `None`）と、眠った刻みの数**を返す（2026-10-12）。
+/// [`borrow_allocator`] の本体。**借りたもの（借りられなければ `None`）と、眠ったティックの数**を返す（2026-10-12）。
 fn borrow_allocator_counting(
     bkl: &mut Option<crate::bkl::BklGuard>,
 ) -> (Option<crate::frame_allocator::Loan>, u64) {
@@ -6837,7 +6837,7 @@ fn borrow_allocator_counting(
 /// 眠る。上限 [`ALLOCATOR_WAIT_LIMIT_TICKS`]）。**呼び手は、引数だけの確かめ（長さ・上限・コピー）の直後に呼び、stdin の
 /// 予約と記録は、借りた後に読む。**
 ///
-/// spawn の入口で待った刻みと諦めた回数は、別にも数える（[`spawn_allocator_waits`]。`pipe-test` が読む）。
+/// spawn の入口で待ったティックと諦めた回数は、別にも数える（[`spawn_allocator_waits`]。`pipe-test` が読む）。
 ///
 /// 破壊テスト (2026-10-12, spawn-refuses-without-waiting-test): 待たずに 1 度だけ試す（直す前の形）。
 fn borrow_allocator_for_spawn(
@@ -6858,12 +6858,12 @@ fn borrow_allocator_for_spawn(
     loan
 }
 
-/// `spawn` の入口が、アロケータを待って眠った刻みの合計（2026-10-12）。
+/// `spawn` の入口が、アロケータを待って眠ったティックの合計（2026-10-12）。
 static SPAWN_ALLOCATOR_WAIT_TICKS: AtomicU64 = AtomicU64::new(0);
 /// `spawn` の入口が、上限まで待っても借りられずに `-EAGAIN` を返した回数（2026-10-12）。
 static SPAWN_ALLOCATOR_GAVE_UP: AtomicU64 = AtomicU64::new(0);
 
-/// `spawn` の入口が、アロケータを待って眠った刻みの合計と、諦めた回数（2026-10-12。パイプの計測の行に出す）。
+/// `spawn` の入口が、アロケータを待って眠ったティックの合計と、諦めた回数（2026-10-12。パイプの計測の行に出す）。
 pub fn spawn_allocator_waits() -> (u64, u64) {
     (
         SPAWN_ALLOCATOR_WAIT_TICKS.load(Ordering::Relaxed),
@@ -6881,7 +6881,7 @@ const CLOCK_REALTIME: u64 = 0;
 /// `-ENOSYS` が返り、`std` が止まった）。
 ///
 /// - `flags` が 0: 相対。`nanosleep` と同じ（`CLOCK_REALTIME` でも `CLOCK_MONOTONIC` でも）。
-/// - `flags` に `TIMER_ABSTIME`: `req` は `CLOCK_MONOTONIC` の絶対の時刻（`clock_gettime` と同じ、起動からの刻みの時計）。
+/// - `flags` に `TIMER_ABSTIME`: `req` は `CLOCK_MONOTONIC` の絶対の時刻（`clock_gettime` と同じ、起動からのティックの時計）。
 ///   過ぎていれば眠らずに 0。`CLOCK_REALTIME` の絶対は、壁の時計が無いので `-EINVAL`。
 /// - `rem` は書かない（割り込まれて早く戻る道が無い）。ほかの時計と知らないフラグは `-EINVAL`。
 ///
@@ -7473,7 +7473,7 @@ unsafe fn sys_write(
             serial.write_byte(*byte);
         }
 
-        // **画面へは BKL を解いてから書く（S12 前の手当て）。**
+        // **画面へは BKL を解いてから書く（S12 前の対策）。**
         //
         // **1 行の描画と転送は 1 ティックの半分ほど掛かる**（実測は `console:` の
         // 判定行にある。TCG で 0.67 ティック）。**保持したまま書くと、その間

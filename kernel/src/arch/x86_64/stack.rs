@@ -106,7 +106,7 @@ pub const IST_STACK_SIZE: usize = 16 * 1024;
 /// アロケータ状態、TSS 等）への被害を防ぐ。全域をカナリアで埋める。
 pub const GUARD_SIZE: usize = 4096;
 
-/// 見張りのページを、ページの権限の一覧（`crate::page_survey`）に登録するときの名前。
+/// ガードページを、ページの権限の一覧（`crate::page_survey`）に登録するときの名前。
 pub const GUARD_PAGES_REGION: &str = "guard pages below the stacks";
 
 /// カナリアのパターン。ヒープの毒値（`0xDE`）とは別の値にして、ログに
@@ -547,7 +547,7 @@ fn report_misaligned_entry(entry: &str, stack: u64) -> ! {
     common::arch::x86_64::cpu::halt_forever()
 }
 
-/// 見張りのページ（マップしていない 1 ページ）の下に、どのスタックが在るか（2026-10-06）。
+/// ガードページ（マップしていない 1 ページ）の下に、どのスタックが在るか（2026-10-06）。
 ///
 /// **ページフォルトのハンドラが、落ちたアドレスから名前を引いて出すために持つ**（[`guarded_stack_at`]）。以前は、起動の
 /// カーネルスタックの見張りだけを名指ししていて、ほかのスタックのあふれは「カーネルスタックの見張りの中ではない」と
@@ -625,7 +625,7 @@ impl core::fmt::Display for GuardedStack {
     }
 }
 
-/// 控えられる見張りのページの数。
+/// 控えられるガードページの数。
 ///
 /// **いま張るのは、BSP の側で 13 枚**（カーネルスタック 1、ワーカー 2、足した 1 本、アイドル、遠征スタック 4、
 /// スレッドのタスクの池 4）**と、AP の 1 つにつき 6 枚**（カーネルスタックと IST の 5 本。
@@ -633,7 +633,7 @@ impl core::fmt::Display for GuardedStack {
 /// 9 コアまでである。**収まることは `crate::task` のコンパイル時の表明が固定する**（2026-10-13）。
 pub const GUARD_PAGE_SLOTS: usize = 64;
 
-/// 見張りのページの表（アドレスと、その上のスタック）。**アドレスが 0 の欄は空きである。**
+/// ガードページの表（アドレスと、その上のスタック）。**アドレスが 0 の欄は空きである。**
 ///
 /// **書くのは起動時の単一の文脈だけ**（[`record_guard_page`]）で、読むのはページフォルトのハンドラである
 /// （[`guarded_stack_at`]）。ロックを取らずに読めるように、欄は原子的な 2 語にしてある。**名前を先に書き、アドレスを
@@ -641,7 +641,7 @@ pub const GUARD_PAGE_SLOTS: usize = 64;
 static GUARD_PAGES: [(AtomicU64, AtomicU64); GUARD_PAGE_SLOTS] =
     [const { (AtomicU64::new(0), AtomicU64::new(0)) }; GUARD_PAGE_SLOTS];
 
-/// 見張りのページを 1 枚、表に控える。**控えられたら `true`**（表が一杯なら `false`）。
+/// ガードページを 1 枚、表に控える。**控えられたら `true`**（表が一杯なら `false`）。
 ///
 /// **同じアドレスを 2 度控えても、欄は 1 つである**（後の名前で上書きする）。
 ///
@@ -650,7 +650,7 @@ static GUARD_PAGES: [(AtomicU64, AtomicU64); GUARD_PAGE_SLOTS] =
 /// - 起動時の単一の文脈から呼ぶ（張る所は、どれも起動の経路に在る）。ページテーブルには触らない。
 /// - `guard_bottom` は、マップしていない 1 ページの先頭のアドレスである。
 pub fn record_guard_page(guard_bottom: u64, stack: GuardedStack) -> bool {
-    // 破壊テスト (2026-10-06, excursion-guard-unrecorded-test): 遠征スタックの見張りのページを、控えたことにして
+    // 破壊テスト (2026-10-06, excursion-guard-unrecorded-test): 遠征スタックのガードページを、控えたことにして
     // 控えない。**張った直後の確かめ（`ring3` の、4 本とも自分の名前で控えられていること）が、名指しして止まる。**
     if cfg!(feature = "excursion-guard-unrecorded-test")
         && matches!(stack, GuardedStack::Excursion { .. })
@@ -668,7 +668,7 @@ pub fn record_guard_page(guard_bottom: u64, stack: GuardedStack) -> bool {
     false
 }
 
-/// `address` が、控えてある見張りのページの中なら、そのページの先頭と、上に在るスタックを返す。
+/// `address` が、控えてあるガードページの中なら、そのページの先頭と、上に在るスタックを返す。
 ///
 /// # 契約（境界の関数。2026-10-06）
 ///
@@ -683,7 +683,7 @@ pub fn guarded_stack_at(address: u64) -> Option<(u64, GuardedStack)> {
     })
 }
 
-/// ガードページを 1 枚設ける（S12 前の手当て、C の途中で寄せた）。
+/// ガードページを 1 枚設ける（S12 前の対策、C の途中で寄せた）。
 ///
 /// **粒度を確かめ、2MiB なら分割し、分割後にもう一度読み直してから unmap する。**
 ///
@@ -695,7 +695,7 @@ pub fn guarded_stack_at(address: u64) -> Option<(u64, GuardedStack)> {
 ///
 /// **`docs/deferred-decisions.md` の「ガードページの split 化」は S11-5 で発火し、
 /// そのとき分割の分岐が配線された。ところが入ったのはカーネルスタックの側だけだった。**
-/// **ワーカーの側は「4KiB でなければ止める」のまま残り、S12 前の手当ての C で
+/// **ワーカーの側は「4KiB でなければ止める」のまま残り、S12 前の対策の C で
 /// イメージが育ったときに、そちらが止めた。**
 ///
 /// **根は「分割が無かったこと」ではない。「同じ不変を守る場所が 2 つあり、
@@ -984,7 +984,7 @@ mod tests {
         assert_eq!(core::mem::size_of::<EntryIstBlock>(), stride * 3);
     }
 
-    /// 見張りのページの名前は、表の 1 語へ入れて戻しても変わらない。**0（空き）になる名前は無い。**
+    /// ガードページの名前は、表の 1 語へ入れて戻しても変わらない。**0（空き）になる名前は無い。**
     #[test]
     fn a_guarded_stack_survives_the_round_trip_through_its_word() {
         let all = [
@@ -1028,7 +1028,7 @@ mod tests {
         );
     }
 
-    /// 表に控えた見張りのページは、その 1 ページの中のアドレスからだけ引ける。同じアドレスを控え直すと、名前が替わる。
+    /// 表に控えたガードページは、その 1 ページの中のアドレスからだけ引ける。同じアドレスを控え直すと、名前が替わる。
     ///
     /// **表は静的で、ほかの試験と共有する**ので、この試験だけが使うアドレス（ほかに現れない値）で確かめる。
     #[test]

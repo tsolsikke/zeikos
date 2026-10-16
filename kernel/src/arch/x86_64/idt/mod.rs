@@ -88,7 +88,7 @@ core::arch::global_asm!(
     "zeikos_exception_stubs:",
     ".set stub_vector, 0",
     ".rept 256",
-    // 刻み幅の検証に使う独立したラベル。アセンブラが算出するので、
+    // ステップ幅の検証に使う独立したラベル。アセンブラが算出するので、
     // Rust 側の base + n * STUB_SIZE という計算とは独立している。
     "  .if stub_vector == 8",
     "    .globl zeikos_exception_stub_8",
@@ -278,7 +278,7 @@ core::arch::global_asm!(
     "zeikos_irq_stubs:",
     ".set irq_index, 0",
     ".rept 33",
-    // スタブ表の刻み幅を独立に検証するためのラベル（例外側と同じ発想）。
+    // スタブ表のステップ幅を独立に検証するためのラベル（例外側と同じ発想）。
     "  .if irq_index == 0",
     "    .globl zeikos_irq_stub_0",
     "    zeikos_irq_stub_0:",
@@ -538,12 +538,12 @@ extern "C" {
     static zeikos_exception_stubs: u8;
     /// スタブ表の終端。先頭との差が `256 * STUB_SIZE` になるはず。
     static zeikos_exception_stubs_end: u8;
-    /// 刻み幅の検証用に、アセンブラが直接付けたラベル。
+    /// ステップ幅の検証用に、アセンブラが直接付けたラベル。
     static zeikos_exception_stub_8: u8;
     static zeikos_exception_stub_14: u8;
     static zeikos_exception_stub_255: u8;
 
-    /// IRQ スタブ表の先頭・終端・刻み幅検証用ラベル。
+    /// IRQ スタブ表の先頭・終端・ステップ幅検証用ラベル。
     ///
     /// 例外用とは別の領域なので、範囲検証も別系統になる。
     static zeikos_irq_stubs: u8;
@@ -1574,7 +1574,7 @@ macro_rules! symbol_address {
 /// 例外用（[`check_stub_table`]）と別系統である。表が別の領域にある
 /// ため、片方の検証がもう片方を保証しない。
 ///
-/// **刻み幅の確かめは、記号のアドレスを `symbol_address!` で取って比べる**——表の頭（`zeikos_irq_stubs`）と
+/// **ステップ幅の確かめは、記号のアドレスを `symbol_address!` で取って比べる**——表の頭（`zeikos_irq_stubs`）と
 /// 最初の項目（`zeikos_irq_stub_0`）は同じアドレスに在る別の記号で、`addr_of!` で比べると最適化が偽に畳む。
 pub fn check_irq_stub_table() -> StubTableCheck {
     let base = symbol_address!(zeikos_irq_stubs);
@@ -1820,7 +1820,7 @@ pub fn check_gates_lead_to_common_entries() -> CommonEntryCheck {
     check
 }
 
-/// スタブ表の刻み幅と、IDT エントリがそれを正しく指していることを検証する。
+/// スタブ表のステップ幅と、IDT エントリがそれを正しく指していることを検証する。
 ///
 /// IDT は `base + n * STUB_SIZE` という式でエントリを作っているため、この
 /// 前提が崩れると全エントリが誤ったアドレスを指す。しかも、その前提を
@@ -2297,7 +2297,7 @@ pub fn advance_monotonic_ticks() -> Option<u64> {
     }
 }
 
-/// 走っている子の遠征を畳む（中断。Ctrl+C。S12 前の手当て、C）。共通の側の入口関数が
+/// 走っている子の遠征を畳む（中断。Ctrl+C。S12 前の対策、C）。共通の側の入口関数が
 /// [`ExitAction::FoldExcursion`] を返したときに、入口が呼ぶ（2026-09-28。9d-3。それまでは
 /// `fold_if_interrupted` が、畳むかどうかを決めることと畳むことを両方持っていた）。
 ///

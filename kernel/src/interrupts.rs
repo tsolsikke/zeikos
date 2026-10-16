@@ -160,7 +160,7 @@ pub fn on_external_interrupt(
             // 共有 IDT で両コアが同じハンドラに入っても、EOI の宛先は分かれる。
             // EOI を省く破壊テスト（`no-eoi-test`）は、完了させる側（`complete`）の中にある。
             unsafe { crate::machine::pc::complete(claimed) };
-            // **中断（Ctrl+C）で遠征を終了させる地点はここである（S12 前の手当て、C）。**
+            // **中断（Ctrl+C）で遠征を終了させる地点はここである（S12 前の対策、C）。**
             //
             // **EOI を送った後でなければならない。** 畳むのは longjmp で出ていく形なので、
             // **EOI より前に置くと、割り込みを終えないまま抜ける。**
@@ -170,7 +170,7 @@ pub fn on_external_interrupt(
             //
             // 畳むと決めたら、出口の動きとして返す。longjmp は入口が、この関数から戻った後に行う（9d-3）。
             if should_fold_excursion(interrupted) {
-                // 破壊テスト (S12 前の手当て C, kill-fold-keep-bkl): 解かずに終了させる。次に BKL を
+                // 破壊テスト (S12 前の対策 C, kill-fold-keep-bkl): 解かずに終了させる。次に BKL を
                 // 取る者が、同じコアの再取得として検出する。**`user-exit-keep-bkl` と
                 // 同じ機序で、入口が `Syscall` ではなく `Irq` である点だけが違う。**
                 #[cfg(feature = "kill-fold-keep-bkl-test")]
@@ -300,7 +300,7 @@ fn advance_clock() {
     }
 }
 
-/// 中断（Ctrl+C）が要求されていれば、走っている子の遠征を畳むと決める（S12 前の手当て、C）。
+/// 中断（Ctrl+C）が要求されていれば、走っている子の遠征を畳むと決める（S12 前の対策、C）。
 ///
 /// **条件が揃わなければ偽を返す。揃えば真を返し、畳むのは入口が行う**（出口の動き。2026-09-28。9d-3。それまでは
 /// `arch` の `fold_if_interrupted` が、決めることと畳むことを両方持っていた）。
@@ -327,7 +327,7 @@ fn advance_clock() {
 ///   同じ形で、**CPU が積んだ事実だけを見る**
 /// - **フラグが立っている**（そして降ろす）
 fn should_fold_excursion(interrupted: &crate::arch::x86_64::Interrupted<'_>) -> bool {
-    // 破壊テスト (S12 前の手当て C, kill-fold-at-depth-one): 深さ 1 でも終了させる。
+    // 破壊テスト (S12 前の対策 C, kill-fold-at-depth-one): 深さ 1 でも終了させる。
     // **シェル自身が Ctrl+C で死ぬ**ので、`init` が起動し直す回数が増える。
     #[cfg(feature = "kill-fold-at-depth-one-test")]
     const MINIMUM_DEPTH: usize = 1;
@@ -373,7 +373,7 @@ fn should_fold_excursion(interrupted: &crate::arch::x86_64::Interrupted<'_>) -> 
     crate::input::take_interrupt_request()
 }
 
-/// 深さがちょうど 1 だったので畳まなかった回数（W2-c-2 の手当て。`ADR-0061`）。
+/// 深さがちょうど 1 だったので畳まなかった回数（W2-c-2 の対策。`ADR-0061`）。
 ///
 /// **「深さ 1 では畳まない」が働いたことの観測である。** **判定は「1 以上」を見る。**
 ///
@@ -772,7 +772,7 @@ pub unsafe fn run_timer_loop(
     // プリエンプティブマルチタスクのデモと検証（M5-d）。timer が動き出した
     // この時点で 1 区間だけ実行する。通常起動（stop_after_ticks == 0）でのみ行う。
     // interrupt-test の有限ループ（stop_after_ticks > 0）では実行しない。デモが
-    // 終わるとワーカーは走行不可になり、以降このハートビートループは
+    // 終わるとワーカーは実行不可になり、以降このハートビートループは
     // プリエンプトされない（runnable がメインだけなので on_timer_tick は
     // no-op）。
     if stop_after_ticks == 0 {
@@ -868,7 +868,7 @@ pub unsafe fn run_timer_loop(
         }
 
         // 増幅器 (S4-c-4-3, sched-keep-workers-runnable): AP が起動した後で
-        // デモのワーカーを走行可能へ戻す。単独では何も主張しない——
+        // デモのワーカーを実行可能へ戻す。単独では何も主張しない——
         // bootstrap processor が巡回を続けるだけで、第 1 層が AP を弾く。
         //
         // 位置はここでなければならない。デモより前だとデモの観測に混ざり、
@@ -1571,7 +1571,7 @@ fn drain_keyboard(
                 logger.info(format_args!("keyboard: line = \"{}\"", line.as_str()));
                 line.clear();
             }
-            // **カーソルの矢印と Esc は、この行では何もしない（S12 前の手当て。
+            // **カーソルの矢印と Esc は、この行では何もしない（S12 前の対策。
             // zi-a で上下と Esc が増えた）。**
             //
             // **ここの行（`TypedLine`）は挿入点を持たない。** 前景が取られる前の

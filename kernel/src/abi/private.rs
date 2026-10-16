@@ -89,7 +89,7 @@ pub const SYS_SPAWN: u64 = ZEIKOS_PRIVATE_BASE + 4;
 pub const SPAWN_FOLDED_FLAG: u64 = 0x100;
 
 /// [`SYS_SPAWN`] の戻り値のうち「子は外から止められた」を表すビット
-/// （Ctrl+C。S12 前の手当て、C）。
+/// （Ctrl+C。S12 前の対策、C）。
 ///
 /// **[`SPAWN_FOLDED_FLAG`] の隣に置く。** 下位 8 ビットは終了状態なので、
 /// **その上のビットで「終了以外の終わり方」を並べる形である。**

@@ -41,7 +41,7 @@ pub const WORKER_COUNT: usize = 2;
 /// Ring 3 を同時に走らせる 1 本（末尾）。
 ///
 /// S4-c-2 で 1 つ増えた。担当コアを入れると、AP にとっての「タスク 0」に相当する
-/// ものが要る。`pick_next` は走行可能な担当が無いときタスク 0 を返すが、タスク 0 は
+/// ものが要る。`pick_next` は実行可能な担当が無いときタスク 0 を返すが、タスク 0 は
 /// bootstrap processor の担当である。
 ///
 /// **W1-c-1 でもう 1 つ増えた（末尾）。** **2 本の Ring 3 を同時に走らせるには、
@@ -52,7 +52,7 @@ pub const WORKER_COUNT: usize = 2;
 /// `#[allow(dead_code)]` は要らない。**
 ///
 /// **W2-a でもう 1 つ増えた（末尾）。** **BSP 用のアイドルタスクである**（[`BSP_IDLE_TASK`]）
-/// ——**待つタスクが出たとき、走行可能な者が居ない間に `hlt` する先が要る**（`ADR-0061` の決定 2）。
+/// ——**待つタスクが出たとき、実行可能な者が居ない間に `hlt` する先が要る**（`ADR-0061` の決定 2）。
 /// **W2-a では誰も選ばない**——**`pick_next` の巡回にも落ち先にも入っていない**（[`default_task_for`]
 /// は今までどおりメインを返す）。**既存の添字は動かない**（[`RING3_TASK`] は 4 のままである。下の doc）。
 ///
@@ -89,7 +89,7 @@ const AP_IDLE_TASK: usize = WORKER_COUNT + 1;
 ///
 /// # なぜ要るのか
 ///
-/// **待つタスクが出ると、走行可能な者が 1 本も居ない時点が生まれる。** **そのとき `hlt` する先が要る。**
+/// **待つタスクが出ると、実行可能な者が 1 本も居ない時点が生まれる。** **そのとき `hlt` する先が要る。**
 /// **落ち先のタスクがその場で `hlt` する形は採らない**——**落ち先を選ぶのは `schedule_switch` の中、
 /// すなわち割り込みハンドラの中であり、そこで眠るとBKLと割り込みの状態を持ったまま止まる。**
 ///
@@ -103,8 +103,8 @@ const BSP_IDLE_TASK: usize = WORKER_COUNT + 3;
 
 /// スレッドのタスクの池の大きさ（M3a。`ADR-0085` の決定 2）。**システム全体で 4 本で、プロセスごとではない。**
 ///
-/// **増やすのはこの定数 1 つである**（見張りのページの名前 `THREAD_GUARD_NAMES` は同じ長さなので、型が合わなくなって
-/// 足し忘れを止める）。1 本につき `.bss` が 68 KiB（スタック 64 KiB と見張りのページ）増え、`[TaskState; TASK_COUNT]`
+/// **増やすのはこの定数 1 つである**（ガードページの名前 `THREAD_GUARD_NAMES` は同じ長さなので、型が合わなくなって
+/// 足し忘れを止める）。1 本につき `.bss` が 68 KiB（スタック 64 KiB とガードページ）増え、`[TaskState; TASK_COUNT]`
 /// のコピーも伸びる（`the_state_array_stays_small_enough_for_the_switch_frame` の上限を見直すこと）。**池が尽きたら
 /// `clone` は `-EAGAIN` を返す**（入口を入れる段で）。
 pub const THREAD_TASKS: usize = 4;
@@ -117,7 +117,7 @@ const fn is_thread_task(task: usize) -> bool {
     task >= THREAD_TASK_FIRST && task < TASK_COUNT
 }
 
-/// 起動で張る見張りのページの数（BSP の側。2026-10-13）——カーネルスタック 1、ワーカー、足した 1 本、BSP 用アイドル、
+/// 起動で張るガードページの数（BSP の側。2026-10-13）——カーネルスタック 1、ワーカー、足した 1 本、BSP 用アイドル、
 /// 遠征スタック（スロット × 深さ）、スレッドのタスクの池。**張る所を足したら、ここも足すこと**（`GUARD_PAGE_SLOTS`
 /// の doc が同じ内訳を言葉で持つ）。
 const GUARD_PAGES_ON_THE_BSP: usize = 1
@@ -127,7 +127,7 @@ const GUARD_PAGES_ON_THE_BSP: usize = 1
     + crate::arch::x86_64::USER_TASK_SLOTS * crate::arch::x86_64::MAX_EXCURSION_DEPTH
     + THREAD_TASKS;
 
-// **見張りのページの表が、扱う CPU の数の上限まで足りること**（2026-10-13。運用者の指摘）。BSP の側と、AP の 1 つにつき
+// **ガードページの表が、扱う CPU の数の上限まで足りること**（2026-10-13。運用者の指摘）。BSP の側と、AP の 1 つにつき
 // `GUARD_PAGES_PER_AP` 枚。`MAX_CPUS` が 2 なら 13 + 6 = 19 枚で、表は 64 枚ある（9 コアまで足りる）。足りなくなったら
 // ここで止まる——表を増やすかは、そのときに決める。
 const _: () = assert!(
@@ -183,7 +183,7 @@ const fn user_ring_position(task: usize) -> Option<usize> {
 /// （`the_fallback_of_every_core_is_a_task_that_core_owns`）が固定する。
 ///
 /// メインが bootstrap processor のアイドルである。専用のアイドルタスクをもう 1 本
-/// 足さないのは、タスク 0 が既にその役（走行可能な担当が無いときの落ち先）を果たして
+/// 足さないのは、タスク 0 が既にその役（実行可能な担当が無いときの落ち先）を果たして
 /// いるためである。
 ///
 /// # これは `MAX_CPUS = 2` でしか成り立たない
@@ -200,7 +200,7 @@ const fn default_task_for(cpu: usize) -> usize {
 
 /// そのコアのアイドルタスク（W2-c-1。`ADR-0061`）。
 ///
-/// **[`default_task_for`] と違う。** **あちらは「走行可能な担当が無いときの帰り先」で、
+/// **[`default_task_for`] と違う。** **あちらは「実行可能な担当が無いときの帰り先」で、
 /// BSP ではメインである**（メインが帰り先の役を果たしている）。**こちらは「誰も走れないときに
 /// `hlt` する先」である。**
 ///
@@ -281,8 +281,8 @@ static DEMO_LOCK: common::critical::Locked<u64> = common::critical::Locked::new(
 /// `Running(cpu)` はその逆マッピングなので、置くと同じ事実が 2 箇所に出て片方が必ず古くなる。
 /// 走っているかは [`CURRENT`] から導く。
 ///
-/// 走行中のタスクは [`Self::Ready`] のままである。`pick_next` が現タスクを返しうる契約
-/// （ホストテストで固定）がそれを要求する。`Ready` は「走行可能」であって
+/// 実行中のタスクは [`Self::Ready`] のままである。`pick_next` が現タスクを返しうる契約
+/// （ホストテストで固定）がそれを要求する。`Ready` は「実行可能」であって
 /// 「走っていない」ではない。
 ///
 /// # なぜ `cpu_id` をペイロードに持たないのか
@@ -302,9 +302,9 @@ enum TaskState {
     /// `init_task` で埋めるので、最初のティックが来る時点では残っていない。観測され
     /// ないことに依存はしていない（`pick_next` は `Ready` 以外を選ばない）。
     Uninitialized,
-    /// 走行可能。走行中のタスクもこの状態である（上記）。
+    /// 実行可能。実行中のタスクもこの状態である（上記）。
     Ready,
-    /// 走行不可だが終了はしていない。メイン（ワーカーが尽きたときだけ戻る）と、
+    /// 実行不可だが終了はしていない。メイン（ワーカーが尽きたときだけ戻る）と、
     /// 締切でデモを止められたワーカーがこれである。
     ///
     /// メイン（タスク 0）が候補にならないのは `pick_next` のループ範囲によるもので、
@@ -315,7 +315,7 @@ enum TaskState {
     /// メインを `Ready` にしても走るようにはならない。動く理由を取り違えないよう
     /// 書いておく。
     /// **`Waiting` と分けてある（W2-b。`ADR-0061` の決定 3）。**
-    /// **こちらは「走行不可の理由が欄の外に在る」**——**メインは帰り先だから、ワーカーは
+    /// **こちらは「実行不可の理由が欄の外に在る」**——**メインは帰り先だから、ワーカーは
     /// 締切で止めたから走らない。** **起こす側が「どの合図で起こすか」を欄から引けない。**
     Blocked,
     /// 合図を待っている（W2-b。`ADR-0061` の決定 3）。**理由は欄が持つ。**
@@ -565,7 +565,7 @@ impl TaskState {
     /// 判定を 1 箇所に集めてあるので、状態を増やしたときに選択可否を決め忘れない。
     ///
     /// **W2-b で [`TaskState::Waiting`] を足したが、ここは変えていない**——**`Ready` だけが
-    /// 走行可能である。** **待っているタスクは選ばれない**（それが待つということである）。
+    /// 実行可能である。** **待っているタスクは選ばれない**（それが待つということである）。
     const fn is_runnable(self) -> bool {
         matches!(self, Self::Ready)
     }
@@ -574,7 +574,7 @@ impl TaskState {
 /// タスク 1 本ぶんの状態。
 #[derive(Clone, Copy)]
 struct Task {
-    /// 保存された RSP（この値が指す先が `IrqContext`）。走行中は無効。
+    /// 保存された RSP（この値が指す先が `IrqContext`）。実行中は無効。
     saved_stack_pointer: u64,
     /// このタスクのカーネルスタック頂点（RSP0 用。§2.2、およびスタック範囲の
     /// 上端）。
@@ -740,7 +740,7 @@ const EMPTY_TASK: Task = Task {
 // `crate::task` を呼ぶのは `on_yield` と `on_timer_tick` の 2 箇所だけで、
 // どちらも IRQ 経路である。実測で確認した）。
 
-/// 現在走行中のタスクのインデックス（コアごと。seam整備3d、ADR-0023）。
+/// 現在実行中のタスクのインデックス（コアごと。seam整備3d、ADR-0023）。
 ///
 /// M5-c の当初は `Scheduler` の `current` フィールドだった。「現在のタスク」は
 /// コアローカルな概念（各コアが別のタスクを走らせる）なので、per-CPU が正しい
@@ -965,7 +965,7 @@ fn registered_thread_task(index: usize) -> Task {
     }
 }
 
-/// 池の `index` 本目のカーネルスタックの (下端, 上端)（M3a。見張りのページを除く）。**池のタスクが Ring 3 に居る間の
+/// 池の `index` 本目のカーネルスタックの (下端, 上端)（M3a。ガードページを除く）。**池のタスクが Ring 3 に居る間の
 /// RSP0 の先で、切り替えの検算とカーネル入場のスタックの確かめが、この範囲を見る**（`ring3::excursion_stack_range_for`）。
 ///
 /// 範囲外の `index` では止まる。
@@ -974,7 +974,7 @@ pub fn thread_task_stack_range(index: usize) -> (u64, u64) {
     (guard.as_u64() + GUARD_SIZE as u64, top.as_u64())
 }
 
-/// 池の見張りのページの名前（起動ログの行と、ページフォルトの名指しに使う）。**池の数と同じ長さである。**
+/// 池のガードページの名前（起動ログの行と、ページフォルトの名指しに使う）。**池の数と同じ長さである。**
 const THREAD_GUARD_NAMES: [&str; THREAD_TASKS] = [
     "the thread task 0 guard page",
     "the thread task 1 guard page",
@@ -1516,7 +1516,7 @@ pub fn finish_thread_task_on_fault(
 }
 
 /// 池のスレッドのタスクが、プロセスを終わらせる印の立った状態でシステムコールの入口に居る（M3a の 3-1b。2026-10-14）。
-/// **`Finished` にして池の番号を返す。** 印（`process_exited` と終了の状態）はスロットの表に在り、主スレッドが次の
+/// **`Finished` にして池の番号を返す。** 印（`process_exited` と終了ステータス）はスロットの表に在り、主スレッドが次の
 /// システムコールの入口か戻りで見て出る。**BKL の内側で呼ぶ**（システムコールの入口）。切り替えて戻らないのは呼び手が
 /// [`park_finished_thread_task`] で行う。
 ///
@@ -2000,7 +2000,7 @@ pub fn note_current_excursion_depth(depth: usize) {
 ///
 /// **ここは欄を変えるだけで、`hlt` もしなければ切り替えもしない。** **呼び出し側が、
 /// 欄を変えてから `yield_now` で譲る**——**そこで `pick_next` がこのタスクを飛ばし、
-/// 走行可能な者が居なければ BSP 用アイドルへ落ちる**（W2-c で落ち先を変える）。
+/// 実行可能な者が居なければ BSP 用アイドルへ落ちる**（W2-c で落ち先を変える）。
 ///
 /// # 割り込みを止めた文脈から呼ぶこと
 ///
@@ -2477,7 +2477,7 @@ core::arch::global_asm!(
 /// # `sti` と `hlt` を隣接させる
 ///
 /// **[`common::arch::x86_64::enable_interrupts_and_wait`] を使う**（`ADR-0018` のチェックリスト 10）。
-/// **条件を確かめてから眠る形にはしていない**——**このタスクが選ばれるのは「走行可能な者が
+/// **条件を確かめてから眠る形にはしていない**——**このタスクが選ばれるのは「実行可能な者が
 /// 居ない」ときだけで、起こすのは割り込みである。** **W2-c で待つ者が出たら、起こす側が
 /// `Ready` にしてから割り込みを終えるので、取りこぼしは生じない**（あちらで判定を設ける）。
 extern "sysv64" fn bsp_idle_main() -> ! {
@@ -2720,7 +2720,7 @@ pub fn init_ap_idle_task() {
     ));
 }
 
-/// デモ後のワーカーを走行可能へ戻す（S4-c-4-3、`sched-keep-workers-runnable`）。
+/// デモ後のワーカーを実行可能へ戻す（S4-c-4-3、`sched-keep-workers-runnable`）。
 ///
 /// # これは増幅器であって、単独では何も主張しない
 ///
@@ -2735,7 +2735,7 @@ pub fn init_ap_idle_task() {
 /// # なぜ締切を止める形にしなかったのか
 ///
 /// `on_timer_tick` の締切分岐を無効にすると、起動が進まない。[`run_preemptive_demo`] は
-/// ワーカーが走行不可になることで戻るので、締切を止めると bootstrap processor がデモから
+/// ワーカーが実行不可になることで戻るので、締切を止めると bootstrap processor がデモから
 /// 戻らず、その後ろにある AP の起動へ到達しない。AP が起動しなければウィンドウも生まれない。
 /// そこでデモは普通に終わらせ、AP が起動した後で戻す形にした。
 ///
@@ -2850,7 +2850,7 @@ fn require_bootstrap_processor(what: &str) {
 
 /// あるワーカーのスタックのガードページを unmap する（M5-b と同じ機構）。
 ///
-/// **本体は [`crate::arch::x86_64::stack::install_guard_page`] にある**（S12 前の手当ての C で寄せた）。
+/// **本体は [`crate::arch::x86_64::stack::install_guard_page`] にある**（S12 前の対策の C で寄せた）。
 /// **カーネルスタック側と同じ 1 本を通る**——**分けていたときに、分割の対処が
 /// あちらにしか入らず、イメージが育ったときにこちらが止めた。**
 ///
@@ -3101,7 +3101,7 @@ unsafe fn setup_tasks(allocator: &mut crate::frame_allocator::FrameAllocator) {
 
     // **スレッドのタスクの池を足す（M3a。`ADR-0085` の決定 2）。**
     //
-    // **見張りのページを張り、スタックの範囲だけを登録する**——**`Uninitialized` のままで、起こすのは `clone` の
+    // **ガードページを張り、スタックの範囲だけを登録する**——**`Uninitialized` のままで、起こすのは `clone` の
     // 入口を入れる段からである**（足した 1 本を `start_ring3_task` が起こすのと同じ形）。**担当は BSP である**
     // （`EMPTY_TASK` の既定。`ADR-0085` の決定 5）。
     for (index, name) in THREAD_GUARD_NAMES.iter().enumerate() {
@@ -3218,7 +3218,7 @@ pub fn on_timer_tick(current_sp: u64) -> u64 {
         PREEMPT_IN_WINDOW.fetch_add(1, Ordering::Relaxed);
     }
 
-    // 締切に達したらワーカーを走行不可にする。次の pick_next がメインを選ぶ。
+    // 締切に達したらワーカーを実行不可にする。次の pick_next がメインを選ぶ。
     if scheduler::demo_active() && timer_ticks() >= scheduler::demo_deadline() {
         for w in 0..WORKER_COUNT {
             // 締切で止めるだけで、ラウンドを終えたわけではない。
@@ -3291,7 +3291,7 @@ fn schedule_switch(current_sp: u64) -> u64 {
         report_double_selection(next, cpu, &currents);
         report_layer_two_skip();
         // 走らせるべき相手がいない（=現タスクのまま）なら何もしない。デモ後の
-        // ハートビート区間（走行可能なワーカーが無い）ではここに来て no-op になる。
+        // ハートビート区間（実行可能なワーカーが無い）ではここに来て no-op になる。
         if next == current {
             return current_sp;
         }
@@ -3448,7 +3448,7 @@ fn schedule_switch(current_sp: u64) -> u64 {
         // 変わるだけである**（`ADR-0060`）。
         //
         // **既定の起動では `stack_top(next)` に等しい**——**遠征中に切り替えが
-        // 起きないからである**（走行可能なタスクがメインだけで、上の
+        // 起きないからである**（実行可能なタスクがメインだけで、上の
         // `next == current` で早く戻る）。**等しくなくなるのは W1-c-4 の `concurrent-test` である。**
         let expected_top = scheduler::kernel_entry_stack_top(next);
         // **0 なら止める（W1-c-3c）。** **下の読み戻しは「書いた値が載ったか」を見るので、
@@ -3623,7 +3623,7 @@ fn report_double_selection(next: usize, cpu: usize, currents: &[usize; MAX_CPUS]
     ));
 }
 
-/// 次に走らせるタスクを選ぶ。ワーカーを巡回し、走行可能なものが無ければ
+/// 次に走らせるタスクを選ぶ。ワーカーを巡回し、実行可能なものが無ければ
 /// メイン（0）へ戻る。
 ///
 /// **状態は、添字から引く関数（`state_of`）で受ける（2026-10-13）。** **以前は `[TaskState; TASK_COUNT]` を値で受けて
@@ -3732,7 +3732,7 @@ fn pick_next(
         return idle_task_for(cpu);
     }
 
-    // 走行可能な担当ワーカーが無いので、自コアの既定タスクへ落ちる（S4-c-3-1）。
+    // 実行可能な担当ワーカーが無いので、自コアの既定タスクへ落ちる（S4-c-3-1）。
     // 固定の `0` から変えた理由は [`default_task_for`] の doc。
     //
     // bootstrap processor から見た振る舞いは変わらない（`default_task_for(0)` は
@@ -3820,7 +3820,7 @@ extern "C" {
 ///
 /// timer が動いている状態（sti 済み）で呼ぶこと。2 本のビジーループワーカーを
 /// 起動し、初回スイッチ（yield）でワーカーへ入る。以後 timer がワーカー間を
-/// プリエンプトで回す。締切に達すると [`on_timer_tick`] がワーカーを走行不可に
+/// プリエンプトで回す。締切に達すると [`on_timer_tick`] がワーカーを実行不可に
 /// してメインへ戻し、この関数が会計・進捗・レジスタ照合・ウィンドウカウントを検査して
 /// 戻る。
 pub fn run_preemptive_demo() {
@@ -3841,7 +3841,7 @@ pub fn run_preemptive_demo() {
     yield_now();
 
     // --- 会計・進捗・ウィンドウカウントを閉じる ---
-    // ワーカーは走行不可だがタイマは動き続けているので、`switches` と
+    // ワーカーは実行不可だがタイマは動き続けているので、`switches` と
     // `resumes` は IF=0 の経路が加算しうる。フィールド単位の volatile な
     // 読みで取る（S0-b。`scheduler` の表を参照）。
     let switches = scheduler::switches();
@@ -3905,9 +3905,9 @@ unsafe fn setup_preemptive_tasks() {
 
     // SAFETY: 単一実行文脈。timer は IF=1 だが、この関数は yield する前に
     // 走り、スケジューラの current はメイン（0）のままである。ここでの更新中に
-    // プリエンプトが起きても、current=メインで走行可能なワーカーがまだ無い間は
+    // プリエンプトが起きても、current=メインで実行可能なワーカーがまだ無い間は
     // pick_next がメインを返すので no-op になる（順序の安全性は最初のワーカーを
-    // 走行可能にした後に yield で入ることに依存する）。
+    // 実行可能にした後に yield で入ることに依存する）。
     let _guard = common::critical::InterruptGuard::enter();
     set_current_index(0);
     scheduler::set_switches(0);
@@ -4173,7 +4173,7 @@ mod tests {
 
     /// AP は自分のアイドルタスクへ落ちる。メインへは落ちない（S4-c-3-1）。
     ///
-    /// 走行可能な担当ワーカーが無い AP を `pick_next` に通す。`MAIN_TASK` が
+    /// 実行可能な担当ワーカーが無い AP を `pick_next` に通す。`MAIN_TASK` が
     /// 返ったら、AP が bootstrap processor のタスクを走らせることになる。
     #[test]
     fn an_application_processor_falls_back_to_its_own_idle_task() {
@@ -4200,7 +4200,7 @@ mod tests {
             ),
             AP_IDLE_TASK
         );
-        // ワーカーが全部走行不可でも同じ落ち先である。
+        // ワーカーが全部実行不可でも同じ落ち先である。
         // **足した 1 本は `Blocked` にする（W1-c-4 で引き直した）**——**`Ready` だと BSP 側がそれを選ぶ。**
         let none_ready = states([false, false, false, true, false, true]);
         assert_eq!(
@@ -4246,8 +4246,8 @@ mod tests {
 
     /// 担当コアが違うタスクは候補にならない（S4-c-1）。
     ///
-    /// 第 1 層そのものの表明である。全員走行可能でも、担当が別コアなら
-    /// 選ばれず、走行可能な担当が無いときの既存の経路（タスク 0）へ落ちる。
+    /// 第 1 層そのものの表明である。全員実行可能でも、担当が別コアなら
+    /// 選ばれず、実行可能な担当が無いときの既存の経路（タスク 0）へ落ちる。
     #[test]
     fn a_task_owned_by_another_cpu_is_not_a_candidate() {
         let all_ready = states([true, true, true, true, true, true]);
@@ -4297,7 +4297,7 @@ mod tests {
         );
     }
 
-    /// 旧 `runnable: bool` に対応する短縮。`true` = 走行可能。
+    /// 旧 `runnable: bool` に対応する短縮。`true` = 実行可能。
     ///
     /// # S4-c-2 で入力が 1 要素増えた
     ///
@@ -4399,7 +4399,7 @@ mod tests {
     /// ので、期待値は変わらない。**
     #[test]
     fn main_is_never_picked_as_a_rotation_candidate() {
-        // メインだけが走行可能なら、返るのは 0（輪の最後。輪に入る前は落ち先の経路だった）。
+        // メインだけが実行可能なら、返るのは 0（輪の最後。輪に入る前は落ち先の経路だった）。
         assert_eq!(
             pick_next(states([true, false, false, true, false, true]), 1),
             0
@@ -4848,7 +4848,7 @@ mod tests {
                 );
             }
         }
-        // **池のカーネルスタックは、見張りのページの 1 ページ上から上端までである。**
+        // **池のカーネルスタックは、ガードページの 1 ページ上から上端までである。**
         for index in 0..THREAD_TASKS {
             let (bottom, top) = super::thread_task_stack_range(index);
             assert_eq!(top - bottom, super::RING3_TASK_STACK_SIZE as u64);
@@ -4927,7 +4927,7 @@ mod tests {
     }
 
     /// 現タスクが再選択されうる。他に走れるワーカーがおらず自分だけが
-    /// 走行可能なら、`pick_next` は現タスクを返す。呼び出し側
+    /// 実行可能なら、`pick_next` は現タスクを返す。呼び出し側
     /// （`schedule_switch`）が `next == current` を no-op として扱うことで
     /// 成立している契約なので、状態機械化でもこの性質を保つこと。
     #[test]
@@ -4942,7 +4942,7 @@ mod tests {
         );
     }
 
-    /// 走行不可のワーカーは飛ばされる。
+    /// 実行不可のワーカーは飛ばされる。
     #[test]
     fn an_unrunnable_worker_is_skipped() {
         assert_eq!(

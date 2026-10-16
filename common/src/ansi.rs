@@ -440,7 +440,7 @@ const fn palette_256(index: u32) -> Rgb {
     }
     if index < 232 {
         let value = index - 16;
-        // **各軸は6段で、xtermの刻みは 0, 95, 135, 175, 215, 255 である。**
+        // **各軸は6段で、xtermのステップは 0, 95, 135, 175, 215, 255 である。**
         let steps = [0u8, 95, 135, 175, 215, 255];
         let red = steps[((value / 36) % 6) as usize];
         let green = steps[((value / 6) % 6) as usize];
@@ -448,7 +448,7 @@ const fn palette_256(index: u32) -> Rgb {
         return Rgb::new(red, green, blue);
     }
     if index < 256 {
-        // **灰は 8 から 10 刻みである**（xtermの慣行）。
+        // **灰は 8 から 10 ステップである**（xtermの慣行）。
         let level = (8 + (index - 232) * 10) as u8;
         return Rgb::new(level, level, level);
     }

@@ -80,7 +80,7 @@ impl PmTimer {
         unsafe { inl(self.port) }
     }
 
-    /// 2 回の読みの間に進んだ刻み（純粋ロジック）。**幅で包み込む。**
+    /// 2 回の読みの間に進んだティック（純粋ロジック）。**幅で包み込む。**
     pub const fn elapsed(&self, before: u32, after: u32) -> u32 {
         elapsed_with_width(before, after, self.bits)
     }
@@ -216,10 +216,10 @@ pub const fn elapsed_with_width(before: u32, after: u32, bits: u8) -> u32 {
     after.wrapping_sub(before) & width_mask(bits)
 }
 
-/// Local APIC タイマの周波数（Hz）を、減った数と PM タイマの刻みから求める（純粋ロジック）。
+/// Local APIC タイマの周波数（Hz）を、減った数と PM タイマのティックから求める（純粋ロジック）。
 ///
 /// **PIT 基準の式と同じ形である**——**ウィンドウの実時間で割る**（`crate::machine::pc::apic` の較正）。
-/// **刻みが 0 なら 0 を返す**（割らない）。
+/// **ティックが 0 なら 0 を返す**（割らない）。
 pub const fn lapic_hz_from_ticks(lapic_counts: u64, pm_ticks: u64) -> u64 {
     if pm_ticks == 0 {
         return 0;
@@ -263,7 +263,7 @@ mod tests {
     /// **周波数はウィンドウの実時間で割る。**
     #[test]
     fn the_frequency_comes_from_the_observed_window() {
-        // 100ms のウィンドウ（PM タイマの刻み 357,954）で 1,000,000 数え下がれば約 10MHz。
+        // 100ms のウィンドウ（PM タイマのティック 357,954）で 1,000,000 数え下がれば約 10MHz。
         assert_eq!(lapic_hz_from_ticks(1_000_000, 357_954), 10_000_013);
         assert_eq!(lapic_hz_from_ticks(1_000_000, 0), 0, "割らない");
     }

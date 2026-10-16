@@ -145,12 +145,12 @@
 //! - `101` 残った 2 つの断片の `munmap` が 0 を返さなかった
 //! - `102` 無名のマッピングの 2 ページ目への `MAP_FIXED` が、そのアドレスと 0 のページを返さなかった
 //! - `103` マッピングの上への `MAP_FIXED_NOREPLACE` が `-EEXIST` を返さなかったか、空いた所でそのアドレスを返さなかった
-//! - `104` スタックとその見張りのページへの `MAP_FIXED` が `-EINVAL` を返さなかった
+//! - `104` スタックとそのガードページへの `MAP_FIXED` が `-EINVAL` を返さなかった
 //! - `105` `brk` の見張りの流れ（`brk`、ヒープの先頭への `PROT_NONE` の `MAP_FIXED`、`brk` を戻す、`munmap`）が通らなかった
 //! - `106` `PROT_READ` にして `PROT_READ|PROT_WRITE` に戻す `mprotect` が 0 を返さなかったか、値が残っていなかった（2026-10-06）
 //! - `107` `PROT_NONE` にして戻す `mprotect` の後、ページの中身が残っていなかった
 //! - `108` マップしていない `PROT_NONE` のマッピングを `PROT_READ|PROT_WRITE` にする `mprotect` が、書ける 0 のページをくれなかった
-//! - `109` `PROT_EXEC` の `mprotect` が `-EPERM`、見張りのページへの `mprotect` が `-EINVAL`、穴を含む範囲が `-ENOMEM` を返さなかった
+//! - `109` `PROT_EXEC` の `mprotect` が `-EPERM`、ガードページへの `mprotect` が `-EINVAL`、穴を含む範囲が `-ENOMEM` を返さなかった
 //! - `110` `spawn("/bin/mprotect-ro")` が「畳まれた・ベクタ 14」を返さなかった（書けなくしたページへの書きは落ちる）
 //! - `111` 自分のコードのページへの `PROT_READ|PROT_WRITE` の `mprotect` が `-EPERM` を返さなかった（W^X）
 //! - `112` `spawn("/bin/mprotect-nx")` が「畳まれた・ベクタ 14」を返さなかった（`PROT_READ` にしたコードのページは実行できない）
@@ -171,7 +171,7 @@
 //!   ほかの tid を `-ESRCH` で断る・シグナル 0 を受ける・`SIGCHLD` と `SIG_IGN` の `SIGUSR1` を無視する、のどれかが違った
 //! - `119` `spawn("/bin/tkill-self")` が 134（`tkill(gettid(), SIGABRT)` で終わらせた。128 + 6）で終わらなかった
 //! - `120` `clock_nanosleep` が、長さ 0 の相対の眠りと過ぎた絶対の時刻で 0 を返さなかったか、知らない時計で `-EINVAL` を返さなかった
-//!   （起動時のこのプログラムは、本当に眠ると戻ってこない——スケジューラの刻みで起こされる形は、シェルの `sleep` が確かめる）
+//!   （起動時のこのプログラムは、本当に眠ると戻ってこない——スケジューラのティックで起こされる形は、シェルの `sleep` が確かめる）
 //! - `121` ユーザーのアドレスの上限のページ・上限をまたぐ範囲・正準でないアドレス・カーネルのアドレスへの `MAP_FIXED`（と上限のページへの
 //!   `MAP_FIXED_NOREPLACE`）が `-ENOMEM` を返さなかったか、64 KiB より下への `MAP_FIXED` が `-EPERM` を返さなかった（2026-10-07）
 //! - `122` 上限のページとカーネルのアドレスの `munmap` が `-EINVAL` を、上限のページと末尾があふれる範囲の `mprotect` が `-ENOMEM` を
@@ -2067,7 +2067,7 @@ core::arch::global_asm!(
     "  mov edi, 103",
     "  test rax, rax",
     "  jne 7f",
-    // 104: スタック（0x7ff000）と見張りのページ（0x7fb000）への MAP_FIXED は -EINVAL。
+    // 104: スタック（0x7ff000）とガードページ（0x7fb000）への MAP_FIXED は -EINVAL。
     "  mov eax, {sys_mmap}",
     "  mov edi, 0x7ff000",
     "  mov esi, 4096",
@@ -2435,7 +2435,7 @@ core::arch::global_asm!(
     "  mov qword ptr [r12 + 4096], 63",
     "  cmp qword ptr [r12 + 4096], 63",
     "  jne 7f",
-    // 109: PROT_EXEC は -EPERM。見張りのページは -EINVAL。穴を含む範囲は -ENOMEM。
+    // 109: PROT_EXEC は -EPERM。ガードページは -EINVAL。穴を含む範囲は -ENOMEM。
     "  mov eax, {sys_mprotect}",
     "  mov rdi, r12",
     "  mov esi, 4096",
@@ -3005,7 +3005,7 @@ core::arch::global_asm!(
     "  jne 7f",
     // 120: clock_nanosleep(CLOCK_MONOTONIC, 0, {0, 0}) は 0（長さ 0 なので眠らない——起動時のここでは本当に眠れない）。
     //      clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, {0, 0}) は過ぎた時刻（起点）で 0。clock_nanosleep(7, 0, …) は -EINVAL。
-    //      起動時のここではタイマの刻みが進まないことが在るので、どちらも待たない値にしてある。
+    //      起動時のここではタイマのティックが進まないことが在るので、どちらも待たない値にしてある。
     //      timespec は rsp+136（16 バイト）。
     "  mov qword ptr [rsp + 136], 0",
     "  mov qword ptr [rsp + 144], 0",
