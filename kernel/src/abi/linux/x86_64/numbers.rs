@@ -78,6 +78,9 @@ pub const SYS_CONNECT: u64 = 42;
 /// `accept` の番号（`ADR-0064`。`asm/unistd_64.h` の `__NR_accept`）。
 pub const SYS_ACCEPT: u64 = 43;
 
+/// `accept4` の番号（`ADR-0087`。`asm/unistd_64.h` の `__NR_accept4`。Rust の std の `UnixListener::accept` が打つ）。
+pub const SYS_ACCEPT4: u64 = 288;
+
 /// `bind` の番号（`ADR-0064`。`asm/unistd_64.h` の `__NR_bind`）。
 pub const SYS_BIND: u64 = 49;
 

@@ -76,6 +76,15 @@ pub const AF_UNIX: u64 = 1;
 /// `SOCK_STREAM`（Linux の値）。
 pub const SOCK_STREAM: u64 = 1;
 
+/// `socket` の `type` のうち、種類を表す下位ビット（`SOCK_TYPE_MASK`。残りはフラグ）。
+pub const SOCK_TYPE_MASK: u64 = 0xf;
+
+/// `SOCK_CLOEXEC`（Linux の値。`O_CLOEXEC` と同じ）。`ADR-0087` で、無視して受ける形になった（`exec` が無い）。
+pub const SOCK_CLOEXEC: u64 = 0o2000000;
+
+/// `SOCK_NONBLOCK`（Linux の値。`O_NONBLOCK` と同じ）。受けない（待たない形は別の課題。`docs/deferred-decisions.md`）。
+pub const SOCK_NONBLOCK: u64 = 0o4000;
+
 /// `POLLIN`（読めるようになった）。**v1 が見る唯一のビットである。**
 pub const POLLIN: u16 = 0x001;
 /// `POLLNVAL`（開いていない fd。`revents` にだけ立つ。2026-10-06）。

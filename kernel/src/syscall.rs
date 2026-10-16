@@ -42,14 +42,14 @@ use common::addr::{DirectMap, PhysAddr};
 use crate::abi::linux::x86_64::SYS_CLOCK_NANOSLEEP;
 use crate::abi::linux::x86_64::{
     stat_bytes, ARCH_GET_FS, ARCH_GET_GS, ARCH_SET_FS, ARCH_SET_GS, STAT_LEN, SYS_ACCEPT,
-    SYS_ARCH_PRCTL, SYS_BIND, SYS_BRK, SYS_CLOCK_GETTIME, SYS_CLONE, SYS_CLOSE, SYS_CONNECT,
-    SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FLOCK, SYS_FSTAT, SYS_FTRUNCATE, SYS_FUTEX,
-    SYS_GETDENTS64, SYS_GETPID, SYS_GETRANDOM, SYS_GETTID, SYS_IOCTL, SYS_LISTEN, SYS_LSEEK,
-    SYS_MADVISE, SYS_MEMFD_CREATE, SYS_MKDIR, SYS_MMAP, SYS_MPROTECT, SYS_MUNMAP, SYS_NANOSLEEP,
-    SYS_OPEN, SYS_POLL, SYS_PRLIMIT64, SYS_READ, SYS_READLINK, SYS_READV, SYS_RECVMSG, SYS_RMDIR,
-    SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SCHED_YIELD, SYS_SENDMSG, SYS_SENDTO,
-    SYS_SET_TID_ADDRESS, SYS_SIGALTSTACK, SYS_SOCKET, SYS_STAT, SYS_TKILL, SYS_UNAME, SYS_UNLINK,
-    SYS_WRITE, SYS_WRITEV,
+    SYS_ACCEPT4, SYS_ARCH_PRCTL, SYS_BIND, SYS_BRK, SYS_CLOCK_GETTIME, SYS_CLONE, SYS_CLOSE,
+    SYS_CONNECT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FLOCK, SYS_FSTAT, SYS_FTRUNCATE,
+    SYS_FUTEX, SYS_GETDENTS64, SYS_GETPID, SYS_GETRANDOM, SYS_GETTID, SYS_IOCTL, SYS_LISTEN,
+    SYS_LSEEK, SYS_MADVISE, SYS_MEMFD_CREATE, SYS_MKDIR, SYS_MMAP, SYS_MPROTECT, SYS_MUNMAP,
+    SYS_NANOSLEEP, SYS_OPEN, SYS_POLL, SYS_PRLIMIT64, SYS_READ, SYS_READLINK, SYS_READV,
+    SYS_RECVMSG, SYS_RMDIR, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SCHED_YIELD, SYS_SENDMSG,
+    SYS_SENDTO, SYS_SET_TID_ADDRESS, SYS_SIGALTSTACK, SYS_SOCKET, SYS_STAT, SYS_TKILL, SYS_UNAME,
+    SYS_UNLINK, SYS_WRITE, SYS_WRITEV,
 };
 use crate::abi::linux::{
     cmsg_one_fd_bytes, dirent64_record, dirent64_record_len, fb_fix_screeninfo_bytes,
@@ -62,7 +62,8 @@ use crate::abi::linux::{
     INPUT_EVENT_LEN, IOVEC_LEN, MAP_ANONYMOUS, MAP_FIXED, MAP_FIXED_NOREPLACE, MSGHDR_CONTROLLEN,
     MSGHDR_LEN, O_ACCMODE, O_APPEND, O_CREAT, O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY, POLLFD_LEN,
     POLLIN, POLLNVAL, PROT_EXEC, PROT_READ, PROT_WRITE, SCM_RIGHTS, SEEK_CUR, SEEK_END, SEEK_SET,
-    SOCKADDR_UN_LEN, SOCK_STREAM, SOL_SOCKET, TIMESPEC_LEN, TIOCGWINSZ, WINSIZE_LEN,
+    SOCKADDR_UN_LEN, SOCK_CLOEXEC, SOCK_STREAM, SOCK_TYPE_MASK, SOL_SOCKET, TIMESPEC_LEN,
+    TIOCGWINSZ, WINSIZE_LEN,
 };
 use crate::abi::linux::{
     E2BIG, EACCES, EADDRINUSE, EAFNOSUPPORT, EAGAIN, EBADF, EBUSY, ECHILD, ECONNREFUSED, EEXIST,
@@ -987,7 +988,31 @@ unsafe fn dispatch(
             bind_from_ring3(args[0], args[1], args[2], page_table_root, direct_map)
         },
         SYS_LISTEN => listen_from_ring3(args[0], args[1]),
-        SYS_ACCEPT => accept_from_ring3(args[0], args[1], bkl),
+        // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。`bkl` はいま保持しているガードである。
+        SYS_ACCEPT => unsafe {
+            accept_from_ring3(
+                args[0],
+                args[1],
+                args[2],
+                0,
+                page_table_root,
+                direct_map,
+                bkl,
+            )
+        },
+        // **`accept4` は `SOCK_CLOEXEC` を無視して `accept` と同じ**（`ADR-0087`。Rust の std が打つ）。
+        // SAFETY: 同上。
+        SYS_ACCEPT4 => unsafe {
+            accept_from_ring3(
+                args[0],
+                args[1],
+                args[2],
+                args[3],
+                page_table_root,
+                direct_map,
+                bkl,
+            )
+        },
         // SAFETY: 同上。
         SYS_CONNECT => unsafe {
             connect_from_ring3(args[0], args[1], args[2], page_table_root, direct_map)
@@ -1423,14 +1448,15 @@ unsafe fn read_socket_name(
 /// （`ADR-0020`。**私物にしない**——**パイプの入口が私物だったのは `spawn` の形に付いたからで、
 /// ソケットは Linux の形そのものが在る**）。
 ///
-/// **受けるのは `socket(AF_UNIX, SOCK_STREAM, 0)` だけである。** **`type` のフラグ
-/// （`SOCK_CLOEXEC` / `SOCK_NONBLOCK`）も `-EINVAL` で断る**（限界。見直すきっかけは `ADR-0064`）。
+/// **受けるのは `socket(AF_UNIX, SOCK_STREAM, 0)` と、それに `SOCK_CLOEXEC` を付けた形である**（`ADR-0087`。
+/// `SOCK_CLOEXEC` は `exec` が無いので無視する。Rust の std と wayland-server は必ず付ける）。**`SOCK_NONBLOCK` は
+/// `-EINVAL` で断る**（待たない形は別の課題。`docs/deferred-decisions.md`）。
 #[inline(never)]
 fn socket_from_ring3(domain: u64, kind: u64, protocol: u64) -> u64 {
     if domain != AF_UNIX {
         return (-EAFNOSUPPORT) as u64;
     }
-    if kind != SOCK_STREAM {
+    if kind & SOCK_TYPE_MASK != SOCK_STREAM || kind & !SOCK_TYPE_MASK & !SOCK_CLOEXEC != 0 {
         return (-EINVAL) as u64;
     }
     if protocol != 0 {
@@ -2088,24 +2114,76 @@ fn listen_from_ring3(fd: u64, _backlog: u64) -> u64 {
 /// [`SYS_ACCEPT`] の本体。**待ち行列が空なら待つ**（[`crate::task::Wait::SocketAcceptable`]）。
 /// **繋がった接続を新しい fd に置く。**
 ///
-/// **`addr` は NULL しか受けない**（相手の名前は返さない。限界）。
+/// **`addr` が NULL でなければ、相手の名前として `AF_UNIX` の空の名前を書き、`*addrlen` を 2 にする**（Linux が
+/// 名前の無い相手に返す形。`ADR-0087`。それまでは `-EINVAL` だった——`ADR-0064` の限界 3）。**`accept4` の `flags` は
+/// `SOCK_CLOEXEC` だけ受けて無視する**（`SOCK_NONBLOCK` は `-EINVAL`）。
 ///
 /// 破壊テスト (`ADR-0064`, socket-accept-does-not-wait): 待たずに `-EAGAIN` を返す。
 /// **`sockd` が `accept failed` で終わる。**
+///
+/// # Safety
+///
+/// `page_table_root` / `direct_map` が稼働中のテーブルのものであること。`bkl` は今持っているガードであること。
 #[inline(never)]
-fn accept_from_ring3(fd: u64, addr: u64, bkl: &mut Option<crate::bkl::BklGuard>) -> u64 {
+unsafe fn accept_from_ring3(
+    fd: u64,
+    addr: u64,
+    addrlen: u64,
+    flags: u64,
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+    bkl: &mut Option<crate::bkl::BklGuard>,
+) -> u64 {
     let listener = match socket_state_of(fd) {
         Ok(crate::vfs::SocketState::Listener { listener }) => listener,
         Ok(_) => return (-EINVAL) as u64,
         Err(errno) => return errno,
     };
-    // **相手の名前は返さない**（限界）。**NULL 以外は断る**——黙って書かない形にしない。
-    if addr != 0 {
+    if flags & !SOCK_CLOEXEC != 0 {
         return (-EINVAL) as u64;
+    }
+    if addr != 0 {
+        // **書けることを先に見る**（取った接続を戻せないため）。`addrlen` は `socklen_t`（4 バイト）。
+        // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+        let Some(bytes) = (unsafe { read_user_fixed::<4>(page_table_root, direct_map, addrlen) })
+        else {
+            return (-EFAULT) as u64;
+        };
+        let room = u64::from(u32::from_le_bytes(bytes)).min(2);
+        // SAFETY: 同上。書く前に、書ける番地かを見るだけである。
+        let writable = unsafe {
+            validate_user_range_for_write(page_table_root, direct_map, addr, room).is_some()
+                && validate_user_range_for_write(page_table_root, direct_map, addrlen, 4).is_some()
+        };
+        if !writable {
+            return (-EFAULT) as u64;
+        }
     }
     loop {
         match crate::socket::accept(listener) {
             crate::socket::AcceptOutcome::Connection(conn) => {
+                if addr != 0 {
+                    let family = (AF_UNIX as u16).to_le_bytes();
+                    // SAFETY: 上で書けることを見た番地である。
+                    let bytes =
+                        unsafe { read_user_fixed::<4>(page_table_root, direct_map, addrlen) }
+                            .unwrap_or([0; 4]);
+                    let room = (u32::from_le_bytes(bytes) as usize).min(2);
+                    // SAFETY: 同上。
+                    let written = unsafe {
+                        write_user_fixed(page_table_root, direct_map, addr, &family[..room])
+                            && write_user_fixed(
+                                page_table_root,
+                                direct_map,
+                                addrlen,
+                                &2u32.to_le_bytes(),
+                            )
+                    };
+                    if !written {
+                        crate::socket::close_end(conn, crate::socket::Side::Server);
+                        return (-EFAULT) as u64;
+                    }
+                }
                 let inserted = crate::vfs::with_current_files(|files| {
                     files.insert(crate::vfs::File::Socket {
                         state: crate::vfs::SocketState::Stream {
