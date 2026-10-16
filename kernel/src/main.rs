@@ -12651,7 +12651,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "shell-script-test",
         cfg!(feature = "shell-script-test"),
-        "--shell-test のスクリプトをスクリプトの族で回す",
+        "--shell-test のスクリプトをスクリプトの family で回す",
     ),
     (
         "pipe-write-does-not-wake-reader",
@@ -15529,7 +15529,7 @@ fn map_kernel_high_half<const CAP: usize>(
     let image_len =
         (image_end.as_u64() - image_start.as_u64()).next_multiple_of(frame_allocator::FRAME_SIZE);
     let high_start = kernel::kernel_virt_from_phys(image_start);
-    // 高位マッピングが消費した中間テーブルのフレーム数を会計する（`PML4[511]` 配下の新規部分木の分）。
+    // 高位マッピングが消費した中間テーブルのフレーム数を会計する（`PML4[511]` 配下の新規サブツリーの分）。
     let frames_before = builder.frames_used();
     map_kernel_image(builder, logger, "higher-half");
     let high_frames = builder.frames_used() - frames_before;

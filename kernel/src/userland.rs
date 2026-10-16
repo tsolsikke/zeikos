@@ -1719,7 +1719,7 @@ static SPAWN_WINDOW_STARTS: [core::sync::atomic::AtomicU64; crate::arch::x86_64:
 /// # 数える理由
 ///
 /// **条件つきの判定は、条件が満たされなくなれば「確かめなかった」と書きながら成功のまま死ぬ**
-/// （運用者の指摘。2026-09-18）。**`FLAKY_EXCLUDED` と手で回す形の前例と同じ族である。**
+/// （運用者の指摘。2026-09-18）。**`FLAKY_EXCLUDED` と手で回す形の前例と同じ family である。**
 /// **回数を行へ出し、参照が固定する**——**0 になれば差分で出る。**
 static GLOBAL_DIFFERENCE_CHECKS: core::sync::atomic::AtomicU64 =
     core::sync::atomic::AtomicU64::new(0);

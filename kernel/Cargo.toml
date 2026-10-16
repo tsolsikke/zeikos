@@ -300,7 +300,7 @@ persist-check-test = []
 env-rewrite-test = []
 # シェルの `|` をスクリプトで回す（ADR-0063 の (b3)）。判定は xtask の pipe-test が読む。
 pipe-test = []
-# --shell-test のスクリプトをそのままスクリプトの族で回す（ADR-0063 の (b3) の (b)）。打鍵を見ない破壊を
+# --shell-test のスクリプトをそのままスクリプトの family で回す（ADR-0063 の (b3) の (b)）。打鍵を見ない破壊を
 # ここへ移す。スクリプトは common::shell_script が変換する。
 shell-script-test = []
 # unix ドメインのストリームソケットをスクリプトで回す（ADR-0064）。init が /bin/sockd を起こしっぱなしで
