@@ -31155,7 +31155,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
         }
     }
 
-    // **種の `/etc/environment` が、`zi` のスクリプトの前提（末尾から数える）を満たすこと**（2026-10-16。運用者の決定。
+    // **seed の `/etc/environment` が、`zi` のスクリプトの前提（末尾から数える）を満たすこと**（2026-10-16。運用者の決定。
     // `check_environment_seed_matches_the_zi_scripts` の doc）。
     total += 1;
     begin_item(
@@ -34959,7 +34959,7 @@ fn string_slice_constant(source: &str, name: &str) -> Result<Vec<String>> {
     Ok(names)
 }
 
-/// 種の `/etc/environment` が、`zi` のスクリプトの前提を満たすこと（2026-10-16。運用者の決定）。
+/// seed の `/etc/environment` が、`zi` のスクリプトの前提を満たすこと（2026-10-16。運用者の決定）。
 ///
 /// **`kernel/src/input.rs` のスクリプトは、行の内容ではなく末尾からの位置で変数を探す**——`env-rewrite-test` は最後の行へ
 /// 降りてから `k` を打って `TERM` へ上がり、`keymap-rewrite-test` は最後の行で `l` を打って右端へ寄せ、その後ろへ
@@ -35025,7 +35025,7 @@ fn longest_run(text: &str, ch: char) -> usize {
     best
 }
 
-/// 種の `/etc/environment` の文面が、スクリプトの前提を満たすか（純粋な論理。ホストの単体試験が固定する）。
+/// seed の `/etc/environment` の文面が、スクリプトの前提を満たすか（純粋な論理。ホストの単体試験が固定する）。
 /// `ups` は `env-rewrite-test` が最後の行から上がる数、`rights` は `keymap-rewrite-test` が最後の行で右へ寄せる数。
 fn environment_seed_findings(seed: &str, ups: usize, rights: usize) -> Vec<String> {
     let lines: Vec<&str> = seed.lines().collect();
@@ -37822,7 +37822,7 @@ mod tests {
         );
     }
 
-    /// 種の `/etc/environment` と `zi` のスクリプトの前提——末尾の 3 行、`k` の数、最後の行の長さ、スクリプトの読み出し。
+    /// seed の `/etc/environment` と `zi` のスクリプトの前提——末尾の 3 行、`k` の数、最後の行の長さ、スクリプトの読み出し。
     #[test]
     fn the_environment_seed_is_checked_against_the_zi_scripts() {
         let good = "# a\nXDG_RUNTIME_DIR=/tmp/seinas\nTERM=zeikos\nPATH=/bin\nHOME=/root\n";
