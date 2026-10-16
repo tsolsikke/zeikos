@@ -31,11 +31,11 @@
 //! ので害が無いもの。
 //! 内訳は `docs/verification-coverage.md` の「ELF の検査を 3 つに分ける」にある。
 //!
-//! # 区画の並びは、ページ単位で写す側のために別に確かめる
+//! # セグメントの並びは、ページ単位で写す側のために別に確かめる
 //!
-//! **[`Elf::parse`] は区画の並びを見ない**（上の理由）。**ページ単位で写すローダーは、写す前に
+//! **[`Elf::parse`] はセグメントの並びを見ない**（上の理由）。**ページ単位で写すローダーは、写す前に
 //! [`Elf::check_load_layout`] を呼ぶ**——アドレスの順、重なり、ページへの切り上げのあふれ、同じページに
-//! 載る区画の権限を確かめる。ユーザーのプログラムを読むカーネルが呼ぶ。`kernel.elf` を読む
+//! 載るセグメントの権限を確かめる。ユーザーのプログラムを読むカーネルが呼ぶ。`kernel.elf` を読む
 //! bootloader は呼ばない（配置の方針が違う）。
 
 use core::ops::Range;
@@ -115,28 +115,28 @@ pub enum ElfError {
     ProgramHeadersBeyondHead,
 }
 
-/// ページ単位で写すローダーが、区画の並びを受け付けられない理由（[`Elf::check_load_layout`]）。
+/// ページ単位で写すローダーが、セグメントの並びを受け付けられない理由（[`Elf::check_load_layout`]）。
 ///
 /// `index` は `PT_LOAD` だけを数えた番号（0 から）である。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LayoutError {
-    /// `p_memsz` が 0 の区画がある。**写すページが無く、最終ページの計算 `p_vaddr + p_memsz - 1` が
+    /// `p_memsz` が 0 のセグメントがある。**写すページが無く、最終ページの計算 `p_vaddr + p_memsz - 1` が
     /// 成り立たない。**
     EmptySegment { index: usize },
     /// 終わりのアドレスをページの境界へ切り上げると u64 を越える（`p_vaddr + p_memsz` のあふれを含む）。
     AddressOverflow { index: usize },
-    /// アドレスの順に並んでいない（前の区画より低いアドレスから始まる）。
+    /// アドレスの順に並んでいない（前のセグメントより低いアドレスから始まる）。
     OutOfOrder { index: usize },
-    /// 前の区画とアドレスが重なる。
+    /// 前のセグメントとアドレスが重なる。
     Overlap { index: usize },
-    /// 前の区画の最終ページから始まり、権限（読み・書き・実行）が前の区画と違う。
+    /// 前のセグメントの最終ページから始まり、権限（読み・書き・実行）が前のセグメントと違う。
     /// **1 枚のページは 1 つの権限しか持てない。**
     MixedPermissionsInPage { index: usize, page: u64 },
-    /// 前の区画の最終ページから始まり、そのページに置くファイルの中身を持つ。
-    /// **共有するページは前の区画が写したものを使うので、後ろの区画の中身を重ねる経路が無い。**
+    /// 前のセグメントの最終ページから始まり、そのページに置くファイルの中身を持つ。
+    /// **共有するページは前のセグメントが写したものを使うので、後ろのセグメントの中身を重ねる経路が無い。**
     FileDataInSharedPage { index: usize, page: u64 },
-    /// 書けて、実行もできる区画がある（`p_flags` に W と X の両方が立っている。2026-10-03）。
-    /// **書けるページは実行できない、という決まりで写すので、受け付けない。** Linux は、こういう区画も
+    /// 書けて、実行もできるセグメントがある（`p_flags` に W と X の両方が立っている。2026-10-03）。
+    /// **書けるページは実行できない、という決まりで写すので、受け付けない。** Linux は、こういうセグメントも
     /// 読み込む——断るのは、このカーネルの決まりである。
     WritableAndExecutable { index: usize },
 }
@@ -274,7 +274,7 @@ impl<'a> Elf<'a> {
 
     /// `PT_LOAD` セグメントのみを走査する。
     ///
-    /// **1 つも無いイメージも受理する。** 「ロードできる区画が無い」は、このイメージを
+    /// **1 つも無いイメージも受理する。** 「ロードできるセグメントが無い」は、このイメージを
     /// 実行しようとする側にとっての誤りであって、バイト列としての壊れではない。
     /// 判定はロードする側で行うこと（bootloader は `kernel.elf` について
     /// 既にそうしている）。
@@ -316,7 +316,7 @@ pub enum ElfKind {
 ///
 /// **[`Elf::parse`] は、ファイルの全体をバイト列で受け取る。** 数 MiB の実行ファイルを載せるときに、全体を 1 つの
 /// 配列へ読んでから検査する形は取れない。**こちらは、先頭の部分（ヘッダとプログラムヘッダの表が入っている所）と、
-/// ファイルの長さの数だけを受け取る。** 区画の中身は、載せる側がファイルから直に読む。
+/// ファイルの長さの数だけを受け取る。** セグメントの中身は、載せる側がファイルから直に読む。
 ///
 /// **`ET_DYN` も受ける。** [`Elf::parse`] は `ET_EXEC` だけを受ける（bootloader が `kernel.elf` を読むのに使う）。
 ///
@@ -440,7 +440,7 @@ impl<'a> ElfHeaders<'a> {
         })
     }
 
-    /// `PT_LOAD` の区画だけを走査する。
+    /// `PT_LOAD` のセグメントだけを走査する。
     pub fn load_segments(&self) -> impl Iterator<Item = ProgramHeader> + '_ {
         self.program_headers().filter(|ph| ph.p_type == PT_LOAD)
     }
@@ -450,7 +450,7 @@ impl<'a> ElfHeaders<'a> {
         check_load_layout(self.load_segments())
     }
 
-    /// 載せる位置を決める（純粋な論理）。**区画の並び（[`Self::check_load_layout`]）は、別に確かめること。**
+    /// 載せる位置を決める（純粋な論理）。**セグメントの並び（[`Self::check_load_layout`]）は、別に確かめること。**
     ///
     /// - `ET_EXEC` は、ずらさない（ずらす量は 0）。
     /// - `ET_DYN` は、`policy.position_independent_base` だけずらす。
@@ -461,7 +461,7 @@ impl<'a> ElfHeaders<'a> {
     /// - 動的リンクを求めていない（`PT_INTERP` が無い）
     /// - 実行できるスタックを求めていない（`PT_GNU_STACK` に X が無い）
     /// - どの `PT_LOAD` も、ずらした後の `[始まり, 終わり)` があふれず、`policy.window` の中に在る
-    /// - イメージの端から端まで（最初の区画の始まりのページから、最後の区画の終わりまで）が `policy.max_span` 以下である
+    /// - イメージの端から端まで（最初のセグメントの始まりのページから、最後のセグメントの終わりまで）が `policy.max_span` 以下である
     pub fn plan(&self, policy: &LoadPolicy) -> Result<LoadPlan, PlacementError> {
         let bias = match self.kind {
             ElfKind::Executable => 0,
@@ -496,7 +496,7 @@ impl<'a> ElfHeaders<'a> {
                     }
                     lowest = Some(lowest.map_or(start, |low| low.min(start)));
                     highest = highest.max(end);
-                    // **`PT_PHDR` が無いイメージのために、表を覆う区画からもアドレスを導く。**
+                    // **`PT_PHDR` が無いイメージのために、表を覆うセグメントからもアドレスを導く。**
                     let table = self.ph_off as u64;
                     if program_headers_at.is_none()
                         && ph.p_offset <= table
@@ -540,7 +540,7 @@ impl<'a> ElfHeaders<'a> {
 pub struct LoadPolicy {
     /// `ET_DYN` のイメージに足す量（ページの境界であること）。**`ET_EXEC` には足さない。**
     pub position_independent_base: u64,
-    /// 区画を置いてよい範囲 `[始まり, 終わり)`。
+    /// セグメントを置いてよい範囲 `[始まり, 終わり)`。
     pub window: (u64, u64),
     /// イメージの端から端までの上限（バイト）。
     pub max_span: u64,
@@ -551,15 +551,15 @@ pub struct LoadPolicy {
 pub struct LoadPlan {
     /// イメージの 種類。
     pub kind: ElfKind,
-    /// 区画の `p_vaddr` に足す量（`ET_EXEC` では 0）。
+    /// セグメントの `p_vaddr` に足す量（`ET_EXEC` では 0）。
     pub bias: u64,
     /// 入口のアドレス（ずらした後）。
     pub entry: u64,
-    /// イメージの始まり（最初の区画が載るページの先頭。ずらした後）。
+    /// イメージの始まり（最初のセグメントが載るページの先頭。ずらした後）。
     pub base: u64,
-    /// イメージの終わり（最後の区画の終わり。ずらした後。ページの境界へは切り上げていない）。
+    /// イメージの終わり（最後のセグメントの終わり。ずらした後。ページの境界へは切り上げていない）。
     pub end: u64,
-    /// プログラムヘッダの表のアドレス（ずらした後）。**表がどの区画にも載らないイメージでは `None`。**
+    /// プログラムヘッダの表のアドレス（ずらした後）。**表がどのセグメントにも載らないイメージでは `None`。**
     /// Linux の起動の取り決めの `AT_PHDR` に渡す値である。
     pub program_headers_at: Option<u64>,
     /// プログラムヘッダの数（`AT_PHNUM` に渡す値）。
@@ -580,7 +580,7 @@ pub enum PlacementError {
     AddressOverflow { index: usize },
     /// 入口のアドレスが、ずらすとあふれる。
     EntryOverflow,
-    /// 区画が、置いてよい範囲の外に在る。
+    /// セグメントが、置いてよい範囲の外に在る。
     OutsideWindow { index: usize, start: u64, end: u64 },
     /// イメージの端から端までが、上限を越える。
     ImageTooLarge { span: u64, limit: u64 },
@@ -590,13 +590,13 @@ pub enum PlacementError {
 ///
 /// **通った並びについて、次が成り立つ。** ローダーはこれを前提に計算してよい。
 ///
-/// - どの区画も `p_memsz > 0` で、`p_vaddr + p_memsz` も、それをページの境界へ切り上げた値も u64 に収まる
+/// - どのセグメントも `p_memsz > 0` で、`p_vaddr + p_memsz` も、それをページの境界へ切り上げた値も u64 に収まる
 ///   （最終ページ `(p_vaddr + p_memsz - 1)` の切り下げと、ページを 1 枚ずつ進める加算があふれない）
-/// - 区画はアドレスの順に並び、重ならない（`p_vaddr` が前の区画の終わり以上）
-/// - 2 つの区画が同じページに載るのは、後ろの区画が前の区画の最終ページから始まる形だけで、そのとき
-///   2 つの権限（`p_flags` の読み・書き・実行）は同じで、後ろの区画はファイルの中身を持たない
+/// - セグメントはアドレスの順に並び、重ならない（`p_vaddr` が前のセグメントの終わり以上）
+/// - 2 つのセグメントが同じページに載るのは、後ろのセグメントが前のセグメントの最終ページから始まる形だけで、そのとき
+///   2 つの権限（`p_flags` の読み・書き・実行）は同じで、後ろのセグメントはファイルの中身を持たない
 ///   （`.data` の直後から `.bss` が始まる形。`ADR-0039`）
-/// - 書けて実行もできる区画は無い（`p_flags` の W と X の両方を持つ区画は断る。2026-10-03）
+/// - 書けて実行もできるセグメントは無い（`p_flags` の W と X の両方を持つセグメントは断る。2026-10-03）
 ///
 /// **`p_vaddr` が置いてよい範囲に在るかは見ない**（ユーザーの範囲の外は、写すときに断られる）。
 ///
@@ -604,7 +604,7 @@ pub enum PlacementError {
 /// （加算は確かめてから行う）。`PT_LOAD` でないものが混ざっていても、同じ規則で見る。
 pub fn check_load_layout(segments: impl Iterator<Item = ProgramHeader>) -> Result<(), LayoutError> {
     let page_mask = !(LOAD_PAGE_SIZE - 1);
-    // 前の区画の（始まり・終わり・権限）。
+    // 前のセグメントの（始まり・終わり・権限）。
     let mut previous: Option<(u64, u64, u32)> = None;
     for (index, ph) in segments.enumerate() {
         if ph.p_memsz == 0 {
@@ -628,7 +628,7 @@ pub fn check_load_layout(segments: impl Iterator<Item = ProgramHeader>) -> Resul
                 return Err(LayoutError::Overlap { index });
             }
             let page = ph.p_vaddr & page_mask;
-            // `previous_end` は前の区画の `p_memsz > 0` により `previous_start` より大きいので、1 を引ける。
+            // `previous_end` は前のセグメントの `p_memsz > 0` により `previous_start` より大きいので、1 を引ける。
             if (previous_end - 1) & page_mask == page {
                 if permissions != previous_permissions {
                     return Err(LayoutError::MixedPermissionsInPage { index, page });
@@ -657,7 +657,7 @@ fn program_header_at(ph: &[u8]) -> ProgramHeader {
     }
 }
 
-/// 区画のファイルの中の範囲が、長さ `file_len` のファイルに収まることを確かめる（[`ElfHeaders::parse`]）。
+/// セグメントのファイルの中の範囲が、長さ `file_len` のファイルに収まることを確かめる（[`ElfHeaders::parse`]）。
 /// **[`file_range`] と同じ確かめを、バイト列ではなく長さの数に対して行う。**
 fn file_range_in(file_len: u64, ph: &ProgramHeader) -> Result<(), ElfError> {
     let end = ph
@@ -939,7 +939,7 @@ mod tests {
     const RW: u32 = PF_R | PF_W;
     const RWX: u32 = PF_R | PF_W | PF_X;
 
-    /// **書けて実行もできる区画は断る**（2026-10-03）。どの位置の区画でも、読みのビットが無くても断る。
+    /// **書けて実行もできるセグメントは断る**（2026-10-03）。どの位置のセグメントでも、読みのビットが無くても断る。
     #[test]
     fn a_segment_that_is_both_writable_and_executable_is_refused() {
         assert_eq!(
@@ -957,7 +957,7 @@ mod tests {
             ),
             Err(LayoutError::WritableAndExecutable { index: 2 })
         );
-        // 書けるだけ、実行できるだけの区画は通る。
+        // 書けるだけ、実行できるだけのセグメントは通る。
         assert_eq!(
             check_load_layout(
                 [
@@ -971,7 +971,7 @@ mod tests {
     }
 
     /// 今のユーザープログラムの形（`.text`・`.rodata`・`.data` がページの境界から始まり、`.bss` が
-    /// `.data` の直後から始まる）は通る。区画が無いイメージも、1 つだけのイメージも通る。
+    /// `.data` の直後から始まる）は通る。セグメントが無いイメージも、1 つだけのイメージも通る。
     #[test]
     fn the_layout_check_accepts_the_shapes_the_toolchain_produces() {
         // `/bin/zi` の実測の形（2026-10-01）。
@@ -987,7 +987,7 @@ mod tests {
             Ok(())
         );
         assert_eq!(check_load_layout(core::iter::empty()), Ok(()));
-        // 前の区画がページの境界ちょうどで終わり、次がその境界から始まる形は、ページを共有しない。
+        // 前のセグメントがページの境界ちょうどで終わり、次がその境界から始まる形は、ページを共有しない。
         let touching = [
             load(0x400000, 0x1000, 0x1000, RX),
             load(0x401000, 0x10, 0x10, RW),
@@ -995,7 +995,7 @@ mod tests {
         assert_eq!(check_load_layout(touching.into_iter()), Ok(()));
     }
 
-    /// 同じページに権限の違う区画が載る並びを断る。**重なってはいない**（後ろの区画は前の区画の
+    /// 同じページに権限の違うセグメントが載る並びを断る。**重なってはいない**（後ろのセグメントは前のセグメントの
     /// 終わりより後ろから始まる）ので、重なりの確かめでは拾えない形である。
     #[test]
     fn the_layout_check_rejects_segments_with_different_permissions_in_one_page() {
@@ -1034,8 +1034,8 @@ mod tests {
         assert_eq!(check_load_layout(other_bits.into_iter()), Ok(()));
     }
 
-    /// 前の区画と同じページから始まる区画が、そのページにファイルの中身を持つ並びを断る
-    /// （権限は同じ）。**ローダーは共有するページへ後ろの区画の中身を重ねない。**
+    /// 前のセグメントと同じページから始まるセグメントが、そのページにファイルの中身を持つ並びを断る
+    /// （権限は同じ）。**ローダーは共有するページへ後ろのセグメントの中身を重ねない。**
     #[test]
     fn the_layout_check_rejects_file_data_in_a_shared_page() {
         let segments = [
@@ -1062,7 +1062,7 @@ mod tests {
             check_load_layout(reversed.into_iter()),
             Err(LayoutError::OutOfOrder { index: 1 })
         );
-        // 前の区画の中身の内側から始まる（起動の途中の検査が使う形と同じ）。
+        // 前のセグメントの中身の内側から始まる（起動の途中の検査が使う形と同じ）。
         let inside = [
             load(0x400000, 0x42, 0x42, RX),
             load(0x400030, 0x12, 0x12, R),
@@ -1080,12 +1080,12 @@ mod tests {
             check_load_layout(same.into_iter()),
             Err(LayoutError::Overlap { index: 1 })
         );
-        // 前の区画の終わりちょうどから始まる形は重なりではない（権限が同じで中身が無ければ通る）。
+        // 前のセグメントの終わりちょうどから始まる形は重なりではない（権限が同じで中身が無ければ通る）。
         let adjacent = [load(0x402000, 0x8, 0x8, RW), load(0x402008, 0, 0x2000, RW)];
         assert_eq!(check_load_layout(adjacent.into_iter()), Ok(()));
     }
 
-    /// 計算があふれる値を断る——大きさ 0 の区画（最終ページの引き算）、終わりのアドレスのあふれ、
+    /// 計算があふれる値を断る——大きさ 0 のセグメント（最終ページの引き算）、終わりのアドレスのあふれ、
     /// ページの境界への切り上げのあふれ。
     #[test]
     fn the_layout_check_rejects_values_whose_arithmetic_overflows() {
@@ -1116,12 +1116,12 @@ mod tests {
         );
     }
 
-    /// イメージから取り出した区画で確かめる入口（[`Elf::check_load_layout`]）は、`PT_LOAD` だけを見る。
+    /// イメージから取り出したセグメントで確かめる入口（[`Elf::check_load_layout`]）は、`PT_LOAD` だけを見る。
     #[test]
     fn the_layout_check_on_an_image_looks_at_its_load_segments() {
         let bytes = build_test_elf(0x100650, &[0xAA, 0xBB, 0xCC], 0x100000, 0x2000);
         assert_eq!(Elf::parse(&bytes).unwrap().check_load_layout(), Ok(()));
-        // 大きさ 0 の区画を持つイメージは、パースは通り、並びの確かめで断られる。
+        // 大きさ 0 のセグメントを持つイメージは、パースは通り、並びの確かめで断られる。
         let empty = build_test_elf(0, &[], 0, 0);
         assert_eq!(
             Elf::parse(&empty).unwrap().check_load_layout(),
@@ -1180,7 +1180,7 @@ mod tests {
         out
     }
 
-    /// ヘッダとプログラムヘッダの表だけの、ファイルの先頭の部分を作る（区画の中身は置かない）。
+    /// ヘッダとプログラムヘッダの表だけの、ファイルの先頭の部分を作る（セグメントの中身は置かない）。
     fn build_head(e_type: u16, entry: u64, phdrs: &[Vec<u8>]) -> Vec<u8> {
         let mut buf = vec![0u8; EHDR_SIZE];
         buf[0..4].copy_from_slice(&ELF_MAGIC);
@@ -1198,7 +1198,7 @@ mod tests {
         buf
     }
 
-    /// 静的 PIE の形——読むだけ・実行・読むだけ・読み書きの 4 つの区画と、TLS とスタックの求め
+    /// 静的 PIE の形——読むだけ・実行・読むだけ・読み書きの 4 つのセグメントと、TLS とスタックの求め
     /// （musl で静的リンクした実行ファイルを `readelf` で見た並びに合わせた）。
     fn static_pie_head() -> Vec<u8> {
         build_head(
@@ -1235,7 +1235,7 @@ mod tests {
         assert_eq!(plan.entry, 0x40_1040);
         assert_eq!(plan.base, 0x40_0000);
         assert_eq!(plan.end, 0x40_7000);
-        // 表は最初の区画に載っている（ファイルの 64 バイト目から）。
+        // 表は最初のセグメントに載っている（ファイルの 64 バイト目から）。
         assert_eq!(plan.program_headers_at, Some(0x40_0040));
         assert_eq!(plan.program_header_count, 6);
     }
@@ -1305,7 +1305,7 @@ mod tests {
                 "e_type {e_type}"
             );
         }
-        // 区画がファイルの外を指す（ファイルの長さを 1 バイト短く言う）。
+        // セグメントがファイルの外を指す（ファイルの長さを 1 バイト短く言う）。
         assert_eq!(
             ElfHeaders::parse(&good, 0x43ff).unwrap_err(),
             ElfError::SegmentFileRangeOutOfBounds
@@ -1400,7 +1400,7 @@ mod tests {
 
     #[test]
     fn a_segment_outside_the_window_is_refused() {
-        // `ET_EXEC` が、範囲の下（0x40_0000 より下）に区画を持つ。
+        // `ET_EXEC` が、範囲の下（0x40_0000 より下）にセグメントを持つ。
         let head = build_head(
             ET_EXEC,
             0x1000,
@@ -1483,7 +1483,7 @@ mod tests {
         );
     }
 
-    /// **プログラムヘッダの表のアドレス**——`PT_PHDR` が在ればそれを、無ければ表を覆う区画から導く。どの区画にも
+    /// **プログラムヘッダの表のアドレス**——`PT_PHDR` が在ればそれを、無ければ表を覆うセグメントから導く。どのセグメントにも
     /// 載っていなければ `None`。
     #[test]
     fn the_program_header_address_comes_from_pt_phdr_or_the_covering_segment() {
@@ -1501,7 +1501,7 @@ mod tests {
             .plan(&POLICY)
             .unwrap();
         assert_eq!(plan.program_headers_at, Some(0x40_9040));
-        // 表を覆う区画が無い（区画がファイルの 0x1000 から始まる）。
+        // 表を覆うセグメントが無い（セグメントがファイルの 0x1000 から始まる）。
         let head = build_head(
             ET_DYN,
             0x1000,
@@ -1514,7 +1514,7 @@ mod tests {
         assert_eq!(plan.program_headers_at, None);
     }
 
-    /// **並びの確かめは、ヘッダだけの入口からも同じものが効く**（書けて実行もできる区画を断る）。
+    /// **並びの確かめは、ヘッダだけの入口からも同じものが効く**（書けて実行もできるセグメントを断る）。
     #[test]
     fn the_layout_rules_apply_to_the_head_parser_too() {
         let head = build_head(

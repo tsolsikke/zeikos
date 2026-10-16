@@ -5,7 +5,7 @@
 //! **「ユーザーが変えられて、カーネルが前提にしている CPU の状態」の棚卸しは、いまの形に依って
 //! いる**——CR0.AM・CR4.SMAP・CR4.FSGSBASE・CR4.PKE・CR4.OSXSAVE が 0 であること。
 //! **`EFER.SCE` は、2026-10-04 に「0 であること」から「1 であること」へ移した**——`syscall` 命令を入口に足したためで
-//! ある。「立っていれば止まる」見張りは、「SCE が 1 で、飛び先と区画と落とす旗（STAR・LSTAR・CSTAR・SFMASK・
+//! ある。「立っていれば止まる」見張りは、「SCE が 1 で、飛び先とセグメントと落とす旗（STAR・LSTAR・CSTAR・SFMASK・
 //! `IA32_SYSENTER_CS`）が決めた値である」ことの読み戻しへ置き換わった（[`SystemCallEntryState`]）。
 //! **どれかを立てる変更をすると、棚卸しの結論が黙って偽になる**（通る理由が変わる種類）。
 //! **ここで起動のたびに読み、立っていたら止める。** **値は起動ログの参照にも載る**
@@ -93,7 +93,7 @@ pub const INVENTORY_BITS: [(Register, u32, &str, &str); 6] = [
 /// CPU の製造元（2026-09-24。**運用者の決定——Intel と AMD の両方に対応する**）。
 ///
 /// **CR4 と EFER のビットの意味と予約は、製造元ごとに違う**——Intel SDM Vol.3A（253668-082US）と
-/// AMD APM Vol.2（24593 Rev. 3.45）。**起動のたびに CPUID の葉 0 で見分け、その製造元の表で判定する。**
+/// AMD APM Vol.2（24593 Rev. 3.45）。**起動のたびに CPUID のリーフ 0 で見分け、その製造元の表で判定する。**
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Vendor {
     Intel,
@@ -104,7 +104,7 @@ pub enum Vendor {
 }
 
 impl Vendor {
-    /// CPUID の葉 0 の 12 文字（EBX・EDX・ECX の順）から見分ける（純粋ロジック）。
+    /// CPUID のリーフ 0 の 12 文字（EBX・EDX・ECX の順）から見分ける（純粋ロジック）。
     pub fn from_signature(signature: &[u8; 12]) -> Self {
         match signature {
             b"GenuineIntel" => Vendor::Intel,
@@ -126,9 +126,9 @@ impl Vendor {
     }
 }
 
-/// CPUID の葉 0 の 12 文字を読む（EBX・EDX・ECX の順に並べると `GenuineIntel` などになる）。
+/// CPUID のリーフ 0 の 12 文字を読む（EBX・EDX・ECX の順に並べると `GenuineIntel` などになる）。
 pub fn read_vendor_signature() -> [u8; 12] {
-    // **`unsafe` は要らない**——**`__cpuid` は x86_64 では safe fn である**（葉 0 はすべての x86_64 が持つ）。
+    // **`unsafe` は要らない**——**`__cpuid` は x86_64 では safe fn である**（リーフ 0 はすべての x86_64 が持つ）。
     let leaf = core::arch::x86_64::__cpuid(0);
     let mut signature = [0u8; 12];
     signature[0..4].copy_from_slice(&leaf.ebx.to_le_bytes());
@@ -305,7 +305,7 @@ pub const REQUIRED_BITS: [(Register, u32, &str, bool, Scope, &str); 26] = [
     ),
     // **`syscall` 命令を入口に足したので、「0 であるべき」（棚卸し）から移した**（2026-10-04）。**Intel と AMD が同じ
     // 0 番に同じ意味で置く**（SDM Vol.3A 2.2.1 の IA32_EFER、APM Vol.2 3.1.7 の EFER）。**立っているだけでは足りない**
-    // ——飛び先と区画と落とす旗が決めた値であることは、[`SystemCallEntryState`] の読み戻しが見る。
+    // ——飛び先とセグメントと落とす旗が決めた値であることは、[`SystemCallEntryState`] の読み戻しが見る。
     (
         Register::Efer,
         0,
@@ -778,26 +778,26 @@ impl fmt::Display for BitName {
 static ESTABLISHED_CR0: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
 /// [`establish_required_bits_on_bsp`] の前後の EFER（起動ログへ出すため）。
 static ESTABLISHED_EFER: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
-/// [`establish_required_bits_on_bsp`] が読んだ CPUID（拡張の葉の最大と、葉 0x8000_0001 の EDX）。
+/// [`establish_required_bits_on_bsp`] が読んだ CPUID（拡張のリーフの最大と、リーフ 0x8000_0001 の EDX）。
 static NO_EXECUTE_CPUID: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
 
-/// CPUID が示す、実行禁止（NX）への対応（2026-10-02）。**Intel と AMD で、葉もビットも同じである**
+/// CPUID が示す、実行禁止（NX）への対応（2026-10-02）。**Intel と AMD で、リーフもビットも同じである**
 /// ——`CPUID.80000001H:EDX[20]`（Intel SDM Vol.3A 5.13.1、AMD APM Vol.2 の EFER の節）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct NoExecuteCpuid {
-    /// 拡張の葉の最大（葉 0x8000_0000 の EAX）。
+    /// 拡張のリーフの最大（リーフ 0x8000_0000 の EAX）。
     pub max_extended_leaf: u32,
-    /// 葉 0x8000_0001 の EDX。**葉が無ければ読まず、0 にする。**
+    /// リーフ 0x8000_0001 の EDX。**リーフが無ければ読まず、0 にする。**
     pub extended_features_edx: u32,
 }
 
 impl NoExecuteCpuid {
-    /// 対応を示すビットが在る葉。
+    /// 対応を示すビットが在るリーフ。
     pub const LEAF: u32 = 0x8000_0001;
-    /// 葉の EDX の中の、対応を示すビット。
+    /// リーフの EDX の中の、対応を示すビット。
     pub const EDX_BIT: u32 = 20;
 
-    /// この CPU の値を読む。**葉が無い CPU では、葉を読まない**（無い葉は、決まっていない値を返す）。
+    /// この CPU の値を読む。**リーフが無い CPU では、リーフを読まない**（無いリーフは、決まっていない値を返す）。
     pub fn read() -> Self {
         // **`unsafe` は要らない**——**`__cpuid` は x86_64 では safe fn である**（[`read_vendor_signature`] と同じ）。
         let max_extended_leaf = core::arch::x86_64::__cpuid(0x8000_0000).eax;
@@ -812,7 +812,7 @@ impl NoExecuteCpuid {
         }
     }
 
-    /// 対応を示すビットの値（0 か 1。葉が無ければ 0）。
+    /// 対応を示すビットの値（0 か 1。リーフが無ければ 0）。
     pub fn bit(self) -> u32 {
         if self.max_extended_leaf >= Self::LEAF {
             (self.extended_features_edx >> Self::EDX_BIT) & 1
@@ -1139,7 +1139,7 @@ impl core::fmt::Display for SystemCallEntryState {
 pub fn check_and_report(logger: &mut Logger<Serial>) {
     // **`syscall` 命令の入口を決めるレジスタを、読み戻して出す**（2026-10-04）。AP も同じ形の行を出す。**値は
     // [`establish_required_bits_on_bsp`] が書いてある。あるべき値と違えば、最初のユーザープログラムより前に止まる**
-    // ——飛び先や区画が違うまま `syscall` 命令を受けると、カーネルの権限のまま、意図しない所へ飛ぶ。
+    // ——飛び先やセグメントが違うまま `syscall` 命令を受けると、カーネルの権限のまま、意図しない所へ飛ぶ。
     let entry = SystemCallEntryState::read(0);
     logger.info(format_args!("syscall-entry: cpu 0: {entry}"));
     if !entry.holds() {
@@ -1705,7 +1705,7 @@ mod tests {
         }
     }
 
-    /// **実行禁止の対応は、拡張の葉 0x8000_0001 が在って、その EDX のビット 20 が 1 のときだけである。**
+    /// **実行禁止の対応は、拡張のリーフ 0x8000_0001 が在って、その EDX のビット 20 が 1 のときだけである。**
     /// 値は 2026-10-02 の実測（QEMU は 0x8000_000a と 0x2193_fbfd、VirtualBox は 0x8000_0008 と 0x2810_0800）。
     #[test]
     fn execute_disable_support_is_read_from_the_extended_leaf() {
@@ -1717,7 +1717,7 @@ mod tests {
         assert!(cpuid(0x8000_0008, 0x2810_0800).supported());
         // ビット 20 だけを落とした値。
         assert!(!cpuid(0x8000_000a, 0x2193_fbfd & !(1 << 20)).supported());
-        // **葉が無い CPU では、EDX に何が入っていても対応していない。**
+        // **リーフが無い CPU では、EDX に何が入っていても対応していない。**
         assert!(!cpuid(0x8000_0000, u32::MAX).supported());
         assert!(!cpuid(0x0000_0007, u32::MAX).supported());
         assert_eq!(cpuid(0x8000_0001, 1 << 20).bit(), 1);

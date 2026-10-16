@@ -101,9 +101,9 @@ pub unsafe fn map_execute_disable_probe<const CAP: usize>(
         common::arch::x86_64::cpu::halt_forever();
     }
     // 破壊テストの傘 (2026-10-02, nx-probe-only-leaf): 変換が実行禁止のビットを立てないビルドなので、試しのページの
-    // 葉にだけ、ここで足す。**実行禁止のビットを持つ葉が、このページの 1 枚だけになる。**
+    // リーフにだけ、ここで足す。**実行禁止のビットを持つリーフが、このページの 1 枚だけになる。**
     #[cfg(feature = "nx-probe-only-leaf-test")]
-    // SAFETY: いまマップした、4KiB の葉の読むだけのページである。実行はしない。
+    // SAFETY: いまマップした、4KiB のリーフの読むだけのページである。実行はしない。
     if let Err(error) = unsafe { table.mark_leaf_execute_disable(virt) } {
         logger.error(format_args!(
             "nx-probe: could not mark the probe page: {error:?}; halting"
@@ -116,7 +116,7 @@ pub unsafe fn map_execute_disable_probe<const CAP: usize>(
         PROBE_VIRT + (1 << 39),
         true,
     );
-    // **葉を読み戻して、実行禁止のビットが本当に付いたことを見る**（付いていなければ、下の読みは何も確かめない）。
+    // **リーフを読み戻して、実行禁止のビットが本当に付いたことを見る**（付いていなければ、下の読みは何も確かめない）。
     let leaf = match table.translate(virt) {
         Ok(Some(translation)) => translation.entry,
         other => {

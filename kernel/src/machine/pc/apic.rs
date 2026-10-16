@@ -331,7 +331,7 @@ fn map_mmio_page<const CAP: usize>(
         // `target` は有効な物理フレーム。`user=false` なのでカーネルの中間
         // テーブルへ U ビットを混ぜない。`cacheable=false` により PCD が立つ
         // （MMIO では読み書きの順序と副作用が意味を持つため。ADR-0015）。
-        // 既に葉が present なら `AlreadyMapped` が返り、何も書き換えない。
+        // 既にリーフが present なら `AlreadyMapped` が返り、何も書き換えない。
         let result =
             unsafe { table.map_4kib(virt, target, PagePermissions::kernel_device(), allocator) };
         match result {

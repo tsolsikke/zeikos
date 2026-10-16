@@ -42,7 +42,7 @@ use kernel::heap::ALLOCATOR;
 extern "C" {
     static __kernel_start: u8;
     static __kernel_end: u8;
-    // 区画の境（ページの権限の一覧が、範囲に区画の名前を付けるために使う。2026-10-01）。
+    // セグメントの境（ページの権限の一覧が、範囲にセグメントの名前を付けるために使う。2026-10-01）。
     static __rodata_start: u8;
     static __data_start: u8;
     static __bss_start: u8;
@@ -65,7 +65,7 @@ extern "C" {
 // 検査対象の asm を複製せずに済む。
 
 /// 静的な起動の表の権限。**起動の表は、覆う範囲の全部を、書けて実行もできるメモリとしてマップする**
-/// （カーネルのイメージと、恒等の 1GiB。区画ごとの権限は、本流の表へ切り替えた後のものである）。
+/// （カーネルのイメージと、恒等の 1GiB。セグメントごとの権限は、本流の表へ切り替えた後のものである）。
 const BOOT_TABLE_PERMISSIONS: kernel::paging::permissions::PagePermissions =
     kernel::paging::permissions::PagePermissions::boot_table_unrestricted();
 
@@ -74,7 +74,7 @@ const BOOT_TABLE_PERMISSIONS: kernel::paging::permissions::PagePermissions =
 const BOOT_TABLE_FLAGS: u64 =
     kernel::arch::x86_64::paging::entry::table_flags(BOOT_TABLE_PERMISSIONS);
 
-/// 起動の表の、2MiB の葉のビット（P|RW|PS = 0x83）。**権限の変換が決める**（同上）。
+/// 起動の表の、2MiB のリーフのビット（P|RW|PS = 0x83）。**権限の変換が決める**（同上）。
 const BOOT_LEAF_FLAGS: u64 = kernel::arch::x86_64::paging::entry::leaf_flags(
     BOOT_TABLE_PERMISSIONS,
     kernel::arch::x86_64::paging::entry::LeafSize::Large,
@@ -209,8 +209,8 @@ core::arch::global_asm!(
 // ——**片方だけが動けば、受け渡しが恒等の外へ出る。**
 const _: () = assert!(common::boot_info::BOOT_IDENTITY_REACH == 512 * (2 << 20));
 
-// **起動の表のビットは、変換から来ても、今までの直書きと同じ値である。** 葉を全部書き込み可にする破壊テストは、
-// もともと書ける葉には効かないので、どのビルドでも成り立つ。
+// **起動の表のビットは、変換から来ても、今までの直書きと同じ値である。** リーフを全部書き込み可にする破壊テストは、
+// もともと書けるリーフには効かないので、どのビルドでも成り立つ。
 const _: () = assert!(BOOT_TABLE_FLAGS == 0x03 && BOOT_LEAF_FLAGS == 0x83);
 
 /// ブートスタックの大きさ。トランポリンが CR3 切り替え後に RSP をここへ移す。
@@ -1395,7 +1395,7 @@ extern "sysv64" fn kernel_main() -> ! {
 
     // ユーザーページのマッピング能力の検証（M5-e-2）。専用サブツリー
     // PML4[USER_PML4_INDEX] へ U=1 ページをマップし、両側 U/S 監査で権限分離を実状態で
-    // 確かめ、葉だけ落として中間は M5-e-3 のために残す。paging-test ビルドでは
+    // 確かめ、リーフだけ落として中間は M5-e-3 のために残す。paging-test ビルドでは
     // unmap を全体破壊するので載せない（関数側で cfg 済み）。
     #[cfg(not(feature = "paging-test"))]
     verify_user_page_mapping(&mut logger, &mut allocator);
@@ -1594,7 +1594,7 @@ extern "sysv64" fn kernel_main() -> ! {
         );
     }
 
-    // **カーネルのイメージの区画ごとの権限を、稼働中の表から読み戻して出す**（2026-10-02。`ADR-0071` の手順 4）。
+    // **カーネルのイメージのセグメントごとの権限を、稼働中の表から読み戻して出す**（2026-10-02。`ADR-0071` の手順 4）。
     // **この後は、カーネルの写像の権限を変えない。**
     report_kernel_image_permissions(&mut logger);
 
@@ -1732,7 +1732,7 @@ extern "sysv64" fn kernel_main() -> ! {
     }
 
     // **本番のカーネルの PML4 を控える（W1-c-2）。** **切り替えは、欄が 0 のタスクへ移るときに
-    // これを載せる**（`task::record_kernel_page_table_root` の doc）。**恒等の除去の区画の外に置く**——
+    // これを載せる**（`task::record_kernel_page_table_root` の doc）。**恒等の除去のセグメントの外に置く**——
     // **`paging-test` の構成は除去を通らないが、本番の表はこの時点で同じである。**
     kernel::task::record_kernel_page_table_root();
 
@@ -1920,7 +1920,7 @@ extern "sysv64" fn kernel_main() -> ! {
     // === S9-b-1: 埋め込んだユーザープログラムの ELF を読み、マップする ===
     //
     // **まだ走らせない**（Ring 3 への遷移は次の手順）。ここまでで、イメージが読めること、
-    // 新しいアドレス空間へ区画がマップできること、**マップした葉の W が区画の権限どおりで
+    // 新しいアドレス空間へセグメントがマップできること、**マップしたリーフの W がセグメントの権限どおりで
     // あること**を見る。
     // **イメージの検査は複製の中へ移した（P-e）。** **埋め込みを外したので、複製する前に
     // 読めるイメージが無い**（`ADR-0034` の Addendum）。**置き場は複製の直後・`exercise` の
@@ -2266,7 +2266,7 @@ fn write_a_kernel_half_entry_after_boot(logger: &mut Logger<Serial>) {
 }
 
 /// 破壊テスト `kernel-mapping-map-after-boot-test` と `kernel-mapping-change-after-boot-test` の本体（2026-10-03。
-/// `ADR-0071` の手順 4 の 3 つ目の決まり）。**起動の後に、カーネル側の写像を足す（既に在る PML4 の項目の下に葉を
+/// `ADR-0071` の手順 4 の 3 つ目の決まり）。**起動の後に、カーネル側の写像を足す（既に在る PML4 の項目の下にリーフを
 /// 1 枚）か、変える（直接写像の 2MiB のページを割る）に行く。** **決まりが、項目を 1 つも書かずに
 /// `KernelMappingFrozen` で断る。** 断られたら名前つきで止まり、通ったら通ったことを出す（試験はその行とシェルの起動を
 /// 禁じている）。
@@ -2290,7 +2290,7 @@ fn change_a_kernel_mapping_after_boot(logger: &mut Logger<Serial>) {
     #[cfg(feature = "kernel-mapping-map-after-boot-test")]
     let (what, result) = {
         // **カーネルのイメージの PML4 の項目（添字 511）の下の、イメージより上の空いたアドレス。** 添字 260 の形（`ensure_child` の
-        // 守りが項目を作る所）とは違い、既に在る項目の下へ葉を足す形である。
+        // 守りが項目を作る所）とは違い、既に在る項目の下へリーフを足す形である。
         let (Some(frame), Some(virt)) = (
             allocator.allocate_frame(),
             common::addr::VirtAddr::new(0xFFFF_FFFF_8100_0000),
@@ -2302,7 +2302,7 @@ fn change_a_kernel_mapping_after_boot(logger: &mut Logger<Serial>) {
         logger.info(format_args!(
             "sabotage: mapping a kernel-half page under the kernel image's PML4 entry after boot"
         ));
-        // SAFETY: 破壊テスト。断られるのが正しい。通ったときは、新しい葉を 1 枚足しただけである。
+        // SAFETY: 破壊テスト。断られるのが正しい。通ったときは、新しいリーフを 1 枚足しただけである。
         let result =
             unsafe { table.map_4kib(virt, frame, PagePermissions::kernel_data(), allocator) };
         if result.is_err() {
@@ -2318,7 +2318,7 @@ fn change_a_kernel_mapping_after_boot(logger: &mut Logger<Serial>) {
             "sabotage: splitting a direct-map huge page after boot ({:#x})",
             virt.as_u64()
         ));
-        // SAFETY: 破壊テスト。断られるのが正しい。通ったときは、2MiB のページを 4KiB の葉に割っただけである。
+        // SAFETY: 破壊テスト。断られるのが正しい。通ったときは、2MiB のページを 4KiB のリーフに割っただけである。
         let result = unsafe { table.split_huge_page(virt, allocator) }.map(|_| ());
         ("change", result)
     };
@@ -5129,7 +5129,7 @@ fn demo_two_address_spaces(
     }
 
     // **書けて実行もできる権限も、項目を書く前に断る**（2026-10-03。ユーザーの写像の W^X）。上と同じく、途中の
-    // 項目の表を取る前である。ELF の区画でこの形のものは、区画の並びの確かめが先に断る。ここは 2 枚目の守りである。
+    // 項目の表を取る前である。ELF のセグメントでこの形のものは、セグメントの並びの確かめが先に断る。ここは 2 枚目の守りである。
     {
         let free_before = allocator.free_frame_count();
         let taken_before = space_a.frames_taken();
@@ -9726,7 +9726,7 @@ enum UserProgramOutcome {
         /// 止まる位置（entry からの相対）。
         stop_offset: u64,
     },
-    /// 32 ビットのコード区画へ移ってからシステムコールの命令を打ち、そこで終了させられる（2026-10-04）。
+    /// 32 ビットのコードセグメントへ移ってからシステムコールの命令を打ち、そこで終了させられる（2026-10-04）。
     ///
     /// **判定は CPU の置き場が持つ**（`kernel::arch::x86_64::ring3::stopped_at_compat_system_call`）。止まる位置は
     /// CPU の製造元で違うので、ここに書くのは命令の位置だけである。
@@ -9941,7 +9941,7 @@ const USER_PROGRAMS: &[UserProgram] = &[
         argv: &[b"debug-trap-syscall"],
         enters_with_direction_flag: None,
     },
-    // **32 ビットのコード区画から、命令の入口を打つ**（2026-10-04）。**32 ビットの呼び出しは受け付けないので、
+    // **32 ビットのコードセグメントから、命令の入口を打つ**（2026-10-04）。**32 ビットの呼び出しは受け付けないので、
     // このプロセスだけが終わる。** 終わり方は CPU の製造元で違う（`kernel/userland/compat-syscall.rs`）。
     UserProgram {
         name: "compat-syscall",
@@ -10170,11 +10170,11 @@ fn load_embedded_user_program(logger: &mut Logger<Serial>) -> Result<(), UserLoa
 /// 6 つ用意する。**落ちる場所が違う。**
 ///
 /// - 入口で落ちる（`Parse`）。ページは 1 枚もマップされていない
-/// - **途中で落ちる（`Mapping { NotPrivate }`）。** 1 本目の区画はマップし終わって
+/// - **途中で落ちる（`Mapping { NotPrivate }`）。** 1 本目のセグメントはマップし終わって
 ///   おり、**2 本目で拒まれる。そこまでにマップしたものの後始末が要る**
-/// - **区画の並びの確かめで落ちる（`Layout`。2026-10-01）。** 写す前に断るので、ページは 1 枚も
+/// - **セグメントの並びの確かめで落ちる（`Layout`。2026-10-01）。** 写す前に断るので、ページは 1 枚も
 ///   マップされていない。4 つある——2 本目が 1 本目の中身の内側から始まる（重なり）、2 本目が 1 本目の
-///   終わりより後ろの同じページから始まる（同じページに権限の違う区画）、2 本目が 1 本目より低いアドレスから
+///   終わりより後ろの同じページから始まる（同じページに権限の違うセグメント）、2 本目が 1 本目より低いアドレスから
 ///   始まる（アドレスの順でない）、2 本目がアドレス 0 で大きさ 0（最終ページの引き算が成り立たない）
 ///
 /// **1 つ目の「重なり」は、以前は途中で落ちていた**（`Mapping { AlreadyMapped }`、S9-b-3-2b。
@@ -10182,7 +10182,7 @@ fn load_embedded_user_program(logger: &mut Logger<Serial>) -> Result<(), UserLoa
 /// 入れる前は断られなかった**——2 つは読み込まれ、1 つは引き算のあふれでカーネルが止まった（実測）。
 ///
 /// 壊したイメージは、**2 本目のプログラムヘッダの欄を書き換えて作る。** パーサは `p_vaddr`
-/// の範囲も区画の重なりも見ない（配置の方針を知らないため。`common::elf` の
+/// の範囲もセグメントの重なりも見ない（配置の方針を知らないため。`common::elf` の
 /// モジュール doc）ので、**パースは通り、その後で拒まれる。**
 fn verify_corrupt_user_program_is_not_loaded(logger: &mut Logger<Serial>) {
     /// 先頭のプログラムヘッダの位置（`hello` の `e_phoff` は 64）。
@@ -10205,7 +10205,7 @@ fn verify_corrupt_user_program_is_not_loaded(logger: &mut Logger<Serial>) {
     enum Refused {
         /// `Elf::parse` が断る。ページは 1 枚も写していない。
         Parse,
-        /// 区画の並びの確かめが断る。ページは 1 枚も写していない。
+        /// セグメントの並びの確かめが断る。ページは 1 枚も写していない。
         Layout,
         /// 写す途中で断られる。そこまでに写したものの後始末が要る。
         Mapping,
@@ -10226,7 +10226,7 @@ fn verify_corrupt_user_program_is_not_loaded(logger: &mut Logger<Serial>) {
             &[(PHDR1 + P_VADDR, 1u64 << 39, 8)],
             Refused::Mapping,
         ),
-        // **ここから下の 4 つは、区画の並びの確かめが断る。** `hello` の 1 本目は `0x400000..0x400042` の
+        // **ここから下の 4 つは、セグメントの並びの確かめが断る。** `hello` の 1 本目は `0x400000..0x400042` の
         // 読みと実行、2 本目は読みだけである。
         (
             "p_vaddr of the second segment moved into the first segment's page",
@@ -10252,7 +10252,7 @@ fn verify_corrupt_user_program_is_not_loaded(logger: &mut Logger<Serial>) {
             ],
             Refused::Layout,
         ),
-        // **書けて実行もできる区画は、並びの確かめが断る**（2026-10-03）。`p_flags` を読み・書き・実行（7）にする。
+        // **書けて実行もできるセグメントは、並びの確かめが断る**（2026-10-03）。`p_flags` を読み・書き・実行（7）にする。
         (
             "p_flags of the first segment set to read, write and execute",
             &[(PHDR0 + P_FLAGS, 7, 4)],
@@ -10581,7 +10581,7 @@ pub const USER_PML4_INDEX: usize = 1;
 /// 専用サブツリー（空き PML4[[`USER_PML4_INDEX`]]、仮想ベース 512 GiB）へ
 /// [`ActivePageTable::map_4kib`] で U=1 のテストページを 1 枚マップし、独立 walker で
 /// 「ユーザーサブツリー全階層 U=1・カーネル側全 U=0」を実走査で確かめ、Ring 0 から
-/// 既知値を書いて読み戻し、葉だけをアンマップする。中間テーブルは残す（M5-e-3 が
+/// 既知値を書いて読み戻し、リーフだけをアンマップする。中間テーブルは残す（M5-e-3 が
 /// 同じサブツリーを再利用する。判断 b-i）。Ring 3 からのアクセスはまだ試さない。
 ///
 /// `paging-test` ビルドは `unmap_4kib` を全体的にわざと壊すので、切り分け軸を一つに
@@ -10678,17 +10678,17 @@ fn verify_user_page_mapping<const CAP: usize>(
         cpu::halt_forever();
     }
 
-    // --- 葉だけアンマップ。中間テーブルは残す（M5-e-3 が再利用） ---
+    // --- リーフだけアンマップ。中間テーブルは残す（M5-e-3 が再利用） ---
     // SAFETY: virt は今マップした 4KiB ページ。以後この仮想アドレスへはアクセスしない
-    // （葉を落とした後の walk は TLB ではなくテーブルを読む）。
+    // （リーフを落とした後の walk は TLB ではなくテーブルを読む）。
     if let Err(e) = unsafe { table.unmap_4kib(virt) } {
         logger.error(format_args!("user-map: unmap_4kib failed: {e:?}; halting"));
         cpu::halt_forever();
     }
-    // 葉のフレームは解放してよい（中間は残す）。
+    // リーフのフレームは解放してよい（中間は残す）。
     let _ = allocator.deallocate_frame(leaf_phys);
 
-    // 葉が消えたこと（独立 walk が NotPresent）。
+    // リーフが消えたこと（独立 walk が NotPresent）。
     // SAFETY: 同上。
     match unsafe { verify::walk_page_table(pml4_phys, identity, virt) } {
         Err(verify::WalkError::NotPresent) => {}
@@ -10758,7 +10758,7 @@ fn assert_folded_at(
 /// 起動時の Ring 3 の試しのコードのページを、カーネルが書くためのアドレス（2026-10-02。`ADR-0071` の決定 3）。
 ///
 /// **ユーザーの側のアドレス（`ring3::USER_CODE_VIRT`）は、読んで実行するだけで、書けない。** カーネルは、同じ
-/// フレームを直接マッピングの側のアドレスから書く。**既に在る葉の権限を、書くために後から変えることはしない。**
+/// フレームを直接マッピングの側のアドレスから書く。**既に在るリーフの権限を、書くために後から変えることはしない。**
 ///
 /// **直接マッピングという別名からは書ける。** 実行できるページに、書ける別名が無いことまでは、まだ求めていない
 /// （実行禁止の 3 段目。保留している。`docs/deferred-decisions.md`）。
@@ -10815,7 +10815,7 @@ fn verify_ring3_excursion<const CAP: usize>(
     let identity = common::addr::DirectMap::identity(common::addr::DirectMap::IDENTITY_MAX_LENGTH)
         .expect("the identity window is canonical");
 
-    // ユーザーコード・ユーザースタック・読み取り専用ページの葉フレームを確保する。
+    // ユーザーコード・ユーザースタック・読み取り専用ページのリーフフレームを確保する。
     let (Some(code_phys), Some(stack_phys), Some(readonly_phys)) = (
         allocator.allocate_frame(),
         allocator.allocate_frame(),
@@ -10842,7 +10842,7 @@ fn verify_ring3_excursion<const CAP: usize>(
     // 破壊テスト (ring3-test-user-page-supervisor): USER を落とす（U=0）。遠征前の両側監査が
     // user violation として検出する。
     // **権限は用途の名前で決める**（2026-10-02）。**コードのページは、ユーザーの側では読んで実行するだけで、
-    // 書けない**（`ADR-0071` の決定 3。以前は、書いてから実行するので、書けて実行もできる区画として取っていた）。
+    // 書けない**（`ADR-0071` の決定 3。以前は、書いてから実行するので、書けて実行もできるセグメントとして取っていた）。
     // **命令を書くのはカーネルで、同じフレームを直接マッピングのアドレスから書く**（[`ring3_trial_code_alias`]）。
     // 3 枚目は読むだけでマップする（S9-a）。**Ring 3 からの書き込みが #PF に
     // なることを ring3-vectors の 6 本目が確かめる的である。**
@@ -11372,7 +11372,7 @@ fn verify_syscall_pointer<const CAP: usize>(
 
     // 無効3の setup: ユーザー範囲内に U=0（supervisor）のページを1枚マップする。code/stack が
     // 載る PD[0]（オフセット 0〜2MiB）とは別の 2MiB 領域、PD[1]（オフセット 2MiB）の
-    // 0x8000200000 に置く。map_4kib(user=false) なので中間 PD[1] も葉も U=0 になる。
+    // 0x8000200000 に置く。map_4kib(user=false) なので中間 PD[1] もリーフも U=0 になる。
     let sup = common::addr::VirtAddr::new(0x8000200000).expect("SUP_VIRT is canonical");
     let Some(sup_phys) = allocator.allocate_frame() else {
         logger.error(format_args!(
@@ -11443,7 +11443,7 @@ fn verify_syscall_pointer<const CAP: usize>(
         }
     }
 
-    // 無効3の teardown: 葉を落とす（中間は残す）。
+    // 無効3の teardown: リーフを落とす（中間は残す）。
     // SAFETY: sup は今マップしたユーザーページ。以後アクセスしない。
     if let Err(e) = unsafe { table.unmap_4kib(sup) } {
         logger.error(format_args!(
@@ -11566,7 +11566,7 @@ fn verify_syscall_checksum(logger: &mut Logger<Serial>) {
 /// この 6 本はいずれも [`ring3::USER_CODE_VIRT`] を飛び先として [`ring3::run_excursion`] へ
 /// 渡すので、遠征のたびにそのページの先頭へ別の命令列を書く。**ページが書き込み可能なのは、
 /// `verify_ring3_excursion` がコードページを `writable: true` でマップしているから
-/// である。** S9-a より前は `map_4kib` が葉を常に W=1 で作っており、選ぶ余地が
+/// である。** S9-a より前は `map_4kib` がリーフを常に W=1 で作っており、選ぶ余地が
 /// 無かった。**6 本目（`#PF-write-ro`）だけは `writable: false` でマップした別の
 /// ページを的にする。**
 ///
@@ -12166,7 +12166,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "kernel-mapping-map-after-boot-test",
         cfg!(feature = "kernel-mapping-map-after-boot-test"),
-        "起動の後に、カーネルのイメージの PML4 の項目の下へ葉を 1 枚足しに行く",
+        "起動の後に、カーネルのイメージの PML4 の項目の下へリーフを 1 枚足しに行く",
     ),
     (
         "kernel-mapping-change-after-boot-test",
@@ -12491,7 +12491,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "shm-mmap-maps-nothing",
         cfg!(feature = "shm-mmap-maps-nothing"),
-        "mmap が葉を張らずにアドレスだけ返す",
+        "mmap がリーフを張らずにアドレスだけ返す",
     ),
     (
         "socket-msghdr-ignores-iovlen",
@@ -12771,7 +12771,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "nx-probe-only-leaf-test",
         cfg!(feature = "nx-probe-only-leaf-test"),
-        "実行禁止のビットを持つ葉を、試しのページの 1 枚だけにする（下の 2 つの傘）",
+        "実行禁止のビットを持つリーフを、試しのページの 1 枚だけにする（下の 2 つの傘）",
     ),
     (
         "nx-probe-bsp-without-nxe-test",
@@ -13146,7 +13146,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "user-load-filesz-only",
         cfg!(feature = "user-load-filesz-only"),
-        "区画を memsz ではなく filesz で張り、.bss を落とす",
+        "セグメントを memsz ではなく filesz で張り、.bss を落とす",
     ),
     (
         "kill-ignore-interrupt-test",
@@ -13401,7 +13401,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "pie-load-without-bias-test",
         cfg!(feature = "pie-load-without-bias-test"),
-        "位置独立のイメージの区画を、ずらさずに載せる",
+        "位置独立のイメージのセグメントを、ずらさずに載せる",
     ),
     (
         "auxv-entry-not-biased-test",
@@ -13436,7 +13436,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "mprotect-none-discards-test",
         cfg!(feature = "mprotect-none-discards-test"),
-        "mprotect(PROT_NONE) で葉を外し、中身を捨てる",
+        "mprotect(PROT_NONE) でリーフを外し、中身を捨てる",
     ),
     (
         "munmap-keeps-frames-test",
@@ -13446,7 +13446,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "munmap-skips-retained-test",
         cfg!(feature = "munmap-skips-retained-test"),
-        "munmap と MAP_FIXED の置き換えが、PROT_NONE で残した葉を外さない",
+        "munmap と MAP_FIXED の置き換えが、PROT_NONE で残したリーフを外さない",
     ),
     (
         "root-entries-off-by-one-test",
@@ -13641,12 +13641,12 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "map-force-writable",
         cfg!(feature = "map-force-writable"),
-        "map_4kib の書き込み可否の引数を無視して葉を常に W=1 にする",
+        "map_4kib の書き込み可否の引数を無視してリーフを常に W=1 にする",
     ),
     (
         "user-leaf-high-bit-test",
         cfg!(feature = "user-leaf-high-bit-test"),
-        "ユーザーから届く葉に、アドレスより上の位置のビット（52）を立てる（破壊ではない）",
+        "ユーザーから届くリーフに、アドレスより上の位置のビット（52）を立てる（破壊ではない）",
     ),
     (
         "user-run-skip-load",
@@ -13661,7 +13661,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "user-load-skip-layout-check",
         cfg!(feature = "user-load-skip-layout-check"),
-        "区画の並びの確かめを通さずに写す",
+        "セグメントの並びの確かめを通さずに写す",
     ),
     (
         "ap-stacks-uncached-test",
@@ -13681,7 +13681,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "kernel-writes-rodata-test",
         cfg!(feature = "kernel-writes-rodata-test"),
-        "カーネルのイメージの読むだけの区画の 1 バイトへ、カーネルが書く",
+        "カーネルのイメージの読むだけのセグメントの 1 バイトへ、カーネルが書く",
     ),
     (
         "kernel-executes-data-test",
@@ -13701,17 +13701,17 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "kernel-rodata-page-writable-test",
         cfg!(feature = "kernel-rodata-page-writable-test"),
-        "カーネルのイメージの読むだけの区画の最初の 1 ページを、書き込み可で写す",
+        "カーネルのイメージの読むだけのセグメントの最初の 1 ページを、書き込み可で写す",
     ),
     (
         "user-leaf-ignores-execute-test",
         cfg!(feature = "user-leaf-ignores-execute-test"),
-        "権限の変換が、ユーザーの側の葉には、実行禁止のビットを立てない",
+        "権限の変換が、ユーザーの側のリーフには、実行禁止のビットを立てない",
     ),
     (
         "user-load-ignores-execute-test",
         cfg!(feature = "user-load-ignores-execute-test"),
-        "ローダーが、書けない区画を、フラグに依らず実行できる形で写す",
+        "ローダーが、書けないセグメントを、フラグに依らず実行できる形で写す",
     ),
     (
         "user-map-allows-writable-executable-test",
@@ -15158,9 +15158,9 @@ fn survey_mappings(logger: &mut Logger<Serial>, moment: &str) {
     };
 }
 
-/// カーネルのイメージの区画と、最初から決まっている範囲を、ページの権限の一覧の領域として登録する。
+/// カーネルのイメージのセグメントと、最初から決まっている範囲を、ページの権限の一覧の領域として登録する。
 ///
-/// **区画の境は `kernel/link.ld` の記号から取る。** イメージの外の範囲（起動の表が写す 1GiB の窓、恒等、起動時の
+/// **セグメントの境は `kernel/link.ld` の記号から取る。** イメージの外の範囲（起動の表が写す 1GiB の窓、恒等、起動時の
 /// Ring 3 の試しのページ）も、名前を持たせておく——名前の無い範囲が一覧に出たら、登録が足りないか、
 /// 写すべきでない所に写っている。
 fn register_image_regions() {
@@ -15172,7 +15172,7 @@ fn register_image_regions() {
     let data = addr_of!(__data_start) as u64;
     let bss = addr_of!(__bss_start) as u64;
     let end = addr_of!(__kernel_end) as u64;
-    // イメージの区画のページ数はコードの量で動くので、要約の値には入れない（権限だけを比べる）。
+    // イメージのセグメントのページ数はコードの量で動くので、要約の値には入れない（権限だけを比べる）。
     register("kernel text", text, rodata, false);
     register("kernel rodata", rodata, data, false);
     register("kernel data", data, bss, false);
@@ -15215,7 +15215,7 @@ fn install_kernel_stack_guard_page(
     }
 }
 
-/// カーネルのイメージの区画の境を、物理のアドレスで読む（`kernel/link.ld` の記号から）。
+/// カーネルのイメージのセグメントの境を、物理のアドレスで読む（`kernel/link.ld` の記号から）。
 fn kernel_image_bounds() -> kernel::paging::image::ImageBounds {
     use common::addr::VirtAddr;
     let phys = |symbol: *const u8| {
@@ -15233,7 +15233,7 @@ fn kernel_image_bounds() -> kernel::paging::image::ImageBounds {
     }
 }
 
-/// カーネルのイメージの区画（写す範囲と権限）。**境が写せる形でなければ、名前つきで止まる。**
+/// カーネルのイメージのセグメント（写す範囲と権限）。**境が写せる形でなければ、名前つきで止まる。**
 fn kernel_image_sections(logger: &mut Logger<Serial>) -> [kernel::paging::image::ImageSection; 3] {
     let bounds = kernel_image_bounds();
     match kernel::paging::image::image_sections(bounds) {
@@ -15248,12 +15248,12 @@ fn kernel_image_sections(logger: &mut Logger<Serial>) -> [kernel::paging::image:
     }
 }
 
-/// カーネルのイメージを、区画ごとの権限で高位（`KERNEL_VIRT_BASE + phys`）へマップする。**イメージを高位へ写すのは、
+/// カーネルのイメージを、セグメントごとの権限で高位（`KERNEL_VIRT_BASE + phys`）へマップする。**イメージを高位へ写すのは、
 /// この関数だけである**（2026-10-02。以前は 3 か所が、イメージの全部を 1 つの権限で写していた）。
 ///
-/// **コードは読んで実行する（書けない）、読むだけの区画は読むだけ、`.data` と `.bss` は書けて実行しない**
-/// （`kernel::paging::image`。`ADR-0071` の手順 4）。区画ごとに範囲を分けて写すので、どの区画も 2MiB に
-/// 満たない今は、イメージの全部が 4KiB の葉になる（1 枚の 2MiB の葉に、権限の違う区画が同居しない）。
+/// **コードは読んで実行する（書けない）、読むだけのセグメントは読むだけ、`.data` と `.bss` は書けて実行しない**
+/// （`kernel::paging::image`。`ADR-0071` の手順 4）。セグメントごとに範囲を分けて写すので、どのセグメントも 2MiB に
+/// 満たない今は、イメージの全部が 4KiB のリーフになる（1 枚の 2MiB のリーフに、権限の違うセグメントが同居しない）。
 fn map_kernel_image<const CAP: usize>(
     builder: &mut PageTableBuilder<'_, CAP>,
     logger: &mut Logger<Serial>,
@@ -15263,7 +15263,7 @@ fn map_kernel_image<const CAP: usize>(
         let start = common::addr::PhysAddr::new(section.start)
             .expect("a kernel image address fits in a physical address");
         let virt = kernel::kernel_virt_from_phys(start);
-        // 破壊テスト (2026-10-02, kernel-rodata-page-writable): 読むだけの区画の最初の 1 ページを、書けるデータの
+        // 破壊テスト (2026-10-02, kernel-rodata-page-writable): 読むだけのセグメントの最初の 1 ページを、書けるデータの
         // 権限で写す。**起動は通る**（誰も書かないので）。ページの権限の一覧が、違いを名前つきで示す。
         let sabotaged_pages = if cfg!(feature = "kernel-rodata-page-writable-test")
             && section.permissions
@@ -15305,11 +15305,11 @@ fn map_kernel_image<const CAP: usize>(
     }
 }
 
-/// 稼働中の表から、カーネルのイメージの区画ごとの権限を読み戻して出す（2026-10-02。`ADR-0071` の手順 4）。
+/// 稼働中の表から、カーネルのイメージのセグメントごとの権限を読み戻して出す（2026-10-02。`ADR-0071` の手順 4）。
 /// **期待と違うページが 1 枚でも在れば、名前つきで止まる。**
 ///
 /// **作る側（`map_kernel_image` と権限の変換）とは別に書いた、辿る側の関数で読む**
-/// （`kernel::arch::x86_64::paging::verify`）。見るのは、区画のページの全部について、4KiB の葉であること、
+/// （`kernel::arch::x86_64::paging::verify`）。見るのは、セグメントのページの全部について、4KiB のリーフであること、
 /// 書けるか、実行できるか、である。
 ///
 /// **マップされていないページは、スタックの見張りのページだけを認める**（`.bss` の中に在り、わざと外してある。
@@ -15349,7 +15349,7 @@ fn report_kernel_image_permissions(logger: &mut Logger<Serial>) {
         }
         // 見張りのページを除いた、マップされているはずのページ数。
         let pages = section.pages() - guard_pages;
-        // 破壊テスト `kernel-rodata-page-writable-test` は、読むだけの区画の 1 ページを書ける権限で写す。その形でも
+        // 破壊テスト `kernel-rodata-page-writable-test` は、読むだけのセグメントの 1 ページを書ける権限で写す。その形でも
         // 起動を続け、ページの権限の一覧に違いを出させる（ここで止めると、一覧まで届かない）。
         let tolerated_writable = if cfg!(feature = "kernel-rodata-page-writable-test")
             && section.permissions
@@ -15365,7 +15365,7 @@ fn report_kernel_image_permissions(logger: &mut Logger<Serial>) {
             tolerated_writable
         };
         // **変換が実行禁止のビットを立てない破壊テストのビルドでは、どのページも実行できる形になる**
-        // （`entry::LEAVES_CARRY_EXECUTE_DISABLE`。実行禁止のビットを持つ葉を、試しのページだけにする形）。
+        // （`entry::LEAVES_CARRY_EXECUTE_DISABLE`。実行禁止のビットを持つリーフを、試しのページだけにする形）。
         // その形でも、ここでは止めない——止めると、AP が試しのページを読む所まで届かない。
         let want_executable = if section.permissions.execute()
             || !kernel::arch::x86_64::paging::entry::LEAVES_CARRY_EXECUTE_DISABLE
@@ -15411,7 +15411,7 @@ fn report_kernel_image_permissions(logger: &mut Logger<Serial>) {
 fn run_permission_violation_test(logger: &mut Logger<Serial>) {
     use kernel::arch::x86_64::paging::verify;
 
-    /// 読むだけの区画に置かれる 16 バイト（`kernel-writes-rodata-test` の的）。
+    /// 読むだけのセグメントに置かれる 16 バイト（`kernel-writes-rodata-test` の的）。
     static READ_ONLY_TARGET: [u8; 16] = *b"read-only target";
     /// `.data` に置かれる `ret`（`kernel-executes-data-test` の的。0 でない初期値なので `.bss` に行かない）。
     static mut DATA_TARGET: [u8; 16] = [0xC3; 16];
@@ -15519,7 +15519,7 @@ fn run_permission_violation_test(logger: &mut Logger<Serial>) {
 
 /// kernel イメージを高位（`KERNEL_VIRT_BASE + phys`）へマップする（B-2a）。
 ///
-/// M2-d・A-1 の両テーブルで共通に使う。**区画ごとの権限で写すのは [`map_kernel_image`] である。**
+/// M2-d・A-1 の両テーブルで共通に使う。**セグメントごとの権限で写すのは [`map_kernel_image`] である。**
 /// ここは、使った表のフレームの数を数えて、起動ログへ出す。
 fn map_kernel_high_half<const CAP: usize>(
     builder: &mut PageTableBuilder<'_, CAP>,

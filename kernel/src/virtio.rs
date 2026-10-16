@@ -54,15 +54,15 @@ const REG_DEVICE_STATUS: u16 = 0x12;
 /// この module は MSI-X に触れないのでずれない。**
 const REG_DEVICE_CONFIG: u16 = 0x14;
 
-/// 装置固有領域の中の `size_max`（u32。1 つの区画の最大のバイト数）。**`VIRTIO_BLK_F_SIZE_MAX` を申告した
+/// 装置固有領域の中の `size_max`（u32。1 つのセグメントの最大のバイト数）。**`VIRTIO_BLK_F_SIZE_MAX` を申告した
 /// 装置でだけ意味を持つ。**
 const CONFIG_SIZE_MAX: u16 = 8;
-/// 装置固有領域の中の `seg_max`（u32。1 つの要求が持てるデータの区画の数）。**`VIRTIO_BLK_F_SEG_MAX` を申告した
+/// 装置固有領域の中の `seg_max`（u32。1 つの要求が持てるデータのセグメントの数）。**`VIRTIO_BLK_F_SEG_MAX` を申告した
 /// 装置でだけ意味を持つ。**
 const CONFIG_SEG_MAX: u16 = 12;
-/// feature: 1 つの区画の最大のバイト数を `size_max` で申告する。
+/// feature: 1 つのセグメントの最大のバイト数を `size_max` で申告する。
 const BLK_F_SIZE_MAX: u32 = 1 << 1;
-/// feature: 1 つの要求が持てるデータの区画の数を `seg_max` で申告する。
+/// feature: 1 つの要求が持てるデータのセグメントの数を `seg_max` で申告する。
 const BLK_F_SEG_MAX: u32 = 1 << 2;
 
 /// 起動時の読み書きで、1 回の要求に載せるバイト数の、こちらで決めた上限（2026-10-05）。
@@ -79,13 +79,13 @@ pub const BOOT_REQUEST_BYTES: u32 = 1024 * 1024;
 ///
 /// # 決まり
 ///
-/// - この実装は、データを 1 つの区画（物理的に連続した範囲）で渡す。だから、要求の大きさの上限は、
-///   区画 1 つの上限である。
+/// - この実装は、データを 1 つのセグメント（物理的に連続した範囲）で渡す。だから、要求の大きさの上限は、
+///   セグメント 1 つの上限である。
 /// - 装置が `VIRTIO_BLK_F_SIZE_MAX` を申告していれば、`size_max` を越えない。**受けると答えていない feature でも、
 ///   申告された上限には従う**（越えて困るのは装置の側で、従って困ることは無い）。
 /// - **申告していなければ、装置の側の上限は無いものとして扱う**（virtio の仕様では、この feature の無い装置は
-///   区画の大きさを制限しない）。こちらで決めた上限（`ours`）だけが効く。
-/// - `seg_max` は、申告されていれば 1 以上であること。0 なら、データを 1 区画も渡せない。
+///   セグメントの大きさを制限しない）。こちらで決めた上限（`ours`）だけが効く。
+/// - `seg_max` は、申告されていれば 1 以上であること。0 なら、データを 1 セグメントも渡せない。
 /// - 512 の倍数へ切り下げる。結果が 0 になる申告（`size_max` が 512 未満）は断る。
 ///
 /// 純粋な論理である（ホストの試験で確かめる）。
@@ -137,9 +137,9 @@ pub struct RequestLimit {
 /// [`request_limit`] が断る形。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RequestLimitError {
-    /// 装置が、データの区画を 1 つも持てないと申告している（`seg_max` が 0）。
+    /// 装置が、データのセグメントを 1 つも持てないと申告している（`seg_max` が 0）。
     NoDataSegment,
-    /// 装置が申告した区画の上限が、1 セクタに満たない。
+    /// 装置が申告したセグメントの上限が、1 セクタに満たない。
     SegmentTooSmall { size_max: u32 },
 }
 
@@ -381,7 +381,7 @@ impl VirtioBlk {
         self.limit.bytes
     }
 
-    /// `bytes` を 1 回の要求で出してよいか。**装置が区画の上限を申告していれば、それを越えない。**
+    /// `bytes` を 1 回の要求で出してよいか。**装置がセグメントの上限を申告していれば、それを越えない。**
     /// 申告が無ければ、装置の側の上限は無い（[`request_limit`] の決まり）。
     pub fn fits_one_request(&self, bytes: u32) -> bool {
         match self.limit.declared_size_max {
@@ -757,7 +757,7 @@ impl DeviceClaim {
         // SAFETY: フラグを持っているので、他のコアはここへ入れない。
         // 据えたガードが生きているので、指す先も生きている（[`DEVICE`] の doc）。
         let device = unsafe { &mut *device };
-        // **装置が区画の上限を申告していて、イメージの全体がそれを越えるなら、出さない**（2026-10-05）。呼んだ側は
+        // **装置がセグメントの上限を申告していて、イメージの全体がそれを越えるなら、出さない**（2026-10-05）。呼んだ側は
         // 保存の失敗として返す。**いまの装置（QEMU）は上限を申告しないので、この道は通らない。** 申告する装置で
         // 保存するには、要求を分けて出す形が要る（`docs/deferred-decisions.md`）。
         if !device.fits_one_request(bytes as u32) {
@@ -1147,7 +1147,7 @@ mod tests {
         assert_eq!(limit.declared_seg_max, Some(254));
     }
 
-    /// 申告した区画の上限が小さければ、それへ合わせる。512 の倍数へ切り下げる。
+    /// 申告したセグメントの上限が小さければ、それへ合わせる。512 の倍数へ切り下げる。
     #[test]
     fn a_declared_segment_size_caps_the_request() {
         let limit = request_limit(BLK_F_SIZE_MAX, 65_536, 0, BOOT_REQUEST_BYTES).unwrap();

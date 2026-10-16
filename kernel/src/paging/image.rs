@@ -1,29 +1,29 @@
-//! カーネルのイメージの区画と、区画ごとの権限（2026-10-02。`ADR-0071` の手順 4）。**純粋な論理。**
+//! カーネルのイメージのセグメントと、セグメントごとの権限（2026-10-02。`ADR-0071` の手順 4）。**純粋な論理。**
 //!
-//! イメージを高いアドレスへ写すとき、区画ごとに権限を変える——コードは読んで実行する（書けない）、読むだけの区画は
-//! 読むだけ、データは書けて実行しない。**区画の境（`kernel/link.ld` の記号）から、写す範囲と権限の組を作るのが
+//! イメージを高いアドレスへ写すとき、セグメントごとに権限を変える——コードは読んで実行する（書けない）、読むだけのセグメントは
+//! 読むだけ、データは書けて実行しない。**セグメントの境（`kernel/link.ld` の記号）から、写す範囲と権限の組を作るのが
 //! ここである。** ポインタにもレジスタにも触らない。ホストの `cargo test` で確かめる。
 //!
-//! **区画はどれも 4KiB の境から始まる**（`link.ld` が揃えている）。区画ごとに範囲を分けて写すと、2MiB の境を
-//! またぐ区画も 4KiB の葉になり、1 枚の 2MiB の葉に、権限の違う区画が同居することが無くなる。
+//! **セグメントはどれも 4KiB の境から始まる**（`link.ld` が揃えている）。セグメントごとに範囲を分けて写すと、2MiB の境を
+//! またぐセグメントも 4KiB のリーフになり、1 枚の 2MiB のリーフに、権限の違うセグメントが同居することが無くなる。
 
 use crate::frame_allocator::FRAME_SIZE;
 use crate::paging::permissions::PagePermissions;
 
-/// イメージの区画の境（物理のアドレス）。`kernel/link.ld` の記号から作る。
+/// イメージのセグメントの境（物理のアドレス）。`kernel/link.ld` の記号から作る。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImageBounds {
-    /// イメージの先頭（`__kernel_start`）。コードの区画（起動のトランポリンと `.text`）の先頭である。
+    /// イメージの先頭（`__kernel_start`）。コードのセグメント（起動のトランポリンと `.text`）の先頭である。
     pub start: u64,
-    /// 読むだけの区画の先頭（`__rodata_start`）。
+    /// 読むだけのセグメントの先頭（`__rodata_start`）。
     pub read_only_start: u64,
-    /// 書ける区画の先頭（`__data_start`）。
+    /// 書けるセグメントの先頭（`__data_start`）。
     pub data_start: u64,
     /// イメージの終わり（`__kernel_end`。4KiB の境でなくてよい。写すときに切り上げる）。
     pub end: u64,
 }
 
-/// イメージの 1 つの区画を写す範囲と権限。
+/// イメージの 1 つのセグメントを写す範囲と権限。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImageSection {
     /// 起動ログとページの権限の確かめに出す名前。
@@ -42,7 +42,7 @@ impl ImageSection {
         self.end - self.start
     }
 
-    /// 範囲が空か（[`image_sections`] は、空の区画を断るので、返す区画はどれも空でない）。
+    /// 範囲が空か（[`image_sections`] は、空のセグメントを断るので、返すセグメントはどれも空でない）。
     pub const fn is_empty(&self) -> bool {
         self.end == self.start
     }
@@ -53,16 +53,16 @@ impl ImageSection {
     }
 }
 
-/// 区画の境が、写せる形になっていない理由。
+/// セグメントの境が、写せる形になっていない理由。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageLayoutError {
-    /// 境が 4KiB に揃っていない（イメージの終わりを除く）。**揃っていないと、1 ページに権限の違う区画が載る。**
+    /// 境が 4KiB に揃っていない（イメージの終わりを除く）。**揃っていないと、1 ページに権限の違うセグメントが載る。**
     NotPageAligned,
-    /// 境の順序が違うか、空の区画が在る（コード、読むだけ、書ける、の順で、どれも 1 ページ以上）。
+    /// 境の順序が違うか、空のセグメントが在る（コード、読むだけ、書ける、の順で、どれも 1 ページ以上）。
     OutOfOrder,
 }
 
-/// 区画の境から、写す範囲と権限の 3 組を作る。**コード、読むだけ、書ける、の順である。**
+/// セグメントの境から、写す範囲と権限の 3 組を作る。**コード、読むだけ、書ける、の順である。**
 ///
 /// - コード: [`PagePermissions::kernel_code`]（読んで実行する。書けない）
 /// - 読むだけ: [`PagePermissions::kernel_read_only`]
@@ -158,7 +158,7 @@ mod tests {
         assert_eq!(exact[2].end, 0x4d_3000);
     }
 
-    /// **境が 4KiB に揃っていなければ断る**——1 ページに、権限の違う区画が載るからである。
+    /// **境が 4KiB に揃っていなければ断る**——1 ページに、権限の違うセグメントが載るからである。
     #[test]
     fn a_boundary_inside_a_page_is_refused() {
         for bounds in [
@@ -183,21 +183,21 @@ mod tests {
         }
     }
 
-    /// **順序が違う境と、空の区画は断る。**
+    /// **順序が違う境と、空のセグメントは断る。**
     #[test]
     fn boundaries_out_of_order_and_empty_sections_are_refused() {
         for bounds in [
-            // 読むだけの区画が、コードより前。
+            // 読むだけのセグメントが、コードより前。
             ImageBounds {
                 read_only_start: 0x0f_f000,
                 ..MEASURED
             },
-            // 読むだけの区画が空。
+            // 読むだけのセグメントが空。
             ImageBounds {
                 data_start: MEASURED.read_only_start,
                 ..MEASURED
             },
-            // 書ける区画が空。
+            // 書けるセグメントが空。
             ImageBounds {
                 end: MEASURED.data_start,
                 ..MEASURED

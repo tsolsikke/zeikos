@@ -50,7 +50,7 @@ pub struct Resolved {
     pub phys: PhysAddr,
     /// 2MiB ページで解決されたか。
     pub huge: bool,
-    /// 解決に使った葉のエントリの生の値（S9-b-1）。
+    /// 解決に使ったリーフのエントリの生の値（S9-b-1）。
     ///
     /// **フラグを読み戻すために持つ。** マップした側とは独立にここまで降りてきた
     /// 値なので、`W` や `U` が実際に立っているかをこの値で照合できる。
@@ -61,24 +61,24 @@ pub struct Resolved {
 }
 
 impl Resolved {
-    /// 葉のエントリが書き込みを許すか（x86 では R/W ビット。2026-09-30）。**共通の側はビットを読まず、これを使う。**
+    /// リーフのエントリが書き込みを許すか（x86 では R/W ビット。2026-09-30）。**共通の側はビットを読まず、これを使う。**
     ///
-    /// **見るのは葉だけである**——書けるかは、途中の段のビットも揃って初めて決まる（x86）。
+    /// **見るのはリーフだけである**——書けるかは、途中の段のビットも揃って初めて決まる（x86）。
     pub const fn leaf_writable(&self) -> bool {
         self.entry & bits::WRITABLE != 0
     }
 
-    /// 葉のエントリが実行を許すか（x86 では、実行禁止のビットが立っていないこと。2026-10-02）。
+    /// リーフのエントリが実行を許すか（x86 では、実行禁止のビットが立っていないこと。2026-10-02）。
     ///
-    /// **見るのは葉だけである**——途中の段に実行禁止が立っていれば実行できないが、途中の段には立てない
+    /// **見るのはリーフだけである**——途中の段に実行禁止が立っていれば実行できないが、途中の段には立てない
     /// （`entry::table_flags`）。
     pub const fn leaf_executable(&self) -> bool {
         self.entry & bits::NO_EXECUTE == 0
     }
 
-    /// 葉のエントリがユーザーから触れる印を持つか（x86 では U/S ビット。2026-09-30）。
+    /// リーフのエントリがユーザーから触れる印を持つか（x86 では U/S ビット。2026-09-30）。
     ///
-    /// **見るのは葉だけである**——中間の段も含めて確かめるのは [`walk_page_table_user_accessible`] である。
+    /// **見るのはリーフだけである**——中間の段も含めて確かめるのは [`walk_page_table_user_accessible`] である。
     pub const fn leaf_user_accessible(&self) -> bool {
         self.entry & bits::USER != 0
     }
@@ -164,7 +164,7 @@ pub unsafe fn walk_page_table(
 
 /// U/S 監査の結果（M5-e-2）。
 ///
-/// テーブル全体を独立に歩き、present な全エントリ（中間 3 段 + 葉）の U/S を
+/// テーブル全体を独立に歩き、present な全エントリ（中間 3 段 + リーフ）の U/S を
 /// 数える。ユーザーサブツリー（`user_pml4_index` 配下）は全て U=1、それ以外は
 /// 全て U=0 が期待値。違反があれば `*_violations` が非ゼロになる。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -181,12 +181,12 @@ pub struct UserSupervisorAudit {
 
 /// 稼働中テーブルを独立に歩き、全 present エントリの U/S を監査する（M5-e-2）。
 ///
-/// `user_pml4_index` の PML4 エントリとその配下（中間 + 葉）は全て U=1、
+/// `user_pml4_index` の PML4 エントリとその配下（中間 + リーフ）は全て U=1、
 /// それ以外の present な PML4 エントリとその配下は全て U=0 であることを、
 /// **構築側とは別のループ**で確かめる。降り方とビット定義はこのファイルの
 /// `bits` に独立に書いてあり、`entry` の定数を参照しない。
 ///
-/// 2MiB / 1GiB ページ（huge）は葉として扱い、そこで降りるのをやめる。
+/// 2MiB / 1GiB ページ（huge）はリーフとして扱い、そこで降りるのをやめる。
 ///
 /// # Safety
 ///
@@ -237,7 +237,7 @@ pub unsafe fn audit_user_supervisor(
             }
             account(pdpte, in_user, &mut audit);
             if pdpte & bits::PAGE_SIZE != 0 {
-                // 1GiB ページ。葉として扱い、これ以上降りない。
+                // 1GiB ページ。リーフとして扱い、これ以上降りない。
                 continue;
             }
 
@@ -249,7 +249,7 @@ pub unsafe fn audit_user_supervisor(
                 }
                 account(pde, in_user, &mut audit);
                 if pde & bits::PAGE_SIZE != 0 {
-                    // 2MiB ページ。葉として扱う。
+                    // 2MiB ページ。リーフとして扱う。
                     continue;
                 }
 
@@ -280,7 +280,7 @@ pub enum UserAccess {
 /// ユーザーアクセス可能性の walk の失敗理由（M5-f-2-1）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UserAccessError {
-    /// 途中の階層または葉が不在。
+    /// 途中の階層またはリーフが不在。
     NotPresent,
     /// present だが、ある階層で U=0（Ring 3 から到達不可）。**U/S は全階層の AND**
     /// なので、中間階層が U=0 でも Ring 3 からは届かない。
@@ -327,7 +327,7 @@ fn level_allows(entry: u64, access: UserAccess) -> Result<(), UserAccessError> {
 /// #PF になり、直接写像を通して書けば CPU は書き込み禁止を守らない。どちらも、書く前にここで断る。
 ///
 /// 既存の [`walk_page_table`] は present のみを見る（M5-e-2 の呼び出し元がそれを前提にする）ため
-/// 別関数にする。**U/S は全階層の AND であり、葉の U だけを見る `translate` では中間
+/// 別関数にする。**U/S は全階層の AND であり、リーフの U だけを見る `translate` では中間
 /// 階層の U=0 を見逃す。** ここは PML4→PT の全階層で U=1 を要求してその穴を塞ぐ。
 /// 既存 walk / audit_user_supervisor の契約は一切変えない。
 ///
@@ -407,7 +407,7 @@ pub unsafe fn read_top_level_entry(
 }
 
 /// 指定した PML4 インデックス配下の中間テーブルフレーム（PDPT/PD/PT）の物理
-/// アドレスを、重複を除いて `out` へ集める。葉（1GiB/2MiB/4KiB ページ）が指す
+/// アドレスを、重複を除いて `out` へ集める。リーフ（1GiB/2MiB/4KiB ページ）が指す
 /// データフレームは含めない。返り値は集めた枚数。`out` に収まらなければ `None`。
 ///
 /// 恒等除去（B-2b-4）のフレーム会計に使う。`PML4[0]` 配下の何枚が到達不能に
@@ -459,7 +459,7 @@ pub(crate) unsafe fn collect_subtree_table_frames(
             continue;
         }
         if pdpte & bits::PAGE_SIZE != 0 {
-            // 1GiB ページ（葉）。データフレームなので数えない。
+            // 1GiB ページ（リーフ）。データフレームなので数えない。
             continue;
         }
         let pd = PhysAddr::new_const(pdpte & bits::ADDR_4K);
@@ -471,12 +471,12 @@ pub(crate) unsafe fn collect_subtree_table_frames(
                 continue;
             }
             if pde & bits::PAGE_SIZE != 0 {
-                // 2MiB ページ（葉）。
+                // 2MiB ページ（リーフ）。
                 continue;
             }
             let pt = PhysAddr::new_const(pde & bits::ADDR_4K);
             push(pt, &mut count)?;
-            // PT 配下は 4KiB 葉のみ。テーブルフレームではないので降りない。
+            // PT 配下は 4KiB リーフのみ。テーブルフレームではないので降りない。
         }
     }
 
@@ -487,7 +487,7 @@ pub(crate) unsafe fn collect_subtree_table_frames(
 mod tests {
     use super::*;
 
-    /// **walk の訳のメソッドは、葉のエントリの R/W と U/S だけを見る**（2026-09-30）。ほかのビットが立っていても
+    /// **walk の訳のメソッドは、リーフのエントリの R/W と U/S だけを見る**（2026-09-30）。ほかのビットが立っていても
     /// 答えは変わらない。
     #[test]
     fn a_resolved_leaf_answers_writable_and_user_from_its_own_bits() {

@@ -28,7 +28,7 @@ use super::{entry, switch, table, verify};
 /// 恒等除去で walk する必須領域。名前と高位 VA の対。
 ///
 /// **恒等が無くても解決できねばならない領域。** ここに挙げた VA が除去後に独立
-/// walker で present な葉へ解決すれば、CR3 リロード（全 TLB フラッシュ）へ進んで
+/// walker で present なリーフへ解決すれば、CR3 リロード（全 TLB フラッシュ）へ進んで
 /// よい。RIP・RSP・direct map ウィンドウ・カーネルイメージは lib が自分で導けるので
 /// [`remove_identity`] が内部で足す。呼び出し側が渡すのは lib からは知り得ない
 /// 高位 VA（ヒープ・フレームバッファ）だけである。

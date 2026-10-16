@@ -90,14 +90,14 @@ pub const POLLIN: u16 = 0x001;
 /// `POLLNVAL`（開いていない fd。`revents` にだけ立つ。2026-10-06）。
 pub const POLLNVAL: u16 = 0x020;
 
-/// `PROT_WRITE`（`mmap`。書ける葉を作る）。
+/// `PROT_WRITE`（`mmap`。書けるリーフを作る）。
 pub const PROT_WRITE: u64 = 2;
 
-/// `PROT_EXEC`（`mmap`。実行できる葉を求める。Linux の `asm-generic/mman-common.h` の値）。
+/// `PROT_EXEC`（`mmap`。実行できるリーフを求める。Linux の `asm-generic/mman-common.h` の値）。
 /// **今は、これを求める `mmap` を全部断る**（`-EPERM`。`crate::syscall` の `mmap` の本体）。
 pub const PROT_EXEC: u64 = 4;
 
-/// `PROT_READ`（読める葉を求める。2026-10-06）。
+/// `PROT_READ`（読めるリーフを求める。2026-10-06）。
 pub const PROT_READ: u64 = 1;
 
 /// `MAP_FIXED`（アドレスを指定して、重なる写像を外してから置く。2026-10-06）。

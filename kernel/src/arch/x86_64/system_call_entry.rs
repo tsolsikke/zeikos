@@ -36,7 +36,7 @@
 //!
 //! # 互換モードからの `syscall`
 //!
-//! GDT には 32 ビットのユーザーのコード区画が在る（`sysret` の並びのために空けられない）ので、Ring 3 はそこへ飛んで
+//! GDT には 32 ビットのユーザーのコードセグメントが在る（`sysret` の並びのために空けられない）ので、Ring 3 はそこへ飛んで
 //! から `syscall` を打てる。**Intel の石では `#UD` になり、今までどおり畳まれる。AMD の石では `CSTAR` の飛び先へ
 //! 来る**ので、そこにも同じ形でスタックを切り替えるスタブを置き、そのプロセスを終わらせる。**Linux は 32 ビットの
 //! 呼び出しを受け付けるので、ここは Linux との差である**（32 ビットは使わない。`docs/architecture.md` の
@@ -121,7 +121,7 @@ const _: () =
 
 // `syscall` 命令の入口のスタブ（CPU ごと）と、互換モードから来たときのスタブ（CPU ごと）。
 //
-// 入った時点: RCX = 戻り先、R11 = 入る前の RFLAGS、RSP = ユーザーの値、CS/SS = カーネルの区画（STAR から）、
+// 入った時点: RCX = 戻り先、R11 = 入る前の RFLAGS、RSP = ユーザーの値、CS/SS = カーネルのセグメント（STAR から）、
 // RFLAGS は SFMASK のビットが落ちている（IF=0）。ほかのレジスタは、ユーザーの値のままである。
 //
 // **割り込みで入ったときに CPU が積むのと同じ 5 語（SS・RSP・RFLAGS・CS・RIP）を自分で積み、その上に目印を積む。**
@@ -365,7 +365,7 @@ pub fn report_entrances(logger: &mut Logger<Serial>) {
 
 /// `cpu` 番の CPU の、`syscall` 命令の入口を決める MSR のあるべき値。
 ///
-/// - `STAR`: 上位 16 ビットが `sysret` の基点（32 ビットのユーザーのコード区画。+8 がユーザーのデータ、+16 が 64 ビットの
+/// - `STAR`: 上位 16 ビットが `sysret` の基点（32 ビットのユーザーのコードセグメント。+8 がユーザーのデータ、+16 が 64 ビットの
 ///   ユーザーのコード）、その下の 16 ビットが `syscall` の基点（カーネルのコード。+8 がカーネルのデータ）。**GDT の
 ///   並びは、この形に合わせてある**（`ADR-0020`）。
 /// - `LSTAR`・`CSTAR`: その CPU のスタブのアドレス。
@@ -417,7 +417,7 @@ pub unsafe fn enable_on_this_cpu(cpu_index: usize) -> bool {
     let Some(msrs) = expected_msrs(cpu_index) else {
         return false;
     };
-    // SAFETY: MSR が在ることは `write_system_call_msrs` が CPUID で確かめる。値は、この CPU のスタブと GDT の区画を
+    // SAFETY: MSR が在ることは `write_system_call_msrs` が CPUID で確かめる。値は、この CPU のスタブと GDT のセグメントを
     // 指す、あるべき値である。
     if !unsafe { cpu::write_system_call_msrs(msrs) } {
         return false;

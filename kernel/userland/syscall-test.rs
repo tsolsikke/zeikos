@@ -271,14 +271,14 @@ const MOTD_FIRST_DWORD: u32 =
 
 /// 検算 111（自分のコードのページを書ける形にする求め）の期待。**既定のビルドでは `-EPERM`。**
 ///
-/// **葉に実行禁止のビットを立てないビルド（cfg `leaves_without_nx`。`nx-probe-only-leaf-test` を含む構成）では 0。**
+/// **リーフに実行禁止のビットを立てないビルド（cfg `leaves_without_nx`。`nx-probe-only-leaf-test` を含む構成）では 0。**
 /// そのビルドでは、ハードウェアが「実行できない」を表せないので、カーネルはどのページも「実行できる」とは見ず、W^X の
 /// 確かめそのものが成り立たない。是正ではなく、期待の切り替えである（2026-10-06）。
 const WX_WRITE_CODE_EXPECTED: i32 = if cfg!(leaves_without_nx) { 0 } else { MINUS_EPERM };
 
 /// 検算 112（`spawn("/bin/mprotect-nx")` の結果）の期待。**既定のビルドでは「畳まれた・ベクタ 14」（`0x100 | 14`）。**
 ///
-/// 葉に実行禁止のビットを立てないビルドでは、`PROT_READ` にしたコードのページも走り続けるので、`mprotect-nx` は 1 で終わる
+/// リーフに実行禁止のビットを立てないビルドでは、`PROT_READ` にしたコードのページも走り続けるので、`mprotect-nx` は 1 で終わる
 /// （上の [`WX_WRITE_CODE_EXPECTED`] と同じ理由）。
 const MPROTECT_NX_EXPECTED: i32 = if cfg!(leaves_without_nx) { 1 } else { 0x10e };
 /// `MAP_SHARED`。
@@ -746,7 +746,7 @@ core::arch::global_asm!(
     "  jne 9f",
 
     // --- 11/12. /etc/motd を全部読み、既知のバイト列と突き合わせる ---
-    // **読み込み先はユーザースタックである**（このプログラムに書ける区画は無い）。
+    // **読み込み先はユーザースタックである**（このプログラムに書けるセグメントは無い）。
     "  sub rsp, 64",
     "  mov eax, {sys_open}",
     "  lea rdi, [rip + MOTD_PATH]",
@@ -784,7 +784,7 @@ core::arch::global_asm!(
     "  int 0x80",
 
     // --- 70. 読み込み先が読み取り専用のページ。**-EFAULT が返るはず** ---
-    // **読み込み先はこのプログラムの `.rodata` である**（書けない区画）。**カーネルが確かめずに書くと、
+    // **読み込み先はこのプログラムの `.rodata` である**（書けないセグメント）。**カーネルが確かめずに書くと、
     // 読み取り専用のページへ書くことになる。** 開き直すのは、読める中身が残っている状態で確かめるためである。
     "  mov eax, {sys_open}",
     "  lea rdi, [rip + MOTD_PATH]",
@@ -2226,7 +2226,7 @@ core::arch::global_asm!(
     "  jne 7f",
     // 124: PROT_NONE にした（フレームを持ったまま写していない）ページを munmap してから、同じアドレスへ MAP_FIXED で写し直す。
     //      もう 1 度 PROT_NONE にして、その上へ MAP_FIXED で写す。どちらも新しい 0 のページが来ること（2026-10-08。直す前は
-    //      munmap と置き換えが古い葉を残し、写し直しがそれを上書きしてフレームを失っていた）。終わりに munmap する。
+    //      munmap と置き換えが古いリーフを残し、写し直しがそれを上書きしてフレームを失っていた）。終わりに munmap する。
     "  mov eax, {sys_mmap}",
     "  xor edi, edi",
     "  mov esi, 4096",
@@ -2477,7 +2477,7 @@ core::arch::global_asm!(
     "  cmp rax, 0x10e",
     "  jne 7f",
     // 111: 実行できるページ（自分のコード。2 ページの範囲の一部）を書ける形にする求めは -EPERM。何も変わらないので、
-    //      この後も走り続けられる。**葉に実行禁止のビットを立てないビルドでは 0**（WX_WRITE_CODE_EXPECTED の doc）。
+    //      この後も走り続けられる。**リーフに実行禁止のビットを立てないビルドでは 0**（WX_WRITE_CODE_EXPECTED の doc）。
     "  mov eax, {sys_mprotect}",
     "  lea rdi, [rip + _start]",
     "  and rdi, -4096",
@@ -2487,7 +2487,7 @@ core::arch::global_asm!(
     "  mov edi, 111",
     "  cmp rax, {wx_write_code_expected}",
     "  jne 7f",
-    // 112: spawn("/bin/mprotect-nx") は「畳まれた・ベクタ 14」（0x100 | 14）を返す。**葉に実行禁止のビットを立てない
+    // 112: spawn("/bin/mprotect-nx") は「畳まれた・ベクタ 14」（0x100 | 14）を返す。**リーフに実行禁止のビットを立てない
     //      ビルドでは 1**（MPROTECT_NX_EXPECTED の doc）。
     "  mov eax, {sys_spawn}",
     "  lea rdi, [rip + MPROTECT_NX_PATH]",

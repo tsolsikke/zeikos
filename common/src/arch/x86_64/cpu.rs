@@ -438,7 +438,7 @@ pub fn max_physical_address_bits() -> Option<u8> {
         return None;
     }
 
-    // SAFETY: 上と同じ。対応していることを直前に確認した葉だけを読む。
+    // SAFETY: 上と同じ。対応していることを直前に確認したリーフだけを読む。
     let eax: u32 = unsafe {
         let eax: u32;
         core::arch::asm!(
@@ -574,7 +574,7 @@ const IA32_STAR: u32 = 0xC000_0081;
 const IA32_LSTAR: u32 = 0xC000_0082;
 const IA32_CSTAR: u32 = 0xC000_0083;
 const IA32_FMASK: u32 = 0xC000_0084;
-/// `sysenter` 命令が読む、カーネルのコード区画のセレクタ。**0 なら `sysenter` は `#GP` になる。**
+/// `sysenter` 命令が読む、カーネルのコードセグメントのセレクタ。**0 なら `sysenter` は `#GP` になる。**
 const IA32_SYSENTER_CS: u32 = 0x174;
 
 /// `syscall` 命令と `sysenter` 命令の入口を決める MSR の、読んだ値の組（2026-10-04）。
@@ -582,11 +582,11 @@ const IA32_SYSENTER_CS: u32 = 0x174;
 /// **読む側と書く側が、同じ型を使う**（[`read_system_call_msrs`] と [`write_system_call_msrs`]）——書いた値を、
 /// 同じ型で読み戻して比べられる。
 ///
-/// - `star`: `syscall` で入るときと `sysret` で戻るときの、区画のセレクタの基点（上位 32 ビット）。
+/// - `star`: `syscall` で入るときと `sysret` で戻るときの、セグメントのセレクタの基点（上位 32 ビット）。
 /// - `lstar`: 64 ビットのコードが打った `syscall` の飛び先。
-/// - `cstar`: 互換モード（32 ビットの区画）のコードが打った `syscall` の飛び先（AMD の石だけが使う）。
+/// - `cstar`: 互換モード（32 ビットのセグメント）のコードが打った `syscall` の飛び先（AMD の石だけが使う）。
 /// - `sfmask`: `syscall` で入るときに RFLAGS から落とすビット。
-/// - `sysenter_cs`: `sysenter` の区画のセレクタ。
+/// - `sysenter_cs`: `sysenter` のセグメントのセレクタ。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct SystemCallMsrs {
     pub star: u64,
@@ -599,9 +599,9 @@ pub struct SystemCallMsrs {
 /// `syscall` 命令の MSR（STAR・LSTAR・CSTAR・SFMASK）と `sysenter` の MSR が、この CPU に在るか。
 ///
 /// **前者は `CPUID.80000001H:EDX[11]`（SYSCALL/SYSRET）、後者は `CPUID.01H:EDX[11]`（SEP）が示す。**
-/// 拡張の葉が `0x8000_0001` に届かない CPU では、前者は無い。
+/// 拡張のリーフが `0x8000_0001` に届かない CPU では、前者は無い。
 pub fn system_call_msrs_exist() -> bool {
-    // **`unsafe` は要らない**——`__cpuid` は x86_64 では safe fn である（葉 0 と 0x8000_0000 はすべての x86_64 が持つ）。
+    // **`unsafe` は要らない**——`__cpuid` は x86_64 では safe fn である（リーフ 0 と 0x8000_0000 はすべての x86_64 が持つ）。
     let extended_leaves = core::arch::x86_64::__cpuid(0x8000_0000).eax;
     let syscall = extended_leaves >= 0x8000_0001
         && core::arch::x86_64::__cpuid(0x8000_0001).edx & (1 << 11) != 0;
@@ -634,7 +634,7 @@ pub fn read_system_call_msrs() -> Option<SystemCallMsrs> {
 /// # Safety
 ///
 /// `msrs` が、この CPU の入口として正しいこと——`lstar` と `cstar` は、カーネルのスタックへ切り替えるスタブのアドレスで、
-/// `star` の区画のセレクタは、載っている GDT の並びに合っていること。**誤った値を書くと、`syscall` 命令が、カーネルの
+/// `star` のセグメントのセレクタは、載っている GDT の並びに合っていること。**誤った値を書くと、`syscall` 命令が、カーネルの
 /// 権限のまま、意図しないアドレスへ飛ぶ。**
 pub unsafe fn write_system_call_msrs(msrs: SystemCallMsrs) -> bool {
     if !system_call_msrs_exist() {

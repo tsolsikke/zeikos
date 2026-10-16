@@ -12,9 +12,9 @@
 //!
 //! # 何を読むか
 //!
-//! - **葉の権限**——書き込み可・ユーザーから触れる・実行できる・キャッシュの属性・グローバル・共有の印
+//! - **リーフの権限**——書き込み可・ユーザーから触れる・実行できる・キャッシュの属性・グローバル・共有の印
 //! - **途中の階層の権限**——書き込み可とユーザーから触れるかは全部の階層の AND で決まり、実行の禁止は
-//!   どこか 1 つの階層に立てば効く。**葉だけを読むと、途中の階層の違いを見落とす**ので、分けて持つ
+//!   どこか 1 つの階層に立てば効く。**リーフだけを読むと、途中の階層の違いを見落とす**ので、分けて持つ
 //! - **ページの大きさ**（4KiB・2MiB・1GiB）
 //!
 //! **読まないもの**——物理のアドレス（ビルドごとに動く）と、CPU が立てる印（アクセス済み・書き込み済み）。
@@ -45,9 +45,9 @@ mod bits {
     pub const PAGE_SIZE_OR_SMALL_PAT: u64 = 1 << 7;
     /// Global。
     pub const GLOBAL: u64 = 1 << 8;
-    /// ソフトウェアが使える印のうち、共有の葉に立てているもの（ビット 9）。
+    /// ソフトウェアが使える印のうち、共有のリーフに立てているもの（ビット 9）。
     pub const SHARED: u64 = 1 << 9;
-    /// 2MiB と 1GiB の葉の PAT（ビット 12）。
+    /// 2MiB と 1GiB のリーフの PAT（ビット 12）。
     pub const LARGE_PAT: u64 = 1 << 12;
     /// 実行の禁止（ビット 63）。`EFER.NXE` が立っていないと予約ビットである。
     pub const NO_EXECUTE: u64 = 1 << 63;
@@ -89,20 +89,20 @@ impl MappingSize {
     }
 }
 
-/// 写っている範囲の権限。**葉と、途中の階層を分けて持つ。**
+/// 写っている範囲の権限。**リーフと、途中の階層を分けて持つ。**
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MappingPermissions {
-    /// 葉が書き込みを許すか。
+    /// リーフが書き込みを許すか。
     pub writable: bool,
-    /// 葉がユーザーから触れる印を持つか。
+    /// リーフがユーザーから触れる印を持つか。
     pub user: bool,
-    /// 葉が実行を許すか（実行の禁止の印が無いか）。
+    /// リーフが実行を許すか（実行の禁止の印が無いか）。
     pub executable: bool,
-    /// 葉のキャッシュの属性。ビット 0 が書き通し、ビット 1 がキャッシュ無効、ビット 2 が PAT。0 が通常である。
+    /// リーフのキャッシュの属性。ビット 0 が書き通し、ビット 1 がキャッシュ無効、ビット 2 が PAT。0 が通常である。
     pub cache: u8,
-    /// 葉がグローバルの印を持つか。
+    /// リーフがグローバルの印を持つか。
     pub global: bool,
-    /// 葉が共有の印を持つか。
+    /// リーフが共有の印を持つか。
     pub shared: bool,
     /// 途中の階層が全部、書き込みを許すか。
     pub tables_writable: bool,
@@ -158,7 +158,7 @@ impl Path {
     }
 }
 
-/// 葉の項目と、そこまでの道から、権限を作る。
+/// リーフの項目と、そこまでの道から、権限を作る。
 fn permissions_of(leaf: u64, size: MappingSize, path: Path) -> MappingPermissions {
     let pat = match size {
         MappingSize::Small => bits::PAGE_SIZE_OR_SMALL_PAT,
@@ -193,14 +193,14 @@ fn address_of(top: usize, upper: usize, middle: usize, leaf: usize) -> u64 {
     }
 }
 
-/// 続いている葉を 1 つの範囲にまとめる。
+/// 続いているリーフを 1 つの範囲にまとめる。
 struct Joiner<'a> {
     pending: Option<MappedRange>,
     visit: &'a mut dyn FnMut(MappedRange),
 }
 
 impl Joiner<'_> {
-    /// 葉を 1 つ受ける。**直前の範囲のすぐ後ろで、大きさも権限も同じなら、範囲を伸ばす。**
+    /// リーフを 1 つ受ける。**直前の範囲のすぐ後ろで、大きさも権限も同じなら、範囲を伸ばす。**
     fn leaf(&mut self, start: u64, size: MappingSize, permissions: MappingPermissions) {
         if let Some(pending) = &mut self.pending {
             // 範囲の終わりは u64 を越えうる（最後のページがアドレスの上端に在るとき）ので、越えたら続きとみなさない。
@@ -232,7 +232,7 @@ impl Joiner<'_> {
 /// `read` は「表の物理のアドレスと添字から、項目を 1 つ読む」関数である。`top` は、最上位の表のうち歩く添字の
 /// 範囲である（全部なら `0..512`。ユーザーの側だけなら `0..256`）。**512 を越える分は読まない。**
 ///
-/// 在る（Present）項目だけを辿る。PDPT と PD の項目が「ページそのもの」なら葉として扱い、そこで降りない。
+/// 在る（Present）項目だけを辿る。PDPT と PD の項目が「ページそのもの」ならリーフとして扱い、そこで降りない。
 fn walk(
     read: &dyn Fn(u64, usize) -> u64,
     root: u64,
@@ -446,7 +446,7 @@ mod tests {
         }
     }
 
-    /// **途中の階層の権限は、葉とは別に読む。** 葉が書き込み可でも、途中の階層のどれかが書き込みを許さなければ
+    /// **途中の階層の権限は、リーフとは別に読む。** リーフが書き込み可でも、途中の階層のどれかが書き込みを許さなければ
     /// `tables_writable` は偽になる。実行の禁止は、途中の階層のどれか 1 つに立てば `tables_executable` が偽になる。
     #[test]
     fn the_permissions_of_the_tables_on_the_way_are_read_apart_from_the_leaf() {
@@ -474,7 +474,7 @@ mod tests {
         assert!(permissions.user && !permissions.tables_user);
     }
 
-    /// **2MiB と 1GiB の葉は、その階層で止まる。** キャッシュの属性の PAT は、4KiB ではビット 7、
+    /// **2MiB と 1GiB のリーフは、その階層で止まる。** キャッシュの属性の PAT は、4KiB ではビット 7、
     /// 大きいページではビット 12 に在る。**大きいページのビット 7 は「ページそのもの」で、PAT ではない。**
     #[test]
     fn large_pages_stop_at_their_level_and_carry_the_cache_bits_at_their_own_place() {
@@ -514,7 +514,7 @@ mod tests {
         );
         assert_eq!(ranges[0].bytes(), 4 << 20);
 
-        // 4KiB の葉のビット 7 は PAT である。書き通しはビット 3、共有の印はビット 9。
+        // 4KiB のリーフのビット 7 は PAT である。書き通しはビット 3、共有の印はビット 9。
         let (root, pt) = chain(&tables, 0, 0, 0, P | W);
         tables.set(
             pt,
@@ -527,7 +527,7 @@ mod tests {
     }
 
     /// **上位の半分のアドレスは、上のビットを 1 で埋めた形で渡す。** 歩く添字の範囲の外は読まない。
-    /// 実行の禁止の印が葉に在れば、`executable` が偽になる。
+    /// 実行の禁止の印がリーフに在れば、`executable` が偽になる。
     #[test]
     fn the_upper_half_is_reported_in_its_canonical_form_and_only_the_asked_top_entries_are_walked()
     {

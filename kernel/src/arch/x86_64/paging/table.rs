@@ -23,8 +23,8 @@ use crate::paging::permissions::PagePermissions;
 
 // **ビットの定数は `entry` の 1 組を使う**（2026-10-02。以前は、このファイルが同じ値の写しを持っていた）。
 // **項目を書くときのビットは、`entry` の変換（`leaf_entry` と `table_entry`）が決める。** ここで読む定数は、
-// 既に在る項目を調べるためのものである。2MiB の葉は PD レベルにだけ書く（PDPT レベルに書くと 1GiB ページの
-// 意味になるため、このモジュールは PDPT レベルには葉を書かない）。
+// 既に在る項目を調べるためのものである。2MiB のリーフは PD レベルにだけ書く（PDPT レベルに書くと 1GiB ページの
+// 意味になるため、このモジュールは PDPT レベルにはリーフを書かない）。
 use super::entry::{self, LeafSize, ADDR_MASK_4K, PAGE_SIZE_2M, PDE_PAGE_SIZE, PTE_PRESENT};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -263,9 +263,9 @@ impl<'a, const CAP: usize> PageTableBuilder<'a, CAP> {
         // SAFETY: `table_phys`/`index` は上記と同じ契約。新規に確保した
         // `child_phys` を Present + Writable な中間エントリとして書く
         // （中間テーブル自体はキャッシュ属性を特別扱いしない）。
-        // **途中の項目は、葉の権限に依らず、常にカーネルの側のものとして書く**（このビルダーが組むのは
+        // **途中の項目は、リーフの権限に依らず、常にカーネルの側のものとして書く**（このビルダーが組むのは
         // カーネルの表だけである。ユーザーから届く項目は作らない）。**途中の項目のビットを決めるのは、
-        // 「下の葉がユーザーから届くか」だけである**（`entry::table_flags`）。書けるかと実行できるかは葉で決める。
+        // 「下のリーフがユーザーから届くか」だけである**（`entry::table_flags`）。書けるかと実行できるかはリーフで決める。
         unsafe {
             write_entry(
                 self.direct_map,

@@ -39,7 +39,7 @@
 #![no_main]
 
 core::arch::global_asm!(
-    // **entry の手前に詰め物を置く**（`hello.rs` と同じ理由）。entry と区画の先頭を一致させない。
+    // **entry の手前に詰め物を置く**（`hello.rs` と同じ理由）。entry とセグメントの先頭を一致させない。
     ".section .text.prepad,\"ax\"",
     ".rept 8",
     "  ud2",

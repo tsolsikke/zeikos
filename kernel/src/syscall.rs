@@ -262,7 +262,7 @@ fn clip_rect_area(rect: &DrmClipRect) -> Option<(u32, u32, u32, u32)> {
 /// 実行ファイルの大きさの上限（2026-10-05 に 32 KiB から 16 MiB へ上げた）。
 ///
 /// **以前は、載せる前に、実行ファイルの全体を静的な配列へ写していた。** 上限の 32 KiB は、その配列の大きさだった。
-/// **いまは写さない**——載せる側は、イメージを「範囲を読む口」で受け、先頭の部分と、区画ごとのページの分だけを読む
+/// **いまは写さない**——載せる側は、イメージを「範囲を読む口」で受け、先頭の部分と、セグメントごとのページの分だけを読む
 /// （`crate::userland` の `load_user_program_from`）。上限は、器の大きさではなく、受け付ける大きさの決まりである。
 ///
 /// **16 MiB は、Linux 向けの静的リンクの実行ファイル（数 MiB）が入る大きさである。** ただし、いまの ext2 の読み手が
@@ -1751,13 +1751,13 @@ pub fn screen_pages_mapped() -> u64 {
 ///
 /// # 共有メモリと同じマップの仕方である
 ///
-/// **葉に `PTE_SHARED` の目印を立てる**（`ADR-0065`）——**`AddressSpace::detach` は目印の在る葉を集めない**ので、
+/// **リーフに `PTE_SHARED` の目印を立てる**（`ADR-0065`）——**`AddressSpace::detach` は目印の在るリーフを集めない**ので、
 /// **プロセスが終わっても裏バッファのフレームはアロケータへ返らない。** **返すのはコンソールで、
 /// 返さない**（起動時に取って、ずっと持つ）。**参照数は使わない**（Q1。カーネル常駐）。
 ///
 /// # 新しく取らない
 ///
-/// **葉は裏バッファのフレームで、アロケータから取るのは中間表だけである**——**その数を破棄の会計へ
+/// **リーフは裏バッファのフレームで、アロケータから取るのは中間表だけである**——**その数を破棄の会計へ
 /// 足す**（共有メモリの `mmap` と同じ）。
 ///
 /// # Safety
@@ -2637,10 +2637,10 @@ unsafe fn munmap_from_ring3(
 /// - `PROT_EXEC` は `-EPERM`——**書けるページを実行できるページにはしない**（W^X。`ADR-0071`。JIT は目指さない）。
 ///   **実行できるページ（`NX` が 0）を書ける形にする求めも `-EPERM`**——範囲の一部でもそのページが在れば、何も変えずに
 ///   断る。`PROT_EXEC` を付けない `mprotect` は、ページを実行できない形にする（Linux と同じ。実行を外す向きだけを許す）。
-/// - `PROT_NONE`: 葉の `P` を落とし、フレームは持ったままにする（`entry::PTE_RETAINED`）。**読める形へ戻すと、同じ中身が戻る。**
+/// - `PROT_NONE`: リーフの `P` を落とし、フレームは持ったままにする（`entry::PTE_RETAINED`）。**読める形へ戻すと、同じ中身が戻る。**
 ///   初めから写していなかった無名の写像（`mmap(PROT_NONE)`）を読める形にするときは、その時点で 0 のフレームを写す。
 /// - 変えてよい種類は、無名・ヒープ・イメージ・スタック。見張りのページ・共有メモリ・画面は `-EINVAL`（`docs/deferred-decisions.md`）。
-/// - 変えた葉は、この CPU の TLB から 1 本ずつ落とす（`invlpg`）。**プロセスは 1 つの CPU に留まるので、ほかの CPU は
+/// - 変えたリーフは、この CPU の TLB から 1 本ずつ落とす（`invlpg`）。**プロセスは 1 つの CPU に留まるので、ほかの CPU は
 ///   見ない**——スレッドが入ると、この前提は崩れる（`docs/deferred-decisions.md`）。
 ///
 /// # Safety
@@ -2748,7 +2748,7 @@ unsafe fn mprotect_from_ring3(
                 outcome = (-EINVAL) as u64;
                 break 'pieces;
             };
-            // 破壊テスト (2026-10-06, mprotect-none-discards-test): `PROT_NONE` で、葉を外してフレームを返す（中身を
+            // 破壊テスト (2026-10-06, mprotect-none-discards-test): `PROT_NONE` で、リーフを外してフレームを返す（中身を
             // 捨てる形。読める形へ戻すと 0 のページが来る）。
             #[cfg(feature = "mprotect-none-discards-test")]
             if !present {
@@ -2759,7 +2759,7 @@ unsafe fn mprotect_from_ring3(
                 page += PAGE_SIZE;
                 continue;
             }
-            // SAFETY: 稼働中の表の、このプロセスの葉を書き換える（写していない葉は `NotMapped` で返る）。
+            // SAFETY: 稼働中の表の、このプロセスのリーフを書き換える（写していないリーフは `NotMapped` で返る）。
             let changed = unsafe { table.set_leaf_access(virt, writable, present) };
             if changed.is_err() {
                 // **写していないページ**（`mmap(PROT_NONE)` の無名の写像）。読める形にするなら、ここで 0 のフレームを写す。
@@ -2797,9 +2797,9 @@ unsafe fn mprotect_from_ring3(
     outcome
 }
 
-/// `[addr, addr + bytes)` のうち、無名の写像の中で、ページテーブルの葉が写っていないページの数（2026-10-08）。`mprotect` が
-/// 読める形にするとき、ここで 0 のフレームを写す。**`PTE_RETAINED` の葉（`PROT_NONE` でフレームを持ったまま）も数える**
-/// ——翻訳では写っていない葉と区別が付かないので、多めに見積もる（足りるかを見るだけなので、多めでよい）。
+/// `[addr, addr + bytes)` のうち、無名の写像の中で、ページテーブルのリーフが写っていないページの数（2026-10-08）。`mprotect` が
+/// 読める形にするとき、ここで 0 のフレームを写す。**`PTE_RETAINED` のリーフ（`PROT_NONE` でフレームを持ったまま）も数える**
+/// ——翻訳では写っていないリーフと区別が付かないので、多めに見積もる（足りるかを見るだけなので、多めでよい）。
 fn frames_for_unmapped_anonymous(
     table: &crate::arch::x86_64::ActivePageTable,
     addr: u64,
@@ -2826,7 +2826,7 @@ fn frames_for_unmapped_anonymous(
     count
 }
 
-/// `[addr, addr + bytes)` の中で `pages` 枚の葉を新しく写すときに、多くても要る中間テーブルの数（2026-10-08）。
+/// `[addr, addr + bytes)` の中で `pages` 枚のリーフを新しく写すときに、多くても要る中間テーブルの数（2026-10-08）。
 ///
 /// **`mprotect` は、複数の写像にまたがる範囲を受ける**（範囲の全部が写像で覆われていればよい）。写像はマッピングテーブルの
 /// [`crate::mappings::MAX_MAPPINGS`]（64）欄までで、無名の写像は 1 つ [`ANONYMOUS_MMAP_MAX`]（16 MiB）までなので、写して
@@ -2834,10 +2834,10 @@ fn frames_for_unmapped_anonymous(
 /// （1 ページずつの写像が、別々の 2 MiB の区切りに 64 個並ぶ形）。ヒープ・イメージ・スタックの写像も範囲に入りうるので、
 /// 範囲そのものはもっと長くなりうる。
 ///
-/// **見積もりの根拠。** `map_4kib` が新しい葉 1 枚のために取るのは、PT・PD・PDPT が 1 枚ずつまでである（PML4 は空間を
+/// **見積もりの根拠。** `map_4kib` が新しいリーフ 1 枚のために取るのは、PT・PD・PDPT が 1 枚ずつまでである（PML4 は空間を
 /// 作るときに在る）。そして、新しく取る PT は範囲が触れる 2 MiB の区切りの数まで、PD は 1 GiB の区切りの数まで、PDPT は
-/// 512 GiB の区切りの数までである。段ごとに「葉の数」と「区切りの数」の小さい方を足すので、散らばった葉でも、長い範囲でも
-/// 足りる。**以前の見積もり（512 枚ごとに PT 1 枚と、両端で 6 枚）は、散らばった葉で足りなかった**（64 枚が別々の 2 MiB に
+/// 512 GiB の区切りの数までである。段ごとに「リーフの数」と「区切りの数」の小さい方を足すので、散らばったリーフでも、長い範囲でも
+/// 足りる。**以前の見積もり（512 枚ごとに PT 1 枚と、両端で 6 枚）は、散らばったリーフで足りなかった**（64 枚が別々の 2 MiB に
 /// 在れば、PT が 64 枚要る）。
 fn page_tables_for(addr: u64, bytes: u64, pages: usize) -> usize {
     if bytes == 0 {
@@ -2963,11 +2963,11 @@ unsafe fn release_range_and_unmap(
     let mut table = unsafe { ActivePageTable::current(direct_map) };
     let mut returned = 0usize;
     for piece in released.iter().take(count).flatten() {
-        // **写していない断片も、ページ表の葉を見て外す**（2026-10-08）。表の `present` が偽の断片には 2 通りある——
-        // `mmap(PROT_NONE)` で範囲だけ取って何も写していないページ（葉が無い。`unmap_4kib` は `NotMapped` を返す）と、
-        // `mprotect(PROT_NONE)` でフレームを持ったまま `P` を落としたページ（`PTE_RETAINED` の葉。`unmap_4kib` が外して
-        // フレームを返す）。どちらかは葉が知っているので、表には持たない（1 つの断片の中で混ざりうる）。
-        // 破壊テスト (2026-10-08, munmap-skips-retained-test): 写していない断片を飛ばす（直す前の形）。`PTE_RETAINED` の葉が
+        // **写していない断片も、ページ表のリーフを見て外す**（2026-10-08）。表の `present` が偽の断片には 2 通りある——
+        // `mmap(PROT_NONE)` で範囲だけ取って何も写していないページ（リーフが無い。`unmap_4kib` は `NotMapped` を返す）と、
+        // `mprotect(PROT_NONE)` でフレームを持ったまま `P` を落としたページ（`PTE_RETAINED` のリーフ。`unmap_4kib` が外して
+        // フレームを返す）。どちらかはリーフが知っているので、表には持たない（1 つの断片の中で混ざりうる）。
+        // 破壊テスト (2026-10-08, munmap-skips-retained-test): 写していない断片を飛ばす（直す前の形）。`PTE_RETAINED` のリーフが
         // 残り、同じアドレスへ写し直すと `map_4kib` が断って、`syscall-test` が 124 番で止まる。
         if !piece.present && cfg!(feature = "munmap-skips-retained-test") {
             continue;
@@ -3115,7 +3115,7 @@ unsafe fn mmap_from_ring3(
     // させない。** 画面へ分かれる前に見るので、どちらの `mmap` にも効く。**今は、実行できる `mmap` を全部断っている**
     // ——Linux のプログラムをそのまま動かす段階では、ファイルを写す `mmap` の「読んで実行する」を許し、断るのを
     // 「書けて実行もできる」だけにする必要がある（`docs/deferred-decisions.md`）。
-    // 破壊テスト (mmap-allows-exec): 断らない（求めを無視して、実行できない葉を写す。以前の形）。
+    // 破壊テスト (mmap-allows-exec): 断らない（求めを無視して、実行できないリーフを写す。以前の形）。
     if prot & PROT_EXEC != 0 && !cfg!(feature = "mmap-allows-exec-test") {
         return (-EPERM) as u64;
     }
@@ -3160,13 +3160,13 @@ unsafe fn mmap_from_ring3(
         Ok(base) => base,
         Err(error) => return errno_for_map(error),
     };
-    // **共有メモリの葉に目印を立てる（`ADR-0065`）。** **`AddressSpace::detach` が集めず、`crate::shm` が
+    // **共有メモリのリーフに目印を立てる（`ADR-0065`）。** **`AddressSpace::detach` が集めず、`crate::shm` が
     // 参照数で返す。**
     let attributes = PagePermissions::user_shared(prot & PROT_WRITE != 0);
     // SAFETY: 遠征の中なので CR3 はこのプロセスの表である。
     let mut table = unsafe { ActivePageTable::current(direct_map) };
     // **載せた後に取った PT を数える（`ADR-0065` の (a)）。** **`map_4kib` が新しい領域へ
-    // 中間表を取るので、その分を破棄の会計の `taken` に足す**——**葉は共有フレームで
+    // 中間表を取るので、その分を破棄の会計の `taken` に足す**——**リーフは共有フレームで
     // アロケータに触らないので、差は表の分だけである。**
     let free_before_map = allocator.free_frame_count();
     let mut outcome = base;
@@ -3227,7 +3227,7 @@ unsafe fn undo_shared_mapping(
     const PAGE: u64 = crate::frame_allocator::FRAME_SIZE;
     for page in 0..mapped {
         if let Some(virt) = common::addr::VirtAddr::new(base + page * PAGE) {
-            // SAFETY: 呼び出し元契約（いま写した共有のページ）。外した葉のフレームは、持ち主が別に居るので返さない。
+            // SAFETY: 呼び出し元契約（いま写した共有のページ）。外したリーフのフレームは、持ち主が別に居るので返さない。
             let _ = unsafe { table.unmap_4kib(virt) };
         }
     }
@@ -4770,7 +4770,7 @@ unsafe fn sys_brk(
     let mut grown = true;
     if want > have {
         // **伸ばす。** 1 ページずつマップする。
-        // **取ったフレームを空間ごとの会計へ足す**（2026-10-03）。**葉と、境を越えて新しく取った中間表の両方を、
+        // **取ったフレームを空間ごとの会計へ足す**（2026-10-03）。**リーフと、境を越えて新しく取った中間表の両方を、
         // 空きフレームの差で数える**（`mmap` と同じ形。失敗して返した分は差に出ない）。**以前は数えておらず、
         // 伸ばしたまま終わるプログラムで、破棄が集めた数が取った数を上回った**（`crate::userland` の
         // `note_post_load_frames` の doc）。
@@ -4779,10 +4779,10 @@ unsafe fn sys_brk(
         // この呼び出しで最初に写したページ。巻き戻しは、ここから上だけを外す（2026-10-09）。
         let mut first_mapped: Option<u64> = None;
         while page < want {
-            // 破壊テスト (brk-skip-shrink-test): 縮めたときに外さなかった葉の上を、伸ばすときは飛ばす。**壊すのは
+            // 破壊テスト (brk-skip-shrink-test): 縮めたときに外さなかったリーフの上を、伸ばすときは飛ばす。**壊すのは
             // 「上端だけ下がり、フレームは返らない」の形であって、伸ばし直せないことではない**——縮めて伸ばし直す
             // 検算（`syscall-test` の 67 と 105）を通し、`zi` の「返した数が釣り合う」判定まで届かせる（2026-10-06）。
-            // **飛ばすのは、この呼び出しで写し始める前の、`have` から続く前の部分だけ**（2026-10-09）。外さなかった葉は、
+            // **飛ばすのは、この呼び出しで写し始める前の、`have` から続く前の部分だけ**（2026-10-09）。外さなかったリーフは、
             // 縮める前の上端までの続いた範囲で、前の部分に在る。写し始めた後の写っているページは飛ばさず、`map_4kib` が
             // 断って巻き戻す——巻き戻しが、この呼び出しより前から在ったページを外さないためである。
             if cfg!(feature = "brk-skip-shrink-test")
@@ -4854,7 +4854,7 @@ unsafe fn sys_brk(
         // 「伸ばして縮めたら空きフレームの数が元へ戻る」判定だけである。**
         #[cfg(not(feature = "brk-skip-shrink-test"))]
         {
-            // **返した葉の数を、空間ごとの会計から引く**（2026-10-03）。**その場でアロケータへ戻すので、破棄が
+            // **返したリーフの数を、空間ごとの会計から引く**（2026-10-03）。**その場でアロケータへ戻すので、破棄が
             // 集める数には入らない。** **中間表は外さないので引かない**（破棄が集める）。
             let mut returned = 0usize;
             let mut page = have;
@@ -4872,7 +4872,7 @@ unsafe fn sys_brk(
                 if let Some(virt) = common::addr::VirtAddr::new(page) {
                     // SAFETY: 稼働中の表から外し、フレームを返す。
                     if let Ok(page) = unsafe { table.unmap_4kib(virt) } {
-                        // **返すのは、外した葉が指していたフレームである**（`page.frame`）。以前は、外す前の
+                        // **返すのは、外したリーフが指していたフレームである**（`page.frame`）。以前は、外す前の
                         // 項目の値を物理のアドレスとして読んでいて、アドレスより上の位置にビットが立つと、
                         // フレームが返らなかった（2026-10-02 に直した）。
                         let _ = allocator.deallocate_frame(page.frame);
@@ -7813,7 +7813,7 @@ fn errno_for_ext2(error: common::ext2::Ext2Error) -> i64 {
 ///
 /// **`Parse`・`Layout` が、渡されたイメージに対する答えである。**
 /// **どちらも `-ENOEXEC` を返す**（2026-10-01。Linux の `execve` と同じ）——イメージがバイト列として壊れている
-/// （`Parse`）ときも、区画の並びを受け付けられない（`Layout`）ときも、「実行できる形でない」である。
+/// （`Parse`）ときも、セグメントの並びを受け付けられない（`Layout`）ときも、「実行できる形でない」である。
 /// **`Parse` は、`ENOEXEC` を持つ前は `-EINVAL` を返していた。**
 ///
 /// **`Read` は `-EIO` を返す**（2026-10-05）——イメージの中身ではなく、読むことそのものが失敗した。大きすぎて読めない
@@ -8270,7 +8270,7 @@ mod tests {
         assert_eq!(clamped[2].1, 0);
     }
 
-    /// **`mprotect` の中間テーブルの見積もりは、散らばった葉でも、長い範囲でも足りる**（2026-10-08）。段ごとに、葉の数と
+    /// **`mprotect` の中間テーブルの見積もりは、散らばったリーフでも、長い範囲でも足りる**（2026-10-08）。段ごとに、リーフの数と
     /// 範囲が触れる区切りの数の小さい方を数える。
     #[test]
     fn the_page_table_estimate_covers_scattered_leaves_and_long_ranges() {
@@ -8367,7 +8367,7 @@ mod tests {
         );
     }
 
-    /// **実行できる形でないイメージは `-ENOEXEC`（8）で断る**（2026-10-01）——区画の並びを受け付けられないイメージも、
+    /// **実行できる形でないイメージは `-ENOEXEC`（8）で断る**（2026-10-01）——セグメントの並びを受け付けられないイメージも、
     /// バイト列として壊れているイメージも同じである。
     #[test]
     fn an_image_that_cannot_be_executed_is_reported_as_enoexec() {

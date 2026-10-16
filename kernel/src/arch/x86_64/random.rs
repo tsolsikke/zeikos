@@ -4,7 +4,7 @@
 //! スタックの見張りの値（カナリア）の seed などに使う。**このカーネルは、まだ乱数の仕組み（エントロピーをためて混ぜる
 //! 所）を持たない。** プログラムが起動できるように、手元で取れる値を渡す。
 //!
-//! - **CPU が `RDRAND` を持てば、それを使う**（CPUID の葉 1 の ECX の 30 番のビット）。
+//! - **CPU が `RDRAND` を持てば、それを使う**（CPUID のリーフ 1 の ECX の 30 番のビット）。
 //! - **持たなければ、タイムスタンプカウンタ（TSC）を、呼ぶたびに進む数と混ぜた値を使う。** 起動のたびに変わるが、
 //!   予測できない値ではない。
 //!
@@ -34,17 +34,17 @@ impl core::fmt::Display for RandomSource {
     }
 }
 
-/// CPU が `RDRAND` を持つか（CPUID の葉 1 の ECX の 30 番のビット）。
+/// CPU が `RDRAND` を持つか（CPUID のリーフ 1 の ECX の 30 番のビット）。
 ///
 /// # 契約（境界の関数。2026-10-06）
 ///
 /// - CPUID を読むだけで、何も変えない。
 pub fn has_rdrand() -> bool {
-    // **`unsafe` は要らない**——`__cpuid` は x86_64 では safe fn である（葉 1 はどの CPU にも在る）。
+    // **`unsafe` は要らない**——`__cpuid` は x86_64 では safe fn である（リーフ 1 はどの CPU にも在る）。
     rdrand_bit(core::arch::x86_64::__cpuid(1).ecx)
 }
 
-/// 葉 1 の ECX から、`RDRAND` のビットを読む（純粋な論理）。
+/// リーフ 1 の ECX から、`RDRAND` のビットを読む（純粋な論理）。
 const fn rdrand_bit(leaf_one_ecx: u32) -> bool {
     leaf_one_ecx & (1 << 30) != 0
 }
@@ -137,7 +137,7 @@ pub fn weak_random_bytes() -> ([u8; 16], RandomSource) {
 mod tests {
     use super::*;
 
-    /// `RDRAND` のビットは、葉 1 の ECX の 30 番である。
+    /// `RDRAND` のビットは、リーフ 1 の ECX の 30 番である。
     #[test]
     fn the_rdrand_bit_is_bit_thirty_of_leaf_one_ecx() {
         assert!(rdrand_bit(1 << 30));

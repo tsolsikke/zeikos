@@ -78,7 +78,7 @@ kernel-top-write-after-boot-test = []
 # 2026-09-27（`ADR-0071` の決定 5）: 書く側の守りを外し、同じ書き込みをする。突き合わせが、実際に書かれた項目を
 # 見つける。`--paging-test kernel-top-write-unguarded-test`。
 kernel-top-write-unguarded-test = []
-# 2026-10-03（`ADR-0071` の手順 4 の 3 つ目の決まり）: 起動の後に、カーネルのイメージの PML4 の項目の下へ葉を 1 枚足しに行く。
+# 2026-10-03（`ADR-0071` の手順 4 の 3 つ目の決まり）: 起動の後に、カーネルのイメージの PML4 の項目の下へリーフを 1 枚足しに行く。
 # 決まりが、項目を 1 つも書かずに断る。`--paging-test kernel-mapping-map-after-boot-test`。
 kernel-mapping-map-after-boot-test = []
 # 2026-10-03（同上）: 起動の後に、直接写像の 2MiB のページを割りに行く（権限を変える入口と同じ守り）。
@@ -370,7 +370,7 @@ stack-overflow-before-guard-test = []
 stderr-on-screen-test = []
 # 破壊（ADR-0038）: 穴を全 0 として読まず拒む。common へ転送する。
 ext2-sparse-as-error-test = ["common/ext2-sparse-as-error"]
-# 破壊（ADR-0039）: 区画を memsz ではなく filesz で張る。.bss が張られず、
+# 破壊（ADR-0039）: セグメントを memsz ではなく filesz で張る。.bss が張られず、
 # /bin/bss-test がゼロを読もうとして落ちる。
 user-load-filesz-only = []
 # 破壊（S12 前の手当て、C）: 中断（Ctrl+C）の旗を立てない。走っている子が
@@ -667,7 +667,7 @@ socket-release-keeps-slot = ["socket-test"]
 shm-ftruncate-ignores-size = ["socket-test"]
 # close で参照を減らさない（ADR-0065）。プールのページが返らない。
 shm-close-keeps-refs = ["socket-test"]
-# mmap が葉を張らずにアドレスだけ返す（ADR-0065）。読み書きが #PF になる。
+# mmap がリーフを張らずにアドレスだけ返す（ADR-0065）。読み書きが #PF になる。
 shm-mmap-maps-nothing = ["socket-test"]
 # sendmsg/recvmsg の msghdr の msg_iovlen を見ない（ADR-0065）。iovlen が 2 でも受ける。
 socket-msghdr-ignores-iovlen = ["socket-test"]
@@ -802,10 +802,10 @@ bsp-enters-with-nxe-clear-test = []
 # AP のトランポリンが LME だけを立て、NXE を立てない（直す前の形。2026-10-02）。
 # AP がトランポリンを出た直後の EFER を BSP が確かめ、NXE が落ちていることを名指しして止まる。
 ap-trampoline-without-nxe-test = []
-# 下の 2 つの傘（単独では使わない）。**実行禁止のビットを持つ葉を、試しのページの 1 枚だけにする**
-# ——権限の変換は実行禁止のビットを立てず、試しのページの葉にだけ、後から足す。
-# NXE を落とした後に、例外の出力（読むだけの区画を引く）まで予約のビットの違反になるのを避けるためである
-# （2026-10-02 の実測。全部の葉が実行禁止のままだと、狙いの #PF の後、行を出せずに #PF を繰り返した）。
+# 下の 2 つの傘（単独では使わない）。**実行禁止のビットを持つリーフを、試しのページの 1 枚だけにする**
+# ——権限の変換は実行禁止のビットを立てず、試しのページのリーフにだけ、後から足す。
+# NXE を落とした後に、例外の出力（読むだけのセグメントを引く）まで予約のビットの違反になるのを避けるためである
+# （2026-10-02 の実測。全部のリーフが実行禁止のままだと、狙いの #PF の後、行を出せずに #PF を繰り返した）。
 nx-probe-only-leaf-test = []
 # BSP が、実行禁止のビットを付けた試しのページを読む直前に、EFER.NXE を落とす（2026-10-02）。
 # 読んだ時点で、予約のビットの違反の #PF になる（CR2 が試しのページ）。
@@ -821,7 +821,7 @@ ap-switches-without-nxe-test = []
 wx-violation-test = []
 # カーネルのイメージの .text の 1 バイトへ、カーネルが書く。#PF（書き込み・権限の違反）で止まる。
 kernel-writes-text-test = ["wx-violation-test"]
-# カーネルのイメージの読むだけの区画の 1 バイトへ、カーネルが書く。#PF（書き込み・権限の違反）で止まる。
+# カーネルのイメージの読むだけのセグメントの 1 バイトへ、カーネルが書く。#PF（書き込み・権限の違反）で止まる。
 kernel-writes-rodata-test = ["wx-violation-test"]
 # カーネルのイメージの .data に置いた 1 バイト（ret）を、カーネルが実行する。#PF（命令の取り出し）で止まる。
 kernel-executes-data-test = ["wx-violation-test"]
@@ -829,14 +829,14 @@ kernel-executes-data-test = ["wx-violation-test"]
 kernel-executes-direct-map-test = ["wx-violation-test"]
 # AP の CPU ごとのスタックのページに置いた 1 バイト（ret）を、カーネルが実行する。#PF（命令の取り出し）で止まる。
 kernel-executes-stack-test = ["wx-violation-test"]
-# カーネルのイメージの読むだけの区画の最初の 1 ページを、書き込み可で写す（2026-10-02）。起動は通る。
+# カーネルのイメージの読むだけのセグメントの最初の 1 ページを、書き込み可で写す（2026-10-02）。起動は通る。
 # ページの権限の一覧が、違いを名前つきで示す。`cargo xtask run --page-permissions --sabotage kernel-rodata-page-writable-test`。
 kernel-rodata-page-writable-test = []
-# 権限の変換が、ユーザーの側の葉には、実行の欄を無視して、実行禁止のビットを立てない（2026-10-03。入れる前の形）。
+# 権限の変換が、ユーザーの側のリーフには、実行の欄を無視して、実行禁止のビットを立てない（2026-10-03。入れる前の形）。
 # 起動時の Ring 3 の試しで、実行できないはずのページへ跳ぶと、跳んだ先が実行されて、判定が落ちる。
 user-leaf-ignores-execute-test = []
-# ローダーが、書けない区画を、区画のフラグに依らず実行できる形で写す（2026-10-03）。
-# 読むだけの区画へ跳ぶ試しのプログラム（nx-rodata）が、跳んだ先を実行してしまい、判定が落ちる。
+# ローダーが、書けないセグメントを、セグメントのフラグに依らず実行できる形で写す（2026-10-03）。
+# 読むだけのセグメントへ跳ぶ試しのプログラム（nx-rodata）が、跳んだ先を実行してしまい、判定が落ちる。
 user-load-ignores-execute-test = []
 # ユーザーのページを足す入口が、書けて実行もできる権限を断らない（2026-10-03）。
 # 起動時の「断ること」の確かめが落ちる。
@@ -908,13 +908,13 @@ ring3-test-no-fold-flag = []
 # 畳みの 3 条件は通り、健全性判定だけが落ちて dump+halt する。
 # `--ring3-test corrupt-frame-cs`。
 ring3-test-corrupt-frame-cs = []
-# S9-a: map_4kib の書き込み可否の引数を無視し、葉を常に W=1 で作る。読み取り
+# S9-a: map_4kib の書き込み可否の引数を無視し、リーフを常に W=1 で作る。読み取り
 # 専用で張ったユーザーページへ Ring 3 が書けてしまい、ring3-vectors の
 # #PF-write-ro が #PF ではなく後続の ud2（ベクタ 6）で畳まれる。
 # paging-test の傘には入れない。傘に入れると Ring 3 の検証自体が載らなくなり、
 # 破壊を観測する側が消える。`--paging-test map-force-writable`。
 map-force-writable = []
-# 試しの形（破壊ではない）: ユーザーから届く葉に、アドレスより上の位置のビット（52。CPU は無視する）を立てる。
+# 試しの形（破壊ではない）: ユーザーから届くリーフに、アドレスより上の位置のビット（52。CPU は無視する）を立てる。
 # 項目の値をアドレスとして読む所が残っていると、フレームの会計が合わなくなって止まる。
 # 実行禁止のビット（63）を入れる前の確かめ。`--paging-test user-leaf-high-bit`。
 user-leaf-high-bit-test = []
@@ -923,12 +923,12 @@ user-leaf-high-bit-test = []
 # ud2 へ届かない。user-run の判定行がベクタの食い違いで止める。
 # `--ring3-test user-skip-load`。
 user-run-skip-load = []
-# 実行しない PT_LOAD を writable: true で張る。読み取り専用のはずの葉が W=1 になり、
-# user-load の読み戻しが捕まえる（2026-10-03 から、実行する区画は対象にしない。書けて実行もできる権限は、
+# 実行しない PT_LOAD を writable: true で張る。読み取り専用のはずのリーフが W=1 になり、
+# user-load の読み戻しが捕まえる（2026-10-03 から、実行するセグメントは対象にしない。書けて実行もできる権限は、
 # ページを足す入口が先に断るため）。**この破壊だけが読み戻しまで到達する**
 # （map-force-writable は先に ring3-vectors が落ちる）。`--ring3-test user-writable-text`。
 user-run-writable-text = []
-# 位置独立のイメージ（ET_DYN）の区画を、ずらさずに載せる（2026-10-06）。入口だけが、ずれたアドレスを指す。載せたものを写像の表へ
+# 位置独立のイメージ（ET_DYN）のセグメントを、ずらさずに載せる（2026-10-06）。入口だけが、ずれたアドレスを指す。載せたものを写像の表へ
 # 登録する所が、逆さまになったイメージの範囲を `BadRange` で名指しして止まる。`--ring3-test pie-without-bias`。
 pie-load-without-bias-test = []
 # 補助ベクタの AT_ENTRY に、ずらす前のアドレスを渡す（2026-10-06）。`pie-hello` が、終了状態 1 で言う。
@@ -947,14 +947,14 @@ mappings-overlap-skip-test = []
 # 範囲の一部の `munmap` で、外す断片と前に残る部分を取り違える（2026-10-06）。残るはずのページが外れ、`syscall-test`
 # が読んでページフォルトで畳まれる。`--syscall-test mappings-split-swap`。
 mappings-split-swap-test = []
-# `mprotect(PROT_NONE)` で、葉を外してフレームを返す（2026-10-06。中身を捨てる形）。読める形へ戻すと 0 のページが来て、
+# `mprotect(PROT_NONE)` で、リーフを外してフレームを返す（2026-10-06。中身を捨てる形）。読める形へ戻すと 0 のページが来て、
 # `syscall-test` が 107 番で止まる。`--syscall-test mprotect-none-discards`。
 mprotect-none-discards-test = []
 # `munmap` が外したフレームをアロケータへ返さない（2026-10-06）。`munmap` を打つ最初のプロセスが終わった後の会計が
 # 釣り合わず、名指しして止まる。`--syscall-test munmap-keeps-frames`。
 munmap-keeps-frames-test = []
 # `munmap` と `MAP_FIXED` の置き換えが、写していない断片（`PROT_NONE`）を飛ばす（2026-10-08。直す前の形）。`mprotect(PROT_NONE)`
-# でフレームを持ったまま残した葉が外れず、同じアドレスへ写し直すと `map_4kib` が断って、`syscall-test` が 124 番で止まる。
+# でフレームを持ったまま残したリーフが外れず、同じアドレスへ写し直すと `map_4kib` が断って、`syscall-test` が 124 番で止まる。
 # `--syscall-test munmap-skips-retained`。
 munmap-skips-retained-test = []
 # `syscall-test` へ渡すルートの項目の数を、1 つ多くする（2026-10-09）。イメージの中身から求めた数と、`getdents64` で
@@ -997,7 +997,7 @@ page-permissions-dump = []
 # 「application processor stacks」の行のキャッシュの属性の違いを名前つきで示す。
 # `cargo xtask run --page-permissions --sabotage ap-stacks-uncached-test`。
 ap-stacks-uncached-test = []
-# 区画の並びの確かめを通さずに写す（2026-10-01）。起動の途中の壊したイメージの検査が、並びの確かめで
+# セグメントの並びの確かめを通さずに写す（2026-10-01）。起動の途中の壊したイメージの検査が、並びの確かめで
 # 断られるはずのイメージを別の場所で断られる（または読み込まれる）のを見て止まる。
 # `--ring3-test user-skip-layout-check`。
 user-load-skip-layout-check = []
@@ -1029,7 +1029,7 @@ syscall-test-gate-dpl0 = []
 syscall-test-drop-retval = []
 # M5-f-2-1: ユーザーポインタ検証の破壊確認。隔離して検出できる 3 種のみ（範囲/present/
 # overflow は多層防御に隠れて単独では検出できない。verification-coverage 参照）。
-# 葉/中間の U=1 判定を外す。ユーザー範囲内の U=0 ページ（無効3）が受理され battery が
+# リーフ/中間の U=1 判定を外す。ユーザー範囲内の U=0 ページ（無効3）が受理され battery が
 # 検出して halt する。`--syscall-test validate-skip-us`。
 syscall-test-validate-skip-us = []
 # ページ走査を先頭ページだけで打ち切る。末尾ページの無効（無効4の跨ぎ）を取り逃して

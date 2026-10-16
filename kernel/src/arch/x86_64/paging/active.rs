@@ -261,7 +261,7 @@ pub enum MapUpdateError {
     GlobalPagePresent,
     /// ページテーブル用のフレームを確保できなかった。
     OutOfFrames,
-    /// マップしようとした葉が既に present。二重マップを黙って上書きしない（M5-e-2）。
+    /// マップしようとしたリーフが既に present。二重マップを黙って上書きしない（M5-e-2）。
     AlreadyMapped,
     /// ユーザーから届いて、書けて、実行もできる権限でマップしようとした（2026-10-03）。
     /// **書けるページは実行できない、という決まりで写すので、断る。** 項目は 1 つも書かない。
@@ -272,7 +272,7 @@ pub enum MapUpdateError {
     KernelMappingFrozen,
 }
 
-/// [`ActivePageTable::unmap_4kib`] が外した葉（2026-10-02）。
+/// [`ActivePageTable::unmap_4kib`] が外したリーフ（2026-10-02）。
 ///
 /// **フレームのアドレスは `frame` で受け取る。** `entry` は外す前の項目の値で、確かめの行に出すためのものである。
 /// **`entry` をアドレスとして読んではならない**——項目には、アドレスのほかに権限のビットが載っている。以前は、項目の値だけを
@@ -280,7 +280,7 @@ pub enum MapUpdateError {
 /// アドレスより上の位置にビットが立つと（実行禁止のビットなど）、アドレスとして読めず、フレームが返らなくなる。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnmappedPage {
-    /// 外した葉が指していたフレーム（項目のアドレスの部分だけを取り出したもの）。
+    /// 外したリーフが指していたフレーム（項目のアドレスの部分だけを取り出したもの）。
     pub frame: PhysAddr,
     /// 外す前の項目の値（アドレスと、権限のビット）。
     pub entry: u64,
@@ -501,16 +501,16 @@ impl ActivePageTable {
         Ok(pde)
     }
 
-    /// 既に在る 4KiB の葉に、実行禁止のビットを足す（**破壊テスト専用**。`nx-probe-only-leaf-test`）。
+    /// 既に在る 4KiB のリーフに、実行禁止のビットを足す（**破壊テスト専用**。`nx-probe-only-leaf-test`）。
     ///
     /// そのビルドでは、権限の変換が実行禁止のビットを立てない（[`entry::LEAVES_CARRY_EXECUTE_DISABLE`]）。
-    /// 試しのページ（`crate::arch::x86_64::execute_disable_probe`）の葉にだけ、ここで足す。**既定のビルドには
-    /// 無い**——既に在る葉の権限を変える所は、既定のビルドでは `mprotect` の [`Self::set_leaf_access`] だけである
+    /// 試しのページ（`crate::arch::x86_64::execute_disable_probe`）のリーフにだけ、ここで足す。**既定のビルドには
+    /// 無い**——既に在るリーフの権限を変える所は、既定のビルドでは `mprotect` の [`Self::set_leaf_access`] だけである
     /// （2026-10-06）。
     ///
     /// # Safety
     ///
-    /// [`Self::unmap_4kib`] と同じ。加えて、`virt` が 4KiB の葉でマップされていて、実行されないページであること。
+    /// [`Self::unmap_4kib`] と同じ。加えて、`virt` が 4KiB のリーフでマップされていて、実行されないページであること。
     #[cfg(feature = "nx-probe-only-leaf-test")]
     pub unsafe fn mark_leaf_execute_disable(
         &mut self,
@@ -542,7 +542,7 @@ impl ActivePageTable {
         Ok(())
     }
 
-    /// `virt` を含む 4KiB の葉の、書けるか・写してあるかを書き換え、実行できない形にする（2026-10-06。`mprotect`）。
+    /// `virt` を含む 4KiB のリーフの、書けるか・写してあるかを書き換え、実行できない形にする（2026-10-06。`mprotect`）。
     ///
     /// - `present` が真: `P` を立て、[`entry::PTE_RETAINED`] を落とし、`W` を `writable` に合わせる。
     /// - `present` が偽: `P` と `W` を落とし、[`entry::PTE_RETAINED`] を立てる。**フレームのアドレスと、ほかのビット（`U`・
@@ -551,12 +551,12 @@ impl ActivePageTable {
     ///   **実行できる形へ変える道は無い**——`mprotect` は `PROT_EXEC` を断るので、実行を外す向きだけが在る（W^X。
     ///   `crate::syscall` の `mprotect` の doc）。
     ///
-    /// 写していない葉（`P` も `RETAINED` も 0）では `NotMapped`。変えた 1 本を、この CPU の TLB から落とす（`invlpg`）。
+    /// 写していないリーフ（`P` も `RETAINED` も 0）では `NotMapped`。変えた 1 本を、この CPU の TLB から落とす（`invlpg`）。
     /// **ほかの CPU の TLB は見ない**——プロセスは 1 つの CPU に留まる（`crate::syscall` の `mprotect` の doc）。
     ///
     /// # Safety
     ///
-    /// [`Self::unmap_4kib`] と同じ。加えて、書ける葉を書けなくした後、または写していない葉にした後に、そこへ書かない
+    /// [`Self::unmap_4kib`] と同じ。加えて、書けるリーフを書けなくした後、または写していないリーフにした後に、そこへ書かない
     /// （書けば #PF になる）ことは呼び出し側の責任である。
     pub unsafe fn set_leaf_access(
         &mut self,
@@ -601,7 +601,7 @@ impl ActivePageTable {
         Ok(())
     }
 
-    /// `virt` を含む 4KiB ページをアンマップする。外した葉（[`UnmappedPage`]）を返す。
+    /// `virt` を含む 4KiB ページをアンマップする。外したリーフ（[`UnmappedPage`]）を返す。
     ///
     /// # 物理フレームは解放しない
     ///
@@ -647,7 +647,7 @@ impl ActivePageTable {
         let pt_index = entry::pt_index(virt);
         // SAFETY: `pt` は PD が指す有効な PT で、添字は 512 未満。
         let pte = unsafe { self.read(pt, pt_index) };
-        // **フレームを持ったまま写していない葉（`mprotect(PROT_NONE)` の後）も、外してフレームを返す**（2026-10-06）。
+        // **フレームを持ったまま写していないリーフ（`mprotect(PROT_NONE)` の後）も、外してフレームを返す**（2026-10-06）。
         if !entry::is_present(pte) && !entry::is_retained(pte) {
             return Err(MapUpdateError::NotMapped);
         }
@@ -673,7 +673,7 @@ impl ActivePageTable {
     /// 稼働中テーブルへ 4KiB ページを 1 枚マップする（M5-e-2）。
     ///
     /// 途中の中間テーブル（PDPT/PD/PT）が不在なら確保して作る。
-    /// 権限がユーザーから届くものなら、**作る中間エントリと葉 PTE の両方**で
+    /// 権限がユーザーから届くものなら、**作る中間エントリとリーフ PTE の両方**で
     /// U/S ビット（[`entry::PTE_USER`]）を立て、Ring 3 から到達可能にする。
     /// CPU は各階層の U/S を AND で合成するため、ユーザーページは PML4 から PT まで
     /// 全階層で U=1 が要る。
@@ -693,18 +693,18 @@ impl ActivePageTable {
     /// **権限は [`PagePermissions`] で受け、ビットへ直すのは `entry` の変換である**
     /// （[`entry::leaf_entry`] と [`entry::table_entry`]。2026-10-02）。
     /// G は立てない（TLB を CR3 リロード / `invlpg` で管理する前提。
-    /// `tlb_flush_precondition` の G=0 前提）。**実行しない権限の葉には、実行禁止のビットが付く**
+    /// `tlb_flush_precondition` の G=0 前提）。**実行しない権限のリーフには、実行禁止のビットが付く**
     /// （`entry::leaf_flags`）。
     ///
-    /// # 書き込み可否は葉だけで表す。中間へは伝播しない
+    /// # 書き込み可否はリーフだけで表す。中間へは伝播しない
     ///
     /// U/S と違い、W は中間へ伝播させない。**書き込みの可否も各階層の W の AND で
-    /// 決まるので、中間を W=0 にすると、その配下の葉が 1 枚残らず読み取り専用に
-    /// なる。** 中間は常に許す側（W=1）に置き、可否は葉で表す。
+    /// 決まるので、中間を W=0 にすると、その配下のリーフが 1 枚残らず読み取り専用に
+    /// なる。** 中間は常に許す側（W=1）に置き、可否はリーフで表す。
     ///
-    /// # 実行できるかも、葉で表す
+    /// # 実行できるかも、リーフで表す
     ///
-    /// **実行しない権限の葉には、実行禁止のビットが付く**（`ADR-0071` の手順 4。カーネルの側は 2026-10-02、
+    /// **実行しない権限のリーフには、実行禁止のビットが付く**（`ADR-0071` の手順 4。カーネルの側は 2026-10-02、
     /// ユーザーの側は 2026-10-03）。**ユーザーから届いて、書けて、実行もできる権限は断る**
     /// （[`MapUpdateError::WritableAndExecutable`]）。**言えるのは、写像ごとの話までである**——同じフレームの別名
     /// （直接マッピング）まで含めた話ではない（保留している）。
@@ -713,7 +713,7 @@ impl ActivePageTable {
     ///
     /// **「Ring 3 から書くと #PF になる」と、「カーネル（Ring 0）から書いても #PF になる」の両方である。**
     /// **`CR0.WP` は 2026-09-24 から BSP と各 AP で立てて確かめている**（`crate::arch::x86_64::cpu_state` の
-    /// `check_aps_match_bsp`）。**Ring 0 の書きが落ちることは、カーネルのイメージの `.text` と読むだけの区画へ書く
+    /// `check_aps_match_bsp`）。**Ring 0 の書きが落ちることは、カーネルのイメージの `.text` と読むだけのセグメントへ書く
     /// 破壊テスト（`kernel-writes-text-test`・`kernel-writes-rodata-test`）が BSP で確かめている**（2026-10-02。
     /// AP の上では確かめていない。以前は AP で WP が立っていなかった。経緯は `docs/deferred-decisions.md` の
     /// 「AP の制御レジスタが BSP と違う」）。
@@ -756,7 +756,7 @@ impl ActivePageTable {
         // SAFETY: 直前に得た有効な PD。
         let pt = unsafe { self.ensure_child(pd, entry::pd_index(virt), permissions, frames)? };
 
-        // 葉。既に present なら二重マップとして弾く（黙って上書きしない）。**フレームを持ったまま写していない葉
+        // リーフ。既に present なら二重マップとして弾く（黙って上書きしない）。**フレームを持ったまま写していないリーフ
         // （`PTE_RETAINED`。`mprotect(PROT_NONE)` の後）も同じに弾く**（2026-10-08）——上書きすると、そのフレームを指す者が
         // 居なくなり、空間の破棄も集められずに失われる。外すのは `unmap_4kib` の仕事である。
         let pt_index = entry::pt_index(virt);
@@ -766,7 +766,7 @@ impl ActivePageTable {
             return Err(MapUpdateError::AlreadyMapped);
         }
 
-        // **葉のビットは `entry::leaf_entry` が決める**（書けるか・ユーザーから届くか・キャッシュ・共有の印）。
+        // **リーフのビットは `entry::leaf_entry` が決める**（書けるか・ユーザーから届くか・キャッシュ・共有の印）。
         // 共有の印（`ADR-0065`）は、`AddressSpace::detach` が集めないための目印で、立てるのは `crate::syscall` の `mmap` の
         // 2 つだけである。破壊テスト `map-force-writable` は、変換の中に在る。
         // SAFETY: pt/添字は上記の契約。書く値は 4KiB ページを指す正しい PTE。
@@ -783,7 +783,7 @@ impl ActivePageTable {
     }
 
     /// `table_phys[index]` が指す子テーブルの物理を返す。不在なら 1 枚確保して
-    /// ゼロ埋めし、葉の権限から決まる途中の項目（[`entry::table_entry`]）を書く（M5-e-2）。
+    /// ゼロ埋めし、リーフの権限から決まる途中の項目（[`entry::table_entry`]）を書く（M5-e-2）。
     ///
     /// 既に present の中間があればそれをそのまま返し、U ビットを立て直さない
     /// （[`Self::map_4kib`] のドキュメント参照）。
@@ -838,7 +838,7 @@ impl ActivePageTable {
             );
         }
         // SAFETY: table_phys/index は上記契約。新規に確保した child を指す
-        // 中間エントリを書く。U を立てるかは、葉の権限から変換が決める。
+        // 中間エントリを書く。U を立てるかは、リーフの権限から変換が決める。
         unsafe { self.write(table_phys, index, entry::table_entry(child, permissions)) };
         Ok(child)
     }

@@ -65,12 +65,12 @@ pub const PDE_HUGE_PAT: u64 = 1 << 12;
 pub const PTE_GLOBAL: u64 = 1 << 8;
 
 /// 共有メモリの目印（ソフトウェア用の空きビット 9。`ADR-0065`）。**CPU は無視する。**
-/// **`AddressSpace::detach` が「この葉はアロケータのものではない（`crate::shm` が
+/// **`AddressSpace::detach` が「このリーフはアロケータのものではない（`crate::shm` が
 /// 参照数で返す）」を見分けるのに使う。** **Linux も `struct page` 相当の管理に空きビットを
 /// 使う思想である**（`docs/architecture.md` の「ABIの形は合わせる」）。
 pub const PTE_SHARED: u64 = 1 << 9;
 
-/// フレームを持ったまま、写していない葉の目印（ソフトウェア用の空きビット 10。2026-10-06。`mprotect(PROT_NONE)`）。
+/// フレームを持ったまま、写していないリーフの目印（ソフトウェア用の空きビット 10。2026-10-06。`mprotect(PROT_NONE)`）。
 /// **CPU は無視する**——`P` が 0 なので、触ればページフォルトになる。**アドレスの部分にはフレームが残っている**ので、
 /// 読める形へ戻すとき（`mprotect(PROT_READ)`）に同じ中身が戻り、外すとき（`munmap`・空間の破棄）にフレームが返る。
 /// **`P` と同時には立たない。**
@@ -78,28 +78,28 @@ pub const PTE_RETAINED: u64 = 1 << 10;
 
 /// 実行の禁止（ビット 63。XD）。**`EFER.NXE` が 0 の CPU では予約のビットで、立てた項目を引くと `#PF` になる。**
 ///
-/// **立てるのは、権限の変換（[`leaf_flags`]）である**——実行しない権限の葉に付く（カーネルの側は 2026-10-02、
+/// **立てるのは、権限の変換（[`leaf_flags`]）である**——実行しない権限のリーフに付く（カーネルの側は 2026-10-02、
 /// ユーザーの側は 2026-10-03）。
 /// **途中の項目には立てない**（CPU は段ごとの実行禁止を OR で合成するので、途中に立てると、その下の全部が
 /// 実行できなくなる）。どの CPU でもこのビットを持つ項目を引けることは、試し専用のページ
 /// （`crate::arch::x86_64::execute_disable_probe`）で確かめている。
 pub const PTE_NO_EXECUTE: u64 = 1 << 63;
 
-/// 権限の変換が、実行しない権限の葉に実行禁止のビットを立てるか。**既定のビルドでは立てる。**
+/// 権限の変換が、実行しない権限のリーフに実行禁止のビットを立てるか。**既定のビルドでは立てる。**
 ///
 /// 立てないのは、破壊テストのビルドだけである。
 ///
 /// - `leaf-ignores-execute-test`: 実行の欄を無視する（実行禁止を入れる前の形）。試しのページ
 ///   （`crate::arch::x86_64::execute_disable_probe`）を足した直後の読み戻しが、ビットが付いていないことを
 ///   見つけて止まる。
-/// - `nx-probe-only-leaf-test`: 実行禁止のビットを持つ葉を、試しのページの 1 枚だけにする（そのページの葉には、
+/// - `nx-probe-only-leaf-test`: 実行禁止のビットを持つリーフを、試しのページの 1 枚だけにする（そのページのリーフには、
 ///   後から足す）。`EFER.NXE` を落とす破壊テストが、狙いの #PF の後に、例外の出力を出せるようにするためである。
 pub const LEAVES_CARRY_EXECUTE_DISABLE: bool = !cfg!(any(
     feature = "leaf-ignores-execute-test",
     feature = "nx-probe-only-leaf-test"
 ));
 
-/// 試しの形（`user-leaf-high-bit-test`）が、ユーザーの葉に立てるビット（52）。
+/// 試しの形（`user-leaf-high-bit-test`）が、ユーザーのリーフに立てるビット（52）。
 ///
 /// **ビット 52 は、CPU が無視する、ソフトウェア用の空きビットである**（保護キーを使わない間は、52 から 62 が空いて
 /// いる。カーネルは `CR4.PKE` を立てていない）。アドレス（ビット 12-51）より上に在るので、項目の値をアドレスとして読む
@@ -140,7 +140,7 @@ pub const fn is_present(entry: u64) -> bool {
 ///
 /// **PT レベル（4KiB）のエントリに対して呼んではならない。** そちらでは同じ
 /// ビットが PAT を意味する。
-/// フレームを持ったまま写していない葉か（[`PTE_RETAINED`]。`P` が 0 のときだけ意味を持つ）。
+/// フレームを持ったまま写していないリーフか（[`PTE_RETAINED`]。`P` が 0 のときだけ意味を持つ）。
 pub const fn is_retained(entry: u64) -> bool {
     entry & PTE_RETAINED != 0 && !is_present(entry)
 }
@@ -196,7 +196,7 @@ pub const fn is_canonical(addr: u64) -> bool {
     common::addr::is_canonical(addr)
 }
 
-/// 葉の大きさ。**同じ権限でも、大きさでビットが変わる**（2MiB の葉は PD の項目で、PS を立てる）。
+/// リーフの大きさ。**同じ権限でも、大きさでビットが変わる**（2MiB のリーフは PD の項目で、PS を立てる）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LeafSize {
     /// 4KiB（PT の項目）。
@@ -205,7 +205,7 @@ pub enum LeafSize {
     Large,
 }
 
-/// 権限を、葉の項目のビットへ直す（2026-10-02。`ADR-0071` の手順 3）。**アドレスは含まない。**
+/// 権限を、リーフの項目のビットへ直す（2026-10-02。`ADR-0071` の手順 3）。**アドレスは含まない。**
 ///
 /// **ページの権限をビットへ直すのは、この関数と [`table_flags`] だけである。** 起動の表、起動の途中に組む表、
 /// 稼働中の表へ足す 1 枚、ユーザーの空間へ足す 1 枚が、どれもここを通る。
@@ -220,13 +220,13 @@ pub enum LeafSize {
 /// | 大きさが `Large` | PS |
 /// | `execute` でない | 実行禁止（ビット 63。[`PTE_NO_EXECUTE`]） |
 ///
-/// **カーネルの側でも、ユーザーの側でも、実行しない権限の葉に実行禁止のビットを立てる**（`ADR-0071` の手順 4。
+/// **カーネルの側でも、ユーザーの側でも、実行しない権限のリーフに実行禁止のビットを立てる**（`ADR-0071` の手順 4。
 /// カーネルの側は 2026-10-02、ユーザーの側は 2026-10-03）。G・PWT・PAT は立てない。
 pub const fn leaf_flags(permissions: PagePermissions, size: LeafSize) -> u64 {
     let mut flags = PTE_PRESENT;
-    // 破壊テスト (S9-a, map-force-writable): 書けるかの欄を無視して、葉を常に W=1 にする。
+    // 破壊テスト (S9-a, map-force-writable): 書けるかの欄を無視して、リーフを常に W=1 にする。
     // 読み取り専用でマップしたユーザーのページへ Ring 3 が書けてしまい、ring3-vectors の #PF-write-ro が
-    // #PF ではなく後続の ud2 で終わる。**以前は、葉を書く 2 つの関数がそれぞれ持っていた。**
+    // #PF ではなく後続の ud2 で終わる。**以前は、リーフを書く 2 つの関数がそれぞれ持っていた。**
     if permissions.write() || cfg!(feature = "map-force-writable") {
         flags |= PTE_WRITABLE;
     }
@@ -242,14 +242,14 @@ pub const fn leaf_flags(permissions: PagePermissions, size: LeafSize) -> u64 {
     if matches!(size, LeafSize::Large) {
         flags |= PDE_PAGE_SIZE;
     }
-    // 破壊テスト (2026-10-03, user-leaf-ignores-execute): ユーザーの側の葉には、実行の欄を無視して、実行禁止の
+    // 破壊テスト (2026-10-03, user-leaf-ignores-execute): ユーザーの側のリーフには、実行の欄を無視して、実行禁止の
     // ビットを立てない（ユーザーの写像に入れる前の形）。実行できないはずのページへ跳ぶ試しのプログラムが、
     // 跳んだ先を実行してしまい、判定が落ちる。
     let ignored = permissions.user() && cfg!(feature = "user-leaf-ignores-execute-test");
     if !permissions.execute() && LEAVES_CARRY_EXECUTE_DISABLE && !ignored {
         flags |= PTE_NO_EXECUTE;
     }
-    // 試しの形 (user-leaf-high-bit-test): ユーザーから届く葉に、アドレスより上の位置のビットを立てる。
+    // 試しの形 (user-leaf-high-bit-test): ユーザーから届くリーフに、アドレスより上の位置のビットを立てる。
     // **破壊ではない**——CPU は無視するので、正しいカーネルは今までどおり動く。項目の値をアドレスとして読む所が
     // 在ると、フレームの会計が合わなくなって止まる。
     if cfg!(feature = "user-leaf-high-bit-test") && permissions.user() {
@@ -258,20 +258,20 @@ pub const fn leaf_flags(permissions: PagePermissions, size: LeafSize) -> u64 {
     flags
 }
 
-/// 権限を、葉へ降りる途中の項目（下の段の表を指す項目）のビットへ直す。**アドレスは含まない。**
+/// 権限を、リーフへ降りる途中の項目（下の段の表を指す項目）のビットへ直す。**アドレスは含まない。**
 ///
-/// **P と W は常に立てる。U は、葉がユーザーから届くときだけ立てる。実行禁止のビットは立てない。**
-/// CPU は段ごとの W と U を AND で、実行禁止を OR で合成するので、途中の段は葉より緩くしておき、実際の権限は葉で決める。
-/// PCD と共有の印は葉だけのもので、途中の項目には立てない（途中の項目の PCD は、表そのものを読むときの
+/// **P と W は常に立てる。U は、リーフがユーザーから届くときだけ立てる。実行禁止のビットは立てない。**
+/// CPU は段ごとの W と U を AND で、実行禁止を OR で合成するので、途中の段はリーフより緩くしておき、実際の権限はリーフで決める。
+/// PCD と共有の印はリーフだけのもので、途中の項目には立てない（途中の項目の PCD は、表そのものを読むときの
 /// キャッシュの扱いを意味する）。
 pub const fn table_flags(permissions: PagePermissions) -> u64 {
     table_flags_for(permissions.user())
 }
 
-/// 途中の項目のビット。**決めるのは「下の葉がユーザーから届くか」だけである。**
+/// 途中の項目のビット。**決めるのは「下のリーフがユーザーから届くか」だけである。**
 ///
-/// 権限から作るとき（[`table_flags`]）と、2MiB の葉を分割して途中の項目に置き換えるとき
-/// （[`table_entry_for_split`]。元の葉の U を引き継ぐ）の両方が、ここを通る。
+/// 権限から作るとき（[`table_flags`]）と、2MiB のリーフを分割して途中の項目に置き換えるとき
+/// （[`table_entry_for_split`]。元のリーフの U を引き継ぐ）の両方が、ここを通る。
 const fn table_flags_for(user: bool) -> u64 {
     let mut flags = PTE_PRESENT | PTE_WRITABLE;
     if user {
@@ -280,12 +280,12 @@ const fn table_flags_for(user: bool) -> u64 {
     flags
 }
 
-/// 2MiB の葉を、キャッシュしない葉にするときに足すビット。**試し専用の
-/// `ActivePageTable::set_huge_page_uncached` だけが使う**（既に在る葉の権限を変える、ただ 1 つの所である）。
+/// 2MiB のリーフを、キャッシュしないリーフにするときに足すビット。**試し専用の
+/// `ActivePageTable::set_huge_page_uncached` だけが使う**（既に在るリーフの権限を変える、ただ 1 つの所である）。
 #[cfg(feature = "paging-test")]
 pub const UNCACHED_LEAF_FLAG: u64 = PTE_PCD;
 
-/// 葉の項目を作る。**アドレスは、大きさに合ったマスクを通す**（4KiB はビット 12 から、2MiB はビット 21 から）。
+/// リーフの項目を作る。**アドレスは、大きさに合ったマスクを通す**（4KiB はビット 12 から、2MiB はビット 21 から）。
 pub const fn leaf_entry(frame: PhysAddr, permissions: PagePermissions, size: LeafSize) -> u64 {
     let address = match size {
         LeafSize::Small => frame.as_u64() & ADDR_MASK_4K,
@@ -435,19 +435,19 @@ mod tests {
                 PagePermissions::kernel_read_only(),
                 Small,
                 P | XD,
-                "イメージの読むだけの区画、実行禁止を確かめる試しのページ",
+                "イメージの読むだけのセグメント、実行禁止を確かめる試しのページ",
             ),
             (
                 PagePermissions::kernel_read_only(),
                 Large,
                 P | PS | XD,
-                "読むだけの区画が 2MiB を越えたときの葉",
+                "読むだけのセグメントが 2MiB を越えたときのリーフ",
             ),
             (
                 PagePermissions::kernel_code(),
                 Large,
                 P | PS,
-                "コードが 2MiB を越えたときの葉",
+                "コードが 2MiB を越えたときのリーフ",
             ),
             (
                 PagePermissions::user_data(),
@@ -459,19 +459,19 @@ mod tests {
                 PagePermissions::user_program(true, false),
                 Small,
                 P | W | U | XD,
-                "書ける区画",
+                "書けるセグメント",
             ),
             (
                 PagePermissions::user_program(false, true),
                 Small,
                 P | U,
-                "実行する区画",
+                "実行するセグメント",
             ),
             (
                 PagePermissions::user_program(false, false),
                 Small,
                 P | U | XD,
-                "読むだけの区画",
+                "読むだけのセグメント",
             ),
             (
                 PagePermissions::user_shared(true),
@@ -494,7 +494,7 @@ mod tests {
             );
         }
         // 途中の項目は、ユーザーから届くかどうかだけで決まる。
-        // **途中の項目には、葉が実行しない権限でも、実行禁止のビットを立てない**（CPU は段ごとの実行禁止を OR で
+        // **途中の項目には、リーフが実行しない権限でも、実行禁止のビットを立てない**（CPU は段ごとの実行禁止を OR で
         // 合成するので、立てると、その下の全部が実行できなくなる）。
         for permissions in [
             PagePermissions::boot_table_unrestricted(),
@@ -529,7 +529,7 @@ mod tests {
     }
 
     /// **実行の欄は、カーネルの側でもユーザーの側でも、そのままビットになる**（カーネルの側は 2026-10-02、
-    /// ユーザーの側は 2026-10-03）。実行しない権限の葉に実行禁止のビット（63）が立ち、実行する権限の葉には
+    /// ユーザーの側は 2026-10-03）。実行しない権限のリーフに実行禁止のビット（63）が立ち、実行する権限のリーフには
     /// 立たない。途中の項目には、どの権限でも立たない。
     #[test]
     fn the_execute_field_reaches_the_bits_on_both_sides() {
@@ -587,7 +587,7 @@ mod tests {
         }
     }
 
-    /// **2MiB の葉を分割するとき、実行禁止のビットは 4KiB の葉へそのまま引き継ぐ。** 途中の項目へは持ち込まない。
+    /// **2MiB のリーフを分割するとき、実行禁止のビットは 4KiB のリーフへそのまま引き継ぐ。** 途中の項目へは持ち込まない。
     #[test]
     fn splitting_keeps_the_execute_disable_bit_on_the_leaves_only() {
         let huge = leaf_entry(
@@ -606,7 +606,7 @@ mod tests {
         }
         let table = table_entry_for_split(huge, p(0x0000_0000_0030_0000));
         assert_eq!(table & PTE_NO_EXECUTE, 0);
-        // 実行できる葉を分割しても、実行禁止のビットは付かない。
+        // 実行できるリーフを分割しても、実行禁止のビットは付かない。
         let code = leaf_entry(
             p(0x0000_0000_4020_0000),
             PagePermissions::kernel_code(),
@@ -631,7 +631,7 @@ mod tests {
             leaf_entry(large, kernel, LeafSize::Large),
             0x0000_0000_4020_0000 | 0x083
         );
-        // 2MiB の葉では、ビット 12 から 20 をアドレスとして残さない（ビット 12 は PAT、13 から 20 は予約）。
+        // 2MiB のリーフでは、ビット 12 から 20 をアドレスとして残さない（ビット 12 は PAT、13 から 20 は予約）。
         let unaligned = p(0x0000_0000_4021_F000);
         assert_eq!(
             leaf_entry(unaligned, kernel, LeafSize::Large),
