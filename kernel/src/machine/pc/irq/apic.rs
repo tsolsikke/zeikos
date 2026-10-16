@@ -120,7 +120,7 @@ pub(super) unsafe fn mask_routed_irq(irq: u8) {
         );
     };
     // SAFETY: `Apic::new` がマッピングを確認した I/O APIC のページ先頭と、`route` がこの IRQ に書いた添字である。
-    // マスクビットだけを立てる read-modify-write で、ベクタ欄と配送設定は保つ。番号の選択と窓の読み書きの 2 手は、
+    // マスクビットだけを立てる read-modify-write で、ベクタ欄と配送設定は保つ。番号の選択とウィンドウの読み書きの 2 手は、
     // 読み書きする関数がこのCPUの割り込みを止めて行う。ほかの CPU とは BKL で排他する（呼び出し側の契約）。
     unsafe {
         let low = crate::machine::pc::apic::read_redirection_entry_low(base, entry);

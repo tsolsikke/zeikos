@@ -143,7 +143,7 @@ pub const SYS_OPEN_INPUT: u64 = ZEIKOS_PRIVATE_BASE + 8;
 /// `open` する**が、ZeikOS に装置のファイルシステムは無い。**番号は私物にする**（[`SYS_OPEN_INPUT`] と
 /// 同じ理由）。**開いた後の形は Linux の fbdev に合わせる**——**形は `ioctl` の
 /// [`FBIOGET_VSCREENINFO`](crate::abi::linux::FBIOGET_VSCREENINFO) /
-/// [`FBIOGET_FSCREENINFO`](crate::abi::linux::FBIOGET_FSCREENINFO)、画素は `mmap`。**
+/// [`FBIOGET_FSCREENINFO`](crate::abi::linux::FBIOGET_FSCREENINFO)、ピクセルは `mmap`。**
 pub const SYS_OPEN_SCREEN: u64 = ZEIKOS_PRIVATE_BASE + 9;
 
 /// **永久に実装しない番号**（S9-b-3-2a）。`-ENOSYS` の的である。
@@ -210,7 +210,7 @@ pub fn zdiag_text_len(raw: &[u8; ZDIAG_LEN]) -> usize {
 /// 画面の矩形をコピーする要求（ZeikOS 独自。`ADR-0066` の Y-c）。**引数は `struct drm_clip_rect`。**
 ///
 /// **fbdev に対応するものが無い**——**fbdev は実物のフレームバッファをマップするので、コピーする必要が無い。**
-/// **ZeikOS は裏バッファをマップする**（Q1。MMIO を Ring 3 へ出さない）**ので、コピーする入口が要る。**
+/// **ZeikOS はバックバッファをマップする**（Q1。MMIO を Ring 3 へ出さない）**ので、コピーする入口が要る。**
 /// **Linux で近いのは DRM の `DRM_IOCTL_MODE_DIRTYFB` で、矩形の配置（`struct drm_clip_rect`）だけを
 /// 採る**——**DIRTYFB そのものは DRM の大きな ABI の一部なので採らない。** **番号は [`TIOCZTAKE`] と
 /// 同じ `'Z'` の帯に置く。**

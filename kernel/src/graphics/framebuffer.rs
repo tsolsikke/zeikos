@@ -28,9 +28,9 @@ use super::layout::{ClippedRect, FramebufferLayout, BYTES_PER_PIXEL};
 ///
 /// # 実測（PERF-c）
 ///
-/// **1 画素ずつ `write_volatile` で書いていたので、消す経路が支配していた**
+/// **1 ピクセルずつ `write_volatile` で書いていたので、消す経路が支配していた**
 /// ——**`less` の1回の移動で、消すのに 438M サイクル（約124ms）、
-/// 転送は 4.7M サイクル（約1.3ms）だった。** **同じ画素数を一括で消す道
+/// 転送は 4.7M サイクル（約1.3ms）だった。** **同じピクセル数を一括で消す道
 /// （`BackBuffer::clear_rows` の `slice::fill`）は45倍速い**（実測）。
 ///
 /// **次に触る者へ**——**RAM の面は一括で書くこと。** **MMIO の面だけが
@@ -46,15 +46,15 @@ pub enum SurfaceKind {
 pub struct Framebuffer {
     kind: SurfaceKind,
     layout: FramebufferLayout,
-    /// 矩形を塗る経路で、1 画素ずつ書いた画素の数（2026-09-15）。
+    /// 矩形を塗る経路で、1 ピクセルずつ書いたピクセルの数（2026-09-15）。
     ///
     /// # なぜ時間ではなく数を持つのか
     ///
     /// **「消す経路が一括で書いている」を、TSC のサイクルの比で見ていた**
-    /// （`--view-test`）。**W1-c-1 でコードが 0x60 バイトずれたら、1 画素ずつ
+    /// （`--view-test`）。**W1-c-1 でコードが 0x60 バイトずれたら、1 ピクセルずつ
     /// 塗るループが 4KiB の境界をまたぎ、TCG の上で消す費用が約 5 倍になって
     /// 判定が落ちた**（`docs/troubleshooting.md`）。**経路は変わっていなかった。**
-    /// **主張は「どちらの道で書いたか」なので、道を通った画素を数える。数は揺れない。**
+    /// **主張は「どちらの道で書いたか」なので、道を通ったピクセルを数える。数は揺れない。**
     single_pixel_writes: u64,
 }
 
@@ -99,7 +99,7 @@ impl Framebuffer {
         self.kind
     }
 
-    /// 矩形を塗る経路で、1 画素ずつ書いた画素の数の累計（2026-09-15）。
+    /// 矩形を塗る経路で、1 ピクセルずつ書いたピクセルの数の累計（2026-09-15）。
     ///
     /// **呼び出し側が前後の差を取る**（`Console` の消す経路）。
     pub fn single_pixel_writes(&self) -> u64 {
@@ -110,7 +110,7 @@ impl Framebuffer {
         &self.layout
     }
 
-    /// 連続した画素をまとめて書く（PERF-c）。**RAM の面だけが呼ぶこと。**
+    /// 連続したピクセルをまとめて書く（PERF-c）。**RAM の面だけが呼ぶこと。**
     ///
     /// **画面の外へはみ出す分は捨てる**（[`Self::write_pixel`] と同じ規則。
     /// **描画経路から panic を起こさない**。ADR-0013）。
@@ -123,7 +123,7 @@ impl Framebuffer {
         };
         let take = (rect.width as usize).min(pixels.len());
         // SAFETY: `clip_rect` と `pixel_offset_bytes` が返した検証済みの位置で、
-        // `take` 画素は面の中に収まる。**RAM の面なので通常の書き込みでよい**
+        // `take` ピクセルは面の中に収まる。**RAM の面なので通常の書き込みでよい**
         // （[`SurfaceKind`] の doc）。**MMIO の面はこの関数を呼ばない。**
         unsafe {
             let base = self
@@ -208,16 +208,16 @@ impl Framebuffer {
                 debug_assert!(false, "clip_rect returned a row outside the framebuffer");
                 return;
             };
-            // **RAM の面は一括で埋める（PERF-c）。** **1 画素ずつ volatile で
+            // **RAM の面は一括で埋める（PERF-c）。** **1 ピクセルずつ volatile で
             // 書く必要が無い**（[`SurfaceKind`] の doc）。**実測で、ここが
             // 描画の費用の6割を占めていた。**
             //
-            // 破壊テスト (PERF-c, draw-pixel-by-pixel-test): RAM でも 1 画素ずつ書く。
+            // 破壊テスト (PERF-c, draw-pixel-by-pixel-test): RAM でも 1 ピクセルずつ書く。
             // **PERF-c の前の形そのものである**——**出る絵は同じで、費用だけが
             // 桁で増える。** **描く費用の判定が検出する。**
             #[cfg(not(feature = "draw-pixel-by-pixel-test"))]
             if self.kind == SurfaceKind::Ram {
-                // SAFETY: row_offset は検証済みで、この行の rect.width 画素は
+                // SAFETY: row_offset は検証済みで、この行の rect.width ピクセルは
                 // 面の中に収まる（上の debug_assert と clip_rect の保証）。
                 // **RAM なので通常の書き込みでよい**（[`SurfaceKind`] の doc）。
                 let row_slice = unsafe {
@@ -233,7 +233,7 @@ impl Framebuffer {
                 row_offset + (rect.width as u64) * BYTES_PER_PIXEL <= self.layout.size_bytes(),
                 "clipped row would run past the end of the framebuffer"
             );
-            // **1 画素ずつ書く道を通った画素を数える（2026-09-15）。** 行ごとに 1 回足す
+            // **1 ピクセルずつ書く道を通ったピクセルを数える（2026-09-15）。** 行ごとに 1 回足す
             // ——**ループの中で数えると、測りたい道そのものを重くする。**
             self.single_pixel_writes += u64::from(rect.width);
             // SAFETY: row_offset は検証済みオフセットで、base..end はマップ済み。

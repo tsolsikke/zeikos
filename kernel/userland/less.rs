@@ -336,7 +336,7 @@ fn redraw(view: &View, doc: &Doc, window: &Window, echo: &userlib::Echo) {
 ///
 /// # 端末に任せる
 ///
-/// **`DL`（`CSI M`）と `IL`（`CSI L`）を送る。** **セルと画素を同じ規則で
+/// **`DL`（`CSI M`）と `IL`（`CSI L`）を送る。** **セルとピクセルを同じ規則で
 /// 動かすのはコンソールの仕事である**（`kernel/src/console/screen.rs`）。
 ///
 /// # 状態行は毎回描き直す
@@ -620,7 +620,7 @@ fn scroll_down(window: &mut Window, lines: usize, total: usize) -> bool {
     // 破壊テスト (VIEW-b, less-window-frozen): ウィンドウを動かさない。
     // **画面は最初の 1 枚のままになる**——**打鍵は届いており、状態行も
     // 描き直されるので、雑に見ると動いていないことに気づけない。**
-    // **落ちるのは「窓の外に在った行が見えるようになった」判定だけである。**
+    // **落ちるのは「ウィンドウの外に在った行が見えるようになった」判定だけである。**
     #[cfg(less_window_frozen)]
     {
         let _ = (window, lines, total);

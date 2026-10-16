@@ -120,7 +120,7 @@ pub fn redirect_rsdp(
         }
     }
 
-    // direct map ウィンドウが覆っていないアドレスを渡す。ウィンドウ長そのものが「窓の外の
+    // direct map ウィンドウが覆っていないアドレスを渡す。ウィンドウ長そのものが「ウィンドウの外の
     // 最初のアドレス」である（`covers` は `phys < length`）。**ウィンドウ長から導くので、
     // ここにリテラルは無い。**
     #[cfg(feature = "acpi-test-rsdp-outside-window")]

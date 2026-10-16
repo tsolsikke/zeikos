@@ -923,7 +923,7 @@ static mut SPAWN_QUARANTINE: [crate::quarantine::Quarantine; crate::arch::x86_64
 static SPAWN_LEAKED: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
 /// [`spawn`] が起動した子の破棄が、隔離に残っていた前の破棄のフレームを返した本数の累計（2026-10-07。
-/// `crate::quarantine::Retired::released_others`）。**親の窓の中で空きフレームが増える**ので、親は消えた数へ足し戻す。
+/// `crate::quarantine::Retired::released_others`）。**親のウィンドウの中で空きフレームが増える**ので、親は消えた数へ足し戻す。
 static SPAWN_RELEASED_OTHERS: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(0);
 
@@ -940,9 +940,9 @@ pub fn spawn_released_others() -> usize {
 }
 
 /// アイドルの定常経路（[`release_retired_quarantines`]）が、隔離に残っていた前の破棄のフレームを返した本数の累計
-/// （2026-10-15）。**`spawn` の窓の中でアイドルが走る形は、主スレッドが futex で眠るイメージ（M3a）で初めて出た**——隔離を
-/// 通す確かめ（`destroy-through-quarantine-test`）で、前のイメージの 193 本が窓の中で返り、`consumed` が 0 に見えて
-/// `DestroyAccounting` で落ちた（`docs/verification-coverage.md`）。窓の前後の差を取って `consumed` へ足し戻す。
+/// （2026-10-15）。**`spawn` のウィンドウの中でアイドルが走る形は、主スレッドが futex で眠るイメージ（M3a）で初めて出た**——隔離を
+/// 通す確かめ（`destroy-through-quarantine-test`）で、前のイメージの 193 本がウィンドウの中で返り、`consumed` が 0 に見えて
+/// `DestroyAccounting` で落ちた（`docs/verification-coverage.md`）。ウィンドウの前後の差を取って `consumed` へ足し戻す。
 static IDLE_RELEASED: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
 /// `IDLE_RELEASED` の値。
@@ -1030,7 +1030,7 @@ pub fn release_retired_quarantines() -> usize {
         remaining += quarantine.held_count();
     }
     crate::frame_allocator::give_back(allocator);
-    // **窓の会計のために数える**（2026-10-15）。`spawn` の窓の中でアイドルが前の破棄の分を返すと、窓の前後の空きの差が
+    // **ウィンドウの会計のために数える**（2026-10-15）。`spawn` のウィンドウの中でアイドルが前の破棄の分を返すと、ウィンドウの前後の空きの差が
     // その分だけ小さく出る（[`idle_released_frames`]）。
     IDLE_RELEASED.fetch_add(released, core::sync::atomic::Ordering::SeqCst);
     if remaining == 0 {
@@ -2762,7 +2762,7 @@ unsafe fn run_loaded_program(
     // 数えられない。** **下側から数えるので、間に毒値が挟まっても影響しない。**
     report_user_stack_high_water(logger, process);
     // **このプロセスが走っている間に、futex で眠った回数と起こした本数を出す**（2026-10-14。`ADR-0081` の Addendum）。
-    // **スレッドの無いプログラムでは 0 と 0 である。** スレッドを作るプログラムでは、`pthread_create` の窓にティックが
+    // **スレッドの無いプログラムでは 0 と 0 である。** スレッドを作るプログラムでは、`pthread_create` のウィンドウにティックが
     // 当たったかで変わる（スケジュールで決まる値。起動ログの参照では値を伏せ、`xtask` が範囲で見る）。
     report_futex_counts(logger, process.name, futex_before);
     // **`futex` で待つ場面に入って、終わらせたプロセス**（2026-10-06。`ADR-0081`）。スレッドが 1 本しか無い間は、
@@ -3329,12 +3329,12 @@ pub fn spawn_with_loan(
     let shared_after = crate::shm::frames_held();
     let shared_net = shared_after.saturating_sub(shared_before) as usize;
     // **その場で返した分と、途中で退いて返した分は、消えた数に入らない**（2026-10-07）。**隔離に残る分だけが「消えたまま」
-    // である。** 前の破棄のフレームがこの窓の中で返っていれば（`released_others`）、その分を消えた数へ足し戻す。
+    // である。** 前の破棄のフレームがこのウィンドウの中で返っていれば（`released_others`）、その分を消えた数へ足し戻す。
     let destroy = last_destroy();
     let own_still = destroy.still_quarantined();
     let released_by_children = spawn_released_others().saturating_sub(released_before_children);
-    // **アイドルが窓の中で返した前の破棄の分も足し戻す**（2026-10-15）。主スレッドが futex で眠る間はアイドルが走り、
-    // 隔離に残っていたフレームを返す——その分は窓の前後の差を減らすが、この空間が消したものではない。
+    // **アイドルがウィンドウの中で返した前の破棄の分も足し戻す**（2026-10-15）。主スレッドが futex で眠る間はアイドルが走り、
+    // 隔離に残っていたフレームを返す——その分はウィンドウの前後の差を減らすが、この空間が消したものではない。
     let released_by_idle = idle_released_frames().saturating_sub(idle_released_before);
     let consumed = (free_before as i64 - free_after as i64 - shared_net as i64
         + destroy.released_others as i64

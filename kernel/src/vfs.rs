@@ -340,7 +340,7 @@ pub enum File {
     ///
     /// **前景の系統だけが `open_screen` で開ける**（`crate::input::caller_is_foreground`）。
     /// **開くと図形モードへ入り、解放（`close` かプロセスの終わり）で抜ける**
-    /// （[`File::release_end`]）。**`mmap` が裏バッファをマップし、`ioctl` が形を答えてコピーする。**
+    /// （[`File::release_end`]）。**`mmap` がバックバッファをマップし、`ioctl` が形を答えてコピーする。**
     /// **画面は 1 つなので添字を持たない。** **`SCM_RIGHTS` は shm の fd だけを運ぶので、
     /// この fd も相手の表へコピーされない。**
     Screen,

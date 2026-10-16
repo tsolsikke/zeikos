@@ -612,7 +612,7 @@ extern "sysv64" fn kernel_main() -> ! {
     }
 
     // **起動のページテーブルの、ページの権限の一覧**（`kernel::page_survey`。`ADR-0071` の手順 3 の道具）。**まだ静的な
-    // 起動のページテーブルが載っている。** 窓を登録した直後なので、表を恒等で読める。
+    // 起動のページテーブルが載っている。** ウィンドウを登録した直後なので、表を恒等で読める。
     register_image_regions();
     survey_mappings(&mut logger, "the boot table");
 
@@ -1210,7 +1210,7 @@ extern "sysv64" fn kernel_main() -> ! {
     activate_direct_map_window(&mut logger);
     rehome_framebuffer_to_window(&mut logger, &mut framebuffer, boot_info);
 
-    // **直接マッピングの窓を持つ表の、ページの権限の一覧。** 窓と、窓の中のフレームバッファを登録する。
+    // **直接マッピングのウィンドウを持つ表の、ページの権限の一覧。** ウィンドウと、ウィンドウの中のフレームバッファを登録する。
     {
         let window = common::addr::direct_map();
         let base = window
@@ -1497,7 +1497,7 @@ extern "sysv64" fn kernel_main() -> ! {
     let mut virtio_disk = match virtio_blk {
         Some(virtio) => {
             // SAFETY: 上の pci scan と同じ位置（BSP のみ・IF=0）。`virtio` は
-            // `scan_bus0` が返した所在で、BAR0 のレジスタの窓ごと渡す。
+            // `scan_bus0` が返した所在で、BAR0 のレジスタのウィンドウごと渡す。
             let outcome = unsafe { kernel::virtio::setup(&mut logger, virtio, &mut allocator) }
                 .and_then(|mut blk| {
                     // SAFETY: 同じ位置。読み先は器（リングの末尾ページ）の中である。
@@ -2530,7 +2530,7 @@ fn run_init(logger: &mut Logger<Serial>, console: Option<&mut Console>) -> ! {
         cpu::halt_forever()
     }
 
-    // **画面へ画素を出す形を検査する（`ADR-0066` の Y-c）。** **`gfxd` を前景で 1 度起動して終える**
+    // **画面へピクセルを出す形を検査する（`ADR-0066` の Y-c）。** **`gfxd` を前景で 1 度起動して終える**
     // ——**`input-test` と同じ形で、シェルは起動しない。**
     #[cfg(feature = "screen-test")]
     {
@@ -2860,7 +2860,7 @@ fn run_poll_test(logger: &mut Logger<Serial>, console: Option<&mut Console>) {
     ));
 }
 
-/// 画面へ画素を出す形を検査する（`ADR-0066` の Y-c）。**`/bin/gfxd` を前景で 1 度起動し、完了時に
+/// 画面へピクセルを出す形を検査する（`ADR-0066` の Y-c）。**`/bin/gfxd` を前景で 1 度起動し、完了時に
 /// 計測を出す。** **シェルは起動しない**（`init` が `screen-test` のとき、これで終える）。
 ///
 /// **前景はこの関数が据える**——**`gfxd` が画面を開けるのは前景の系統だけである**
@@ -2933,7 +2933,7 @@ fn run_screen_test(logger: &mut Logger<Serial>, console: Option<&mut Console>) {
 ///
 /// **`compd` が `/bin/compc` を切り離して起動する**（`a | b` と同じスロットの形）。**クライアントが
 /// shm のプールを `SCM_RIGHTS` で送り、`compd` が {入力, listener, クライアント} の集合で待って受け、
-/// 裏バッファへ合成して `present` する。** **打鍵で終わる。**
+/// バックバッファへ合成して `present` する。** **打鍵で終わる。**
 ///
 /// **判定は `xtask` の `compose-test` が、画面の読み戻し（`screendump`）と行を読んで行う。**
 #[cfg(feature = "compose-test")]
@@ -10089,7 +10089,7 @@ fn load_embedded_user_program(logger: &mut Logger<Serial>) -> Result<(), UserLoa
         // **実測で踏んだ**——`syscall-test` が子を 2 本起動したところ、24 枚消えて
         // 自分の隔離は 8 枚だった。差の 16 枚が子 2 本のぶんである。
         // **その場で返した分は消えた数に入らない**（2026-10-07。`kernel::quarantine::Retire`）。隔離に残る分だけを
-        // 「消えたまま」と数え、前の破棄のフレームがこの窓で返った分（`released_others`）は足し戻す。
+        // 「消えたまま」と数え、前の破棄のフレームがこのウィンドウで返った分（`released_others`）は足し戻す。
         let destroy = kernel::userland::last_destroy();
         let own_still = destroy.still_quarantined();
         let consumed = (free_before as i64 - frame_count_now(logger) as i64
@@ -11393,7 +11393,7 @@ fn verify_syscall_pointer<const CAP: usize>(
     let efault = (-kernel::abi::linux::EFAULT) as u64;
     let kernel_ptr: u64 = 0x10_0000; // カーネルイメージ領域（PML4[0]、U=0、範囲下限外）
     let unmapped: u64 = 0x8000400000; // PML4[1]、PD[2]、未マップ
-                                      // **窓の上端を超える長さ。** 窓は 1 つになったので、上端は今の遠征の窓から
+                                      // **ウィンドウの上端を超える長さ。** ウィンドウは 1 つになったので、上端は今の遠征のウィンドウから
                                       // 導く（S9-b-3-2b）。
     let (_, window_end) = kernel::syscall::window_for_subtree(USER_PML4_INDEX);
     let over_long_len: u64 = window_end - ring3::USER_CODE_VIRT + 0x1000;
@@ -11953,7 +11953,7 @@ fn verify_split_and_unmap<const CAP: usize>(
 
     // 登録 direct map の高位ウィンドウを使う（B-0）。A-2 以降 direct_map() は高位ウィンドウ
     // （DIRECT_MAP_BASE + phys、PML4[256]、B でも残る）を返す。分割/アンマップの対象と
-    // 読み戻しを高位ウィンドウへ移し、照合を「phys == 高位窓の virt_to_phys(virt)」へ一般化した
+    // 読み戻しを高位ウィンドウへ移し、照合を「phys == 高位ウィンドウの virt_to_phys(virt)」へ一般化した
     // （恒等ウィンドウを base=0 の特殊ケースとして含む形）。B で恒等（PML4[0]）を外しても
     // このテストは生き残る。
     let table_map = common::addr::direct_map();
@@ -12286,7 +12286,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "zi-status-stale-column-test",
         cfg!(feature = "zi-status-stale-column-test"),
-        "zi が窓の動かない移動で状態行を描き直さず、行:桁 が古くなる",
+        "zi がウィンドウの動かない移動で状態行を描き直さず、行:桁 が古くなる",
     ),
     (
         "profile-test",
@@ -12426,7 +12426,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "wait-window-is-wide",
         cfg!(feature = "wait-window-is-wide"),
-        "待ちを据える前の窓を広げる",
+        "待ちを据える前のウィンドウを広げる",
     ),
     (
         "pipe-test",
@@ -12991,7 +12991,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "zi-window-frozen-test",
         cfg!(feature = "zi-window-frozen-test"),
-        "zi が窓を動かさない",
+        "zi がウィンドウを動かさない",
     ),
     (
         "unlink-ignore-request-test",
@@ -13066,7 +13066,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "zi-redraw-whole-screen-test",
         cfg!(feature = "zi-redraw-whole-screen-test"),
-        "zi が窓の1行の移動でも全画面を描き直す（PERF-e の前の形）",
+        "zi がウィンドウの1行の移動でも全画面を描き直す（PERF-e の前の形）",
     ),
     (
         "less-redraw-whole-screen-test",
@@ -13076,7 +13076,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "draw-pixel-by-pixel-test",
         cfg!(feature = "draw-pixel-by-pixel-test"),
-        "RAM の面も 1 画素ずつ書き、描く費用が桁で増える",
+        "RAM の面も 1 ピクセルずつ書き、描く費用が桁で増える",
     ),
     (
         "zi-skip-cursor-flush-test",
@@ -13106,7 +13106,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "less-window-frozen-test",
         cfg!(feature = "less-window-frozen-test"),
-        "less が窓を動かさず、最初の1枚のままになる",
+        "less がウィンドウを動かさず、最初の1枚のままになる",
     ),
     (
         "view-test",
@@ -13366,12 +13366,12 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "paging-test-directmap-low-window",
         cfg!(feature = "paging-test-directmap-low-window"),
-        "direct map の窓を高位ではなく低位（恒等と同じ）で張る",
+        "direct map のウィンドウを高位ではなく低位（恒等と同じ）で張る",
     ),
     (
         "paging-test-directmap-wrong-base",
         cfg!(feature = "paging-test-directmap-wrong-base"),
-        "A-2 の登録窓の base を 1 ページずらす",
+        "A-2 の登録ウィンドウの base を 1 ページずらす",
     ),
     (
         "stack-guard-test",
@@ -13606,7 +13606,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "task-widen-preempt-window",
         cfg!(feature = "task-widen-preempt-window"),
-        "プリエンプト窓の NOP そりを広げる",
+        "プリエンプトウィンドウの NOP そりを広げる",
     ),
     (
         "task-preempt-in-critical",
@@ -13871,7 +13871,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "acpi-test-rsdp-outside-window",
         cfg!(feature = "acpi-test-rsdp-outside-window"),
-        "RSDP を direct map 窓の外へ差し替える",
+        "RSDP を direct map ウィンドウの外へ差し替える",
     ),
     (
         "smp-ap-timer-no-svr-test",
@@ -14853,7 +14853,7 @@ fn build_and_switch_direct_map(
         cpu::halt_forever();
     };
     // SAFETY: kernel_start は kernel image の範囲内で、その範囲はウィンドウの構築対象である
-    // （map_range で全ページを張る）。切り替え前の窓プローブがその範囲の境界で解決を
+    // （map_range で全ページを張る）。切り替え前のウィンドウプローブがその範囲の境界で解決を
     // 確認している。当該アドレス自体をプローブしているのではなく、範囲をすべてマップした構築と
     // 境界での独立検証に依る。読み取りのみ。
     let kernel_byte_via_window =
@@ -14921,7 +14921,7 @@ fn build_and_switch_direct_map(
 ///
 /// A-1 で高位ウィンドウをマップし CR3 も切り替えてあるので、差し替えた瞬間から
 /// `direct_map().phys_to_virt` が高位を返し、その高位アドレスは有効である。恒等は残す
-/// （A では外さない）。`replace_direct_map` の # Safety が要求する「CR3 を新窓のテーブルへ
+/// （A では外さない）。`replace_direct_map` の # Safety が要求する「CR3 を新ウィンドウのテーブルへ
 /// 切り替えた後で呼ぶこと」を満たしている。
 ///
 /// 破壊テスト (paging-test-directmap-wrong-base): 差し替えるウィンドウの base をわざと 1 ページずらす。
@@ -14964,7 +14964,7 @@ fn activate_direct_map_window(logger: &mut Logger<Serial>) {
     };
 
     // SAFETY: A-1 が高位ウィンドウをマップし CR3 を新テーブルへ切り替え済みで、恒等も残っている。
-    // replace_direct_map の # Safety（新窓のテーブルへ切り替えた後で呼ぶこと）を満たす。
+    // replace_direct_map の # Safety（新ウィンドウのテーブルへ切り替えた後で呼ぶこと）を満たす。
     // この区間に他の実行文脈は無い。AP を起動するのは `run_timer_loop` の中
     // （`interrupts.rs`）で、ここより後である。**この根拠は起動順に依っている。
     // AP を起動する位置がこの区間より前へ動くなら、書き直すこと。**
@@ -15088,7 +15088,7 @@ fn rehome_framebuffer_to_window(
     let mut high_fb = unsafe { Framebuffer::new(new_layout) };
 
     // 高位 base 経由で書き、高位と恒等の両方から読み戻して、同じ物理が両方のウィンドウから見える
-    // ことを直接確かめる（A-1 の別名証明のフレームバッファ版）。この画素は直後の
+    // ことを直接確かめる（A-1 の別名証明のフレームバッファ版）。このピクセルは直後の
     // コンソール全面クリアで消える。
     const PROOF: Color = Color::rgb(0xC0, 0x40, 0x80);
     high_fb.write_pixel(0, 0, PROOF);
@@ -15145,8 +15145,8 @@ fn rehome_framebuffer_to_window(
 /// 稼働中のページテーブルを歩いて、ページの権限の一覧を出す（`kernel::page_survey`。`ADR-0071` の手順 3 の道具）。
 /// **起動の途中の 1 本の流れから呼ぶ。**
 fn survey_mappings(logger: &mut Logger<Serial>, moment: &str) {
-    // SAFETY: 根は稼働中のページテーブルで、窓は登録済みの直接マッピングである（切り替える前は恒等、後は高いアドレスの窓）。
-    // どちらの窓でも、ページテーブルのフレームは全部読める。読み取りのみ。起動の途中の 1 本の流れなので、歩いている間に
+    // SAFETY: 根は稼働中のページテーブルで、ウィンドウは登録済みの直接マッピングである（切り替える前は恒等、後は高いアドレスのウィンドウ）。
+    // どちらのウィンドウでも、ページテーブルのフレームは全部読める。読み取りのみ。起動の途中の 1 本の流れなので、歩いている間に
     // 表は変わらない。
     unsafe {
         kernel::page_survey::report_kernel(
@@ -15160,7 +15160,7 @@ fn survey_mappings(logger: &mut Logger<Serial>, moment: &str) {
 
 /// カーネルのイメージのセグメントと、最初から決まっている範囲を、ページの権限の一覧の領域として登録する。
 ///
-/// **セグメントの境は `kernel/link.ld` の記号から取る。** イメージの外の範囲（起動のページテーブルがマップする 1GiB の窓、恒等、起動時の
+/// **セグメントの境は `kernel/link.ld` の記号から取る。** イメージの外の範囲（起動のページテーブルがマップする 1GiB のウィンドウ、恒等、起動時の
 /// Ring 3 の試しのページ）も、名前を持たせておく——名前の無い範囲が一覧に出たら、登録が足りないか、
 /// マップするべきでない所にマップされている。
 fn register_image_regions() {

@@ -193,7 +193,7 @@ impl BackBuffer {
             return;
         }
 
-        // **`DL` の画素の側と同じ規則である（PERF-e）。** **道を 2 本持たない。**
+        // **`DL` のピクセルの側と同じ規則である（PERF-e）。** **道を 2 本持たない。**
         self.delete_rows(0, lines, color);
     }
 

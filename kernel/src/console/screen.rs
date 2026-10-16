@@ -102,7 +102,7 @@ pub struct FlushStats {
     ///
     /// **`draw_cycles` の内訳である**——**引いた残りが字を置く費用である。**
     pub erase_cycles: u64,
-    /// 消す経路（`EL` / `ED`）で、1 画素ずつ書いた画素の数（2026-09-15）。
+    /// 消す経路（`EL` / `ED`）で、1 ピクセルずつ書いたピクセルの数（2026-09-15）。
     ///
     /// **判定はこちらで行う。** **[`Self::erase_cycles`] は (info) である**——
     /// **コードの配置が 4KiB の境界をまたぐだけで、TCG の上で数倍動いた**
@@ -714,10 +714,10 @@ impl Console {
 
     /// 行を削除して下を詰める（`DL`。PERF-d）。
     ///
-    /// # セルと画素を同じ規則で動かす
+    /// # セルとピクセルを同じ規則で動かす
     ///
     /// **片方だけを動かすと、状態と画面が食い違う**（`set_alternate_screen`の
-    /// doc と同じ立場である）。**セルは`common::screen`が、画素は
+    /// doc と同じ立場である）。**セルは`common::screen`が、ピクセルは
     /// [`crate::console::BackBuffer`]が持つ。**
     ///
     /// # 全面を未転送にする
@@ -863,7 +863,7 @@ impl Console {
     /// 停止しても再帰の懸念はない。
     pub fn flush(&mut self) {
         // **図形モードから戻った後なら、先にセルから描き直す（`ADR-0066` の Y-c）。**
-        // **裏バッファには Ring 3 の画素が残っている**——**セルが持つ文字の画面へ戻す。**
+        // **バックバッファには Ring 3 のピクセルが残っている**——**セルが持つ文字の画面へ戻す。**
         if self.repaint_requested {
             self.repaint_requested = false;
             self.repaint_from_cells();
@@ -895,21 +895,21 @@ impl Console {
         }
     }
 
-    /// 裏バッファの位置と大きさ（`ADR-0066` の Y-c）。**図形モードで Ring 3 へマップする面である。**
+    /// バックバッファの位置と大きさ（`ADR-0066` の Y-c）。**図形モードで Ring 3 へマップする面である。**
     ///
     /// **返すのは direct map のアドレスとバイト数である。** **物理位置は呼ぶ側が
-    /// direct map を引き戻して得る**（裏バッファは起動時に連続のフレームで取ってある。
+    /// direct map を引き戻して得る**（バックバッファは起動時に連続のフレームで取ってある。
     /// `kernel_main` の `init_console`）。
     pub fn back_buffer_region(&self) -> (VirtAddr, u64) {
         (self.back.base(), self.back.layout().size_bytes())
     }
 
-    /// 図形モードの間の転送（`ADR-0066` の Y-c）。**矩形を裏バッファから MMIO へコピーする。**
+    /// 図形モードの間の転送（`ADR-0066` の Y-c）。**矩形をバックバッファから MMIO へコピーする。**
     ///
     /// # カーソルを描かない
     ///
     /// **[`Self::flush`] は送る前にカーソルを描く**（ES-c）——**図形モードでそれをすると、
-    /// Ring 3 の画素の上に下線が乗る。** **ここは画素をそのままコピーするだけである。**
+    /// Ring 3 のピクセルの上に下線が乗る。** **ここはピクセルをそのままコピーするだけである。**
     ///
     /// **矩形は画面へ切り詰める**（[`DirtyRegion::mark`] と同じ規則）。**コピーしたバイト数を返す。**
     pub fn present(&mut self, x: u32, y: u32, width: u32, height: u32) -> u64 {
@@ -931,7 +931,7 @@ impl Console {
     /// 図形モードから戻る目印を立てる（`ADR-0066` の Y-c）。**描き直しは次の [`Self::flush`] で行う。**
     ///
     /// **カーソルの跡を忘れる**——**図形モードの間に Ring 3 が上書きしているので、
-    /// 消そうとして元の画素を戻すと、Ring 3 の画素を画面に残す。**
+    /// 消そうとして元のピクセルを戻すと、Ring 3 のピクセルを画面に残す。**
     pub fn request_repaint(&mut self) {
         self.cursor_drawn_at = None;
         self.repaint_requested = true;

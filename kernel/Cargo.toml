@@ -160,7 +160,7 @@ zi-first-nonblank-to-zero-test = []
 # こちら側にも在った）。全角の直後に Esc を打つと字の途中へ落ちるので、
 # utf8-test の「Esc が字の境界へ戻る」判定が落ちる。
 zi-escape-by-byte-test = []
-# 破壊（VIM-1b）: zi が窓の動かない移動で状態行を描き直さない（VIM-1b の前の形）。
+# 破壊（VIM-1b）: zi がウィンドウの動かない移動で状態行を描き直さない（VIM-1b の前の形）。
 # 絵の本文は同じで、状態行の 行:桁 だけが古くなるので、utf8-test の
 # 「状態行がカーソルに追いつく」判定だけが落ちる。
 zi-status-stale-column-test = []
@@ -270,8 +270,8 @@ zi-skip-grow-test = []
 # 破壊（zi-f）: zi が行頭の Backspace を捨てる。行が繋がらないので、
 # 読み戻しが 2 行のまま残る。zi-enter-does-nothing と対である。
 zi-join-does-nothing-test = []
-# 破壊（VIEW-a）: zi が窓を動かさない。b-2 までの振る舞いへ戻る。バッファは
-# 正しいので内部状態の判定は落ちず、画面を読む「窓が動いた」判定だけが落ちる。
+# 破壊（VIEW-a）: zi がウィンドウを動かさない。b-2 までの振る舞いへ戻る。バッファは
+# 正しいので内部状態の判定は落ちず、画面を読む「ウィンドウが動いた」判定だけが落ちる。
 zi-window-frozen-test = []
 # 破壊（zi-c）: 書きで開いた fd への write が複製へ足さない。検証も戻り値も
 # 正しく、書いたつもりが複製に届いていない——読み戻しの検算（58 番）が捕まえる。
@@ -323,8 +323,8 @@ zi-insert-drop-first-test = []
 # 仕組みで、スクリプトだけが違う。zi-test は 21 秒で破壊19構成に掛かるので、
 # less のスクリプトを混ぜずに別へ立てた。
 view-test = []
-# 破壊（VIEW-b）: less が窓を動かさない。打鍵は届いており状態行も描き直される
-# ので、雑に見ると気づけない。「窓の外に在った行が見えるようになった」判定が
+# 破壊（VIEW-b）: less がウィンドウを動かさない。打鍵は届いており状態行も描き直される
+# ので、雑に見ると気づけない。「ウィンドウの外に在った行が見えるようになった」判定が
 # 捕まえる。
 less-window-frozen-test = []
 # 破壊（PERF-g）: zi が編集でも全面を描き直す。PERF-g の前の形で、絵は同じで
@@ -333,13 +333,13 @@ zi-edit-redraws-everything-test = []
 # 破壊（PERF-f）: 変わっていなくてもカーソルを描き直す。PERF-f の前の形で、
 # 絵は同じだが空読みのたびに転送が走る。空読みの判定が捕まえる。
 cursor-repaint-always-test = []
-# 破壊（PERF-e）: zi が窓の1行の移動でも全画面を描き直す。PERF-e の前の形で、
+# 破壊（PERF-e）: zi がウィンドウの1行の移動でも全画面を描き直す。PERF-e の前の形で、
 # 出る絵は同じで描く字が桁で増える。描く字の数の判定が捕まえる。
 zi-redraw-whole-screen-test = []
 # 破壊（PERF-d）: less が1行の移動でも全画面を描き直す。PERF-d の前の形で、
 # 出る絵は同じで描く字が55から967へ増える。描く字の数の判定が捕まえる。
 less-redraw-whole-screen-test = []
-# 破壊（PERF-c）: RAM の面も 1 画素ずつ volatile で書く。PERF-c の前の形
+# 破壊（PERF-c）: RAM の面も 1 ピクセルずつ volatile で書く。PERF-c の前の形
 # そのもので、出る絵は同じで費用だけが桁で増える。描く費用の判定が捕まえる。
 draw-pixel-by-pixel-test = []
 # 破壊（PERF-b の回帰）: zi がカーソルを戻した後に送らない。ノーマルモードの
@@ -508,12 +508,12 @@ paging-test-no-invlpg = ["paging-test-unmap-fault"]
 paging-test-unmap-fault = ["paging-test"]
 # 稼働中のヒープが載る 2MiB ページを、使いながら分割する。
 paging-test-split-heap = ["paging-test"]
-# direct map の窓を高位 base ではなく低位（phys、恒等と同じ）で張る。
+# direct map のウィンドウを高位 base ではなく低位（phys、恒等と同じ）で張る。
 # 恒等が phys->phys を張っているので起動は検証手前まで正常に進むが、
 # 独立 walker が DIRECT_MAP_BASE + phys を辿ると NotPresent で止まる。
-# 高位窓が存在することそのものを検査していることの証明（A-1）。
+# 高位ウィンドウが存在することそのものを検査していることの証明（A-1）。
 paging-test-directmap-low-window = ["paging-test"]
-# A-2 で登録 DirectMap へ差し替える窓の base をわざと 1 ページずらす。
+# A-2 で登録 DirectMap へ差し替えるウィンドウの base をわざと 1 ページずらす。
 # 差し替え直後の phys_to_virt 検証が期待値と食い違って停止する。登録値の
 # 検証が働いていることの証明（A-1 の low-window とは層が違う）。
 paging-test-directmap-wrong-base = ["paging-test"]
@@ -623,7 +623,7 @@ wait-ignores-the-generation = ["concurrent-test"]
 finish-does-not-wake = ["concurrent-test"]
 # 回収しても Uninitialized へ戻さない（ADR-0063 の (b2)）。次の起こしが断られる。
 reap-does-not-reset = ["concurrent-test"]
-# 待ちを据える前の窓を広げる（ADR-0063 の (b2)）。取りこぼしが起きて、親が永久に待つ。
+# 待ちを据える前のウィンドウを広げる（ADR-0063 の (b2)）。取りこぼしが起きて、親が永久に待つ。
 wait-window-is-wide = ["concurrent-test"]
 # パイプへ書いても読み手を起こさない（ADR-0063 の (b3)）。読み手が永久に待つ。
 pipe-write-does-not-wake-reader = ["pipe-test"]
@@ -694,7 +694,7 @@ poll-mistakes-the-member = ["poll-test"]
 # **Y-d の組でも回すので、poll-test に寄りかからない（xtask が構成を足す）。**
 poll-waits-on-one-member = []
 # Y-c: 画面出力（ADR-0066）。init が /bin/gfxd を前景で起こす。gfxd は /bin/gfxc を起こしっぱなしで
-# 起こして（前景でない者が画面と入力を開けないことを見る）、画面を開き、裏バッファを mmap して
+# 起こして（前景でない者が画面と入力を開けないことを見る）、画面を開き、バックバッファを mmap して
 # 四角を描き、present でコピーする。判定は xtask の screen-test が screendump を読んで行う。
 screen-test = []
 # Seinas の fbdev の裏側（release の seinas-fbdev。musl の静的 PIE）をイメージの /bin/linux に入れる手元と CI の確かめ
@@ -715,7 +715,7 @@ fb0-deferred-present-skip-test = []
 fb0-close-keeps-graphics-test = []
 # /dev/fb0 の転送が間隔を見ず、呼ばれるたびにコピーする（ADR-0083）。転送の回数が間隔から導ける上限の内に収まる判定が落ちる。
 fb0-deferred-ignores-interval-test = []
-# present がコピーしない（ADR-0066 の Y-c）。書いた画素が MMIO に届く判定が落ちる。
+# present がコピーしない（ADR-0066 の Y-c）。書いたピクセルが MMIO に届く判定が落ちる。
 # **Y-d の組でも回すので、screen-test に寄りかからない（xtask が構成を足す）。**
 screen-present-does-not-copy = []
 # 図形モードから抜けても描き直さない（ADR-0066 の Y-c）。文字コンソールが戻る判定が落ちる。
@@ -879,8 +879,8 @@ task-switch-yield-in-critical = []
 # プリエンプティブスイッチで RSP0 の更新を落とす。M5-c で入れた RSP0 読み戻し
 # 検査が発火して halt することを確認する。`--task-test drop-rsp0`。
 task-switch-drop-rsp0 = []
-# プリエンプトが set/store の窓に落ちる確率を上げるため NOP そりを長くする。
-# 窓カウントが増えることで、統計的レジスタ検証の判定が働くことを確かめる
+# プリエンプトが set/store のウィンドウに落ちる確率を上げるため NOP そりを長くする。
+# ウィンドウカウントが増えることで、統計的レジスタ検証の判定が働くことを確かめる
 # （条件1）。`--task-test widen-window`。
 task-widen-preempt-window = []
 # InterruptGuard の cli を落とす（common へ渡す。下記）。Locked 保持中も IF=1 の
@@ -1130,7 +1130,7 @@ acpi-test-zero-entry-length = ["acpi-test"]
 # RSDP の物理アドレスを、classify() が Unmapped にする最大の記述子の中点へ
 # 差し替える。#PF にならず検出されることの実証。アドレスは実行時に導く。
 acpi-test-unmapped-rsdp = ["acpi-test"]
-# RSDP の物理アドレスを direct map 窓の外（窓長そのもの）へ差し替える。
+# RSDP の物理アドレスを direct map ウィンドウの外（ウィンドウ長そのもの）へ差し替える。
 acpi-test-rsdp-outside-window = ["acpi-test"]
 # S1-c: APIC MMIO のマッピングの破壊確認。いずれも既定ビルドには入らない。
 # `cargo xtask run --apic-test <kind>` が有効化する。観測は panic ではなく、
@@ -1240,7 +1240,7 @@ bkl-hold-forever-test = []
 # タイマ入口で BKL を取らない。**ロックだけを飛ばして計数は残す**ので、
 # 破壊ビルドのカウンタは「守られるはずだった区間」を数えている（本番の定義と別物）。
 bkl-skip-timer-entry-test = []
-# 入口の保持区間を広げて重なりを増幅する。**広げた窓の重なりであって、素の重なりの
+# 入口の保持区間を広げて重なりを増幅する。**広げたウィンドウの重なりであって、素の重なりの
 # 頻度は別である。** 「BKL が無ければ常に 2 になる」を意味しない。
 bkl-widen-entry-window-test = []
 # B-2a-5: higher-half の破壊確認。いずれも既定ビルドには入らない。`--highhalf-test <kind>`。

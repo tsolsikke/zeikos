@@ -617,7 +617,7 @@ pub struct ScreenInfo {
     pub width: u32,
     /// 縦のピクセル数（`yres`）。
     pub height: u32,
-    /// 1 画素のビット数（`bits_per_pixel`）。
+    /// 1 ピクセルのビット数（`bits_per_pixel`）。
     pub bits_per_pixel: u32,
     /// 赤のビット位置（`red.offset`）。
     pub red_offset: u32,

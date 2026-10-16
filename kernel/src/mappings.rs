@@ -46,7 +46,7 @@ pub enum MappingKind {
     Anonymous,
     /// 共有メモリ（`memfd_create` の fd）。フレームは `crate::shm` が参照数で持つ。
     SharedMemory { shm: u8 },
-    /// 画面の裏バッファ。フレームはカーネルのもの。
+    /// 画面のバックバッファ。フレームはカーネルのもの。
     Screen,
     /// 載せたイメージ（`PT_LOAD` のセグメントの全部をまとめた範囲）。**外せない。**
     Image,

@@ -3,8 +3,8 @@
 //! # 話し方は legacy である（ADR-0033）
 //!
 //! BAR0 の I/O ポート越しにレジスタを読み書きする。MMIO のマッピングは使わない。
-//! **読み書きは、`machine` が BAR0 から作ったレジスタの窓（[`RegisterWindow`]）で行う**（2026-09-30）。どのアドレスを
-//! 叩いてよいかの前提は、窓を作る所にある。
+//! **読み書きは、`machine` が BAR0 から作ったレジスタのウィンドウ（[`RegisterWindow`]）で行う**（2026-09-30）。どのアドレスを
+//! 叩いてよいかの前提は、ウィンドウを作る所にある。
 //! feature は何も受けずに交渉する（装置側の bit は読んで判定行に出す）。
 //!
 //! # 範囲（S13-c まで）
@@ -199,7 +199,7 @@ pub enum VirtioBlkError {
 /// **イメージ全体のロード（ADR-0034）が 2 人目の利用者になったので、設定を分けて
 /// 保持する**——`VirtioBlkLocation` を返す形にしたときと同じ進み方である。
 pub struct VirtioBlk {
-    /// BAR0 のレジスタの窓（所在から移した。複製は作れない）。
+    /// BAR0 のレジスタのウィンドウ（所在から移した。複製は作れない）。
     registers: RegisterWindow,
     queue_size: u64,
     /// リングの物理先頭（4096 整列）。
@@ -230,10 +230,10 @@ pub struct VirtioBlk {
 /// （AP 起床前）、割り込みが無効である位置から呼ぶこと。** 加えて:
 ///
 /// - リングの物理領域を触るのは、返した [`VirtioBlk`] だけであること（複製を作らない）。**リングのアドレスを
-///   装置へ告げると、装置がそこを読み書きする**——窓への書き込み（unsafe fn）は、この契約を根拠にする
+///   装置へ告げると、装置がそこを読み書きする**——ウィンドウへの書き込み（unsafe fn）は、この契約を根拠にする
 ///
-/// 窓の前提（どのアドレスを叩いてよいか）は、窓を作る所にある（[`RegisterWindow`]。2026-09-30 に、ここの
-/// 「`io_base` が virtio-blk の BAR0 の I/O ウィンドウであること」から移した）。窓は所在から返す
+/// ウィンドウの前提（どのアドレスを叩いてよいか）は、ウィンドウを作る所にある（[`RegisterWindow`]。2026-09-30 に、ここの
+/// 「`io_base` が virtio-blk の BAR0 の I/O ウィンドウであること」から移した）。ウィンドウは所在から返す
 /// [`VirtioBlk`] へ移るので、複製は型が作らせない。
 pub unsafe fn setup(
     logger: &mut Logger<Serial>,
@@ -606,7 +606,7 @@ impl VirtioBlk {
     }
 }
 
-/// 割り込みで観測する準備が済んだ virtio の ISR（S13-d。2026-09-30 に、ISR のポートの番号から、窓と位置の控えにした）。
+/// 割り込みで観測する準備が済んだ virtio の ISR（S13-d。2026-09-30 に、ISR のポートの番号から、ウィンドウと位置の控えにした）。
 ///
 /// **割り込みの処理（[`handle_irq`]。処理の表から呼ばれる）から届く必要があるので static である。**
 /// 空は「まだ武装していない」を表す。**ハンドラは BKL を持たずに読む**（[`RegisterCell`] の契約）。
@@ -909,7 +909,7 @@ fn handle_irq(_source: crate::interrupts::InterruptSource) {
 ///
 /// - 配線（`route_to_apic`）と武装（[`arm_interrupt`]）が済み、IF=1 であること
 /// - [`read_at`](VirtioBlk::read_at) と同じ排他（この struct だけが
-///   リングとレジスタの窓を触る。**ISR だけは窓と位置を控えてハンドラと共有し、
+///   リングとレジスタのウィンドウを触る。**ISR だけはウィンドウと位置を控えてハンドラと共有し、
 ///   それは意図した相互作用である**——装置が上げ、ハンドラが読んで下ろす）
 pub unsafe fn exercise_interrupt_read(
     logger: &mut Logger<Serial>,
@@ -963,7 +963,7 @@ const BLOCKING_WAIT_TICKS: u64 = 200;
 /// である（`CLAUDE.md` §6）。post-boot の読み 1 回に限る（S13-e の flush へ
 /// 広げない）。
 ///
-/// # 取り逃しの窓の閉じ（ADR-0036 の IF の規律）
+/// # 取り逃しのウィンドウの閉じ（ADR-0036 の IF の規律）
 ///
 /// 完了フラグの検査を `cli` 下（[`common::critical::EntryInterruptGuard`]）で行い、未完了なら
 /// **`sti; hlt` を隣接させて眠る**（[`common::arch::x86_64::enable_interrupts_and_wait`]）。
@@ -973,7 +973,7 @@ const BLOCKING_WAIT_TICKS: u64 = 200;
 /// # Safety
 ///
 /// [`exercise_interrupt_read`] と同じ位置の契約（配線・武装済み、IF=1、
-/// この struct だけがリングとレジスタの窓を触る）。
+/// この struct だけがリングとレジスタのウィンドウを触る）。
 pub unsafe fn exercise_blocking_read(
     logger: &mut Logger<Serial>,
     blk: &mut VirtioBlk,
@@ -1008,7 +1008,7 @@ pub unsafe fn exercise_blocking_read(
     let deadline = crate::arch::x86_64::timer_ticks() + BLOCKING_WAIT_TICKS;
     let mut halts = 0u64;
     loop {
-        // cli 下で完了を検査する（取り逃しの窓を閉じる。ADR-0036）。
+        // cli 下で完了を検査する（取り逃しのウィンドウを閉じる。ADR-0036）。
         let guard = common::critical::EntryInterruptGuard::enter();
         if IRQ_DELIVERED.load(core::sync::atomic::Ordering::Acquire) > before {
             drop(guard);
@@ -1038,7 +1038,7 @@ pub unsafe fn exercise_blocking_read(
     // **主張は「BKL を解いてから待った」ことである**（§6。ADR-0036）。
     // **「眠った（hlt）」とは言い切らない**——実測で QEMU の TCG は完了 IRQ を
     // 眠る前に配送し、既定では halt を 1 度も踏まない（d-1 のポーリングが数
-    // spin で返るのと同じ速さの限界）。取り逃しの窓を閉じる cli 下の検査は
+    // spin で返るのと同じ速さの限界）。取り逃しのウィンドウを閉じる cli 下の検査は
     // 毎回通る。
     logger.info(format_args!(
         "virtio-blk: blocking read: released the BKL before waiting; the completion was seen"

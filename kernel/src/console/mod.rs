@@ -333,10 +333,10 @@ pub fn note_terminal_write() {
 
 /// 図形モードの面（`ADR-0066` の Y-c）。**[`enter_graphics`] と [`graphics_surface`] が返す。**
 ///
-/// **裏バッファそのものである**——**新しく取らない**（Q1。起動時に確保済みの連続フレーム）。
+/// **バックバッファそのものである**——**新しく取らない**（Q1。起動時に確保済みの連続フレーム）。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct GraphicsSurface {
-    /// 裏バッファの物理位置（フレームの境。`kernel_main` の `init_console` が連続で取った）。
+    /// バックバッファの物理位置（フレームの境。`kernel_main` の `init_console` が連続で取った）。
     pub phys: common::addr::PhysAddr,
     /// 面のバイト数（`stride * height * 4`。ページへは丸めない）。
     pub size_bytes: u64,
@@ -346,7 +346,7 @@ pub struct GraphicsSurface {
     pub height: u32,
     /// 1 行のピクセル数（`width` 以上）。
     pub stride: u32,
-    /// 画素の並び（`Rgb` か `Bgr`。**`FramebufferLayout` が他を断っている**）。
+    /// ピクセルの並び（`Rgb` か `Bgr`。**`FramebufferLayout` が他を断っている**）。
     pub format: common::boot_info::PixelFormat,
 }
 
@@ -374,7 +374,7 @@ static GRAPHICS_LEFT: AtomicU64 = AtomicU64::new(0);
 static GRAPHICS_PRESENTS: AtomicU64 = AtomicU64::new(0);
 
 /// `/dev/fb0` で開いた図形モードか（2026-10-07。`ADR-0083`）。**書けば映る形**——利用者は `FBIOZPRESENT` を打たず、
-/// カーネルが間隔ごとに裏バッファの全体を画面へ転送する（Linux の `fb_deferred_io` と同じ考え）。**`SYS_OPEN_SCREEN`
+/// カーネルが間隔ごとにバックバッファの全体を画面へ転送する（Linux の `fb_deferred_io` と同じ考え）。**`SYS_OPEN_SCREEN`
 /// （ZeikOS 独自）で開いた図形モードでは立てない**——そちらは利用者が `FBIOZPRESENT` で矩形をコピーする。
 static FB0_OPEN: AtomicBool = AtomicBool::new(false);
 /// 最後に転送した時刻（タイマの刻み）。[`present_deferred_if_due`] が間隔を数える。
@@ -411,7 +411,7 @@ pub fn enter_graphics_via_fb0(now_ticks: u64) -> Result<GraphicsSurface, Graphic
     Ok(surface)
 }
 
-/// `/dev/fb0` の裏バッファを、間隔が過ぎていれば画面の全体へ転送する（2026-10-07。`ADR-0083`）。
+/// `/dev/fb0` のバックバッファを、間隔が過ぎていれば画面の全体へ転送する（2026-10-07。`ADR-0083`）。
 ///
 /// **呼ぶ所は 2 つ**——システムコールの戻り（`crate::syscall`）と、BSP のアイドルの定常ループ（`crate::task`）。
 /// **どちらも割り込みの外で、BKL を持っている。** 前景のプロセスが眠っている間（`nanosleep`）はアイドルしか走らないので、
@@ -442,7 +442,7 @@ pub fn present_deferred_if_due(now_ticks: u64, interval_ticks: u64) -> bool {
     true
 }
 
-/// 裏バッファの全体を画面へ転送し、回数とサイクルを数える（[`present_deferred_if_due`] と [`close_screen_fd`] から）。
+/// バックバッファの全体を画面へ転送し、回数とサイクルを数える（[`present_deferred_if_due`] と [`close_screen_fd`] から）。
 /// **`FBIOZPRESENT` の回数（`GRAPHICS_PRESENTS`）には足さない**——利用者が打った数と、カーネルがコピーした数を分けて見る。
 ///
 /// # 呼ぶ側が BKL を持つとは限らない（2026-10-12）
@@ -534,7 +534,7 @@ pub fn graphics_surface() -> Option<GraphicsSurface> {
 /// # 入ったら字を描かない
 ///
 /// **[`write_foreground_bytes`] と [`flush_foreground`] が図形モードの間は描かない。**
-/// **裏バッファは、ここから Ring 3 の画素の面になる。**
+/// **バックバッファは、ここから Ring 3 のピクセルの面になる。**
 pub fn enter_graphics() -> Result<GraphicsSurface, GraphicsError> {
     let surface = graphics_surface().ok_or(GraphicsError::NoConsole)?;
     // **持ち主は 1 つ**——`compare_exchange` で取る（`claim_foreground` と同じ形）。
@@ -550,7 +550,7 @@ pub fn enter_graphics() -> Result<GraphicsSurface, GraphicsError> {
 
 /// 図形モードの矩形を MMIO へコピーする（`ADR-0066` の Y-c）。**コピーしたバイト数を返す。**
 ///
-/// **切り替えではない**——**裏バッファの矩形を前へコピーする**（Q1）。**図形モードでなければ 0。**
+/// **切り替えではない**——**バックバッファの矩形を前へコピーする**（Q1）。**図形モードでなければ 0。**
 ///
 /// # 呼ぶ側の前提
 ///
@@ -564,8 +564,8 @@ pub fn present_graphics(x: u32, y: u32, width: u32, height: u32) -> u64 {
         return 0;
     }
     GRAPHICS_PRESENTS.fetch_add(1, Ordering::Relaxed);
-    // 破壊テスト (Y-c, screen-present-does-not-copy): コピーしない。**Ring 3 は画素を書いたが、画面へは
-    // 届かない**——**判定「書いた画素が MMIO に届いた」だけが落ちる。**
+    // 破壊テスト (Y-c, screen-present-does-not-copy): コピーしない。**Ring 3 はピクセルを書いたが、画面へは
+    // 届かない**——**判定「書いたピクセルが MMIO に届いた」だけが落ちる。**
     if cfg!(feature = "screen-present-does-not-copy") {
         return 0;
     }
@@ -590,7 +590,7 @@ pub fn leave_graphics() {
     }
     GRAPHICS_LEFT.fetch_add(1, Ordering::Relaxed);
     // 破壊テスト (Y-c, screen-leave-does-not-repaint): 描き直さない。**文字の経路は戻るが、画面には
-    // Ring 3 の画素が残る**——**判定「文字コンソールが戻った」だけが落ちる。**
+    // Ring 3 のピクセルが残る**——**判定「文字コンソールが戻った」だけが落ちる。**
     if cfg!(feature = "screen-leave-does-not-repaint") {
         return;
     }
@@ -620,7 +620,7 @@ pub fn flush_foreground() {
         return;
     }
     // **図形モードの間は流さない（`ADR-0066` の Y-c）。** **流すとカーソルを描いてから送るので、
-    // Ring 3 の画素の上に下線が乗る**（`Console::flush` の doc）。**送るのは `present` だけである。**
+    // Ring 3 のピクセルの上に下線が乗る**（`Console::flush` の doc）。**送るのは `present` だけである。**
     if graphics_active() {
         return;
     }
@@ -654,7 +654,7 @@ pub fn write_foreground_bytes(bytes: &[u8]) {
     // **数える（PERF）。** **落とすバイトも数える**——**Ring 3 から見れば
     // 送った量である。**
     console.note_foreground_write(bytes.len());
-    // **図形モードの間は字を描かない（`ADR-0066` の Y-c）。** **裏バッファは Ring 3 の画素の面で、
+    // **図形モードの間は字を描かない（`ADR-0066` の Y-c）。** **バックバッファは Ring 3 のピクセルの面で、
     // 字を描くと絵を壊す。** **セルにも置かない**——**戻ったときの画面は、図形モードへ入る
     // 前の文字の画面である**（**字はシリアルには出ている**。v1 の限界。`ADR-0066`）。
     if graphics_active() {

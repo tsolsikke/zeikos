@@ -11,7 +11,7 @@
 //! 1. `open("/dev/fb0", O_RDWR)`。**`SYS_OPEN_SCREEN`（ZeikOS 独自）ではなく、Linux の道で開く**——Seinas の fbdev の裏側が
 //!    そうするため。
 //! 2. `ioctl(FBIOGET_VSCREENINFO)`・`ioctl(FBIOGET_FSCREENINFO)` で形を訊き、`mmap(MAP_SHARED)` で面をマップする。
-//! 3. 四隅に 80 画素の四角を置く——左上 赤、右上 緑、左下 青、右下 黄（Seinas の fbdev の確かめの絵と同じ配置。向きと
+//! 3. 四隅に 80 ピクセルの四角を置く——左上 赤、右上 緑、左下 青、右下 黄（Seinas の fbdev の確かめの絵と同じ配置。向きと
 //!    色の並びが分かる）。**`FBIOZPRESENT` は打たない**——Linux の fbdev は書けば映るので、カーネルが間隔ごとにコピーするはずである。
 //! 4. `fb-test: painted` と言って、1.5 秒眠る（`nanosleep`。その間に `xtask` が `screendump` で読む）。
 //! 5. `fb-test: slept` と言って、`munmap` し、`close` する（図形モードから抜け、文字の画面が戻る）。0 で終わる。
@@ -41,7 +41,7 @@ const SYS_NANOSLEEP: u64 = 35;
 const SYS_MUNMAP: u64 = 11;
 /// `O_RDWR`。
 const O_RDWR: u64 = 2;
-/// 四隅の四角の 1 辺（画素）。`xtask` の判定と対になっている。
+/// 四隅の四角の 1 辺（ピクセル）。`xtask` の判定と対になっている。
 const CORNER: u32 = 80;
 /// 色（`0x00RRGGBB`。画面の並びが BGR でも RGB でも、赤・緑・青の位置は `screen_info` で読んで並べる）。
 const RED: (u8, u8, u8) = (0xff, 0x00, 0x00);
@@ -59,7 +59,7 @@ fn fail(text: &[u8], status: u64) -> ! {
     exit(status)
 }
 
-/// `(r, g, b)` を、画面の並び（赤と青のビット位置）に合わせた 32 ビットの画素にする。
+/// `(r, g, b)` を、画面の並び（赤と青のビット位置）に合わせた 32 ビットのピクセルにする。
 fn pixel(color: (u8, u8, u8), red_offset: u32, blue_offset: u32) -> u32 {
     let (r, g, b) = color;
     (u32::from(r) << red_offset) | (u32::from(g) << 8) | (u32::from(b) << blue_offset)

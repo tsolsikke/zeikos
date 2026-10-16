@@ -105,9 +105,9 @@ pub struct Winsize {
     pub row: u16,
     /// `ws_col`（桁の数）。
     pub col: u16,
-    /// `ws_xpixel`（横の画素の数）。
+    /// `ws_xpixel`（横のピクセルの数）。
     pub xpixel: u16,
-    /// `ws_ypixel`（縦の画素の数）。
+    /// `ws_ypixel`（縦のピクセルの数）。
     pub ypixel: u16,
 }
 
@@ -271,9 +271,9 @@ pub struct FbBitfield {
 /// **値を決めるのは共通の側で、[`fb_var_screeninfo_bytes`] は欄の位置へ書くだけである**（`ADR-0071` の決定 1 の 2 で、
 /// `crate::syscall` の画面の `ioctl` から分けた。2026-09-30）。
 pub struct FbVarScreeninfo {
-    /// `xres`（横の画素の数）。
+    /// `xres`（横のピクセルの数）。
     pub xres: u32,
-    /// `yres`（縦の画素の数）。
+    /// `yres`（縦のピクセルの数）。
     pub yres: u32,
     /// `xres_virtual`。
     pub xres_virtual: u32,

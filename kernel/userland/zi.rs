@@ -962,7 +962,7 @@ fn follow_window(window: &mut Window, row: usize) -> bool {
     // **b-2 までの振る舞いに戻る**——**ウィンドウは先頭に据え置かれ、カーソルが
     // 下へ出ても画面は先頭の 48 行のままである。** **バッファは正しいので、
     // 内部状態を見る判定は 1 つも落ちない**——**落ちるのは画面を読む
-    // 「窓が動いた」判定だけである。**
+    // 「ウィンドウが動いた」判定だけである。**
     #[cfg(zi_window_frozen)]
     {
         let _ = row;
@@ -1338,7 +1338,7 @@ pub unsafe extern "sysv64" fn zeikos_main(stack: *const u64) -> ! {
         text_lines: buffer.count,
         path: &path[..length + 1],
     };
-    // **見えている窓（VIEW-a。ADR-0045）。** **高さは本文に使える行数である。**
+    // **見えているウィンドウ（VIEW-a。ADR-0045）。** **高さは本文に使える行数である。**
     let mut window = Window::new(view.text_rows());
     redraw(
         &view,

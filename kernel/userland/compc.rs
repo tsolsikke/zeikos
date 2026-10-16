@@ -151,7 +151,7 @@ pub unsafe extern "sysv64" fn zeikos_main(_stack: *const u64) -> ! {
                 (true, false) => WHITE,
                 (false, false) => GRAY,
             };
-            // SAFETY: `y * SIZE + x` はプールの画素数の内側である。**マップした面は 4 バイト境界。**
+            // SAFETY: `y * SIZE + x` はプールのピクセル数の内側である。**マップした面は 4 バイト境界。**
             unsafe { core::ptr::write_volatile(pixels.add((y * SIZE + x) as usize), color) };
         }
     }

@@ -113,14 +113,14 @@ const SUBTREE_SPAN: u64 = 1 << 39;
 ///
 /// 返すのは `[start, end)` で、`start` は [`USER_MIN_ADDR`] で床を打ってある。
 ///
-/// # 窓は 1 つである
+/// # ウィンドウは 1 つである
 ///
 /// **S9-b-1 から S9-b-3-2a までは 2 つあった**（起動時の検証用と、ユーザー
 /// プログラム用）。どちらか一方に収まっていれば受理する形で、**またぐ範囲を
 /// 受理しない条件を明示的に書く必要があった。**
 ///
 /// **1 つにまとめると、その条件は消える。** またぐ範囲が受理されないのは、
-/// **窓が 1 つしかないからである**（書かれた条件ではなく、構造の帰結になった）。
+/// **ウィンドウが 1 つしかないからである**（書かれた条件ではなく、構造の帰結になった）。
 ///
 /// # ウィンドウが有限であることが、走査の停止性を与えている
 ///
@@ -188,7 +188,7 @@ pub fn spawn_status(outcome: &crate::userland::SpawnOutcome) -> u64 {
     }
 }
 
-/// 画素の色の並び（`struct fb_bitfield` の `offset`）。**青・緑・赤の順に返す。**
+/// ピクセルの色の並び（`struct fb_bitfield` の `offset`）。**青・緑・赤の順に返す。**
 ///
 /// **UEFI の `Bgr` は「バイト 0 が青」、`Rgb` は「バイト 0 が赤」である**（`PixelFormat` の doc）。
 /// **リトルエンディアンの 32 ビットで読むので、バイトの位置 × 8 がビットの位置になる。**
@@ -202,7 +202,7 @@ pub const fn fb_color_offsets(bgr: bool) -> (u32, u32, u32) {
 
 /// `FBIOGET_VSCREENINFO` が返す値（`ADR-0066` の Y-c）。**引数だけで決める**（ホストで固定する）。
 ///
-/// **画素は 32 ビットで、色は 8 ビットずつである。** **仮想の大きさは見える大きさと同じ**（パンも回転も持たない）。
+/// **ピクセルは 32 ビットで、色は 8 ビットずつである。** **仮想の大きさは見える大きさと同じ**（パンも回転も持たない）。
 /// **欄の位置へ書くのは abi の `fb_var_screeninfo_bytes` である**（`ADR-0071` の決定 1 の 2 で分けた。2026-09-30）。
 fn screen_var_info(width: u32, height: u32, bgr: bool) -> FbVarScreeninfo {
     let (blue, green, red) = fb_color_offsets(bgr);
@@ -338,7 +338,7 @@ pub const PROBE_ARGS: [u64; 6] = [
 ///
 /// **`PROBE_*` は移していない。** **起動時の probe しか使わない。**
 struct SyscallState {
-    /// 今 Ring 3 が使っている窓の下端と上端（S9-b-3-2b）。
+    /// 今 Ring 3 が使っているウィンドウの下端と上端（S9-b-3-2b）。
     ///
     /// # 据えるのは Ring 3 へ落ちる側である
     ///
@@ -349,7 +349,7 @@ struct SyscallState {
     /// # 既定値は空のウィンドウである
     ///
     /// `(0, 0)` は**どんな長さ 1 以上の範囲も受理しない。** 据え忘れたときに黙って
-    /// 通る形にしない。**安全側は「窓が無ければ何も通さない」である。**
+    /// 通る形にしない。**安全側は「ウィンドウが無ければ何も通さない」である。**
     user_window_start: AtomicU64,
     user_window_end: AtomicU64,
     /// [`SYS_EXIT`] を受け取ったか（S9-b-3-1）。**呼び出し側は、遠征から戻った理由が
@@ -534,7 +534,7 @@ impl UserSliceMut {
 /// 契約はこの検証器を共有する全 syscall が継承する（呼び出し側で短絡しない）。
 /// それ以外は次を満たすとき `Some`:
 ///   (a) 長さの加算にオーバーフローが無い（`checked_add`）。
-///   (b) 範囲が**今 Ring 3 が使っている窓**に収まる（[`user_window`]）。
+///   (b) 範囲が**今 Ring 3 が使っているウィンドウ**に収まる（[`user_window`]）。
 ///   (c) 範囲を跨ぐ全 4KiB ページが present && 全階層 U=1
 ///       （[`crate::arch::x86_64::walk_page_table_user_accessible`]）。
 ///       **書くための確かめは、全階層で書き込み可であることも求める。**
@@ -1634,7 +1634,7 @@ enum ScreenOpenedBy {
 /// Linux の fbdev の装置の道。
 const DEV_FB0: &[u8] = b"/dev/fb0";
 
-/// `/dev/fb0` の裏バッファを画面へ転送する間隔（タイマの刻み。50 ms = 20 Hz。2026-10-07。`ADR-0083`）。
+/// `/dev/fb0` のバックバッファを画面へ転送する間隔（タイマの刻み。50 ms = 20 Hz。2026-10-07。`ADR-0083`）。
 /// **全面の転送は KVM で約 5M サイクル（約 1.5 ms）、TCG ではその数倍**なので、20 Hz なら CPU 時間の数パーセントである
 /// （実測は `docs/verification-coverage.md`）。利用者が見る遅れは最大でこの間隔。
 pub const FB0_PRESENT_INTERVAL_TICKS: u64 = crate::machine::pc::timer_frequency_hz() as u64 / 20;
@@ -1747,17 +1747,17 @@ pub fn screen_pages_mapped() -> u64 {
     SCREEN_PAGES_MAPPED.load(Ordering::Relaxed)
 }
 
-/// 画面の fd の `mmap`（`ADR-0066` の Y-c）。**裏バッファを自分の空間の `MMAP_BASE` から上へマップする。**
+/// 画面の fd の `mmap`（`ADR-0066` の Y-c）。**バックバッファを自分の空間の `MMAP_BASE` から上へマップする。**
 ///
 /// # 共有メモリと同じマップの仕方である
 ///
 /// **リーフに `PTE_SHARED` の目印を立てる**（`ADR-0065`）——**`AddressSpace::detach` は目印の在るリーフを集めない**ので、
-/// **プロセスが終わっても裏バッファのフレームはアロケータへ返らない。** **返すのはコンソールで、
+/// **プロセスが終わってもバックバッファのフレームはアロケータへ返らない。** **返すのはコンソールで、
 /// 返さない**（起動時に取って、ずっと持つ）。**参照数は使わない**（Q1。カーネル常駐）。
 ///
 /// # 新しく取らない
 ///
-/// **リーフは裏バッファのフレームで、アロケータから取るのは中間表だけである**——**その数を破棄の会計へ
+/// **リーフはバックバッファのフレームで、アロケータから取るのは中間表だけである**——**その数を破棄の会計へ
 /// 足す**（共有メモリの `mmap` と同じ）。
 ///
 /// # Safety
@@ -1795,7 +1795,7 @@ unsafe fn mmap_screen_from_ring3(
         Ok(base) => base,
         Err(error) => return errno_for_map(error),
     };
-    // **裏バッファは普通の RAM である**（MMIO ではない。`BackBuffer` の doc）ので、キャッシュしてよい。
+    // **バックバッファは普通の RAM である**（MMIO ではない。`BackBuffer` の doc）ので、キャッシュしてよい。
     // **共有の印が付く**——**`AddressSpace::detach` が集めない**（この関数の doc）。
     let attributes = PagePermissions::user_shared(prot & PROT_WRITE != 0);
     // SAFETY: 遠征の中なので CR3 はこのプロセスの表である。
@@ -1811,7 +1811,7 @@ unsafe fn mmap_screen_from_ring3(
             outcome = (-EINVAL) as u64;
             break;
         };
-        // SAFETY: 稼働中のページテーブルへ、ユーザーの範囲を、裏バッファの物理ページでマップする。**裏バッファは
+        // SAFETY: 稼働中のページテーブルへ、ユーザーの範囲を、バックバッファの物理ページでマップする。**バックバッファは
         // 起動時に `pages` ぶん以上を連続で取ってある**（`limit` で切った）。
         if unsafe { table.map_4kib(virt, frame, attributes, allocator) }.is_err() {
             outcome = (-ENOMEM) as u64;
@@ -1821,7 +1821,7 @@ unsafe fn mmap_screen_from_ring3(
         mapped += 1;
     }
     if outcome != base {
-        // SAFETY: いまマップした裏バッファのページを、同じ稼働中のページテーブルから外す。
+        // SAFETY: いまマップしたバックバッファのページを、同じ稼働中のページテーブルから外す。
         unsafe { undo_shared_mapping(&mut table, base, mapped, pages * PAGE) };
     }
     let tables_taken = free_before_map.saturating_sub(allocator.free_frame_count());
@@ -2577,7 +2577,7 @@ const ANONYMOUS_MMAP_MAX: u64 = 16 * 1024 * 1024;
 /// - 範囲に掛かる無名のマッピングを外す。一部にだけ掛かるマッピングは、残る部分を分けて表に戻す。ページを外してフレームを返す。
 /// - 範囲にどのマッピングも掛かっていなければ 0（Linux と同じ）。
 /// - イメージ・スタック・見張りのページ・ヒープ・共有メモリ・画面に掛かる範囲は `-EINVAL`（何も変えない）。ヒープは `brk` が
-///   持つので外さない。共有メモリと画面は、参照数と裏バッファの扱いが要る（`docs/deferred-decisions.md`）。
+///   持つので外さない。共有メモリと画面は、参照数とバックバッファの扱いが要る（`docs/deferred-decisions.md`）。
 ///
 /// # Safety
 ///
@@ -3126,7 +3126,7 @@ unsafe fn mmap_from_ring3(
         return (-ENOMEM) as u64;
     };
     let allocator: &mut crate::frame_allocator::FrameAllocator = &mut loan;
-    // **画面の fd なら裏バッファをマップする（`ADR-0066` の Y-c）。** **マップの仕方は共有メモリと同じ**
+    // **画面の fd ならバックバッファをマップする（`ADR-0066` の Y-c）。** **マップの仕方は共有メモリと同じ**
     // （`PTE_SHARED`）。
     if is_screen_fd(fd) {
         // SAFETY: 呼び出し元契約をそのまま渡す。
@@ -3209,10 +3209,10 @@ unsafe fn mmap_from_ring3(
     outcome
 }
 
-/// 共有のページ（共有メモリと画面の裏バッファ）をマップする途中で失敗したとき、マップした分を外し、表の予約を返す（2026-10-08）。
+/// 共有のページ（共有メモリと画面のバックバッファ）をマップする途中で失敗したとき、マップした分を外し、表の予約を返す（2026-10-08）。
 ///
 /// 以前は、予約とマップした分を残したまま失敗を返していた——表とページテーブルには、返したアドレスを使う者の居ないマッピングが残った。
-/// **フレームは返さない**（共有メモリは参照数で、裏バッファはコンソールが持つ）。中間テーブルは残す（破棄が集め、空間の
+/// **フレームは返さない**（共有メモリは参照数で、バックバッファはコンソールが持つ）。中間テーブルは残す（破棄が集め、空間の
 /// 会計にも足してある）。
 ///
 /// # Safety
@@ -4116,7 +4116,7 @@ pub(crate) unsafe extern "sysv64" fn syscall_entry(
         unsafe { crate::arch::x86_64::leave_user_mode() }
     }
 
-    // **`/dev/fb0` の裏バッファを、間隔が過ぎていれば画面へ転送する**（2026-10-07。`ADR-0083`）。システムコールの戻りは、
+    // **`/dev/fb0` のバックバッファを、間隔が過ぎていれば画面へ転送する**（2026-10-07。`ADR-0083`）。システムコールの戻りは、
     // 割り込みの外で BKL を持つ所である。**アイドルの定常ループにも同じ 1 行が在る**（眠っているプロセスのため）。
     crate::console::present_deferred_if_due(
         crate::arch::x86_64::monotonic_ticks(),
@@ -4350,8 +4350,8 @@ unsafe fn sys_read(
         return unsafe { read_input_events(buf, count, page_table_root, direct_map, bkl) };
     }
     // **画面の fd は読めない（`ADR-0066` の Y-c）。** **入力 fd と同じで inode が None なので、
-    // 分けないと端末の枝へ落ちて打鍵を読んでしまう。** **Linux の fbdev は `read` で画素を返すが、
-    // 合わせなかった**——**画素は `mmap` で読める**ので、2 つ目の道を持たない。
+    // 分けないと端末の枝へ落ちて打鍵を読んでしまう。** **Linux の fbdev は `read` でピクセルを返すが、
+    // 合わせなかった**——**ピクセルは `mmap` で読める**ので、2 つ目の道を持たない。
     let is_screen = crate::vfs::with_current_files(|files| {
         files
             .get(fd as usize)
@@ -5876,7 +5876,7 @@ fn classify_clone_flags(flags: u64) -> CloneRequest {
 /// 起こし、その tid を返す。**
 ///
 /// **受けるのは musl の `pthread_create` の組だけである**（[`classify_clone_flags`]）。Linux が `-EINVAL` にする組はそのまま
-/// `-EINVAL`、Linux では通るがここに無い組（`fork` の形）は `-ENOSYS`。**アドレスは、スタックが窓の外なら `-EINVAL`、TLS が
+/// `-EINVAL`、Linux では通るがここに無い組（`fork` の形）は `-ENOSYS`。**アドレスは、スタックがウィンドウの外なら `-EINVAL`、TLS が
 /// ユーザーの範囲の正準なアドレスでなければ `-EPERM`（`arch_prctl` と同じ。Linux の `do_arch_prctl_64` も `-EPERM`）、
 /// `parent_tid` と `child_tid` に書けなければ `-EFAULT`。** 池が尽きていれば `-EAGAIN`（Linux の `EAGAIN` は、スレッドの数の
 /// 上限に当たったときの値である）。**断るのは全部、池を取る前である**（巻き戻すものは無い）。
@@ -8045,7 +8045,7 @@ pub fn restore_records(records: Records) {
     }
 }
 
-/// 今 Ring 3 が使っている窓を返す（S9-b-3-2b）。
+/// 今 Ring 3 が使っているウィンドウを返す（S9-b-3-2b）。
 pub fn user_window() -> (u64, u64) {
     (
         state().user_window_start.load(Ordering::SeqCst),
@@ -8327,7 +8327,7 @@ mod tests {
     }
 
     /// **`Bgr` は「バイト 0 が青」——青 0・緑 8・赤 16。** `Rgb` では赤と青の位置が入れ替わる。
-    /// **画素は 32 ビットで、色は 8 ビットずつ。仮想の大きさは見える大きさと同じである。**
+    /// **ピクセルは 32 ビットで、色は 8 ビットずつ。仮想の大きさは見える大きさと同じである。**
     #[test]
     fn the_color_offsets_follow_the_pixel_order() {
         assert_eq!(fb_color_offsets(true), (0, 8, 16));

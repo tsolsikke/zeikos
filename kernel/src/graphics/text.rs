@@ -41,16 +41,16 @@ impl Framebuffer {
     ) {
         // **RAM の面は 1 行ぶんをまとめて書く（PERF-c）。**
         //
-        // **1 画素ずつ `write_volatile` で書いていた**——**MMIO の規則を
+        // **1 ピクセルずつ `write_volatile` で書いていた**——**MMIO の規則を
         // RAM の面へも当てていた**（`super::framebuffer::SurfaceKind` の doc）。
-        // **背景を塗る形（コンソールが使う側）では、1 行が連続した 8 画素に
+        // **背景を塗る形（コンソールが使う側）では、1 行が連続した 8 ピクセルに
         // なるので、組み立てて 1 回でコピーできる。**
         //
-        // **重ね描き（`background` が `None`）は 1 画素ずつのままである**
+        // **重ね描き（`background` が `None`）は 1 ピクセルずつのままである**
         // ——**穴が開くので連続にならない。** **利用者はデモの経路だけで、
         // コンソールは必ず背景を塗る。**
         //
-        // 破壊テスト (PERF-c, draw-pixel-by-pixel-test): まとめずに 1 画素ずつ書く。
+        // 破壊テスト (PERF-c, draw-pixel-by-pixel-test): まとめずに 1 ピクセルずつ書く。
         if let (Some(background), false) = (
             background,
             cfg!(feature = "draw-pixel-by-pixel-test")
@@ -77,7 +77,7 @@ impl Framebuffer {
 
     /// グリフを 1 行ずつまとめて書く（PERF-c）。**RAM の面だけが通る。**
     ///
-    /// **`MAX_GLYPH_WIDTH` 画素までを組み立てて、行ごとに 1 回でコピーする。**
+    /// **`MAX_GLYPH_WIDTH` ピクセルまでを組み立てて、行ごとに 1 回でコピーする。**
     fn draw_glyph_rows(
         &mut self,
         x: u32,
@@ -86,7 +86,7 @@ impl Framebuffer {
         foreground: Color,
         background: Color,
     ) {
-        /// 組み立てる行の上限（画素）。**全角でも 16 である**
+        /// 組み立てる行の上限（ピクセル）。**全角でも 16 である**
         /// （`common::screen::MAX_GLYPH_WIDTH_CELLS` × セル幅）。
         const MAX_GLYPH_WIDTH: usize = 32;
         let width = (glyph.width_pixels() as usize).min(MAX_GLYPH_WIDTH);
@@ -99,7 +99,7 @@ impl Framebuffer {
         // **行ごとに呼んでいた**——**16 行ぶんの `clip_rect` と
         // `pixel_offset_bytes` である。** **debug ビルドでは、どちらも
         // 検査つきの関数呼び出しになる**（実測で、グリフ 1 字が 161K サイクル
-        // だった。**うち書き込みは 8 画素 × 16 行 = 32 バイト × 16 しかない**）。
+        // だった。**うち書き込みは 8 ピクセル × 16 行 = 32 バイト × 16 しかない**）。
         //
         // **画面の外へ出る字は、これまでどおり `write_pixel_run` の側で捨てる**
         // ——**まとめて書けるのは、字が丸ごと収まっているときだけである。**
@@ -142,7 +142,7 @@ impl Framebuffer {
                     back
                 };
             }
-            // SAFETY: 上の SAFETY と同じ。行の先頭から `width` 画素は面の中である。
+            // SAFETY: 上の SAFETY と同じ。行の先頭から `width` ピクセルは面の中である。
             unsafe {
                 let row_ptr = base.byte_add((row as u64 * stride_bytes) as usize);
                 core::slice::from_raw_parts_mut(row_ptr, width).copy_from_slice(&line[..width]);
