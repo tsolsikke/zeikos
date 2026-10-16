@@ -1023,6 +1023,7 @@ xtask::tests::the_capture_stops_only_when_the_prompt_follows_ready
 xtask::tests::the_commit_message_rules_catch_each_shape
 xtask::tests::the_commit_message_rules_pass_the_shapes_that_are_allowed
 xtask::tests::the_dependency_scan_reads_code_paths_through_aliases_only
+xtask::tests::the_environment_seed_is_checked_against_the_zi_scripts
 xtask::tests::the_flag_scopes_match_the_run_dispatch
 xtask::tests::the_fs_extract_sabotage_takes_the_check_name_the_full_check_uses
 xtask::tests::the_interrupt_control_scan_sees_the_save_and_restore_entry_points

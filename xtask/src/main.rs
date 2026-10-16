@@ -21053,7 +21053,7 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         after: " syscall(s)",
         min: 46,
         max: 50,
-        what: "m3a-spawn-from-thread-rust's system calls (measured 44..=46 in 40 boots before the spawn after the join and its line were added on 2026-10-16 (+2; measured 47..=48 in 3 boots after): 45; 44 when a tick let the thread finish before the main thread's join; 46 when the thread's flag-wait loop yielded once more; room for musl's thread-list-lock window, +2)",
+        what: "m3a-spawn-from-thread-rust's system calls (measured 46..=48 in the 196 boots of the 2026-10-16 full check after the spawn after the join and its line were added (+2 over the earlier 44..=46): 47 in 155, 48 in 39, 46 in 2; 46 when a tick let the thread finish before the main thread's join, 48 when the thread's flag-wait loop yielded once more; room for musl's thread-list-lock window, +2)",
     },
     BootLogRange {
         line: "spawn: /bin/linux/m3a-exit-group-spin-rust ended",
@@ -31155,6 +31155,21 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
         }
     }
 
+    // **種の `/etc/environment` が、`zi` の台本の前提（末尾から数える）を満たすこと**（2026-10-16。運用者の決定。
+    // `check_environment_seed_matches_the_zi_scripts` の doc）。
+    total += 1;
+    begin_item(
+        Family::Base,
+        "the environment seed keeps the lines the zi scripts count from the end",
+    );
+    match check_environment_seed_matches_the_zi_scripts(&workspace_root) {
+        Ok(message) => println!("--- environment seed: {message}"),
+        Err(error) => {
+            println!("--- environment seed: FAILED ({error})");
+            failed.push("environment seed".to_string());
+        }
+    }
+
     // **Git の pre-push の関門が入っていること**（2026-09-26。運用者の決定 1 の ③ の条件 3）。**hook の本体が
     // 追跡されて実行でき、WSL の中では `core.hooksPath` がそこを指していること。**
     total += 1;
@@ -34691,8 +34706,8 @@ fn count_elements(text: &str) -> usize {
 
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
-    base: 65,
-    full: 534,
+    base: 66,
+    full: 535,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。
@@ -34942,6 +34957,111 @@ fn string_slice_constant(source: &str, name: &str) -> Result<Vec<String>> {
         bail!("`{head}` lists no name");
     }
     Ok(names)
+}
+
+/// 種の `/etc/environment` が、`zi` の台本の前提を満たすこと（2026-10-16。運用者の決定）。
+///
+/// **`kernel/src/input.rs` の台本は、行の内容ではなく末尾からの位置で変数を探す**——`env-rewrite-test` は最後の行へ
+/// 降りてから `k` を打って `TERM` へ上がり、`keymap-rewrite-test` は最後の行で `l` を打って右端へ寄せ、その後ろへ
+/// `KEYMAP=us` を足す（`zi` に検索が無い）。**末尾に行を足すとどちらもずれる**——2026-10-16 に `XDG_RUNTIME_DIR` を
+/// 末尾に足して、full check の keymap と persist (env) の 4 項目が落ちた（基本の検査には無かった。
+/// `docs/troubleshooting.md`）。
+///
+/// 見るのは 3 つ——末尾の 3 行が `TERM=`・`PATH=`・`HOME=` で始まること、`env-rewrite-test` の `k` の数だけ末尾から
+/// 上がった行が `TERM=` であること、最後の行の長さが `keymap-rewrite-test` の `l` の数以下であること（右端に届く）。
+/// **`k` と `l` の数は `kernel/src/input.rs` の文面から読む**（台本を変えたら、ここも自動で追う）。
+fn check_environment_seed_matches_the_zi_scripts(workspace_root: &Path) -> Result<String> {
+    let read = |relative: &str| -> Result<String> {
+        let path = workspace_root.join(relative);
+        fs::read_to_string(&path).with_context(|| format!("failed to read {}", path.display()))
+    };
+    let seed = read("kernel/fsimage/seed/etc/environment")?;
+    let input = read("kernel/src/input.rs")?;
+    let ups = longest_run(&zi_script_of_feature(&input, "env-rewrite-test")?, 'k');
+    let rights = longest_run(&zi_script_of_feature(&input, "keymap-rewrite-test")?, 'l');
+    let findings = environment_seed_findings(&seed, ups, rights);
+    if !findings.is_empty() {
+        bail!("{}", findings.join("; "));
+    }
+    let last = seed.lines().last().unwrap_or("");
+    Ok(format!(
+        "OK (the last three lines are TERM, PATH and HOME; TERM is {ups} line(s) above the end as env-rewrite-test \
+         expects; the last line has {} byte(s), within the {rights} `l` of keymap-rewrite-test)",
+        last.len()
+    ))
+}
+
+/// `kernel/src/input.rs` の、`#[cfg(feature = "<feature>")]` の直後の `const SCRIPT: &[u8] = b"…";` の文面（純粋な論理）。
+/// **同じ feature の `cfg` は何か所にも在るので、直後に `const SCRIPT` が続くものを探す。**
+fn zi_script_of_feature(source: &str, feature: &str) -> Result<String> {
+    let marker = format!("#[cfg(feature = \"{feature}\")]");
+    let mut from = 0;
+    while let Some(at) = source[from..].find(&marker) {
+        let after = &source[from + at + marker.len()..];
+        let trimmed = after.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("const SCRIPT: &[u8] = b\"") {
+            let end = rest
+                .find("\";")
+                .with_context(|| format!("the SCRIPT of {feature} has no closing `\";`"))?;
+            return Ok(rest[..end].to_string());
+        }
+        from += at + marker.len();
+    }
+    bail!("kernel/src/input.rs has no `const SCRIPT` right after `{marker}`")
+}
+
+/// 文の中で `ch` が続く最長の長さ（純粋な論理）。
+fn longest_run(text: &str, ch: char) -> usize {
+    let mut best = 0;
+    let mut run = 0;
+    for c in text.chars() {
+        if c == ch {
+            run += 1;
+            best = best.max(run);
+        } else {
+            run = 0;
+        }
+    }
+    best
+}
+
+/// 種の `/etc/environment` の文面が、台本の前提を満たすか（純粋な論理。ホストの単体試験が固定する）。
+/// `ups` は `env-rewrite-test` が最後の行から上がる数、`rights` は `keymap-rewrite-test` が最後の行で右へ寄せる数。
+fn environment_seed_findings(seed: &str, ups: usize, rights: usize) -> Vec<String> {
+    let lines: Vec<&str> = seed.lines().collect();
+    let mut findings = Vec::new();
+    if lines.len() < 3 {
+        findings.push(format!(
+            "the seed has {} line(s); the last three must be TERM, PATH and HOME",
+            lines.len()
+        ));
+        return findings;
+    }
+    let n = lines.len();
+    for (offset, name) in [(3, "TERM="), (2, "PATH="), (1, "HOME=")] {
+        let line = lines[n - offset];
+        if !line.starts_with(name) {
+            findings.push(format!(
+                "line {} from the end is {line:?}, but the zi scripts expect it to start with {name:?}",
+                offset
+            ));
+        }
+    }
+    if ups + 1 > n || !lines[n - 1 - ups].starts_with("TERM=") {
+        findings.push(format!(
+            "env-rewrite-test goes {ups} line(s) up from the last line and expects TERM= there, but finds {:?}",
+            lines.get(n.wrapping_sub(1 + ups)).copied().unwrap_or("nothing")
+        ));
+    }
+    let last = lines[n - 1];
+    if last.len() > rights {
+        findings.push(format!(
+            "the last line {last:?} has {} byte(s); keymap-rewrite-test presses `l` {rights} time(s) and must reach its \
+             right end to append KEYMAP=us after it",
+            last.len()
+        ));
+    }
+    findings
 }
 
 /// 実際に走った項目数が会計行と一致するかを見る。
@@ -37700,6 +37820,25 @@ mod tests {
         assert!(
             super::volatile_field_span("next at 12ab (every", " next at ", " (every").is_none()
         );
+    }
+
+    /// 種の `/etc/environment` と `zi` の台本の前提——末尾の 3 行、`k` の数、最後の行の長さ、台本の読み出し。
+    #[test]
+    fn the_environment_seed_is_checked_against_the_zi_scripts() {
+        let good = "# a\nXDG_RUNTIME_DIR=/tmp/seinas\nTERM=zeikos\nPATH=/bin\nHOME=/root\n";
+        assert!(super::environment_seed_findings(good, 2, 20).is_empty());
+        let appended = "# a\nTERM=zeikos\nPATH=/bin\nHOME=/root\nXDG_RUNTIME_DIR=/tmp/seinas\n";
+        let findings = super::environment_seed_findings(appended, 2, 20);
+        assert_eq!(findings.len(), 5, "{findings:?}");
+        assert!(super::environment_seed_findings(good, 3, 20)[0].contains("env-rewrite-test"));
+        assert!(super::environment_seed_findings(good, 2, 9)[0].contains("keymap-rewrite-test"));
+        assert_eq!(super::longest_run("jjjkkllll", 'l'), 4);
+        let source = "#[cfg(feature = \"x-test\")]\n    fn f() {}\n    #[cfg(feature = \"x-test\")]\n    const SCRIPT: &[u8] = b\"/bin/zi\\n\\\n        kk\";\n";
+        assert_eq!(
+            super::longest_run(&super::zi_script_of_feature(source, "x-test").unwrap(), 'k'),
+            2
+        );
+        assert!(super::zi_script_of_feature(source, "y-test").is_err());
     }
 
     /// `const X: &[&str] = &[…];` の文字列を文面から読む——複数行・1 行・コメント付き・空。
