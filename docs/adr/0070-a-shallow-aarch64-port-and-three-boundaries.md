@@ -36,7 +36,7 @@ QEMUの`virt`と、AAVMF（`qemu-efi-aarch64`の2024.02）で次を確かめた�
 
 起動の形で直す所を、実測で2つ見つけた。
 
-- 起動の台本（`startup.nsh`。`xtask`が書く）が、`FS0:\EFI\BOOT\BOOTX64.EFI`と決め打ちしている。
+- 起動のスクリプト（`startup.nsh`。`xtask`が書く）が、`FS0:\EFI\BOOT\BOOTX64.EFI`と決め打ちしている。
 - カーネルへ渡るときの呼び出し規約が`extern "sysv64"`である（`common/src/boot_info.rs`）。
 
 いまのx86の中身は`BOOTX64.EFI`が156KiB、`kernel.elf`が7.2MiB（debug）、`fs.img`が2MiBで、約9.4MiBである。両方のCPUの分で約19MiBになり、いまのESP（64MiB）に入る。

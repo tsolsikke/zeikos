@@ -52,7 +52,7 @@ Seinas（wayland-server）は起動時に、ソケットのパスの隣にロッ
    `File::Regular { writable: true }` で開く。読みは今までどおり位置から、書きは `O_TRUNC` なら 0 から（今の全置換の
    部品のまま。位置書きは入れない——`ADR-0037` の「決めないこと」のまま）。`O_CLOEXEC` は `exec` が無いので無視する
    （`F_SETFD` と同じ。`sys_fcntl` の doc）。`O_CREAT` の親ディレクトリは在る必要がある（`/tmp/seinas` は
-   `/etc/profile` の `mkdir` か `kernel/build.rs` の種で作る。後者を選ぶ——起動の順に依らない）。
+   `/etc/profile` の `mkdir` か `kernel/build.rs` のseedで作る。後者を選ぶ——起動の順に依らない）。
 
 6. **`socket` の `SOCK_CLOEXEC` を無視して受ける**（`SOCK_NONBLOCK` は断ったまま。待たない形は別の課題）。
    **`accept4`（288）を足し、`SOCK_CLOEXEC` を無視して `accept` と同じにする**。Rust の std と wayland-server は
@@ -84,7 +84,7 @@ Seinas（wayland-server）は起動時に、ソケットのパスの隣にロッ
 - 検査: `socket-test` に listener 3 本（名前 3 つで bind・connect）と、`flock` の確かめ（取る・別の fd で
   `-EWOULDBLOCK`・`close` で放す・`LOCK_UN`）と破壊（`flock-ignores-holder-test`: 持ち主を見ずに 0 を返す。
   `flock-keeps-lock-after-close-test`: `close` で放さない）を足す。`page permissions` と起動ログの参照を採り直す
-  （種に `/tmp/seinas` が増える。ディスクのチェックサムが変わる）。Linux 向けの確かめのイメージ（musl の Rust）を
+  （seedに `/tmp/seinas` が増える。ディスクのチェックサムが変わる）。Linux 向けの確かめのイメージ（musl の Rust）を
   1 本足し、Linux の参照を控える（`flock` と `bind` の一連）。
 - 持ち越し: `SOCK_NONBLOCK`・`O_NONBLOCK` の待たない形（`F_SETFL` は受けて無視している）、`F_ADD_SEALS`（zeyes が
   memfd に打つ。`sys_fcntl` は `-EINVAL`）、`/tmp` を誰が消すか、`F_DUPFD` の写しのロックの共有。

@@ -204,18 +204,18 @@ const EXPECTED_CPU_RESET_COUNT: usize = 2;
 
 const EXCEPTION_TEST_TIMEOUT: Duration = Duration::from_secs(20);
 
-/// `zi` の台本を待つ猶予（H-b-2）。
+/// `zi` のスクリプトを待つ猶予（H-b-2）。
 ///
 /// # 共通の 20 秒では足りなくなった
 ///
-/// **H-b-2 で台本に 3 つの回が増えた**——`/data/joined` の行の連結と、
+/// **H-b-2 でスクリプトに 3 つの回が増えた**——`/data/joined` の行の連結と、
 /// **100 行のファイルを `cat` で 2 回撮る往復**である。
 /// **実測で足りず、`/data/joined` の回の入口で QEMU を止めていた**
 /// （**判定は 4 本とも「出力が無い」で落ちた**）。
 ///
 /// **値は実測から決めた**（下の `(info)` の行が、毎回どれだけ掛かったかを出す）。
 /// **実測は 16.1 秒である**——**20 秒のすぐ下で、通る回と落ちる回があった。**
-/// **4 倍に近い余裕を取って 60 秒にする。** **台本を伸ばすときは、
+/// **4 倍に近い余裕を取って 60 秒にする。** **スクリプトを伸ばすときは、
 /// その `(info)` の行を見て決め直すこと。**
 ///
 /// **共通の定数を上げない。** **他の検査は 20 秒で足りており、
@@ -2711,7 +2711,7 @@ const RUN_FLAGS: &[(&str, RunValue)] = &[
     ("--drift-test", RunValue::Optional),
     ("--smp", RunValue::Required),
     ("--calibration-spread", RunValue::Optional),
-    // 台本・打鍵・装置の判定（`--sabotage FEATURE` を取るものを含む）
+    // スクリプト・打鍵・装置の判定（`--sabotage FEATURE` を取るものを含む）
     ("--shell-test", RunValue::None),
     ("--shell-script-test", RunValue::None),
     ("--drop-arrows", RunValue::None),
@@ -3426,7 +3426,7 @@ fn main() -> Result<()> {
                 );
             }
             // **履歴の持ち越しの判定（HI-1）。**
-            // **`--shell-test` の台本を台本のグループで実行する（`ADR-0063` の (b3) の (b)）。**
+            // **`--shell-test` のスクリプトをスクリプトのグループで実行する（`ADR-0063` の (b3) の (b)）。**
             if rest.iter().any(|a| a == "--shell-script-test") {
                 let sabotage = rest
                     .iter()
@@ -3462,7 +3462,7 @@ fn main() -> Result<()> {
                     result,
                 );
             }
-            // **シェルの `|` の判定（`ADR-0063` の (b3)）。台本のグループである。**
+            // **シェルの `|` の判定（`ADR-0063` の (b3)）。スクリプトのグループである。**
             if rest.iter().any(|a| a == "--pipe-test") {
                 // **確かめの feature（[`PIPE_TEST_CHECKS`]）は `--with` で足し、通ることを見る**（2026-10-12）。
                 if let Some(check) = rest
@@ -3497,7 +3497,7 @@ fn main() -> Result<()> {
                     result,
                 );
             }
-            // **unix ドメインのストリームソケットの判定（`ADR-0064`）。台本のグループである。**
+            // **unix ドメインのストリームソケットの判定（`ADR-0064`）。スクリプトのグループである。**
             if rest.iter().any(|a| a == "--linux-c-test") {
                 return cmd_linux_c_test();
             }
@@ -5812,15 +5812,15 @@ enum ShellTestMode {
     /// **起動しなかった場合は Ok にしない。** あちらは環境の失敗で、
     /// **検出したことにはならない**（`classify_boot` が先に切り分ける）。
     MustFail(&'static str),
-    /// 台本で駆動する素（`ADR-0063` の (b3) の (b)）。**判定は同じ関数で、台本では見ない
+    /// スクリプトで駆動する素（`ADR-0063` の (b3) の (b)）。**判定は同じ関数で、スクリプトでは見ない
     /// ものを [`SCRIPT_SKIPS`] で外す。**
     ScriptNormal,
-    /// 台本で駆動する破壊テスト。**通らないことを期待する。**
+    /// スクリプトで駆動する破壊テスト。**通らないことを期待する。**
     ScriptMustFail(&'static str),
 }
 
-/// 台本で駆動したときに見ない判定（`ADR-0063` の (b3) の (b)）。**実測で決めた**——**台本の素を
-/// 1 回実行し、落ちた判定を「台本では成り立たない理由」ごとに分けた**（`docs/verification-coverage.md`）。
+/// スクリプトで駆動したときに見ない判定（`ADR-0063` の (b3) の (b)）。**実測で決めた**——**スクリプトの素を
+/// 1 回実行し、落ちた判定を「スクリプトでは成り立たない理由」ごとに分けた**（`docs/verification-coverage.md`）。
 const SCRIPT_SKIPS: &[&str] = &[
     // **`spin` と `ctrl-c` の行を外している**（Ctrl+C の終了処理は IRQ の経路）。
     "ctrl_c_stopped_the_child",
@@ -5828,14 +5828,14 @@ const SCRIPT_SKIPS: &[&str] = &[
     "ctrl_c_stopped_the_detached_spin",
     // **`spin` を起動しないので、方向フラグの前提も作られない**（2026-09-24）。
     "spin_was_interrupted_with_df_set",
-    // **台本が駆動している間、`read(0)` は待たない**（空振りで起きる機会が無い）。
+    // **スクリプトが駆動している間、`read(0)` は待たない**（空振りで起きる機会が無い）。
     "woke_empty_and_waited_again",
 ];
 
 /// `shell-script-test` で実行する破壊テスト（`ADR-0063` の (b3) の (b)）。**`SHELL_TEST_SABOTAGES` から
-/// 移したもの**——**台本の形で 3 回続けて落ちたものだけを移す。**
+/// 移したもの**——**スクリプトの形で 3 回続けて落ちたものだけを移す。**
 const SHELL_SCRIPT_SABOTAGES: &[&str] = &[
-    // **10 本とも台本の形で 3 回続けて落ちた**（実測。2026-09-19。**8 本は約 11 秒、
+    // **10 本ともスクリプトの形で 3 回続けて落ちた**（実測。2026-09-19。**8 本は約 11 秒、
     // `timer-never-wakes` と `idle-holds-bkl-across-hlt` は止まる形で 39 秒**）。
     // **1 本あたり 47 秒か 19 秒縮む**（`--shell-test` の破壊テストは 58 秒）。
     "clock-goes-backwards",
@@ -5858,9 +5858,9 @@ const UTF8_TEST_SABOTAGES: &[&str] = &[
     "width-always-one-test",
     "console-drop-invalid-chunk-test",
     // **`a` がバイトで進む形（2026-09-03）。** **多バイトの段階で見落としていた**
-    // ——**台本が全角の上で `a` を打っていなかったので、判定も検出していなかった。**
+    // ——**スクリプトが全角の上で `a` を打っていなかったので、判定も検出していなかった。**
     "zi-append-by-byte-test",
-    // **VIM-1 で 4 つ増えた。** **`$` / `^` / `A` / `o` を足したので、台本が
+    // **VIM-1 で 4 つ増えた。** **`$` / `^` / `A` / `o` を足したので、スクリプトが
     // `/data/vimops` を開くようになった。**
     //
     // **`zi-line-end-stays-test` は 3 本落ちる**——**`$` の判定と、同じ道を
@@ -6058,7 +6058,7 @@ const SYSCALLS_PER_BYTE_BOUND: u64 = 16;
 /// # 中断だけの一覧ではなくなった（DIR-1）
 ///
 /// **`env-drop-path-test` が加わった。** **`PATH` が届かないと、名前だけで
-/// 打った語が起動できない。** **いまは台本のグループ（[`SHELL_SCRIPT_SABOTAGES`]）で実行する**——**台本の形では
+/// 打った語が起動できない。** **いまはスクリプトのグループ（[`SHELL_SCRIPT_SABOTAGES`]）で実行する**——**スクリプトの形では
 /// 「bare names resolved under /bin」を含む 14 本が落ちる**（2026-09-26 の 3 回。**加えたときは
 /// 「落ちるのは 1 本だけ」だった**）。
 ///
@@ -6066,7 +6066,7 @@ const SYSCALLS_PER_BYTE_BOUND: u64 = 16;
 /// 食い違うと、次に足す者が「中断ではないから別の一覧が要る」と考える。**
 const SHELL_TEST_SABOTAGES: &[&str] = &[
     // **打鍵の IRQ か Ctrl+C の終了処理に依るものだけが残る**（`ADR-0063` の (b3) の (b)。2026-09-19）。
-    // **それ以外の 10 本は `SHELL_SCRIPT_SABOTAGES` へ移した**——**台本の形で 3 回続けて落ちた。**
+    // **それ以外の 10 本は `SHELL_SCRIPT_SABOTAGES` へ移した**——**スクリプトの形で 3 回続けて落ちた。**
     //
     // **W2-c-2 の 2 つと W2-d+ の 1 つ（`ADR-0061` / `ADR-0062`）。** **`read(0)` の待ちと、
     // 眠っている最中の打鍵に依る。** **`wake-ignores-the-reason` は W2-c-2 では用意できず
@@ -6083,7 +6083,7 @@ const SHELL_TEST_SABOTAGES: &[&str] = &[
     // **パイプラインの左側（切り離したスロット）を止める条件を外す（2026-09-28）。** 深さ 1 でも畳むのは切り離した
     // スロットだけで、その条件が Ctrl+C の経路にある。
     "kill-fold-ignore-detached-slot-test",
-    // **デコーダを外す破壊テスト（SE-a / SE-b。`ADR-0050`）。** **台本はデコーダを通らないので、
+    // **デコーダを外す破壊テスト（SE-a / SE-b。`ADR-0050`）。** **スクリプトはデコーダを通らないので、
     // 打鍵でしか効かない。** **落ちる判定は `keyboard-drop-home-end-test` が 1 本、
     // `keyboard-drop-ctrl-letters-test` が 2 本**（実測。2026-08-28）。
     "keyboard-drop-home-end-test",
@@ -6121,7 +6121,7 @@ impl ShellTestMode {
         }
     }
 
-    /// 台本で駆動しているか。**打鍵の IRQ に依る判定を [`SCRIPT_SKIPS`] で外す。**
+    /// スクリプトで駆動しているか。**打鍵の IRQ に依る判定を [`SCRIPT_SKIPS`] で外す。**
     fn driven_by_script(self) -> bool {
         matches!(
             self,
@@ -6176,7 +6176,7 @@ impl ShellTestMode {
     /// 3 打が CSI として解釈され、挿入点が動く」である。**
     fn expects_esc_to_reach_ring3(self) -> bool {
         // **US の回も偽である（f-1b）。** **Esc は届いているが、
-        // 台本が `[` を作るのに打っている `bracket_right`（`0x1B`）は、
+        // スクリプトが `[` を作るのに打っている `bracket_right`（`0x1B`）は、
         // US では `]` である**——**CSI にならないので挿入点が動かない。**
         // **これは US の表が効いていることの、もう 1 つの現れである。**
         !matches!(
@@ -6194,7 +6194,7 @@ impl ShellTestMode {
 
     /// `|` が打てることを期待するか（2026-09-28。`spin | cat` の行）。
     ///
-    /// **US では `|` が打てない**——**台本は `shift-yen`（JIS の ¥ の Shift）で `|` を作っており、US にはそのキーが
+    /// **US では `|` が打てない**——**スクリプトは `shift-yen`（JIS の ¥ の Shift）で `|` を作っており、US にはそのキーが
     /// 無い**（表の外の 2 キーと同じ）。**打った行は `spin  cat` になり、`spin` は深さ 2 の子として走って、
     /// 同じ Ctrl+C で止まる。**
     fn expects_the_pipe_to_be_typed(self) -> bool {
@@ -6203,15 +6203,15 @@ impl ShellTestMode {
 
     /// `~` の展開について期待すること（f-1b）。
     ///
-    /// **US では `~` そのものが打てない**——**台本は `shift-equal`
+    /// **US では `~` そのものが打てない**——**スクリプトは `shift-equal`
     /// （`0x0D` の Shift）で `~` を作っており、US ではあれが `+` である。**
     fn expects_the_tilde_to_expand(self) -> bool {
         !self.expects_the_us_layout()
     }
 
-    /// `export` の台本が効くことを期待するか（f-2 の後に足した）。
+    /// `export` のスクリプトが効くことを期待するか（f-2 の後に足した）。
     ///
-    /// **US では `=` が打てない**——**台本は `shift-minus`（JIS の `-` の Shift）で
+    /// **US では `=` が打てない**——**スクリプトは `shift-minus`（JIS の `-` の Shift）で
     /// `=` を作っており、US ではあれが `_` である。** **`export ZF2_exported` に
     /// なるので、シェルは「名前ではない」と断る。**
     ///
@@ -6555,7 +6555,7 @@ struct PagePermissionsScene {
 enum SceneEnd {
     /// シェルのプロンプトが出るまで。
     ShellPrompt,
-    /// 台本が終わるまで（`script-done:` の行）。
+    /// スクリプトが終わるまで（`script-done:` の行）。
     ScriptDone,
     /// `gfxd` が打鍵を待つ所まで走らせ、打鍵を送って、終わりの計測の行が出るまで（`--screen-test` と同じ駆動）。
     ScreenKey,
@@ -6670,7 +6670,7 @@ fn cmd_page_permissions(
     qemu_args.push("-smp".into());
     qemu_args.push("2".into());
 
-    // **場面ごとの上限。** 起動だけなら起動の上限、その後に台本や打鍵が在る場面は、その分を足す。
+    // **場面ごとの上限。** 起動だけなら起動の上限、その後にスクリプトや打鍵が在る場面は、その分を足す。
     let limit = match scene.until {
         SceneEnd::ShellPrompt => BOOT_READY_TIMEOUT,
         SceneEnd::ScriptDone => BOOT_READY_TIMEOUT + ZI_TEST_TIMEOUT,
@@ -6826,9 +6826,9 @@ fn cmd_page_permissions(
     }
 }
 
-/// `zi` の実演（zi-d）。**決定的な台本入力で駆動する。**
+/// `zi` の実演（zi-d）。**決定的なスクリプト入力で駆動する。**
 ///
-/// **`sendkey` を使わない。** 台本は `read_bytes` が返すので、打鍵の間隔にも
+/// **`sendkey` を使わない。** スクリプトは `read_bytes` が返すので、打鍵の間隔にも
 /// 行の処理の速さにも依らない（`kernel/src/input.rs` の `script`）。
 /// **`--shell-test` は実打鍵の側を主張しており、層が違う**——あちらが
 /// 42.58 秒（実測）掛かるのは待ちのためである。
@@ -6844,7 +6844,7 @@ fn cmd_page_permissions(
 /// 「プログラムが壊れた」に見えるが、実際は「ログが UTF-8 として読めなかった」
 /// である。**
 ///
-/// **実測で踏んだ**（2026-09-01）。**`utf8-test` の台本が `/data/badutf8` を
+/// **実測で踏んだ**（2026-09-01）。**`utf8-test` のスクリプトが `/data/badutf8` を
 /// 画面へ出し、その中身がシリアルへも出た。** **`xtask` は「カーネルが起動
 /// しなかった」と報告した**——**2 回続けて同じ形だったので、環境の揺れでは
 /// ないと分かった。**
@@ -7735,7 +7735,7 @@ const SABOTAGE_JUDGEMENTS: &[NamedJudgement] = &[
         note: "",
         reached: true,
     },
-    // ── shell（反転させる形。2026-09-26。打鍵 11・台本 10・utf8 8・補完 4・profile 3・history 2・環境の出どころ 2・keymap 1） ──
+    // ── shell（反転させる形。2026-09-26。打鍵 11・スクリプト 10・utf8 8・補完 4・profile 3・history 2・環境の出どころ 2・keymap 1） ──
     NamedJudgement {
         check: "utf8 test",
         key: "width-always-one-test",
@@ -9267,7 +9267,7 @@ fn cmd_utf8_test(features: &[&str], expect_pass: bool) -> Result<()> {
     //
     // # ここだけは UTF-8 として読めない
     //
-    // **台本が `/data/badutf8` を開くので、その中身がそのままシリアルへ出る**
+    // **スクリプトが `/data/badutf8` を開くので、その中身がそのままシリアルへ出る**
     // ——**`fs::read_to_string` は失敗し、`unwrap_or_default()` が空文字を返す。**
     // **実測で踏んだ**（2026-09-01。**「カーネルが起動しなかった」と報告された**）。
     // **バイトで読んで、落として直す。**
@@ -9448,7 +9448,7 @@ fn cmd_utf8_test(features: &[&str], expect_pass: bool) -> Result<()> {
 /// # 出力の数え方
 ///
 /// **`echo` の出力は 1 行まるごとがその値である**（実測。プロンプトと
-/// 打った語はその前の行に在り、`zash` は台本の経路でエコーしない）。
+/// 打った語はその前の行に在り、`zash` はスクリプトの経路でエコーしない）。
 /// **行がまるごと一致することを見る**——**部分一致にすると起動ログの
 /// 他の行に当たりうる**（`etc` は短い）。
 /// **1 度目と 2 度目は `init` の起動し直しの行で分ける。**
@@ -9539,7 +9539,7 @@ fn cmd_profile_test(features: &[&str], expect_pass: bool) -> Result<()> {
         None => (stripped.as_str(), ""),
     };
     // **`echo` の出力はそれだけで 1 行になる。** **プロンプトと打った語は
-    // その前の行に在る**（`zash` は台本の経路でエコーしない）。
+    // その前の行に在る**（`zash` はスクリプトの経路でエコーしない）。
     // **行がまるごとその値であることを見る**——**部分一致にすると、
     // 起動ログの他の行に当たりうる。**
     let says = |text: &str, value: &str| text.lines().any(|line| line.trim() == value);
@@ -9591,14 +9591,14 @@ fn cmd_profile_test(features: &[&str], expect_pass: bool) -> Result<()> {
 ///
 /// `docs/coding-standards.md` の「判定が探す値は、イメージとログの語と当たらない
 /// ものにする」。**`hist-one` / `hist-two` はイメージのどこにも無い。**
-/// `pipe-test` の上限（秒）。**既定は台本のグループの水準（約 10 秒）の見込みなので、その 10 倍。**
+/// `pipe-test` の上限（秒）。**既定はスクリプトのグループの水準（約 10 秒）の見込みなので、その 10 倍。**
 const PIPE_TEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// `pipe-test` の「出力が伸びない」上限（秒）。**黙って止まる破壊テストのために置く**
 /// （`CONCURRENT_TEST_STALL_LIMIT` と同じ形。`ADR-0063` の (b2)）。**既定の全体の 3 倍以上を取る。**
 const PIPE_TEST_STALL_LIMIT: Duration = Duration::from_secs(30);
 
-/// シェルの `|` の判定（`ADR-0063` の (b3)）。**台本のグループで、1 回の起動で 7 本の `|` を見る。**
+/// シェルの `|` の判定（`ADR-0063` の (b3)）。**スクリプトのグループで、1 回の起動で 7 本の `|` を見る。**
 ///
 /// # 判定は内容と計測で見る。順序では見ない
 ///
@@ -9606,13 +9606,13 @@ const PIPE_TEST_STALL_LIMIT: Duration = Duration::from_secs(30);
 ///    **切り離して起動したスロットは端末へ 1 度も書かない**（計測）
 /// 2. **読み手が先に待つ形が出た**——読み手の待ちが 1 以上、**書きが読み手を起こした回数が 1 以上**、
 ///    **かつ 2 本が同時に待った回数が 1 以上**（`sleep 0.2 | cat`）。**1 つ目のセッションの計測の行で読む**
-///    （2026-09-30。台本は `sleep 0.2 | cat` の後で 1 度 `exit` する。**`/data/big` のパイプで止まる破壊テストでも、
+///    （2026-09-30。スクリプトは `sleep 0.2 | cat` の後で 1 度 `exit` する。**`/data/big` のパイプで止まる破壊テストでも、
 ///    この値は出ている**）。**ほかの判定は最後の計測の行（起動からの合計）で読む。**
 /// 3. **書き手が待つ形が出た**——書き手の待ちが 1 以上（`/data/big` は輪の 8.5 倍）
 /// 4. **`/data/big` がバイト単位で通る**（イメージから `debugfs` で読んだものと同じ）
 /// 5. **読み手が読まずに終わると、書き手は `-EPIPE` を見る**——計測が 1 以上、`cat` が 4 で終わる
 /// 6. **右が居なくても詰まらない**——`cannot run` が出て、予約が 1 つ消え、次の `|` が通る
-/// 7. **7 本とも左が起動した**（計測が 7）、**台本が最後まで届いた**（`script-done:`）
+/// 7. **7 本とも左が起動した**（計測が 7）、**スクリプトが最後まで届いた**（`script-done:`）
 ///
 /// **禁止**——**`[ERROR]` が 1 行も無いこと**（`AllocatorUnavailable` と会計をこれで覆う）。
 fn cmd_pipe_test(features: &[&str], expect_pass: bool) -> Result<()> {
@@ -9716,9 +9716,9 @@ fn cmd_pipe_test(features: &[&str], expect_pass: bool) -> Result<()> {
         let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
         digits.parse().ok()
     };
-    // **計測の行はセッションごとに出る**（台本が 2 回 `exit` する）。**判定 2 は 1 つ目の行、ほかは最後の行を読む。**
+    // **計測の行はセッションごとに出る**（スクリプトが 2 回 `exit` する）。**判定 2 は 1 つ目の行、ほかは最後の行を読む。**
     // **1 つ目の行は、`/data/big` のパイプの行より前に出たものだけを使う**——**そのパイプで止まった回でも、この行は
-    // 出ている。** 台本の 1 つ目の `exit` が抜けると、1 つ目の行がパイプの後になり、判定 2 の値は無い形で落ちる。
+    // 出ている。** スクリプトの 1 つ目の `exit` が抜けると、1 つ目の行がパイプの後になり、判定 2 の値は無い形で落ちる。
     let big_pipe_at = lines
         .iter()
         .position(|line| line.contains("/bin/cat /data/big | /bin/cat"));
@@ -9803,7 +9803,7 @@ fn cmd_pipe_test(features: &[&str], expect_pass: bool) -> Result<()> {
         && reservations_dropped == Some(1)
         && again_once;
 
-    // **判定 7**——7 本とも左が起動し、台本が最後まで届いた。
+    // **判定 7**——7 本とも左が起動し、スクリプトが最後まで届いた。
     let reached_the_end = stripped.contains("script-done:");
     let all_left_sides_started = detached_starts == Some(7) && created == Some(7);
 
@@ -10023,14 +10023,14 @@ fn count_lines_ending_with(lines: &[&str], wanted: &str) -> usize {
         .count()
 }
 
-/// `socket-test` の上限（秒）。**既定は台本のグループの水準（10 秒の桁）の見込みなので、その 10 倍。**
+/// `socket-test` の上限（秒）。**既定はスクリプトのグループの水準（10 秒の桁）の見込みなので、その 10 倍。**
 const SOCKET_TEST_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// `socket-test` の「出力が伸びない」上限（秒）。**黙って止まる破壊テストが 2 つ在る**
 /// （`PIPE_TEST_STALL_LIMIT` と同じ形）。
 const SOCKET_TEST_STALL_LIMIT: Duration = Duration::from_secs(30);
 
-/// unix ドメインのストリームソケットの判定（`ADR-0064`）。**台本のグループで、1 回の起動で
+/// unix ドメインのストリームソケットの判定（`ADR-0064`）。**スクリプトのグループで、1 回の起動で
 /// `sockc` の 6 つの形を見る。** **`sockd` は `init` が切り離して起動する。**
 ///
 /// # 判定は内容と計測で見る。順序では見ない
@@ -10046,7 +10046,7 @@ const SOCKET_TEST_STALL_LIMIT: Duration = Duration::from_secs(30);
 /// 8. **相手が閉じた後の `write` は `-EPIPE`**（`quit` の後の `write=-32`）
 /// 9. **待ち行列とスロット**——`twice` の 2 本目が待ち行列で待って通り、接続は 5 つ作られ
 ///    同時には 2 つまで、5 つともスロットが返り、listener は 1 本取られて 1 本返った
-/// 10. **`sockd` が 0 で終わり、台本が最後まで届いた**
+/// 10. **`sockd` が 0 で終わり、スクリプトが最後まで届いた**
 ///
 /// **禁止**——**`[ERROR]` が 1 行も無いこと。**
 fn cmd_socket_test(features: &[&str], expect_pass: bool) -> Result<()> {
@@ -10165,7 +10165,7 @@ fn cmd_socket_test(features: &[&str], expect_pass: bool) -> Result<()> {
     };
     // **共有メモリの計測（`ADR-0065`）。** **`shm:` の行も空白をまとめて読む。** **計測は大域で、
     // 起動時の `syscall-test` の mmap の検査（67）も乗る**——**created/released/mapped は
-    // その分だけ多い（`>=` で見る）。** **fds は台本だけ（起動時は fd を送らない）なので `==`。**
+    // その分だけ多い（`>=` で見る）。** **fds はスクリプトだけ（起動時は fd を送らない）なので `==`。**
     let shm_line: Option<String> = lines
         .iter()
         .find(|line| line.contains("[INFO] shm: created "))
@@ -10242,7 +10242,7 @@ fn cmd_socket_test(features: &[&str], expect_pass: bool) -> Result<()> {
         ),
         (
             // **`>= 1` は `== 1` ではない**——**計測は大域で、起動時の `syscall-test` の 66 番
-            // （無い名前への `connect`）も乗るので、既定でも `connect refused` は 1、この台本の
+            // （無い名前への `connect`）も乗るので、既定でも `connect refused` は 1、このスクリプトの
             // `sockc nobody` と合わせて 2 になる**（`kernel/src/main.rs` の `socket:` の doc）。
             // **`sockc nobody` が `-111` を出したことは `count_line` の側で見る。**
             "an_unknown_name_is_refused",
@@ -10289,7 +10289,7 @@ fn cmd_socket_test(features: &[&str], expect_pass: bool) -> Result<()> {
         ),
         (
             // **共有メモリの計測（`ADR-0065`）。** **created/released/mapped は起動時の
-            // `syscall-test` の分も乗るので `>=`、fds は台本だけなので `==`。**
+            // `syscall-test` の分も乗るので `>=`、fds はスクリプトだけなので `==`。**
             "shm_gauges_are_coherent",
             shm_created.is_some_and(|n| n >= 3)
                 && shm_released.is_some_and(|n| n >= 3)
@@ -11069,7 +11069,7 @@ fn fb_test_corners_matching(image: &Option<(u32, u32, Vec<u8>)>) -> Option<u32> 
     )
 }
 
-/// QEMU monitor のキー名に直す（シェルへ打つ 1 行。`common::shell_script` の台本と同じ名前）。英数字・`/`・`-`・` `・`.`
+/// QEMU monitor のキー名に直す（シェルへ打つ 1 行。`common::shell_script` のスクリプトと同じ名前）。英数字・`/`・`-`・` `・`.`
 /// だけを受ける（受け入れの条件の行に要るものだけ）。
 fn monitor_keys_for(line: &str) -> Result<Vec<&'static str>> {
     const LETTERS: [&str; 26] = [
@@ -12042,7 +12042,7 @@ const MACHINE_VARIANT_SABOTAGES: &[(&str, &str, bool, VariantExpect)] = &[
         VariantExpect::StopsWith("fs-image: there is no virtio-blk device and no RAM image"),
     ),
     // **装置が無いのに書き戻しの完了を待つ**（待ちを残した形）。**締切で panic して止まる**
-    // ——**黙って固まる形を、行にして見えるようにしてある。** **台本を伴う**（保存の操作が要る）。
+    // ——**黙って固まる形を、行にして見えるようにしてある。** **スクリプトを伴う**（保存の操作が要る）。
     (
         "pc-no-virtio",
         "flush-waits-without-device",
@@ -12122,12 +12122,12 @@ enum VariantExpect {
         lines: &'static [&'static str],
         forbidden: &'static [&'static str],
     },
-    /// 台本が書いて読み直せた（HW-d。`ADR-0068`）。
+    /// スクリプトが書いて読み直せた（HW-d。`ADR-0068`）。
     ///
     /// **`line` に一致する行が出て、`markers` の全部が出て、`[ERROR]` が無いこと。**
     /// **一致は「行そのもの」で見る**——**打った字も serial に出るので、部分一致では
     /// `cat` の出力と区別できない**（`zi` の描画は同じ行に状態も載せる）。
-    /// **待つのは `line` が出るまでで、プロンプトではない**（台本はプロンプトの後に走る）。
+    /// **待つのは `line` が出るまでで、プロンプトではない**（スクリプトはプロンプトの後に走る）。
     PromptAndScript {
         line: &'static str,
         markers: &'static [&'static str],
@@ -12747,7 +12747,7 @@ fn cmd_image(contents: MediaContents) -> Result<()> {
 ///
 /// **像のバイトは起動ログの参照（巻の名前と、superblock のセクタの検査値）に出る。** 写しの置き場の当たりは読み取り専用の
 /// 写しへのハードリンクで、`fs::copy` が権限を写し、`mke2fs -d` がそれを inode へ入れていたので、当たりだけ `/bin` の
-/// プログラムが 0444 になり、参照と食い違った（`docs/troubleshooting.md` の 2026-10-08 の項）。いまは `build.rs` が種の
+/// プログラムが 0444 になり、参照と食い違った（`docs/troubleshooting.md` の 2026-10-08 の項）。いまは `build.rs` が seed の
 /// 権限を決める。**この項目は、決め忘れや、権限のほかに写し元から混ざるものを、全検査を待たずに捕まえる。**
 ///
 /// # 形
@@ -13052,7 +13052,7 @@ fn cmd_machine_variant(
     ))?;
 
     // **プロンプトか停止の行を待つ。** どちらも来なければ上限で切る。
-    // **台本の回は、台本が書いて読み直した行を待つ**（HW-d）——**プロンプトはその前に出る。**
+    // **スクリプトの回は、スクリプトが書いて読み直した行を待つ**（HW-d）——**プロンプトはその前に出る。**
     let script_line = match expect {
         VariantExpect::PromptAndScript { line, .. } => Some(line),
         _ => None,
@@ -13894,7 +13894,7 @@ fn cmd_fp_test(features: &[&str], expect_pass: bool) -> Result<()> {
         if strip_ansi(&text).contains("script-done:") {
             break;
         }
-        // **止まったマーカーで待つのをやめる**（5.b。2026-09-25）。**`#MF` でプログラムを終了させられない破壊テストは、台本の
+        // **止まったマーカーで待つのをやめる**（5.b。2026-09-25）。**`#MF` でプログラムを終了させられない破壊テストは、スクリプトの
         // 途中でカーネルを止める**——**以前は上限の 60 秒まで待っていた**（実測で、止まるのは
         // 起動してから 8.6 秒）。
         if let Some(sign) = stop.settled(stop_sign_in(&text, "")) {
@@ -13936,7 +13936,7 @@ fn cmd_fp_test(features: &[&str], expect_pass: bool) -> Result<()> {
     }
 
     // **シェルの前後を分けない**——**`init` が起動した 1 回目はシェルより
-    // 前に出る。** 他の台本の判定と違い、**ここは起動シーケンスの語と当たらない**
+    // 前に出る。** 他のスクリプトの判定と違い、**ここは起動シーケンスの語と当たらない**
     // （`fp:` で始まる行はこの 2 本のプログラムしか出さない）。
     let stripped = strip_ansi(&serial);
 
@@ -13992,7 +13992,7 @@ fn cmd_fp_test(features: &[&str], expect_pass: bool) -> Result<()> {
     // 洗った」）。**破壊テストは置いていない**——**`fp-mf-not-foldable-test` が
     // 「畳めるベクタの一覧が効いていること」を既に主張している。**
     let folded_the_debug_fault = stripped.contains("/bin/dbfault ended (Folded(1))");
-    // **止まっていないことは、台本が最後まで進んだことで示す。**
+    // **止まっていないことは、スクリプトが最後まで進んだことで示す。**
     let script_finished = stripped.contains("script-done:");
 
     // **計測**——**TCG が `#XM` を配送しないことを、出力に残しておく。**
@@ -14616,7 +14616,7 @@ fn cmd_ttf_test(features: &[&str], expect_pass: bool) -> Result<()> {
 
     // **合図**——**ホスト側が最後まで出ていなければ、突き合わせは何も主張しない。**
     let host_complete = host.last().map(String::as_str) == Some("ttf: done");
-    // **合図**——**台本が最後まで進んだこと。**
+    // **合図**——**スクリプトが最後まで進んだこと。**
     let script_finished = stripped.contains("script-done:");
 
     // **計測**——**イメージをビルドした `cc` の版と、いまホスト側をビルドした版。**
@@ -14867,7 +14867,7 @@ fn cmd_serial_test(features: &[&str], expect_pass: bool) -> Result<()> {
     }
 }
 
-/// 台本の doc）。
+/// スクリプトの doc）。
 fn cmd_complete_test(features: &[&str], expect_pass: bool) -> Result<()> {
     let workspace_root = workspace_root()?;
     let run = RunDir::create(&workspace_root, "complete-test")?;
@@ -15070,26 +15070,26 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
         launch::Deadline::Failure,
     ))?;
 
-    // **台本の最後の出力が出るまで待つ。** 上限つき。
+    // **スクリプトの最後の出力が出るまで待つ。** 上限つき。
     //
-    // **本数で待たない。** 判定行の本数で切ると、**台本を出し切る前に
+    // **本数で待たない。** 判定行の本数で切ると、**スクリプトを出し切る前に
     // QEMU を止めてしまう**（実測でそうなった——`x` の削除が届く前に
     // 落として、`x deleted a byte = false` になった）。
-    // **台本の最後は `cat` の読み戻し**（zi-d-2）だが、`cat` は起動シーケンス
+    // **スクリプトの最後は `cat` の読み戻し**（zi-d-2）だが、`cat` は起動シーケンス
     // でも走るので、**その行では早く切れる**（実測）。**シェルが `cat` を
     // 終えたことを、プロンプトのエコーで見る。**
-    // **台本の最後の判定行が出るまで待つ（e-3）。**
+    // **スクリプトの最後の判定行が出るまで待つ（e-3）。**
     //
     // **以前はプロンプトのエコー（`zaytos$ /bin/cat /data/lines`）を待っていた**が、
     // **あれは `cat` が走る前に出る**ので、**その後に置いた観測点が間に合う保証が
     // 無い**（`kernel/src/input.rs` の `OBSERVE_AFTER_ALT`）。
     //
     // **次に、代替画面の観測の行を合図にした。** **DIR-1b でその観測点を
-    // 台本の途中へ移したところ、待ちが途中で切れた**（実測。**`tail` と `rm` が
+    // スクリプトの途中へ移したところ、待ちが途中で切れた**（実測。**`tail` と `rm` が
     // 走る前に QEMU を止めていた**）。
     //
     // **合図と主張を分けた。** **`script-done:` は何も主張しない観測点で、
-    // 台本の末尾にだけ在る**（`crate::console::probe` の `ScriptDone`）。
+    // スクリプトの末尾にだけ在る**（`crate::console::probe` の `ScriptDone`）。
     let done_marker = "script-done:";
     let started_waiting = Instant::now();
     let deadline = started_waiting + ZI_TEST_TIMEOUT;
@@ -15104,7 +15104,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
             break;
         }
         // **止まったマーカーで待つのをやめる**（5.b。2026-09-25）。**起動の中の検査が止めると、
-        // 台本は走らない**——**以前は上限の 60 秒まで待っていた**（実測で、`brk` の破壊テストが
+        // スクリプトは走らない**——**以前は上限の 60 秒まで待っていた**（実測で、`brk` の破壊テストが
         // 止まるのは起動してから 4.8 秒）。
         if let Some(sign) = stop.settled(stop_sign_in(&text, "")) {
             stopped = Some(sign);
@@ -15143,7 +15143,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
         return Err(anyhow::Error::new(StoppedEarly { sign, serial }));
     }
 
-    // **カーソルの推移を判定行から拾う。** `row` の列がそのまま台本の答えである。
+    // **カーソルの推移を判定行から拾う。** `row` の列がそのままスクリプトの答えである。
     //
     // **矢印と `hjkl` を札で分ける（ES-d の対策）**——[`parse_zi_cursor_rows`]。
     let arrow_rows = parse_zi_cursor_rows(&serial, "arrow");
@@ -15151,10 +15151,10 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
 
     let started = serial.contains("zi: ready");
     // **上下でカーソルが動いた（zi-a で zi-d へ委ねた分担の条件）。**
-    // 台本は下・下・上を送るので、`row` は 0 -> 1 -> 2 -> 1 と動く。
+    // スクリプトは下・下・上を送るので、`row` は 0 -> 1 -> 2 -> 1 と動く。
     let arrows_moved = arrow_rows.windows(2).any(|pair| pair[1] > pair[0])
         && arrow_rows.windows(2).any(|pair| pair[1] < pair[0]);
-    // **hjkl でも動いた。** 台本は j j k k を送るので、上下の後にもう一度
+    // **hjkl でも動いた。** スクリプトは j j k k を送るので、上下の後にもう一度
     // 増えて減る推移が出る。**両方の経路が同じ動きを作ることの主張である。**
     let distinct_rows = {
         let mut seen: Vec<u32> = move_rows.clone();
@@ -15163,7 +15163,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
         seen.len()
     };
     let hjkl_moved = distinct_rows >= 3;
-    // **挿入と削除がバッファへ効いた。** 台本は `i Z Y Esc x` なので、
+    // **挿入と削除がバッファへ効いた。** スクリプトは `i Z Y Esc x` なので、
     // 桁が 2 つ進んでから戻り、削除で 1 つ減る。
     //
     // **本数で見る（ES-d の対策）。** **在るかどうかで見ていたので、
@@ -15172,15 +15172,15 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
     // **往復の判定も検出しない**——`zi` の再描画と `cat` の読み戻しは
     // どちらも落とした後の内容なので、一致してしまう
     // （`docs/verification-coverage.md`）。
-    // **台本が送る挿入は 3 字である**（`kernel/src/input.rs` の `SCRIPT` の
-    // `iZY` と `aQ`）。**この数は台本の写しで、台本を変えたらここも変わる。**
+    // **スクリプトが送る挿入は 3 字である**（`kernel/src/input.rs` の `SCRIPT` の
+    // `iZY` と `aQ`）。**この数はスクリプトの写しで、スクリプトを変えたらここも変わる。**
     //
-    // **実際に変わった（e-4）。** **台本へ `a` の挿入を 1 字足したとき、
+    // **実際に変わった（e-4）。** **スクリプトへ `a` の挿入を 1 字足したとき、
     // ここが 2 のままだったので、1 字落とす破壊テストが検出されなくなった**
     // （落としても 2 字残るため）。**`--full` が「破壊が捕まらない」と
     // 出して分かった**——**写しは、写した先が変わった瞬間に古くなる。**
     //
-    // **数え直した（H-b-2）。** **数えているのは台本ぜんたいの `typed` の本数で、
+    // **数え直した（H-b-2）。** **数えているのはスクリプトぜんたいの `typed` の本数で、
     // `/data/lines` の回だけではない**——**実測で 16 本である**
     // （`fresh` の `NEW` が 3、`lines` の `ZY` と `Q` が 3、`edited` の
     // `ab` `cd` `X` が 5、`joined` の `ab` `cd` が 4、`big` の `Z` が 1）。
@@ -15188,7 +15188,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
     // **下限は 3 のままにしてある。** **この判定は「挿入がバッファへ届いた」
     // までしか示さない**——**1 字落とす破壊テストを検出しているのは往復のほうである**
     // （`zi-insert-drop-first` の項。`docs/verification-coverage.md`）。
-    // **本数を実測値へ固定すると、台本を触るたびに直す作業が増えるだけで、
+    // **本数を実測値へ固定すると、スクリプトを触るたびに直す作業が増えるだけで、
     // 検出する力は増えない。**
     let typed_events = serial
         .lines()
@@ -15232,10 +15232,10 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
     // （「期待値は定数で持たず外の道具から導く」）。
     // **`/data/lines` の回に区切る（zi-f）。**
     //
-    // **台本の末尾に `zi` の回がもう 1 つ増えた**ので、**区切らないと
+    // **スクリプトの末尾に `zi` の回がもう 1 つ増えた**ので、**区切らないと
     // 「最後の再描画」があちらを指し、`/data/lines` の読み戻しと
     // 突き合わなくなる**（実測で踏んだ）。
-    // **台本を変えるときは、台本に寄りかかっている判定を数え直すこと。**
+    // **スクリプトを変えるときは、スクリプトに寄りかかっている判定を数え直すこと。**
     let lines_session = serial
         .split("/bin/tail /data/lines")
         .next()
@@ -15249,7 +15249,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
     // 目印を付けてあった項目で、目印のとおりに壊れた。**
     //
     // **画面を読む形にすれば、描き方に依らない。** **観測点は `:w` の直前に
-    // 置いてある**（`kernel/src/input.rs` の台本）。
+    // 置いてある**（`kernel/src/input.rs` のスクリプト）。
     let edited_lines: Vec<String> = serial
         .lines()
         .filter_map(|line| line.split("screen-text: row ").nth(1))
@@ -15282,7 +15282,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
     // # なぜ数で見るのか
     //
     // **サイクルは揺れる**（機械と負荷で動く）。**描いたセルの数は
-    // 揺れない**——**台本が同じなら同じ画面になり、同じ数になる。**
+    // 揺れない**——**スクリプトが同じなら同じ画面になり、同じ数になる。**
     // **判定は数で行い、サイクルは (info) の側へ置く**（運用者の指示）。
     //
     // # 期待値を定数で持たない
@@ -15335,7 +15335,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
     //
     // **判定を出すのはカーネルである**（`kernel/src/console/probe.rs`）——
     // **色を出す利用者は Ring 3 に居て、画面を読み戻せない。**
-    // **台本の中の観測点で、そのつど画面を見ている。**
+    // **スクリプトの中の観測点で、そのつど画面を見ている。**
     //
     // **上の判定群とは層が違う。** あちらは `zi` の内部状態で、
     // **こちらはバックバッファのピクセルである。**
@@ -15386,7 +15386,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
 
     // **Esc 1 バイトで、次の入力を待たずに前のモードへ戻ること（e-2）。**
     //
-    // **台本は `i Z Y` の後に Esc を 1 バイト送り、そこで「休み」を挟む**
+    // **スクリプトは `i Z Y` の後に Esc を 1 バイト送り、そこで「休み」を挟む**
     // （`kernel/src/input.rs` の `SCRIPT_PAUSE`）。**休みは `read` を空に
     // するので、`zi` は「入力が途切れた」を見る。** 直後の観測点で札を読む。
     //
@@ -15408,7 +15408,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
     // `top` を出しており、ウィンドウの中の位置は `row - top`、桁は `col` である。**
     // **期待値をホストが持たない**——**どちらも実測の値で、計算だけをここでする。**
     //
-    // **観測点は台本の `lh`（ノーマルモードの移動）の直後に置いてある。**
+    // **観測点はスクリプトの `lh`（ノーマルモードの移動）の直後に置いてある。**
     let cursor_cell = serial
         .lines()
         .find_map(|line| line.split("screen-cursor: the cursor cell is ").nth(1))
@@ -15502,7 +15502,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
     // 主張である**（行番号はカーネルが画面から取る）。
     let status_at_bottom = judged("the zi status line sits on the second-to-last row");
     // **コマンド行に、打っている途中が出ていること。**
-    // **台本の `:w` の直後に観測している**ので、最下行は `:w` である。
+    // **スクリプトの `:w` の直後に観測している**ので、最下行は `:w` である。
     // **`:` を含む形であることまで見る**——`w` だけでは、コマンド行ではなく
     // 本文へ出ていても通る。
     let command_line = serial
@@ -15515,7 +15515,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
 
     // **報せがコマンド行に出ていること（e-5）。**
     //
-    // **台本は変更を持ったまま `:q` を打つ**ので、`zi` は断る。
+    // **スクリプトは変更を持ったまま `:q` を打つ**ので、`zi` は断る。
     // **断った理由が最下行に出ていることを、画面の実物で見る。**
     // **`STDERR` へ出していたものを移した**——**`zi` は代替画面に居るので、
     // あちらは「使う人が見る画面」ではない。**
@@ -15615,7 +15615,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
     // **ディレクトリの一巡（DIR-1c）。**
     //
     // **`mkdir` → `touch` → `ls` → `cat` → 空でない `rmdir`（断られる）→
-    // `rm` → `rmdir` → `ls` を、台本が順に打っている。**
+    // `rm` → `rmdir` → `ls` を、スクリプトが順に打っている。**
     //
     // **3 つを見る。**
     let after_mkdir = plain.split("/bin/mkdir /tmp/box").nth(1).unwrap_or("");
@@ -15689,7 +15689,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
     // 返し忘れていないこと」である。** **`syscall-test` が通っても、
     // `zi` が返し忘れていれば、フレームは減り続ける。**
     //
-    // **台本は `zi` を 3 回起動する**（`/data/lines`・`/data/fresh`・
+    // **スクリプトは `zi` を 3 回起動する**（`/data/lines`・`/data/fresh`・
     // `/data/edited`）。**回数を写さない**——**1 回でも取り忘れ・返し忘れが
     // あれば落ちる形にする。** **`> 0` も要る**——**取っていなければ
     // 「0 と 0」で一致してしまい、ヒープを使わなくなった形が通る。**
@@ -15733,11 +15733,11 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
 
     // **行頭の Backspace が前の行と繋げたこと（H-b-2。7-3 で塞いだ穴）。**
     //
-    // **b-1 まで、この経路は台本が 1 度も通らなかった**
+    // **b-1 まで、この経路はスクリプトが 1 度も通らなかった**
     // （`docs/verification-coverage.md` の「検査なし」）。**運用者の目視では
-    // 通っていたが、判定が無かった。** **台本を触る b-2 で足した。**
+    // 通っていたが、判定が無かった。** **スクリプトを触る b-2 で足した。**
     //
-    // **台本は `ab` / `cd` の 2 行を作り、2 行目の行頭で Backspace を打つ。**
+    // **スクリプトは `ab` / `cd` の 2 行を作り、2 行目の行頭で Backspace を打つ。**
     // **1 行の `abcd` になるはずである。**
     let joined_output = program_output(
         plain
@@ -15769,10 +15769,10 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
             .next()
             .unwrap_or(""),
     );
-    // **区切りは次の回の手前である（ADR-0046 で台本が伸びた）。**
+    // **区切りは次の回の手前である（ADR-0046 でスクリプトが伸びた）。**
     // **`script-done` で切っていたが、後ろに `/nope/x` の回が付いた**ので、
     // **そのままだとその回の出力まで飲み込む**（`/data/lines` と `edited` で
-    // 既に 2 度踏んでいる形である。**台本を変えたら、台本に寄りかかっている
+    // 既に 2 度踏んでいる形である。**スクリプトを変えたら、スクリプトに寄りかかっている
     // 判定を数え直すこと**）。
     let big_after = program_output(
         plain
@@ -15787,7 +15787,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
     let big_lines_after: Vec<&str> = big_after.lines().collect();
     let big_passes_the_old_line_limit = big_lines_before.len() > 64;
     let big_passes_the_old_length_limit = big_lines_before.iter().any(|line| line.len() > 128);
-    // **台本は先頭の行の行頭へ `Z` を 1 字入れる。** 他の行は変わらない。
+    // **スクリプトは先頭の行の行頭へ `Z` を 1 字入れる。** 他の行は変わらない。
     let big_round_trip = big_lines_before.len() > 1
         && big_lines_after.len() == big_lines_before.len()
         && big_lines_after[0] == format!("Z{}", big_lines_before[0])
@@ -15799,7 +15799,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
     // それはバッファ側である**——**H-b-2 で検出できなかったのは、
     // まさにバッファしか見ていなかったからである。**
     //
-    // **台本は `/data/big` を開き、ウィンドウを動かす前と後で 2 回観測する**
+    // **スクリプトは `/data/big` を開き、ウィンドウを動かす前と後で 2 回観測する**
     // （`kernel/src/console/probe.rs` の `observe_zi_window`）。
     //
     // **期待値をホストが持たない。** **2 つが違うことと、後のほうが
@@ -15852,7 +15852,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
 
     // **エラーがエコーエリアに出ている（ADR-0046）。画面の実物で見る。**
     //
-    // **台本は `/nope/x` を開いて `:w` を打つ。** **親のディレクトリが無いので
+    // **スクリプトは `/nope/x` を開いて `:w` を打つ。** **親のディレクトリが無いので
     // 断られる**——**`zi` が代替画面に居る間にエラーを出す唯一の道である。**
     //
     // **主張は 2 つあり、どちらも要る。**
@@ -15876,14 +15876,14 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
 
     // **Enter と Backspace と Delete（zi-f）。**
     //
-    // **台本が新しいファイルを開き、3 つを通してから保存している**
-    // （`kernel/src/input.rs` の台本の doc に打鍵が並べてある）。
+    // **スクリプトが新しいファイルを開き、3 つを通してから保存している**
+    // （`kernel/src/input.rs` のスクリプトの doc に打鍵が並べてある）。
     // **読み戻しは `ab` と `c` の 2 行になるはずである。**
     // **区切りは次の `zi` の回の手前である（H-b-2）。**
     //
-    // **`script-done` で切っていた。** **台本の末尾に回が 3 つ増えた**ので、
+    // **`script-done` で切っていた。** **スクリプトの末尾に回が 3 つ増えた**ので、
     // **そのままだと後ろの回の出力まで飲み込む**（`/data/lines` の回で
-    // 一度踏んだのと同じ形である。**台本を変えたら、台本に寄りかかっている
+    // 一度踏んだのと同じ形である。**スクリプトを変えたら、スクリプトに寄りかかっている
     // 判定を数え直すこと**）。
     let edited_output = program_output(
         plain
@@ -15908,7 +15908,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
 
     // **`a` は `i` と違う桁から挿入する（e-4）。**
     //
-    // **台本は `i`（そのまま）と `a`（1 つ右）を両方通す。** `zi` は
+    // **スクリプトは `i`（そのまま）と `a`（1 つ右）を両方通す。** `zi` は
     // 判定行の札を分けている（`insert` と `append`）ので、**直前の報告の桁と
     // 比べる**——`i` は同じ桁、`a` は 1 つ右である。
     // **期待値を写していない**（数はどちらも `zi` の報告から取る）。
@@ -15939,13 +15939,13 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
         });
     let append_differs_from_insert = insert_kept_the_column && append_moved_right;
 
-    // **判定ではない。** **台本が伸びたときに [`ZI_TEST_TIMEOUT`] を決め直す
+    // **判定ではない。** **スクリプトが伸びたときに [`ZI_TEST_TIMEOUT`] を決め直す
     // ための実測値である。** **揺れる値なので、合否には載せない。**
     println!(
         "{context}: (info) the script finished {finished_after:?} into the wait \
          (the wait allows {ZI_TEST_TIMEOUT:?}; None means it never finished)"
     );
-    // **合図である（2026-09-04）。** **偽なら台本ごと動かないので、
+    // **合図である（2026-09-04）。** **偽ならスクリプトごと動かないので、
     // 「これだけが落ちる破壊」は在りえない。** **合否には載せたままで、
     // 読み方だけを分ける**——`tools/judgement-map.py` が `(signal)` を数えない。
     println!("{context}: (signal) zi started = {started}");
@@ -16292,7 +16292,7 @@ fn program_output(segment: &str) -> String {
         .join("\n")
 }
 
-/// `less` の実演（VIEW-b）。**決定的な台本入力で駆動する。**
+/// `less` の実演（VIEW-b）。**決定的なスクリプト入力で駆動する。**
 ///
 /// # `zi-test` と分けてある
 ///
@@ -16397,9 +16397,9 @@ fn cmd_view_test(features: &[&str]) -> Result<()> {
             .next()
             .unwrap_or(""),
     );
-    // **区切りは次の回の手前である（VIEW-c で台本が伸びた）。**
+    // **区切りは次の回の手前である（VIEW-c でスクリプトが伸びた）。**
     // **`script-done` で切っていたが、後ろに `more` の 2 回と `cat` が付いた**
-    // ——**台本を変えたら、台本に寄りかかっている判定を数え直すこと。**
+    // ——**スクリプトを変えたら、スクリプトに寄りかかっている判定を数え直すこと。**
     let cat_after = program_output(
         plain
             .split("/bin/cat /data/big")
@@ -16539,7 +16539,7 @@ fn cmd_view_test(features: &[&str]) -> Result<()> {
     //
     // **実測**——**ずらすと 55 字、全部描き直すと 967 字である。**
     // **上限を 200 字に置くと、両側に 3 倍以上の余裕がある。**
-    // **字の数は揺れない**（同じ台本なら同じである）。
+    // **字の数は揺れない**（同じスクリプトなら同じである）。
     let one_line_redraws_one_line = delta(2, 3)
         .and_then(|values| values.get(3).copied())
         .is_some_and(|glyphs| glyphs <= 200);
@@ -17445,11 +17445,11 @@ fn cmd_virtio_irq_test(features: &[&str]) -> Result<()> {
     Ok(())
 }
 
-/// `--shell-test` の台本を、カーネルの台本として差し込んで実行する（`ADR-0063` の (b3) の (b)）。
+/// `--shell-test` のスクリプトを、カーネルのスクリプトとして差し込んで実行する（`ADR-0063` の (b3) の (b)）。
 ///
-/// **駆動だけが違う。** **判定は [`judge_shell_session`] で同じである**——**台本では成り立たない
+/// **駆動だけが違う。** **判定は [`judge_shell_session`] で同じである**——**スクリプトでは成り立たない
 /// 判定だけ [`SCRIPT_SKIPS`] で外す。** **打鍵を見ない破壊テストをここへ移すと、1 本あたり約 50 秒
-/// 縮む**（`--shell-test` の破壊テストは 58 秒、台本のグループは 8.5 秒。実測）。
+/// 縮む**（`--shell-test` の破壊テストは 58 秒、スクリプトのグループは 8.5 秒。実測）。
 fn cmd_shell_script_test(mode: ShellTestMode) -> Result<()> {
     let workspace_root = workspace_root()?;
     let run = RunDir::create(&workspace_root, &mode.context())?;
@@ -17486,7 +17486,7 @@ fn cmd_shell_script_test(mode: ShellTestMode) -> Result<()> {
         launch::Deadline::Failure,
     ))?;
 
-    // **台本の終わり（`script-done:`）か、起動し直しのマーカーか、出力が伸びなくなるまで待つ。**
+    // **スクリプトの終わり（`script-done:`）か、起動し直しのマーカーか、出力が伸びなくなるまで待つ。**
     let started = Instant::now();
     let deadline = started + PIPE_TEST_TIMEOUT;
     let mut last_len = 0usize;
@@ -17668,8 +17668,8 @@ fn cmd_shell_test_with_disk(mode: ShellTestMode, previous: Option<&Path>) -> Res
 /// 見る**——**`serial` と `qemu` のデバッグログと、起動の合図（`ready`）と、QEMU の終了状態
 /// である。** **駆動の側が QEMU を持つので、判定はプロセスに触れない。**
 ///
-/// **分けた理由は、同じ判定を台本で駆動した起動へも当てるためである**（`--full` の余裕。
-/// **打鍵を見ない破壊テストを台本のグループへ移す**——`ADR-0063` の決定 4）。**この関数そのものは
+/// **分けた理由は、同じ判定をスクリプトで駆動した起動へも当てるためである**（`--full` の余裕。
+/// **打鍵を見ない破壊テストをスクリプトのグループへ移す**——`ADR-0063` の決定 4）。**この関数そのものは
 /// 振る舞いを変えていない**——**中身は `cmd_shell_test` の後半をそのまま切り出したものである。**
 /// シードの `/etc/motd`（イメージへ入る原本）の、空でない最初の行（前後の空白を除く。2026-10-10）。シェルの検査が、
 /// `cat /etc/motd` の出力を探すのに使う。**シードが変われば、期待も一緒に変わる。**
@@ -17844,7 +17844,7 @@ fn judge_shell_session(
     // **破壊テストのビルド（`keyboard-drop-esc-test`）では期待が裏返る。**
     let esc_moved = after_shell.contains("zash: nm: cannot run");
     // **届かなかったときに残る語は、変換表で変わる（f-1b）。**
-    // **台本は `bracket_right`（`0x1B`）を打っており、JIS では `[`、
+    // **スクリプトは `bracket_right`（`0x1B`）を打っており、JIS では `[`、
     // US では `]` である。**
     let esc_did_not_move = if mode.expects_the_us_layout() {
         after_shell.contains("zash: m]Dn: cannot run")
@@ -17972,9 +17972,9 @@ fn judge_shell_session(
     //
     // **矢印が落ちている構成では期待が変わる。** **左が届かないので挿入点は
     // 行末のままで、Delete は消す字を持たない**——走るのは `ij` である。
-    // **実測でここを踏んだ**（2026-08-28。台本へ左を足した回で
-    // `keyboard-drop-arrows` の実行が落ちた）。**台本を変えるときは、
-    // 台本を写している判定を数え直すこと。**
+    // **実測でここを踏んだ**（2026-08-28。スクリプトへ左を足した回で
+    // `keyboard-drop-arrows` の実行が落ちた）。**スクリプトを変えるときは、
+    // スクリプトを写している判定を数え直すこと。**
     let delete_removed = after_shell.contains("zash: i: cannot run");
     let delete_left_the_csi = after_shell.contains("zash: i3~j: cannot run");
     let delete_left_the_line_alone = after_shell.contains("zash: ij: cannot run");
@@ -18017,7 +18017,7 @@ fn judge_shell_session(
     // **SE-f で Ctrl+D から Ctrl+G へ移した**——**あちらに意味ができたので、
     // 「捨てる」を主張するキーとして使えなくなった。**
     //
-    // **Tab と別の 1 本にしてある**——**落ちる破壊テストが違う**（台本の doc）。
+    // **Tab と別の 1 本にしてある**——**落ちる破壊テストが違う**（スクリプトの doc）。
     let unknown_ctrl_dropped = after_shell.contains("zash: no: cannot run");
     let unknown_ctrl_kept = after_shell.contains("zash: n\u{7}o: cannot run");
     let unknown_ctrl_stayed_out_of_the_line = unknown_ctrl_dropped && !unknown_ctrl_kept;
@@ -18041,12 +18041,12 @@ fn judge_shell_session(
     // **添字ではなく名前で引く（f-2 で直した）。**
     //
     // **以前は生の添字だった**（`echo_argcs.get(4)` のように書いてあった）。
-    // **f-1 と f-1b が台本の途中へ `echo` の行を 4 つ足したとき、`Ctrl+W` と
+    // **f-1 と f-1b がスクリプトの途中へ `echo` の行を 4 つ足したとき、`Ctrl+W` と
     // `$1` を見ている 2 本の添字がずれた**——**ずれた先の行の `argc` が
     // たまたま同じ 2 だったので、判定は成功のままだった**（実測。2026-08-31）。
     // **「偶然に頼った捕捉は捕捉ではない」の実例である。**
     //
-    // **名前で引き、本数も突き合わせる**——**台本へ `echo` の行を足して
+    // **名前で引き、本数も突き合わせる**——**スクリプトへ `echo` の行を足して
     // ここへ名前を足さなければ、本数の判定が落ちる。** **静かにずれる形を、
     // 落ちる形へ変えた。**
     let echo_lines_are_accounted_for = echo_argcs.len() == ECHO_LINES_IN_ORDER.len();
@@ -18260,7 +18260,7 @@ fn judge_shell_session(
     // **消す並びを出したことは、シリアルに出た並びそのもので見る。**
     //
     // **画面が実際に消えたことは見ていない。** **`--shell-test` は実打鍵の経路で、
-    // 画面を観測する仕組み（`screen-text`）はカーネル側の台本にしか無い。**
+    // 画面を観測する仕組み（`screen-text`）はカーネル側のスクリプトにしか無い。**
     // **ED(2) と CUP の解釈は `--ansi-test` が持っている**（`ADR-0029`）。
     // **観測していないことは観測していないと書く。**
     let ctrl_l_kept_the_line = after_shell.contains("zash: ll: cannot run");
@@ -18590,7 +18590,7 @@ fn judge_shell_session(
     //
     // **関係で見る。時間では見ない。** **ティックの増加は、深さ 1 の弾き（判定 6 の量）と
     // ほぼ 1 対 1 になる**——**どちらも BSP のタイマ割り込みで増えるからである。**
-    // **実測で 4,024 対 3,964 = 1.015 だった**（2026-09-17）。**`sleep 1` を台本へ足した後は
+    // **実測で 4,024 対 3,964 = 1.015 だった**（2026-09-17）。**`sleep 1` をスクリプトへ足した後は
     // 4,129 対 3,967 = 1.041 である**——**眠っている 1 秒は深さ 2 なので、弾きに数えられない。**
     //
     // **上限は測ってから決めた**——**1.5 である。** **通る側（1.015）に 1.48 倍の余裕があり、
@@ -18619,7 +18619,7 @@ fn judge_shell_session(
     // **`timer-wakes-before-deadline` はここで落ちる**（毎ティック起こす）。
     let timer_kept_the_deadline = timer_woke_before_deadline == Some(0);
     // **眠っていた間（深さ 2）は弾きに数えられないので、時計の進みから引く**（(b3) の (b)）。
-    // **台本で駆動するとセッションが 193 ティックで、`sleep 1` の 100 ティックが 6 割を占め、
+    // **スクリプトで駆動するとセッションが 193 ティックで、`sleep 1` の 100 ティックが 6 割を占め、
     // 引かないと関係が構造的に崩れた**（実測。sendkey では 4137 ティックのうちの 100 で効かなかった）。
     let slept_ticks = sleep_advanced.unwrap_or(0) / 10;
     let clock_matches_the_timer = match (clock_from, clock_to, depth_one_not_folded) {
@@ -18692,7 +18692,7 @@ fn judge_shell_session(
     // **判定 3（起こされて進む）は、既存の判定が覆っている**——**打った字が届き、
     // `ls`・`cat`・`hello` が走ったことを上で見ている。** **同じことを 2 度数えない。**
 
-    // **判定を名前つきの一覧にする（`ADR-0063` の (b3) の (b)）。** **台本で駆動したときは
+    // **判定を名前つきの一覧にする（`ADR-0063` の (b3) の (b)）。** **スクリプトで駆動したときは
     // [`SCRIPT_SKIPS`] の判定を見ない**——**見なかったことと、落ちた名前を行に出す。**
     // **カーネルの `[ERROR]` の行が無いことを判定に入れる**（2026-10-03。それまでは出すだけで判定に使っていなかった
     // ——止まって検出される破壊テストの理由を出力に残すために 2026-09-26 に足した行である）。
@@ -18871,8 +18871,8 @@ const EXCURSION_STACK_MIN_SPARE: usize = 16 * 1024;
 
 // **`--shell-test` が打つ行は `common::shell_script::LINES` にある**（`ADR-0063` の (b3) の (b)）。
 //
-// **ここに在った一覧を `common` へ移した**——**同じ台本を、`sendkey` で打つ形（ここ）と
-// カーネルの台本として差し込む形（`shell-script-test`）の両方が読むためである。**
+// **ここに在った一覧を `common` へ移した**——**同じスクリプトを、`sendkey` で打つ形（ここ）と
+// カーネルのスクリプトとして差し込む形（`shell-script-test`）の両方が読むためである。**
 // **各行の意味は、あちらの行頭のコメントと、ここの判定の doc にある。**
 
 /// `--shell-test` が打つ行（S11-11。S12 前の手当ての 3 本目で伸ばした）。
@@ -18885,16 +18885,16 @@ const EXCURSION_STACK_MIN_SPARE: usize = 16 * 1024;
 /// **`/` を含む側を先に打つ。** あちらは 3 本目より前から通っていた道なので、
 /// **固定の既定を入れて壊れていないことを先に見る。**
 /// **そのあと `/` を含まない側を打つ。**
-/// 台本の中で `/bin/echo` を起動する行を、**打つ順に**並べた名前（f-2）。
+/// スクリプトの中で `/bin/echo` を起動する行を、**打つ順に**並べた名前（f-2）。
 ///
 /// # なぜ名前の一覧を持つのか
 ///
-/// **判定が `argc` を添字で引いていたためである。** **台本の途中へ `echo` の行を
+/// **判定が `argc` を添字で引いていたためである。** **スクリプトの途中へ `echo` の行を
 /// 足すと添字がずれるが、ずれた先の値がたまたま同じなら成功のままになる**
 /// ——**f-1 と f-1b で実際にそうなっていた**（実測。2026-08-31。
 /// `Ctrl+W` と `$1` の 2 本が、`~` の行を見ていた）。
 ///
-/// **ここに名前を並べ、本数を突き合わせる。** **台本へ `echo` の行を足したのに
+/// **ここに名前を並べ、本数を突き合わせる。** **スクリプトへ `echo` の行を足したのに
 /// ここへ足さなければ、`echo lines accounted for` が落ちる。**
 ///
 /// **名前は打った行そのものにしてある**（編集のキーを使う行だけ、何をしたかを添える）。
@@ -21358,7 +21358,7 @@ fn normalize_boot_log(serial: &str, drop_core_count_lines: bool) -> Vec<String> 
 /// 2. **外の道具が示す**——`debugfs` が `disk0.img` から `/data/lines` を読み、
 ///    **ビルドしたイメージの同じファイルと違う。** **さらに `e2fsck` が通る**
 ///    （書き戻しが構造を壊していない）
-/// 3. **2 度目の Ring 3 が読み戻す**——`persist-check-test` の台本が
+/// 3. **2 度目の Ring 3 が読み戻す**——`persist-check-test` のスクリプトが
 ///    `cat /data/lines` を打ち、**出た本文が、`debugfs` が装置から読んだものと
 ///    一致する。** **出どころが独立である**（片方はホストの道具、片方は
 ///    カーネルとファイルシステムとシリアル）
@@ -21461,10 +21461,10 @@ fn cmd_persist_zi_test(rebuild_between: bool) -> Result<()> {
     let plain = strip_ansi(&second);
     // **`script-done:` ではなく次の行で区切る（f-1 で踏んだ）。**
     //
-    // **`persist-check-test` の台本に `/bin/echo $TERM` が増えた**ので、
+    // **`persist-check-test` のスクリプトに `/bin/echo $TERM` が増えた**ので、
     // **`script-done:` まで取ると `cat` の出力にあちらが混ざる**
     // （実測。26 バイトのはずが 33 バイトになった）。
-    // **台本を変えるときは、台本に寄りかかっている判定を数え直すこと**
+    // **スクリプトを変えるときは、スクリプトに寄りかかっている判定を数え直すこと**
     // （`--zi-test` の doc に同じ注意が在る。**2 度目である**）。
     let printed = program_output(
         plain
@@ -21544,13 +21544,13 @@ fn cmd_persist_zi_test(rebuild_between: bool) -> Result<()> {
 /// # 書き換えるのは `TERM` である
 ///
 /// **`PATH` を書き換えると、2 度目のシェルが名前でコマンドを引けなくなり、
-/// 台本ごと動かない**（運用者の指示）。**`HOME` は `~` の展開が使っており、
+/// スクリプトごと動かない**（運用者の指示）。**`HOME` は `~` の展開が使っており、
 /// そちらの判定と混ざる。**
 ///
 /// # 破壊テスト
 ///
 /// **`rebuild_between` を立てると、2 度目の前にイメージを作り直す。**
-/// **2 度目は種のままの `TERM=zeikos` を読むので、3 層目が落ちる。**
+/// **2 度目は seed のままの `TERM=zeikos` を読むので、3 層目が落ちる。**
 fn cmd_persist_env_test(rebuild_between: bool, ignore_file: bool) -> Result<()> {
     let workspace_root = workspace_root()?;
     let context = if rebuild_between {
@@ -21670,7 +21670,7 @@ fn cmd_persist_env_test(rebuild_between: bool, ignore_file: bool) -> Result<()> 
 ///
 /// # 2 度起こす枠を使う
 ///
-/// **1 度目は `zi` で `KEYMAP=us` を足す**（台本。デコーダを通らない）。
+/// **1 度目は `zi` で `KEYMAP=us` を足す**（スクリプト。デコーダを通らない）。
 /// **2 度目は `sendkey` で物理キーを打つ**（`--shell-test` の駆動。
 /// **デコーダを通る唯一の経路である**）。
 ///
@@ -22570,7 +22570,7 @@ const SHELL_TEST_PROMPT_POLL: Duration = Duration::from_millis(20);
 const SHELL_TEST_PROMPT_GIVE_UP: usize = 2;
 
 /// その行の終わりで、プロンプトが戻るのを待つか（案 G。純粋な論理）。**戻らない行は決まった待ちのまま**——
-/// 自分では終わらない子を起こす行（`spin` と `spin | cat`。台本では打たない行で、Enter で終わるもの）と、
+/// 自分では終わらない子を起こす行（`spin` と `spin | cat`。スクリプトでは打たない行で、Enter で終わるもの）と、
 /// シェルを終える `exit` の行。**Ctrl+C の行は待つ**（止めた子が終わるとプロンプトが戻る）。
 fn waits_for_the_prompt(line: &common::shell_script::Line) -> bool {
     let ends_with_enter = line.keys.last() == Some(&"ret");
@@ -29363,9 +29363,9 @@ fn check_structural_guard_symbols_present(workspace_root: &Path) -> Result<Strin
 /// （`kernel/src/graphics/font/`。実測）。**それ以外の字は U+FFFD の箱になる。**
 /// **`/etc/environment` の日本語のコメントが、画面で箱の列に見えていた**
 /// （運用者の報告。2026-08-31）。**装置の中身は壊れていない**——`debugfs` が
-/// 読んだバイト列は種のものと一致した。**壊れていたのは見え方だけである。**
+/// 読んだバイト列は seed のものと一致した。**壊れていたのは見え方だけである。**
 ///
-/// # 見るのは種のツリーだけである
+/// # 見るのは seed のツリーだけである
 ///
 /// **`kernel/fsimage/seed/` の下は、人が書いてイメージへ入るテキストである。**
 /// **`/bin` の実行ファイルは機械語なので対象にしない**——**実測で 0x80 以上の
@@ -29623,7 +29623,7 @@ fn check_fs_image_passes_e2fsck(workspace_root: &Path) -> Result<String> {
 ///
 /// **CI へ `--commit` を足した 1 回目と 2 回目が、どちらもこれで失敗した。**
 /// **`rustc` へ原本を絶対パスで渡していたので `panic` の位置がイメージへ載り、
-/// `mke2fs -d` が種の所有者をコピーしていたので uid がイメージへ載っていた**
+/// `mke2fs -d` が seed の所有者をコピーしていたので uid がイメージへ載っていた**
 /// （`docs/troubleshooting.md` の 2026-09-06）。
 ///
 /// # ここが見るのは 4 つの軸のうち 2 つである
@@ -31155,7 +31155,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
         }
     }
 
-    // **種の `/etc/environment` が、`zi` の台本の前提（末尾から数える）を満たすこと**（2026-10-16。運用者の決定。
+    // **種の `/etc/environment` が、`zi` のスクリプトの前提（末尾から数える）を満たすこと**（2026-10-16。運用者の決定。
     // `check_environment_seed_matches_the_zi_scripts` の doc）。
     total += 1;
     begin_item(
@@ -31587,7 +31587,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
         //
         // **`--shell-test` へ足していない**——**あちらは `sendkey` で
         // 1 キーずつ打つので、同じ主張が 12 構成に掛かって高い**
-        // （`kernel/src/input.rs` の `profile-test` の台本の doc）。
+        // （`kernel/src/input.rs` の `profile-test` のスクリプトの doc）。
         total += 1;
         begin_item(
             Family::Shell,
@@ -31654,7 +31654,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
         }
         batch.run(&mut failed);
 
-        // **シェルの `|`（`ADR-0063` の (b3)）。** **台本のグループで、1 回の起動で 7 本の `|` を見る。**
+        // **シェルの `|`（`ADR-0063` の (b3)）。** **スクリプトのグループで、1 回の起動で 7 本の `|` を見る。**
         // **破壊テストは 7 つで、落ちる判定がそれぞれ違う**（`PIPE_TEST_SABOTAGES` の doc）。
         total += 1;
         begin_item(
@@ -31708,7 +31708,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
         }
         batch.run(&mut failed);
 
-        // **unix ドメインのストリームソケット（`ADR-0064`）。** **台本のグループで、1 回の起動で
+        // **unix ドメインのストリームソケット（`ADR-0064`）。** **スクリプトのグループで、1 回の起動で
         // `sockc` の 6 つの形を見る。** **破壊テストは 8 つで、落ちる判定がそれぞれ違う**
         // （`SOCKET_TEST_SABOTAGES` の doc）。
         total += 1;
@@ -32586,7 +32586,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
             &mut failed,
         );
 
-        // **`zi` の実演（zi-d）。** 決定的な台本入力で、開いて動いて編集し、
+        // **`zi` の実演（zi-d）。** 決定的なスクリプト入力で、開いて動いて編集し、
         // `:wq` で保存し、`cat` で読み戻すところまでを見る。
         total += 1;
         begin_item(
@@ -32601,7 +32601,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
             }
         }
 
-        // **`less` の実演（VIEW-b）。** **`zi-test` とは別の台本である**
+        // **`less` の実演（VIEW-b）。** **`zi-test` とは別のスクリプトである**
         // ——**あちらは21秒掛かり、破壊テスト19構成すべてに掛かる**ので、
         // **`less` の打鍵を混ぜない**（運用者の承認）。
         //
@@ -33181,7 +33181,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
         }
         batch.run(&mut failed);
 
-        // **同じ台本を台本のグループで実行する（`ADR-0063` の (b3) の (b)）。** **打鍵を見ない破壊テストは
+        // **同じスクリプトをスクリプトのグループで実行する（`ADR-0063` の (b3) の (b)）。** **打鍵を見ない破壊テストは
         // こちらで落とす**——**1 本あたり約 50 秒縮む。**
         total += 1;
         begin_item(
@@ -34710,7 +34710,7 @@ const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     full: 535,
 };
 
-/// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。
+/// `--shell-test` の破壊テストが `sendkey` とスクリプトのグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。
 ///
 /// # 項目数では見えないので、駆動する側の一覧を数える
 ///
@@ -34727,7 +34727,7 @@ const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
 struct ExpectedShellSabotageSplit {
     /// `sendkey` で打つ `--shell-test` に残した破壊テスト（`SHELL_TEST_SABOTAGES`）。
     sendkey: usize,
-    /// 台本のグループで実行する破壊テスト（`SHELL_SCRIPT_SABOTAGES`）。
+    /// スクリプトのグループで実行する破壊テスト（`SHELL_SCRIPT_SABOTAGES`）。
     script: usize,
 }
 
@@ -34959,9 +34959,9 @@ fn string_slice_constant(source: &str, name: &str) -> Result<Vec<String>> {
     Ok(names)
 }
 
-/// 種の `/etc/environment` が、`zi` の台本の前提を満たすこと（2026-10-16。運用者の決定）。
+/// 種の `/etc/environment` が、`zi` のスクリプトの前提を満たすこと（2026-10-16。運用者の決定）。
 ///
-/// **`kernel/src/input.rs` の台本は、行の内容ではなく末尾からの位置で変数を探す**——`env-rewrite-test` は最後の行へ
+/// **`kernel/src/input.rs` のスクリプトは、行の内容ではなく末尾からの位置で変数を探す**——`env-rewrite-test` は最後の行へ
 /// 降りてから `k` を打って `TERM` へ上がり、`keymap-rewrite-test` は最後の行で `l` を打って右端へ寄せ、その後ろへ
 /// `KEYMAP=us` を足す（`zi` に検索が無い）。**末尾に行を足すとどちらもずれる**——2026-10-16 に `XDG_RUNTIME_DIR` を
 /// 末尾に足して、full check の keymap と persist (env) の 4 項目が落ちた（基本の検査には無かった。
@@ -34969,7 +34969,7 @@ fn string_slice_constant(source: &str, name: &str) -> Result<Vec<String>> {
 ///
 /// 見るのは 3 つ——末尾の 3 行が `TERM=`・`PATH=`・`HOME=` で始まること、`env-rewrite-test` の `k` の数だけ末尾から
 /// 上がった行が `TERM=` であること、最後の行の長さが `keymap-rewrite-test` の `l` の数以下であること（右端に届く）。
-/// **`k` と `l` の数は `kernel/src/input.rs` の文面から読む**（台本を変えたら、ここも自動で追う）。
+/// **`k` と `l` の数は `kernel/src/input.rs` の文面から読む**（スクリプトを変えたら、ここも自動で追う）。
 fn check_environment_seed_matches_the_zi_scripts(workspace_root: &Path) -> Result<String> {
     let read = |relative: &str| -> Result<String> {
         let path = workspace_root.join(relative);
@@ -35025,7 +35025,7 @@ fn longest_run(text: &str, ch: char) -> usize {
     best
 }
 
-/// 種の `/etc/environment` の文面が、台本の前提を満たすか（純粋な論理。ホストの単体試験が固定する）。
+/// 種の `/etc/environment` の文面が、スクリプトの前提を満たすか（純粋な論理。ホストの単体試験が固定する）。
 /// `ups` は `env-rewrite-test` が最後の行から上がる数、`rights` は `keymap-rewrite-test` が最後の行で右へ寄せる数。
 fn environment_seed_findings(seed: &str, ups: usize, rights: usize) -> Vec<String> {
     let lines: Vec<&str> = seed.lines().collect();
@@ -35731,7 +35731,7 @@ static TIME_LIMIT: std::sync::Mutex<Option<(Instant, std::time::Duration)>> =
 ///
 /// **1 つは実測である**——**261項目で約75分だった**（f-2 の完了時。**内訳は
 /// `docs/verification-coverage.md` に在る**）。**264項目で 90分に触れた**
-/// （**131項目まで進んで切れた**）。**余裕が 15分では、台本を 1 本伸ばすたびに
+/// （**131項目まで進んで切れた**）。**余裕が 15分では、スクリプトを 1 本伸ばすたびに
 /// 触ることになる**——**`--shell-test` は 13 構成、`zi-test` は 22 構成に掛かる。**
 ///
 /// **もう 1 つは、切れた回から得られるものが少ないことである。**
@@ -36356,7 +36356,7 @@ fn full_check_jobs() -> usize {
 
 /// 全検査で同時に走らせない表の行と、その理由（2026-09-29。運用者の決定）。**`*` はその表の全部の行。**
 ///
-/// **読んで分けた行**（sendkey で打つシェルの試験、ホストの時間と比べる試験、台本で駆動するシェルの試験、宣言した上限
+/// **読んで分けた行**（sendkey で打つシェルの試験、ホストの時間と比べる試験、スクリプトで駆動するシェルの試験、宣言した上限
 /// まで走る実行）と、**走らせて分けた行**（候補を 4 本ずつで回して、判定が変わったか、余裕が揺れの幅を越えて減った行）
 /// を載せる。**死んだ行は落とす**（[`check_not_concurrent_rows`]。全検査の入口で見る）。**表に載らない表のループと、
 /// 1 つずつの項目は、今までどおり順に回る。**
@@ -36369,7 +36369,7 @@ const NOT_CONCURRENT: &[(&str, &str, &str)] = &[
     (
         "SHELL_SCRIPT_SABOTAGES",
         "*",
-        "台本で駆動するシェルの試験（時計・sleep の長さをホストの時間と比べる判定を含む）",
+        "スクリプトで駆動するシェルの試験（時計・sleep の長さをホストの時間と比べる判定を含む）",
     ),
     ("LAPIC_TIMER_TESTS", "rate", "ホストの時間と比べる（ティックの速さの比）"),
     (
@@ -37822,7 +37822,7 @@ mod tests {
         );
     }
 
-    /// 種の `/etc/environment` と `zi` の台本の前提——末尾の 3 行、`k` の数、最後の行の長さ、台本の読み出し。
+    /// 種の `/etc/environment` と `zi` のスクリプトの前提——末尾の 3 行、`k` の数、最後の行の長さ、スクリプトの読み出し。
     #[test]
     fn the_environment_seed_is_checked_against_the_zi_scripts() {
         let good = "# a\nXDG_RUNTIME_DIR=/tmp/seinas\nTERM=zeikos\nPATH=/bin\nHOME=/root\n";
@@ -38030,7 +38030,7 @@ thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack
     }
 
     /// **切り離して走る `sockd` の行が、シェルの書いている途中へ割り込んでも数えられる**（2026-10-03。
-    /// `--full` で 1 度落ちた形。`zeikos$ /` の直後に `sockd: client left` が入り、台本の行の残り
+    /// `--full` で 1 度落ちた形。`zeikos$ /` の直後に `sockd: client left` が入り、スクリプトの行の残り
     /// `bin/sockc quit` が次の行になった）。**前に何が来ても、終わりでしか一致しない。**
     #[test]
     fn a_detached_line_is_counted_even_after_an_interleaved_prompt() {

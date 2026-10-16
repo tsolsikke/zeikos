@@ -115,7 +115,7 @@ Accepted
 
 **計測の既定の値**（`--socket-test`の1回）——**listener 取った1返した1、`bind refused` 1、接続 created 5（同時に最大2）released 5、`connect refused` 2、`backlog full` 0、`accept`待ち4、読み手の待ち10（書きが起こした5）、書き手の待ち1（読みが起こした1）、閉じた相手への書き1、EOF 5。**
 
-**`connect refused`が2である内訳を切り分けた**（一時のログを`connect`の入口に入れ、1回走らせて`"nobody"`が2回来ることを確かめ、revertした。`docs/coding-standards.md`の「一時的な破壊・変更の手順」）。**1つは起動時の`syscall-test`の検査66（無い名前への`connect`）、1つは台本の`sockc nobody`である。** **計測は大域なので両方が乗る。** **判定5は`connect refused >= 1`で見る。** **`pipe:`の計測は大域だが起動時に触られない**（`syscall-test`はパイプを使わない）**ので、`pipe-test`の判定は`== 7`で見てよい。**
+**`connect refused`が2である内訳を切り分けた**（一時のログを`connect`の入口に入れ、1回走らせて`"nobody"`が2回来ることを確かめ、revertした。`docs/coding-standards.md`の「一時的な破壊・変更の手順」）。**1つは起動時の`syscall-test`の検査66（無い名前への`connect`）、1つはスクリプトの`sockc nobody`である。** **計測は大域なので両方が乗る。** **判定5は`connect refused >= 1`で見る。** **`pipe:`の計測は大域だが起動時に触られない**（`syscall-test`はパイプを使わない）**ので、`pipe-test`の判定は`== 7`で見てよい。**
 
 ### `SYS_SPAWN_DETACHED`をそのまま使う
 
@@ -129,7 +129,7 @@ Accepted
 4. **双方が読まずに書き続けると互いに待つ**（Linuxも同じ。`big`が1,536 ≤ 2×輪に収めてあるのはこのため）。**見直すきっかけ**——**利用者が輪の2倍を超える往復を1回のwriteでするとき**（回避は利用者の側）。
 5. **1つのタスクが待つ理由を2つ同時に持てない。** **見直すきっかけ**——**画面と入力の受け渡しの段の設計時**（Seinasが入力とソケットの両方を待つとき。持ち越しに立てた。運用者の指示Q7）。
 6. **カーネルで待っている子にCtrl+Cは届かない**（(b3)の限界の再掲）。**`sockd`は`quit`で終える入口を持つ。** **見直すきっかけ**——**`-EINTR`を作る段階**（`ADR-0063`の(b3)の限界）。
-7. **`socket-test`の台本では`|`を使えない**（切り離して起動する1本をサーバーが使っている）。**見直すきっかけ**——**2本目のRing 3を増やす段階。**
+7. **`socket-test`のスクリプトでは`|`を使えない**（切り離して起動する1本をサーバーが使っている）。**見直すきっかけ**——**2本目のRing 3を増やす段階。**
 8. **fdの運搬（`SCM_RIGHTS`）・`mmap`・`shutdown`・`sendmsg`は無い。** **見直すきっかけ**——**次の段階（共有メモリとfdの受け渡し）。** **そこで`load_user_program`の枠を先に読む**（`docs/deferred-decisions.md`の遠征スタックの行。余裕1,016バイト）。
 
 ## Alternatives Considered

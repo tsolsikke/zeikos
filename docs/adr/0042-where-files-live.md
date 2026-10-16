@@ -15,7 +15,7 @@ Accepted
 | 名前 | 中身 |
 |---|---|
 | `/bin` | 実行ファイル8本（`bss-test` `cat` `hello` `ls` `spawn-test` `spin` `zash` `zi`） |
-| `/data` | 検査の種5つ（`lines` `writable` `direct-max` `indirect-first` `sparse-hole`） |
+| `/data` | 検査のseed5つ（`lines` `writable` `direct-max` `indirect-first` `sparse-hole`） |
 | `/etc` | `motd` 1つ |
 | `/lost+found` | `mke2fs`が作る |
 
@@ -72,14 +72,14 @@ Accepted
 
 ### 3. `/data`は残す。**FHSに無い名前であることを明記する**
 
-**`/data`の中身は検査の種である**——`lines`（`zi`が編集する4行）、`writable`（書き込みの的）、`direct-max` / `indirect-first`（単一間接の刻み）、`sparse-hole`（穴あき）。**利用者に見せるためのものではない。**
+**`/data`の中身は検査のseedである**——`lines`（`zi`が編集する4行）、`writable`（書き込みの的）、`direct-max` / `indirect-first`（単一間接の刻み）、`sparse-hole`（穴あき）。**利用者に見せるためのものではない。**
 
 **移さない理由は2つある。**
 
-1. **移してもFHSに近づかない。** **FHSに「検査の種」の置き場は無い。** `/usr/share`（静的な共有データ）が近いが、**`/usr`を使わないと決めた**（決定2）。`/var/lib`も候補だが、**あれは「プログラムが書き換える状態」で、こちらはイメージに焼いた定数である。**
+1. **移してもFHSに近づかない。** **FHSに「検査のseed」の置き場は無い。** `/usr/share`（静的な共有データ）が近いが、**`/usr`を使わないと決めた**（決定2）。`/var/lib`も候補だが、**あれは「プログラムが書き換える状態」で、こちらはイメージに焼いた定数である。**
 2. **費用が106箇所で、得るものが名前だけである**（実測）。**書き換えは機械的だが、判定の期待値と`build.rs`の staging が全部動く。**
 
-**そのかわり規約を書く。** **利用者のファイルは`/home`へ、検査の種は`/data`へ。** **`/data`はFHSに無い名前であり、意図してそうしている。**
+**そのかわり規約を書く。** **利用者のファイルは`/home`へ、検査のseedは`/data`へ。** **`/data`はFHSに無い名前であり、意図してそうしている。**
 
 ### 4. 新しい場所を足すときの規則
 
@@ -142,4 +142,4 @@ Accepted
 - **空きinodeは206から203へ**（3つ）。
 - **ルート直下の項は8から9になった**（`syscall-test`の`ROOT_ENTRIES`。**足した日にこの検算が起動を止めた**——**3度目である**）。
 
-**`/lib`は種のツリー（`kernel/fsimage/seed`）を通らない。** **`build.rs`が`third_party/`から staging へ直接コピーする**ので、**イメージのテキストがASCIIだけであることの検査の範囲に入らない**（`docs/verification-coverage.md`の「追跡下を走る道具が、バイナリをどう扱うか」）。
+**`/lib`はseedのツリー（`kernel/fsimage/seed`）を通らない。** **`build.rs`が`third_party/`から staging へ直接コピーする**ので、**イメージのテキストがASCIIだけであることの検査の範囲に入らない**（`docs/verification-coverage.md`の「追跡下を走る道具が、バイナリをどう扱うか」）。

@@ -47,7 +47,7 @@ Accepted
 
 ### (e) `--shell-test`へ判定を足す
 
-**あちらは QEMU monitor の`sendkey`で1キーずつ打つ**（1キー120ms、1行の後に800ms）。**`echo $ZPROFILE`の1行で約3秒で、`--full`では12構成に掛かる。** **台本の経路（`profile-test`）ならバイトを直に差し込むので、同じ主張が1回の起動で済む。**
+**あちらは QEMU monitor の`sendkey`で1キーずつ打つ**（1キー120ms、1行の後に800ms）。**`echo $ZPROFILE`の1行で約3秒で、`--full`では12構成に掛かる。** **スクリプトの経路（`profile-test`）ならバイトを直に差し込むので、同じ主張が1回の起動で済む。**
 
 ## 読めなかったときは3段で決める（`/etc/environment`と同じ形）
 

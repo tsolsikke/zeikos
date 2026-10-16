@@ -25,7 +25,7 @@ pub enum Family {
     Process,
     /// pipe・socket・poll・入力・画面・合成。
     Ipc,
-    /// シェル・台本・UTF-8・profile・history・補完・ANSI・キー配列・環境。
+    /// シェル・スクリプト・UTF-8・profile・history・補完・ANSI・キー配列・環境。
     Shell,
     /// `zi`・`less`/`more`・TTF。
     Apps,
@@ -139,7 +139,7 @@ pub const PATH_RULES: &[PathRule] = &[
             "common/src/addr.rs",
             "common/src/percpu.rs",
             "common/src/critical.rs",
-            // **時計は眠りとタイムアウトの全部が読む**（シェルの台本の破壊テスト `timer-never-wakes` 等）。
+            // **時計は眠りとタイムアウトの全部が読む**（シェルのスクリプトの破壊テスト `timer-never-wakes` 等）。
             "common/src/time.rs",
             // **どの Ring 3 のプログラムも ELF として読む。**
             "common/src/elf.rs",
@@ -168,7 +168,7 @@ pub const PATH_RULES: &[PathRule] = &[
             "kernel/src/paging/**",
             "kernel/src/heap/**",
             // **割り込みの配送とタスクの切り替え**——**タイマの割り込みとスケジューラは、どのグループの項目も
-            // 通る**（AP の `ap-touch-scheduler`・シェルの台本の眠り）。
+            // 通る**（AP の `ap-touch-scheduler`・シェルのスクリプトの眠り）。
             "kernel/src/interrupts.rs",
             "kernel/src/task.rs",
             "kernel/src/task/**",
@@ -230,7 +230,7 @@ pub const PATH_RULES: &[PathRule] = &[
             "kernel/userland/fb-test.rs",
             "kernel/userland/frame-hog.rs",
             // **Linux 向けのプログラム**（2026-10-06。既定の像の `/bin/linux` に入り、起動時の `linux-check`（カーネル。
-            // `bss-check` の後）とシェルの台本が起こす。2026-10-07 までは `syscall-test` が起こしていた）。
+            // `bss-check` の後）とシェルのスクリプトが起こす。2026-10-07 までは `syscall-test` が起こしていた）。
             "linux-programs/m1-rust.rs",
             // **スレッドを 1 つ作る像**（M3a。2026-10-14。起動時の `linux-check` が `m1-rust` の次に起こす）。
             "linux-programs/m3a-rust.rs",
@@ -303,7 +303,7 @@ pub const PATH_RULES: &[PathRule] = &[
         reach: Reach::Families(&[Family::Ipc]),
     },
     PathRule {
-        // **`input.rs` は台本（`zi`・`utf8`・`profile` の打鍵）も持つ。**
+        // **`input.rs` はスクリプト（`zi`・`utf8`・`profile` の打鍵）も持つ。**
         patterns: &["kernel/src/input.rs"],
         reach: Reach::Families(&[Family::Ipc, Family::Shell, Family::Apps]),
     },
