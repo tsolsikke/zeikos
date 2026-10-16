@@ -21051,9 +21051,9 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         line: "spawn: /bin/linux/m3a-spawn-from-thread-rust ended",
         before: " after ",
         after: " syscall(s)",
-        min: 44,
-        max: 48,
-        what: "m3a-spawn-from-thread-rust's system calls (measured 44..=46 in 40 boots: 45; 44 when a tick let the thread finish before the main thread's join; 46 when the thread's flag-wait loop yielded once more; room for musl's thread-list-lock window, +2)",
+        min: 46,
+        max: 50,
+        what: "m3a-spawn-from-thread-rust's system calls (measured 44..=46 in 40 boots before the spawn after the join and its line were added on 2026-10-16 (+2; measured 47..=48 in 3 boots after): 45; 44 when a tick let the thread finish before the main thread's join; 46 when the thread's flag-wait loop yielded once more; room for musl's thread-list-lock window, +2)",
     },
     BootLogRange {
         line: "spawn: /bin/linux/m3a-exit-group-spin-rust ended",
@@ -37740,7 +37740,7 @@ thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack
 [INFO] user-destroy: /bin/linux/m3a-exit-group-waiters-rust returned 1220 frame(s) at once and quarantined 0 (0 wait(s), 0 released meanwhile, 0 leaked) in 8409908 cycle(s)
 [INFO] spawn: /bin/linux/m3a-exit-while-spinning-rust ended (Exited(4)) after 55 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
 [INFO] spawn: /bin/linux/m3a-nested-clone-rust ended (Exited(4)) after 120 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
-[INFO] spawn: /bin/linux/m3a-spawn-from-thread-rust ended (Exited(4)) after 45 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
+[INFO] spawn: /bin/linux/m3a-spawn-from-thread-rust ended (Exited(4)) after 47 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
 [INFO] spawn: /bin/linux/m3a-exit-group-spin-rust ended (Exited(7)) after 38 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
 [INFO] futex: /bin/linux/m3a-exit-while-spinning-rust slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] futex: /bin/linux/m3a-nested-clone-rust slept 1 time(s) and woke 1 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)

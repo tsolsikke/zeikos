@@ -1,4 +1,5 @@
 m3a-spawn-from-thread-rust: main starts with 4 argument(s)
 m3a-spawn-from-thread-rust: spawn from the main thread while the thread is alive was refused
 m3a-spawn-from-thread-rust: spawn from the thread was refused
+m3a-spawn-from-thread-rust: spawn from the main thread after the join was attempted
 exit status: 4

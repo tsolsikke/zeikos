@@ -6690,11 +6690,30 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
         b"/bin/linux/m3a-nested-clone-rust",
         b"m3a-nested-clone-rust\0/etc/motd\0a\0b\0",
     );
+    // **`join` の後の `spawn` は断られないこと**（2026-10-16）。イメージは、スレッドから 1 回、スレッドが生きている間の主から
+    // 1 回（どちらも `-EAGAIN`）、`join` の後の主から 1 回（無いパスなので `-ENOENT`。断られてはいない）打つ。断った回数の
+    // 差が 2 でなければ名指しして止まる——`Finished` で reap 前のスレッドを生きていると数えていた形（バグ探しの B2）を
+    // 二度と戻さない。
+    let refusals_before = kernel::syscall::spawn_refusals_for_threads();
     verify_linux_program(
         logger,
         b"/bin/linux/m3a-spawn-from-thread-rust",
         b"m3a-spawn-from-thread-rust\0/etc/motd\0a\0b\0",
     );
+    let refusals = kernel::syscall::spawn_refusals_for_threads() - refusals_before;
+    if refusals == 2 {
+        logger.info(format_args!(
+            "linux-check: m3a-spawn-from-thread-rust had spawns refused for threads = {refusals} (expected 2); from \
+             the thread, and from the main thread while the thread was alive; the one after the join went through \
+             to the path lookup"
+        ));
+    } else {
+        logger.error(format_args!(
+            "linux-check: m3a-spawn-from-thread-rust had {refusals} spawn(s) refused for threads, expected 2; a spawn \
+             after the join was refused (a finished thread was counted as alive) or one before it was not. halting"
+        ));
+        cpu::halt_forever();
+    }
     verify_linux_program_ending(
         logger,
         b"/bin/linux/m3a-exit-group-spin-rust",

@@ -1255,8 +1255,13 @@ pub fn live_threads_in_slot(slot: usize) -> usize {
     (0..THREAD_TASKS)
         .filter(|index| {
             let task = THREAD_TASK_FIRST + index;
-            scheduler::state(task) != TaskState::Uninitialized
-                && scheduler::ring3_slot(task) == slot
+            // **`Finished`（終わったが reap される前）は数えない**（2026-10-16）。二度と走らないので、`spawn` の
+            // 「残ったスレッドが子の表を見てしまう」は起きない。数えると、スレッドを `join` した後の `spawn` が
+            // 次の `clone` まで `-EAGAIN` になる（reap は次の `clone` とプロセスの終わりでしか起きない）。
+            !matches!(
+                scheduler::state(task),
+                TaskState::Uninitialized | TaskState::Finished
+            ) && scheduler::ring3_slot(task) == slot
         })
         .count()
 }

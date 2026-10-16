@@ -57,6 +57,21 @@ fn try_spawn(who: &str) {
     }
 }
 
+/// `join` の後の `spawn`。無いパスを渡す（通れば `-ENOENT`、断られれば `-EAGAIN`。Linux は `-ENOSYS`）。**行の文言は
+/// 結果に依らない**——Linux の参照と突き合わせるため。
+fn try_spawn_after_join() {
+    let path = b"/bin/none\0";
+    let argv: [*const u8; 2] = [path.as_ptr(), std::ptr::null()];
+    let envp: [*const u8; 1] = [std::ptr::null()];
+    let _ = raw_syscall3(
+        SYS_SPAWN,
+        path.as_ptr() as u64,
+        argv.as_ptr() as u64,
+        envp.as_ptr() as u64,
+    );
+    println!("m3a-spawn-from-thread-rust: spawn from the main thread after the join was attempted");
+}
+
 fn main() {
     let argument_count = std::env::args().count();
     println!("m3a-spawn-from-thread-rust: main starts with {argument_count} argument(s)");
@@ -71,5 +86,9 @@ fn main() {
     try_spawn("the main thread while the thread is alive");
     go.store(true, Ordering::SeqCst);
     handle.join().unwrap_or(());
+    // **`join` の後は断られない**（2026-10-16）。無いパスを渡すので、ZeikOS では `-ENOENT`（断りではない）、Linux では
+    // `-ENOSYS` で、どちらも負の値になる。行は同じ文言で出し、断られなかったことはカーネルの側が数えて見る
+    // （`verify_linux_programs`）。
+    try_spawn_after_join();
     std::process::exit(argument_count as i32);
 }

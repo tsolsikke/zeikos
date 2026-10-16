@@ -6074,6 +6074,15 @@ fn process_end_set_by_current_thread() -> bool {
     }
 }
 
+/// `spawn` をスレッドのために断った回数の累計（計測。2026-10-16）。**`join` の後の `spawn` が断られないことの確かめに
+/// 使う**（`verify_linux_programs` が `m3a-spawn-from-thread-rust` の前後の差を見る）。
+static SPAWN_REFUSED_FOR_THREADS: AtomicU64 = AtomicU64::new(0);
+
+/// `SPAWN_REFUSED_FOR_THREADS` の値。
+pub fn spawn_refusals_for_threads() -> u64 {
+    SPAWN_REFUSED_FOR_THREADS.load(Ordering::Relaxed)
+}
+
 /// `spawn`（3 つの形のどれか）を、スレッドのために断るなら `-EAGAIN` を名指しの行と一緒に返す（M3a。`ADR-0085` の
 /// 決定 3）。**3 つの入口（`spawn_from_ring3`・`spawn_detached_from_ring3`・`spawn_with_piped_stdin_from_ring3`）の先頭で
 /// 呼ぶ**——`syscall_entry` に置くと、その枠（遠征スタックの高水位にそのまま乗る）が広がる。入れ子の子は同じスロットの
@@ -6094,6 +6103,7 @@ fn spawn_refused_for_threads(number: u64) -> Option<u64> {
 #[inline(never)]
 #[cold]
 fn report_spawn_refused_for_threads(number: u64, refusal: crate::task::SpawnRefusal) -> u64 {
+    SPAWN_REFUSED_FOR_THREADS.fetch_add(1, Ordering::Relaxed);
     serial_line(format_args!(
         "thread: spawn (system call {number}) refused with -EAGAIN: {refusal:?} (a process with threads does not \
          spawn while M3a keeps the slot tables shared; ADR-0085, decision 3)"
