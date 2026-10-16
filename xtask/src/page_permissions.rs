@@ -15,7 +15,7 @@
 //!
 //! - **`pages=~12` のように `~` が付いた行は、ページ数を比べない**（カーネルのイメージの区画や CPU ごとのスタックのように、
 //!   コードの量や CPU の数でページ数が動く領域）。権限は比べる。
-//! - 行の末尾の ` first=0x...`（名前の無い範囲の先頭の番地）は読み捨てる。番地はビルドごとに動く。
+//! - 行の末尾の ` first=0x...`（名前の無い範囲の先頭のアドレス）は読み捨てる。アドレスはビルドごとに動く。
 //!
 //! # 同じ名前の時点が 2 度出るとき
 //!
@@ -115,7 +115,7 @@ pub fn parse(listing: &str) -> Result<Vec<Row>, String> {
         let pages = pages
             .strip_prefix("pages=")
             .ok_or_else(|| format!("the last column is not pages=N: {line:?}"))?;
-        // 名前の無い範囲の先頭の番地は読み捨てる。
+        // 名前の無い範囲の先頭のアドレスは読み捨てる。
         let pages = pages
             .split_once(" first=")
             .map_or(pages, |(count, _)| count);
@@ -308,7 +308,7 @@ user program hello | stack | 4K | w=1 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=
         assert!(rows[2].fields.is_empty());
         assert_eq!((rows[3].pages, rows[3].pages_compared), (1, true));
 
-        // 名前の無い範囲の先頭の番地は読み捨てる。
+        // 名前の無い範囲の先頭のアドレスは読み捨てる。
         let unnamed = parse(
             "m | (unnamed) | 4K | w=1 u=0 x=1 cache=0 g=0 shared=0 tables(w=1 u=0 x=1) | pages=3 first=0xffff800000001000\n",
         )

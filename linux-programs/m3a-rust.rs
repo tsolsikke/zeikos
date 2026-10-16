@@ -3,7 +3,7 @@
 //!
 //! # 何のためのものか
 //!
-//! `clone` の入口と、スレッドが走ること、スレッドの `exit` が `CLONE_CHILD_CLEARTID` の番地に 0 を書くことを、musl の本物の
+//! `clone` の入口と、スレッドが走ること、スレッドの `exit` が `CLONE_CHILD_CLEARTID` のアドレスに 0 を書くことを、musl の本物の
 //! 道（`pthread_create` → `clone(0x7d0f00, …)`、TLS、`__thread_list_lock`）で確かめる。**Linux 上でも ZeikOS 上でも、同じ
 //! 出力と同じ終了の状態になる**ことを、控えた参照（`linux-programs/reference/`）と突き合わせる。
 //!

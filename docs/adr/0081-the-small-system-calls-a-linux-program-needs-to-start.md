@@ -21,7 +21,7 @@ Accepted（2026-10-06に運用者が設計案を承認し、同じ日に実装�
 
 | 呼び出し | 受ける形 |
 |---|---|
-| `set_tid_address` | 番地を控えて、唯一のスレッドの番号（1）を返す。スレッドの終わりに0を書く仕組みは要らない |
+| `set_tid_address` | アドレスを控えて、唯一のスレッドの番号（1）を返す。スレッドの終わりに0を書く仕組みは要らない |
 | `rt_sigaction` | 下の2 |
 | `rt_sigprocmask` | マスクを控え、前のマスクを返す。`SIGKILL`・`SIGSTOP`は塞げない。`sigsetsize`は8だけ |
 | `sigaltstack` | 控えて、前の値を返す。`SS_DISABLE`、`MINSIGSTKSZ`未満（`-ENOMEM`）、知らないフラグ（`-EINVAL`）はLinuxと同じ |
@@ -40,12 +40,12 @@ Accepted（2026-10-06に運用者が設計案を承認し、同じ日に実装�
 - プロセスごとに64項の表（`sa_handler`・`sa_flags`・`sa_restorer`・`sa_mask`。カーネルが受ける`struct sigaction`の並び）を持ち、`rt_sigaction`で替えて、前の登録を返す。
 - `SIGKILL`・`SIGSTOP`は替えられない（問い合わせはできる）。ハンドラ（`SIG_DFL`・`SIG_IGN`以外）の登録は、`SA_RESTORER`が無ければ`-EINVAL`——カーネルはハンドラから戻る道を自分では持たない（musl・glibcは必ず付ける）。
 - **配送はしない。** どのシグナルも、まだ起きない。Rustの`std`が`SIGSEGV`・`SIGBUS`を代替スタックつきで登録するが、ユーザーのページフォルトは今までどおりプロセスの終了にする。`SIGPIPE`を`SIG_IGN`にする求めは控えるだけでよい——閉じた相手への`write`は、配送が無いので`-EPIPE`をそのまま返す。
-- **表はプロセスの記録（`UserProcess`）に足さず、スロットと遠征の深さごとの静的な置き場に置く**（`kernel/src/process_state.rs`）。記録は載せる側の遠征スタックの上に在り、2KiBを足すと、子が走っている間ずっと残る枠が太る（`ADR-0079`）。`set_tid_address`の番地と、`readlink`が返す実行ファイルの名前も、同じ置き場に置く。
+- **表はプロセスの記録（`UserProcess`）に足さず、スロットと遠征の深さごとの静的な置き場に置く**（`kernel/src/process_state.rs`）。記録は載せる側の遠征スタックの上に在り、2KiBを足すと、子が走っている間ずっと残る枠が太る（`ADR-0079`）。`set_tid_address`のアドレスと、`readlink`が返す実行ファイルの名前も、同じ置き場に置く。
 
 ### 3. `FUTEX_WAIT`で待つ場面は、偽りの戻り値を返さず、名指ししてプロセスを終わらせる
 
 - 値が同じなら、Linuxは誰かが起こすまで眠る。このカーネルには起こすスレッドが居ないので、眠れば永久に戻らない。
-- **0や`-EINTR`を返して先へ進ませない**——行き詰まりを隠すと、ロックが壊れたまま走る。番地を控え、終了状態137（`128 + SIGKILL`。シェルが「シグナルで終わった」と見せる値）でプロセスを終わらせ、載せる側が`futex:`の行で名指しする。
+- **0や`-EINTR`を返して先へ進ませない**——行き詰まりを隠すと、ロックが壊れたまま走る。アドレスを控え、終了状態137（`128 + SIGKILL`。シェルが「シグナルで終わった」と見せる値）でプロセスを終わらせ、載せる側が`futex:`の行で名指しする。
 - スレッド（M3a）が入ったら、本当に待つ形にする（`docs/deferred-decisions.md`）。
 - **終わらせる呼び出しは、番号ではなく終了の印で見る。** `exit`だけを番号で見ていた入口の分岐を、「終了の印が立っていれば返らない」に変えた。`exit`・`exit_group`・`futex`の待つ場面が、同じ道を通る。
 
@@ -78,11 +78,11 @@ Linux向けのmuslの静的なイメージ（`linux-programs/m1-rust`・`m1-c`�
 
 | 呼び出し | 受ける形 |
 |---|---|
-| `writev`・`readv` | `struct iovec`を1本ずつユーザーの番地から読み、`write`・`read`を1本ずつ呼ぶ（控えの配列を遠征スタックに置かない）。長さ0の本は飛ばす。途中で失敗したら、動いた分が在ればその数を、無ければ失敗を返す。`readv`は短く終わった本で止める。本の数は1,024（`UIO_MAXIOV`）まで |
+| `writev`・`readv` | `struct iovec`を1本ずつユーザーのアドレスから読み、`write`・`read`を1本ずつ呼ぶ（控えの配列を遠征スタックに置かない）。長さ0の本は飛ばす。途中で失敗したら、動いた分が在ればその数を、無ければ失敗を返す。`readv`は短く終わった本で止める。本の数は1,024（`UIO_MAXIOV`）まで |
 | `poll`の`events`が0 | 開いているかの問い合わせ。開いていなければ`revents`に`POLLNVAL`、開いていれば何も起きない（Linuxと同じ。Rustの`std`が起動時に0・1・2へ打つ。**以前は`-EINVAL`で、`std`は`fcntl`へ落ちていた**）。負のfdは見ない |
 | `lseek`の`SEEK_CUR`・`SEEK_END` | 今の位置・末尾からの符号つきの相対。負の位置は`-EINVAL`。末尾より先は、`File::seek_to`が末尾で止める（以前からの形） |
 | `getpid`・`gettid` | 1（`set_tid_address`と同じ。プロセスもスレッドも1つずつ） |
-| `madvise` | 助言は受けて何もしない（0）。ページの境界に無い番地は`-EINVAL` |
+| `madvise` | 助言は受けて何もしない（0）。ページの境界に無いアドレスは`-EINVAL` |
 | `tkill` | 自分（1）以外は`-ESRCH`。シグナル0は問い合わせで0。登録が`SIG_IGN`のものと、既定が「無視」のもの（`SIGCHLD`・`SIGCONT`・`SIGURG`・`SIGWINCH`）は0で何も起きない。**それ以外は、配送が無いので、名指しの行を出してプロセスを終わらせる**（終了状態は`128 + sig`。muslの`abort`は`tkill(gettid(), SIGABRT)`なので134） |
 | `clock_nanosleep`（2026-10-07。M2の実測で足した） | 相対の眠りと、`CLOCK_MONOTONIC`の絶対の時刻（`TIMER_ABSTIME`）を受け、`nanosleep`と眠りの本体を共にする。`CLOCK_REALTIME`の絶対は、壁の時計が無いので`-EINVAL`。`rem`は書かない（割り込まれて早く戻る道が無い）。**muslの`nanosleep`とRustの`std::thread::sleep`は、`nanosleep`ではなくこれを打つ**——無いと`-ENOSYS`で`std`が止まった（`ADR-0083`のAddendum） |
 
@@ -130,13 +130,13 @@ DOCUMENTATION_URL="https://github.com/tsolsikke/zeikos/tree/main/docs"
 
 決定3は、起こすスレッドが居ない間の形だった。スレッドの池（`ADR-0085`）が入ったので、`FUTEX_WAIT`で本当に待つ形にした（`kernel/src/syscall.rs`の`sys_futex`）。
 
-- **受けるもの。** `FUTEX_WAIT`と、ビットの組が全部1の`FUTEX_WAIT_BITSET`（muslの`__timedwait`は絶対時刻の期限のためにこれを打ち、ビットの組は必ず全部1である）、`FUTEX_WAKE`と、ビットの組が全部1の`FUTEX_WAKE_BITSET`。**`FUTEX_PRIVATE_FLAG`と`FUTEX_CLOCK_REALTIME`は見ない**（`ADR-0085`の決定4。futexはプロセスの中だけなので、privateでないものも同じ扱い。`docs/deferred-decisions.md`）。番地は4バイト境界でなければ`-EINVAL`。
-- **待ちの鍵は、プロセス（Ring 3のスロット）とユーザーの番地の組である**（`crate::task::Wait::Futex`）。待つ理由は今までどおり`Task`の欄（`WaitSet`）に置き、欄の外に待つ者の一覧を持たない。**鍵のスロットはプロセスの代わりである**——入れ子の`spawn`の子は同じスロットで走るが、スレッドを持つプロセスは`spawn`しない（`clone`の3段目の断り）ので、鍵はぶつからない。入れ子とスレッドが同居する段では、鍵に深さを足す。`FUTEX_WAKE`は同じ鍵で待つタスクを多くても`val`本起こし、起こした本数を返す（相手が居なければ0）。
+- **受けるもの。** `FUTEX_WAIT`と、ビットの組が全部1の`FUTEX_WAIT_BITSET`（muslの`__timedwait`は絶対時刻の期限のためにこれを打ち、ビットの組は必ず全部1である）、`FUTEX_WAKE`と、ビットの組が全部1の`FUTEX_WAKE_BITSET`。**`FUTEX_PRIVATE_FLAG`と`FUTEX_CLOCK_REALTIME`は見ない**（`ADR-0085`の決定4。futexはプロセスの中だけなので、privateでないものも同じ扱い。`docs/deferred-decisions.md`）。アドレスは4バイト境界でなければ`-EINVAL`。
+- **待ちの鍵は、プロセス（Ring 3のスロット）とユーザーのアドレスの組である**（`crate::task::Wait::Futex`）。待つ理由は今までどおり`Task`の欄（`WaitSet`）に置き、欄の外に待つ者の一覧を持たない。**鍵のスロットはプロセスの代わりである**——入れ子の`spawn`の子は同じスロットで走るが、スレッドを持つプロセスは`spawn`しない（`clone`の3段目の断り）ので、鍵はぶつからない。入れ子とスレッドが同居する段では、鍵に深さを足す。`FUTEX_WAKE`は同じ鍵で待つタスクを多くても`val`本起こし、起こした本数を返す（相手が居なければ0）。
 - **値を確かめてから眠るまでは、BKLの内側（IF=0）である。** `FUTEX_WAKE`もBKLの内側で欄を見るので、「値を見てから`Waiting`にする」までに起こしが入ることは無い（`sys_read`と同じ形）。待っている間はBKLを持たない。起こされたら0を返し、呼ぶ側が値を見直す（空振りの起こしは、`ADR-0061`でもfutexの仕様でも許される）。
-- **行き詰まりの検出は残す。** 眠ると誰も起こせないとき——同じプロセスに、ほかに`Ready`のタスクも、futex以外の理由（パイプ・ソケット・キーボード・タイマ。プロセスの外が起こせる）で待つタスクも居ないとき——は、眠らずに今までどおり番地を控えて137で終わらせる（`crate::task::another_task_of_the_slot_could_wake`。純粋な関数で、単体試験が固定する）。**スレッドが1本だけのプロセスは、必ずこれに当たる**ので、この段では起動ログの振る舞いが変わらない（番地を伏せた突き合わせで差が0）。**本当に眠る道は、この段では一度も通らない**——通すのは`clone`の3段目の確かめ（`docs/verification-coverage.md`）。`futex_deadlock_address`の欄は、`ADR-0085`の対応表で「消す」としていたが、この検出のために残す。
+- **行き詰まりの検出は残す。** 眠ると誰も起こせないとき——同じプロセスに、ほかに`Ready`のタスクも、futex以外の理由（パイプ・ソケット・キーボード・タイマ。プロセスの外が起こせる）で待つタスクも居ないとき——は、眠らずに今までどおりアドレスを控えて137で終わらせる（`crate::task::another_task_of_the_slot_could_wake`。純粋な関数で、単体試験が固定する）。**スレッドが1本だけのプロセスは、必ずこれに当たる**ので、この段では起動ログの振る舞いが変わらない（アドレスを伏せた突き合わせで差が0）。**本当に眠る道は、この段では一度も通らない**——通すのは`clone`の3段目の確かめ（`docs/verification-coverage.md`）。`futex_deadlock_address`の欄は、`ADR-0085`の対応表で「消す」としていたが、この検出のために残す。
 - **対象外のもの（来たら`-ENOSYS`）と、来たときの扱い。**
   - 期限つきの待ち（`timeout`が0でない`FUTEX_WAIT`は相対の時刻、`FUTEX_WAIT_BITSET`は絶対の時刻）——`pthread_cond_timedwait`・`sem_timedwait`・Rustの`park_timeout`が打つ。来たら、`WaitSet`に`Wait::Timer`を一緒に入れる形で待つ（`poll`の集合と同じ作り。締切はタイマが起こす）。
-  - `FUTEX_REQUEUE`・`FUTEX_CMP_REQUEUE`——muslの`pthread_cond_broadcast`が、待ち手をmutexへ付け替えるために打つ。来たら、鍵を付け替える形（1本起こし、残りの`Wait::Futex`の番地を書き換える）で足す。
+  - `FUTEX_REQUEUE`・`FUTEX_CMP_REQUEUE`——muslの`pthread_cond_broadcast`が、待ち手をmutexへ付け替えるために打つ。来たら、鍵を付け替える形（1本起こし、残りの`Wait::Futex`のアドレスを書き換える）で足す。
   - PI（`FUTEX_LOCK_PI`など）とrobust（`set_robust_list`は受けて控えるだけ）——muslは使わない。使う利用者が出るまで足さない。
   - 全部1でないビットの組——使う利用者が出るまで足さない。
 

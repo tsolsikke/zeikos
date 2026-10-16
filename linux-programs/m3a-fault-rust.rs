@@ -4,7 +4,7 @@
 //! # 何をするか
 //!
 //! 1. 主スレッドが 1 行出し、スレッドを作る。
-//! 2. スレッドは 1 行出してから、番地 8 へ書く（`black_box` で定数の畳み込みを防ぐ。番地 8 は写されていないので #PF になる）。
+//! 2. スレッドは 1 行出してから、アドレス 8 へ書く（`black_box` で定数の畳み込みを防ぐ。アドレス 8 は写されていないので #PF になる）。
 //!    Linux は SIGSEGV でプロセスを終える（終了の状態 139）。ZeikOS は、スレッドを終えてプロセスを `Folded(14)` で終える
 //!    （主スレッドが同じ例外で終わるときと同じ符号）。
 //! 3. 主スレッドは `sched_yield` を決まった回数（64 回）打つ。ZeikOS では、最初の譲りでスレッドが走って落ち、次の
@@ -21,7 +21,7 @@ fn main() {
     let handle = std::thread::spawn(|| {
         println!("m3a-fault-rust: the thread writes to address 8 now");
         let bad = std::hint::black_box(8usize) as *mut u32;
-        // SAFETY: 書けない番地へわざと書く（このプログラムの目的）。プロセスはここで終わる。
+        // SAFETY: 書けないアドレスへわざと書く（このプログラムの目的）。プロセスはここで終わる。
         unsafe { bad.write_volatile(1) };
         0u32
     });

@@ -197,7 +197,7 @@ pub(super) fn boot_log_compare(root: &Path) -> Result<String> {
             &[reference_arg.as_str(), reference_arg.as_str()],
         )?,
     )?;
-    if !same.contains("番地を伏せても食い違う行 0") {
+    if !same.contains("アドレスを伏せても食い違う行 0") {
         bail!("the reference compared with itself did not come out as 0 line(s): {same}");
     }
 
@@ -221,7 +221,7 @@ pub(super) fn boot_log_compare(root: &Path) -> Result<String> {
             &[reference_arg.as_str(), changed_arg.as_str()],
         )?,
     )?;
-    if !differ.contains("番地を伏せても食い違う行 1") {
+    if !differ.contains("アドレスを伏せても食い違う行 1") {
         bail!("a copy with one line changed did not come out as 1 line: {differ}");
     }
     Ok(

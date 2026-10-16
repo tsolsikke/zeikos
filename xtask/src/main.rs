@@ -380,7 +380,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
     },
     // **権限の違反が #PF で止まること**（2026-10-02。カーネルの写像の W^X。`ADR-0071` の手順 4）。
     // **「落ちた」だけにしない**——触る前に、狙うページが在ること・権限を稼働中の表から読み戻した行と、誤りコード
-    // （書き込みか命令の取り出しか、権限の違反か）と、CR2 が告げた番地と同じであることを見る。
+    // （書き込みか命令の取り出しか、権限の違反か）と、CR2 が告げたアドレスと同じであることを見る。
     // 触った後に戻ってきた行（守りが効いていない）が出ないことも見る。
     // カーネルのイメージの `.text` の 1 バイトへ書く。
     CriticalTest {
@@ -439,7 +439,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // カーネルの関数を、直接マッピングの番地（書ける別名）から実行する。**別名は実行できない。**
+    // カーネルの関数を、直接マッピングのアドレス（書ける別名）から実行する。**別名は実行できない。**
     CriticalTest {
         name: "kernel-executes-direct-map",
         feature: "kernel-executes-direct-map-test",
@@ -487,8 +487,8 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
     },
     // **`syscall` 命令の入口**（2026-10-04）。**試しの形 1 つと、破壊テスト 4 つ。**
     //
-    // **戻り先を正準でない番地にした形**（試しの形。破壊ではない）。**戻る直前の確かめが、そのプロセスだけを
-    // 終わらせる**——`syscall-insn` が、一般保護例外（13）として、書き換えた番地で畳まれる。カーネルの例外の記録は出ない。
+    // **戻り先を正準でないアドレスにした形**（試しの形。破壊ではない）。**戻る直前の確かめが、そのプロセスだけを
+    // 終わらせる**——`syscall-insn` が、一般保護例外（13）として、書き換えたアドレスで畳まれる。カーネルの例外の記録は出ない。
     CriticalTest {
         name: "syscall-return-noncanonical",
         feature: "syscall-return-noncanonical-test",
@@ -501,8 +501,8 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
     },
     // **戻る直前の確かめを外す**（上の形と組み合わせる）。**確かめが終わらせた記録（一般保護例外・13）が出なくなる。**
     //
-    // **QEMU の TCG は、正準でない番地への `iretq` をカーネルの中では止めない**（実測。2026-10-04）——Ring 3 へ
-    // 移ってから、その番地の命令の取り出しがページフォルト（14）になり、プロセスが畳まれる。**本物の Intel の石では、
+    // **QEMU の TCG は、正準でないアドレスへの `iretq` をカーネルの中では止めない**（実測。2026-10-04）——Ring 3 へ
+    // 移ってから、そのアドレスの命令の取り出しがページフォルト（14）になり、プロセスが畳まれる。**本物の Intel の石では、
     // `iretq` がカーネルの中で一般保護例外を起こす**（SDM の IRET の記述。この環境では確かめられない）。
     // **だから、この破壊テストが QEMU で見るのは「確かめが働いていない」ことである**——13 ではなく 14 で終わる。
     CriticalTest {
@@ -529,7 +529,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // **スタブが、カーネルのスタックへ切り替えない。** **入口の確かめが、スタックの番地を見て止める。**
+    // **スタブが、カーネルのスタックへ切り替えない。** **入口の確かめが、スタックのアドレスを見て止める。**
     CriticalTest {
         name: "syscall-stub-keeps-user-stack",
         feature: "syscall-stub-keeps-user-stack-test",
@@ -556,7 +556,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
     },
     // **`arch_prctl` の破壊テスト 2 つ**（2026-10-05）。**起動時の `syscall-test` の 72 番から 78 番が見る。**
     //
-    // **基底にする番地を確かめない。** **正準でない番地が、断られずに通る**——`syscall-test` が 75 番で終わる。
+    // **基底にするアドレスを確かめない。** **正準でないアドレスが、断られずに通る**——`syscall-test` が 75 番で終わる。
     //
     // **QEMU の TCG は、正準でない値を基底の MSR へ書いても例外にしない**（実測。2026-10-05）。**本物の石では、
     // その書き込みがカーネルの中で一般保護例外になる**（SDM の WRMSR の記述。この環境では確かめられない）。
@@ -624,7 +624,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         min_heartbeats: None,
     },    // **M3a の 3-2（2026-10-15）：スレッドの破壊テスト 8 件。** 目印は 2026-10-15 の実測で決めた（落ち方は
     // `docs/verification-coverage.md` の feature の一覧）。どれも既定の起動（起動時の Linux のイメージの確かめ）で落ちる。
-    // 子が clone の戻り値を親の RAX（56）で読む。musl の __clone は 0 でない戻り値を親の道として扱い、子のスタックの番地へ ret する
+    // 子が clone の戻り値を親の RAX（56）で読む。musl の __clone は 0 でない戻り値を親の道として扱い、子のスタックのアドレスへ ret する
     // ——スレッドが命令フェッチの #PF で落ち、プロセスは Folded(14)、起動時の確かめが名指しして止まる。
     CriticalTest {
         name: "clone-keeps-parent-rax",
@@ -641,7 +641,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // スレッドの exit で CLONE_CHILD_CLEARTID の番地に 0 を書かない。親の join は番地が 0 になるまで FUTEX_WAIT し、起こす者が
+    // スレッドの exit で CLONE_CHILD_CLEARTID のアドレスに 0 を書かない。親の join はアドレスが 0 になるまで FUTEX_WAIT し、起こす者が
     // 居ないので行き詰まりの判定が 137 で終える。起動時の確かめが名指しして止まる。
     CriticalTest {
         name: "clone-no-clear-tid",
@@ -659,7 +659,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // 池のタスクの FS の基底を 0 にする。スレッドは最初の TLS の参照（musl の pthread_self）で番地 0 を読み、#PF で落ちる。
+    // 池のタスクの FS の基底を 0 にする。スレッドは最初の TLS の参照（musl の pthread_self）でアドレス 0 を読み、#PF で落ちる。
     // プロセスは Folded(14)、起動時の確かめが名指しして止まる。
     CriticalTest {
         name: "clone-no-settls",
@@ -795,10 +795,10 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         min_heartbeats: None,
     },    // **スレッドの破壊テスト 2 件（スレッドの検証の5。2026-10-15）。** 目印は実測で決めた。
     // FUTEX_WAKE で誰も起こさない。主スレッドが futex で眠る場面で「起こしうるタスクが無い」と判定され、137 で終わり、
-    // 起動時の確かめが名指しして止まる。**どのイメージで捕まるかはティックで変わる**——musl は clone の clear-tid の番地に
+    // 起動時の確かめが名指しして止まる。**どのイメージで捕まるかはティックで変わる**——musl は clone の clear-tid のアドレスに
     // `__thread_list_lock` を渡すので、その取り合いに入った回（`m3a-rust` が futex で 1 回眠る回。残っている起動の
     // 約 19%）は、落とした FUTEX_WAKE の分で先に走る `m3a-rust` が行き詰まる。そうでない回は `m3a-mutex-rust` の
-    // `Mutex` の unlock が起こせず、主の join で行き詰まる。目印はイメージの名前と番地を持たない（2026-10-15 の
+    // `Mutex` の unlock が起こせず、主の join で行き詰まる。目印はイメージの名前とアドレスを持たない（2026-10-15 の
     // full check #5 で、`m3a-mutex-rust` の名前で書いていて落ちた。`docs/troubleshooting.md`）。
     CriticalTest {
         name: "futex-wake-dropped",
@@ -1221,12 +1221,12 @@ const PAGING_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // 2026-10-02: ユーザーから届く葉に、番地より上の位置のビット（52。CPU は無視する）を立てた形でも、
+    // 2026-10-02: ユーザーから届く葉に、アドレスより上の位置のビット（52。CPU は無視する）を立てた形でも、
     // 起動時のプログラムが今までどおり走り、フレームの会計が合うこと。**破壊ではない**——通るのが正しい。
     //
-    // **項目の値を番地として読む所が在ると、ここで落ちる。** `brk` の縮める側が、外した項目の値を物理の番地として
+    // **項目の値をアドレスとして読む所が在ると、ここで落ちる。** `brk` の縮める側が、外した項目の値を物理のアドレスとして
     // 読んでいたときは、`syscall-test` が伸ばした 2 枚が返らず、会計の誤り（`DestroyAccounting`）で止まった
-    // （直す前の形で実測した）。実行禁止のビット（63）も番地より上に在るので、入れる前にこの形で確かめる。
+    // （直す前の形で実測した）。実行禁止のビット（63）もアドレスより上に在るので、入れる前にこの形で確かめる。
     CriticalTest {
         name: "user-leaf-high-bit",
         feature: "user-leaf-high-bit-test",
@@ -1685,7 +1685,7 @@ const RING3_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // **位置独立のイメージの区画を、ずらさずに載せる**（2026-10-06）。入口だけがずれた番地を指す。**捕まえるのは、載せた
+    // **位置独立のイメージの区画を、ずらさずに載せる**（2026-10-06）。入口だけがずれたアドレスを指す。**捕まえるのは、載せた
     // ものを写像の表へ登録する所である**——イメージの範囲が「ずらした始まり」から「ずらさないヒープの始まり」までとなって
     // 逆さまになり、`BadRange` で名指しして止まる。写像の表（2026-10-06）の前は、入口のページフォルトで畳まれる形
     // （`spawn: /bin/pie-hello ended (Folded(14))`）で見ていた。そこへ届く前に止まるようになったので、印を替えた。
@@ -1703,8 +1703,8 @@ const RING3_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // **補助ベクタの `AT_ENTRY` に、ずらす前の番地を渡す**（2026-10-06）。`spawn` で起こした `/bin/pie-hello` が、
-    // 終了状態 1（`AT_ENTRY` が `_start` の番地と違う）で終わる。
+    // **補助ベクタの `AT_ENTRY` に、ずらす前のアドレスを渡す**（2026-10-06）。`spawn` で起こした `/bin/pie-hello` が、
+    // 終了状態 1（`AT_ENTRY` が `_start` のアドレスと違う）で終わる。
     CriticalTest {
         name: "auxv-entry-not-biased",
         feature: "auxv-entry-not-biased-test",
@@ -1720,8 +1720,8 @@ const RING3_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // **補助ベクタの `AT_PHDR` に、ずらす前の番地を渡す**（2026-10-06）。`spawn` で起こした `/bin/pie-hello` が、
-    // 終了状態 2（`AT_PHDR` が、自分の ELF ヘッダから求めた表の番地と違う）で終わる。
+    // **補助ベクタの `AT_PHDR` に、ずらす前のアドレスを渡す**（2026-10-06）。`spawn` で起こした `/bin/pie-hello` が、
+    // 終了状態 2（`AT_PHDR` が、自分の ELF ヘッダから求めた表のアドレスと違う）で終わる。
     CriticalTest {
         name: "auxv-phdr-not-biased",
         feature: "auxv-phdr-not-biased-test",
@@ -1925,7 +1925,7 @@ const SYSCALL_TESTS: &[CriticalTest] = &[
         min_heartbeats: None,
     },
     // **`munmap` と `MAP_FIXED` の置き換えが、`PROT_NONE` でフレームを持ったまま残した葉を外さない**（2026-10-08。直す前の形）。
-    // 同じ番地へ写し直すと `map_4kib` が断り、`syscall-test` が 124 番で止まる。
+    // 同じアドレスへ写し直すと `map_4kib` が断り、`syscall-test` が 124 番で止まる。
     CriticalTest {
         name: "munmap-skips-retained",
         feature: "munmap-skips-retained-test",
@@ -1955,7 +1955,7 @@ const SYSCALL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // **`mmap(MAP_FIXED)`・`munmap`・`mprotect` がユーザーの番地の上限を見ない**（2026-10-07。直す前の形）。上限のページへの
+    // **`mmap(MAP_FIXED)`・`munmap`・`mprotect` がユーザーのアドレスの上限を見ない**（2026-10-07。直す前の形）。上限のページへの
     // `MAP_FIXED` が通ってしまい、`syscall-test` が 121 番で止まる。
     CriticalTest {
         name: "mmap-fixed-ignores-user-limit",
@@ -4979,7 +4979,7 @@ fn cmd_fs_image_extract(features: &[&str]) -> Result<()> {
     // **読む側が複製を見ていること（S12-b の 1 段目）。**
     //
     // **複製は元のイメージとバイト単位で一致しているので、向けても向けなくても
-    // 読めるものは変わらない。番地だけが違う。** したがって
+    // 読めるものは変わらない。アドレスだけが違う。** したがって
     // **アドレスを突き合わせないと「向けた」ことを主張できない。**
     let reader_phys = serial
         .lines()
@@ -10192,7 +10192,7 @@ fn cmd_socket_test(features: &[&str], expect_pass: bool) -> Result<()> {
     let epipe = g("writes to a closed peer ");
     let eof = g("EOF seen ");
 
-    // **`mmap` の番地（プロセスごと）。** **`user-mmap:` の行は、`mmap` したプロセスが終わるときに 1 行ずつ出る。**
+    // **`mmap` のアドレス（プロセスごと）。** **`user-mmap:` の行は、`mmap` したプロセスが終わるときに 1 行ずつ出る。**
     // **長い行なので、`socket:` の行と同じく空白を 1 つにまとめてから読む。**
     let mmap_lines: Vec<String> = lines
         .iter()
@@ -10212,9 +10212,9 @@ fn cmd_socket_test(features: &[&str], expect_pass: bool) -> Result<()> {
             count_line("sockc: hello reply=hello") == 1,
         ),
         (
-            // **`mmap` の番地はプロセスごとで、どのプロセスも基点（`0x10000000`）から始まる。** **`sockd` が生きている
+            // **`mmap` のアドレスはプロセスごとで、どのプロセスも基点（`0x10000000`）から始まる。** **`sockd` が生きている
             // 間に `sockc` が 2 回走り（`shm` と `shmlate`）、3 本とも同じ共有メモリ（2 ページ）をマップする**——
-            // **`sockc` は 2 回とも基点から 2 ページ、`sockd` は自分の 2 度ぶんだけ進む。** **番地を分け合う形に戻ると、
+            // **`sockc` は 2 回とも基点から 2 ページ、`sockd` は自分の 2 度ぶんだけ進む。** **アドレスを分け合う形に戻ると、
             // 後からマップした側が基点より上から始まる**（直す前の実測: 最初の `sockc` が `0x10001000`、次が
             // `0x10003000`）。**基点より上から始まった行が 1 つも無いことも見る**（起動時の `syscall-test` の行を含む）。
             "every_process_maps_from_the_base",
@@ -10942,7 +10942,7 @@ enum FbTestEnding {
     Close,
     /// `close` を打たずに `exit(0)`（feature `fb-test-no-close`）。
     NoClose,
-    /// わざと番地 0 へ書いて畳まれる（feature `fb-test-fold`。ベクタ 14）。
+    /// わざとアドレス 0 へ書いて畳まれる（feature `fb-test-fold`。ベクタ 14）。
     Fold,
 }
 
@@ -12067,7 +12067,7 @@ const MACHINE_VARIANT_SABOTAGES: &[(&str, &str, bool, VariantExpect)] = &[
     ),
     // **デバッグ例外・NMI・機械チェックのゲートに IST を与えない**（2026-10-04）——**起動時の IDT の確かめが、
     // 3 つが IST に載っていないことを名指しして止まる。** **この 3 つは割り込みを禁じていても届くので、スタックの
-    // 番地が当てにならない瞬間（`syscall` 命令の入口）を作る前に、載っていることを起動のたびに確かめる。**
+    // アドレスが当てにならない瞬間（`syscall` 命令の入口）を作る前に、載っていることを起動のたびに確かめる。**
     (
         "pc-default",
         "entry-stacks-not-assigned-test",
@@ -12169,7 +12169,7 @@ fn qemu_shut_the_machine_down(debug: &str) -> bool {
 /// (変種の名前, カーネルの feature, 何が起きれば正しいか)
 ///
 /// - `frame-allocator-high-after-switch`——**自前のページテーブルへ切り替えた後から、アロケータが最も高い
-///   空きから配る。** **6GiB で起動すると 4GiB の上のフレームが実際に配られる**（既定では低い番地から
+///   空きから配る。** **6GiB で起動すると 4GiB の上のフレームが実際に配られる**（既定では低いアドレスから
 ///   配るので、4GiB の上はマップしてあることしか確かめられない。レビューの足す1点。2026-09-22）。
 ///   **アドレスを 32 ビットへ切り詰める箇所を表に出す。**
 const MACHINE_VARIANT_CONFIGS: &[(&str, &str, VariantExpect)] = &[
@@ -13314,7 +13314,7 @@ fn cmd_machine_variant(
             );
             println!("{context}: the machine did not shut down = {}", !shut_down);
             // **処理が機械チェックのスタック（IST4）の上で走っていた**（2026-10-04）。**例外の処理が、自分のフレームの
-            // 番地を、この CPU の TSS の IST4 と突き合わせて出す行である。**
+            // アドレスを、この CPU の TSS の IST4 と突き合わせて出す行である。**
             let on_ist = text.contains("on IST4=true");
             println!("{context}: the handler ran on the machine check stack (IST4) = {on_ist}");
             ready && reached && halted && !shut_down && on_ist
@@ -14007,7 +14007,7 @@ fn cmd_fp_test(features: &[&str], expect_pass: bool) -> Result<()> {
         .collect();
     let child_started_without_fs_base =
         child_bases.len() == 1 && child_bases[0].ends_with("0x0000000000000000");
-    // **判定 7**——**子の起動を跨いで、親の FS の基底が残る**（2026-10-05）。**子は、自分の番地を基底に入れて終わる。**
+    // **判定 7**——**子の起動を跨いで、親の FS の基底が残る**（2026-10-05）。**子は、自分のアドレスを基底に入れて終わる。**
     // 1 本目（子が走った回）が主張を担う。
     let parent_bases: Vec<&str> = stripped
         .lines()
@@ -14300,7 +14300,7 @@ fn cmd_concurrent_test(features: &[&str], expect_pass: bool) -> Result<()> {
     // **判定 5**——FP を入れ替える。
     let fp_kept_apart = done_a.is_some_and(|line| line.ends_with(" sum_ok=true"))
         && done_b.is_some_and(|line| line.ends_with(" sum_ok=true"));
-    // **FS の基底を取り違えない**（2026-10-05）。**2 本は、違う番地を基底に入れ、毎周カーネルに訊いて比べる**
+    // **FS の基底を取り違えない**（2026-10-05）。**2 本は、違うアドレスを基底に入れ、毎周カーネルに訊いて比べる**
     // （`kernel/userland/ticker.h`）。**切り替えで基底を入れ替えなければ、片方が、もう片方の基底のまま走る。**
     let fs_base_kept_apart = done_a.is_some_and(|line| line.contains(" tls_ok=true "))
         && done_b.is_some_and(|line| line.contains(" tls_ok=true "));
@@ -20782,7 +20782,7 @@ const BOOT_LOG_VOLATILE_FIELDS: &[VolatileField] = &[
         before: " woke ",
         after: " waiter(s)",
     },
-    // チャネルのイメージの「次に mmap する番地」（2026-10-15）。musl の mallocng が `clone` の直後に mmap する 1 ページ
+    // チャネルのイメージの「次に mmap するアドレス」（2026-10-15）。musl の mallocng が `clone` の直後に mmap する 1 ページ
     // （ワーカーのスタックの上に置かれる）を、主スレッドが持つとワーカーが munmap して終わり、ワーカーが持つと誰も返さない。
     // どちらになるかはティックで決まり、終わりに残る一番上のマップが変わる（Linux の `strace -f` でも同じ 2 つの形が出る。
     // 2026-10-15 に 50 回起動して 3 回が前者。`docs/verification-coverage.md` の「スレッドの順序で終わりに残るページ数が
@@ -21250,7 +21250,7 @@ fn volatile_field_span(line: &str, before: &str, after: &str) -> Option<(usize, 
         start + line[start..].find(after)?
     };
     let digits = &line[start..end];
-    // **10 進の数か、`0x` の付いた 16 進の番地**（2026-10-15。スレッドを持つイメージの `user-mmap:` の「次に mmap する番地」は、
+    // **10 進の数か、`0x` の付いた 16 進のアドレス**（2026-10-15。スレッドを持つイメージの `user-mmap:` の「次に mmap するアドレス」は、
     // ワーカーのスタックを munmap する順で変わる）。
     let hex = digits
         .strip_prefix("0x")
@@ -24608,18 +24608,18 @@ const DIRECT_PORT_IO_ALLOWLIST: &[DirectPortIoSite] = &[
     DirectPortIoSite {
         file: "common/src/machine/pc/serial.rs",
         item: "write_setup",
-        reason: "16550 の設定を書く手順（COM1 の決まった番地。`Serial::new` は外へ出していない。\
+        reason: "16550 の設定を書く手順（COM1 の決まったアドレス。`Serial::new` は外へ出していない。\
                  呼ぶのは `Serial::init` だけで、書くのは起動の 1 回だけである）",
     },
     DirectPortIoSite {
         file: "common/src/machine/pc/serial.rs",
         item: "transmit_ready",
-        reason: "送信の空きを読む（COM1 の決まった番地）",
+        reason: "送信の空きを読む（COM1 の決まったアドレス）",
     },
     DirectPortIoSite {
         file: "common/src/machine/pc/serial.rs",
         item: "write_byte",
-        reason: "1 バイトを書く（COM1 の決まった番地）",
+        reason: "1 バイトを書く（COM1 の決まったアドレス）",
     },
     // i8042（キーボードのコントローラ）。
     DirectPortIoSite {
@@ -24646,12 +24646,12 @@ const DIRECT_PORT_IO_ALLOWLIST: &[DirectPortIoSite] = &[
     DirectPortIoSite {
         file: "kernel/src/machine/pc/irq/pic.rs",
         item: "read_masks",
-        reason: "8259 の IMR を読む（決まった番地）",
+        reason: "8259 の IMR を読む（決まったアドレス）",
     },
     DirectPortIoSite {
         file: "kernel/src/machine/pc/irq/pic.rs",
         item: "set_masks",
-        reason: "8259 の IMR を書く（決まった番地）",
+        reason: "8259 の IMR を書く（決まったアドレス）",
     },
     DirectPortIoSite {
         file: "kernel/src/machine/pc/irq/pic.rs",
@@ -28039,7 +28039,7 @@ const COMMON_ITEMS_FOR_HOMES: &[CommonItemsForHomes] = &[
             "is_canonical",
             "mark_identity_removed",
         ],
-        reason: "番地の型と、物理のメモリを読む窓（ページテーブル・ACPI の表・AP のスタックを扱う）",
+        reason: "アドレスの型と、物理のメモリを読む窓（ページテーブル・ACPI の表・AP のスタックを扱う）",
     },
     CommonItemsForHomes {
         module: "common::critical",
@@ -28071,7 +28071,7 @@ const COMMON_ITEMS_FOR_HOMES: &[CommonItemsForHomes] = &[
     CommonItemsForHomes {
         module: "kernel",
         items: &["kernel_phys_from_virt"],
-        reason: "カーネルの仮想番地から物理番地を得る（AP のトランポリンが、静的な起動のページテーブルの物理番地を渡す）",
+        reason: "カーネルの仮想アドレスから物理アドレスを得る（AP のトランポリンが、静的な起動のページテーブルの物理アドレスを渡す）",
     },
     CommonItemsForHomes {
         module: "kernel::frame_allocator",
@@ -28095,7 +28095,7 @@ const COMMON_ITEMS_FOR_HOMES: &[CommonItemsForHomes] = &[
     CommonItemsForHomes {
         module: "kernel::link_symbols",
         items: &["KERNEL_LOAD_ADDR", "KERNEL_VIRT_BASE"],
-        reason: "カーネルのイメージの先頭の番地（恒等の写像を外す前に、必ず残す領域として導く）",
+        reason: "カーネルのイメージの先頭のアドレス（恒等の写像を外す前に、必ず残す領域として導く）",
     },
     CommonItemsForHomes {
         module: "kernel::memory_map",
@@ -28127,7 +28127,7 @@ const COMMON_ITEMS_FOR_HOMES: &[CommonItemsForHomes] = &[
     CommonItemsForHomes {
         module: "kernel::smp::shootdown_probe",
         items: &["virt"],
-        reason: "試しの feature のビルドで、起動の後に外してよい探りの 1 ページの番地（3 つ目の決まりの唯一の例外）",
+        reason: "試しの feature のビルドで、起動の後に外してよい探りの 1 ページのアドレス（3 つ目の決まりの唯一の例外）",
     },
     CommonItemsForHomes {
         module: "kernel::task",
@@ -36688,7 +36688,7 @@ fn kernel_cargo_args(features: &[&str]) -> Vec<String> {
 ///
 /// 1. **SSD へ書く量。** カーネルは、破壊テストの構成ごとに 1 度ずつビルドする（約 870 組）。増分の置き場は組ごとに
 ///    でき、数十 GiB になっていた。
-/// 2. **同じバイナリになること。** 増分の置き場を使うかどうかで、コードの分け方が変わり、カーネルのイメージの大きさと番地が
+/// 2. **同じバイナリになること。** 増分の置き場を使うかどうかで、コードの分け方が変わり、カーネルのイメージの大きさとアドレスが
 ///    変わる（実測。全検査の側だけ使わない形にしたら、起動ログの参照と 1 ページ食い違った）。**起動ログとページの
 ///    権限の参照は、どの木で、どの順でビルドしても同じバイナリになることに依っている。**
 ///
@@ -37806,7 +37806,7 @@ mod tests {
         );
     }
 
-    /// 伏せる欄は 10 進の数か `0x` の 16 進の番地で、どちらも読めて範囲に入る（2026-10-15）。
+    /// 伏せる欄は 10 進の数か `0x` の 16 進のアドレスで、どちらも読めて範囲に入る（2026-10-15）。
     #[test]
     fn volatile_fields_take_decimal_numbers_and_hex_addresses() {
         let line = "user-mmap: /bin/x had its first mmap at 0x10000000 and would map next at 0x1020a000 (every process starts";
