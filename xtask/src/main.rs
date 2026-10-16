@@ -2648,27 +2648,27 @@ const MONITOR_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const SCREENDUMP_FILE_TIMEOUT: Duration = Duration::from_secs(5);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-/// `cargo xtask run` の旗が値を取るか（2026-10-03）。
+/// `cargo xtask run` のフラグが値を取るか（2026-10-03）。
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum RunValue {
     /// 値を取らない（`--gui`）。
     None,
-    /// 直後の 1 語を値に取る（`--exception-test <kind>`）。**無ければ、その旗の処理が自分の文で断る。**
+    /// 直後の 1 語を値に取る（`--exception-test <kind>`）。**無ければ、そのフラグの処理が自分の文で断る。**
     Required,
     /// 直後の 1 語が `-` で始まらなければ値に取る（`--drift-test [MINUTES]`。`--keymap-test --sabotage` の
     /// `--sabotage` は値を取らない形でも使う）。
     Optional,
 }
 
-/// `cargo xtask run` が受け付ける旗の一覧（2026-10-03）。**ここに無い `-` で始まる引数と、どの旗の値でもない
+/// `cargo xtask run` が受け付けるフラグの一覧（2026-10-03）。**ここに無い `-` で始まる引数と、どのフラグの値でもない
 /// 位置の引数は、入口で名前つきで断る**（[`run_arguments_problem`]）。
 ///
 /// **2026-10-02 まで、`run` は知らない引数を黙って捨てていた**——引数の列を `any(|a| a == "--…")` で引くだけ
-/// なので、打ち間違えた旗も、`--help` も、既定の起動（QEMU をそのまま起こす）に化けた。**実測で、`--help` を
+/// なので、打ち間違えたフラグも、`--help` も、既定の起動（QEMU をそのまま起こす）に化けた。**実測で、`--help` を
 /// 打って素の QEMU が起動した**（2026-10-03。`docs/troubleshooting.md`）。
 ///
-/// **旗を足したら、ここにも足す。** **足し忘れは、その旗を打った最初の 1 回で「知らない旗」と断られて分かる。**
-/// **一覧の旗が全部この表に在ることは、ホストのテストが `USAGE` と docs の `cargo xtask run …` の行を読んで確かめる。**
+/// **フラグを足したら、ここにも足す。** **足し忘れは、そのフラグを打った最初の 1 回で「知らないフラグ」と断られて分かる。**
+/// **一覧のフラグが全部この表に在ることは、ホストのテストが `USAGE` と docs の `cargo xtask run …` の行を読んで確かめる。**
 const RUN_FLAGS: &[(&str, RunValue)] = &[
     // 既定の起動の変種
     ("--panic-test", RunValue::None),
@@ -2858,9 +2858,9 @@ const RUN_FLAG_SCOPES: &[(&str, RunFlagScope)] = &[
     ("--rebuild-disk", RunFlagScope::DefaultRunOnly),
 ];
 
-/// `cargo xtask run` の引数に、知らない旗か、どの旗の値でもない位置の引数か、効く所の無いフラグ（[`RUN_FLAG_SCOPES`]）が
+/// `cargo xtask run` の引数に、知らないフラグか、どのフラグの値でもない位置の引数か、効く所の無いフラグ（[`RUN_FLAG_SCOPES`]）が
 /// 在れば、その名前を挙げる（純粋な論理。2026-10-03。効く所の無いフラグは 2026-10-08）。**無ければ `None`。**
-/// **それ以外の組み合わせの意味までは見ない**（それぞれの旗の処理が見る）。
+/// **それ以外の組み合わせの意味までは見ない**（それぞれのフラグの処理が見る）。
 fn run_arguments_problem(rest: &[String]) -> Option<String> {
     let mut unknown: Vec<&str> = Vec::new();
     let mut stray: Vec<&str> = Vec::new();
@@ -3138,7 +3138,7 @@ fn main() -> Result<()> {
                 let Some(feature) = rest.get(index + 1) else {
                     bail!("--boot-marker-sabotage needs a feature\n\n{USAGE}");
                 };
-                // **検査の名前は全検査と同じにする**（表は検査の名前と鍵の組で引く）。
+                // **検査の名前は全検査と同じにする**（表は検査の名前とキーの組で引く）。
                 let check = match feature.as_str() {
                     "ext2-sparse-as-error-test" => "sparse read",
                     "user-load-filesz-only" => "bss mapping",
@@ -3743,7 +3743,7 @@ fn main() -> Result<()> {
                 if !rest.iter().any(|a| a == "--sabotage") {
                     return cmd_keymap_test(false);
                 }
-                // **鍵は全検査の項目の文脈の名前である**（[`SABOTAGE_JUDGEMENTS`] の `keymap` の行）。
+                // **キーは全検査の項目の文脈の名前である**（[`SABOTAGE_JUDGEMENTS`] の `keymap` の行）。
                 let result = cmd_keymap_test(true);
                 return finish_direct_sabotage(
                     "keymap",
@@ -3753,7 +3753,7 @@ fn main() -> Result<()> {
                 );
             }
             // **永続の 3 つの破壊の形（`--rebuild-between`・`--ignore-file`）も、全検査と同じ判定を通す**（2026-10-03。
-            // `--sabotage` ではないが、直に打つ破壊テストである。鍵は全検査の項目の文脈の名前）。
+            // `--sabotage` ではないが、直に打つ破壊テストである。キーは全検査の項目の文脈の名前）。
             if rest.iter().any(|a| a == "--persist-env-test") {
                 let rebuild = rest.iter().any(|a| a == "--rebuild-between");
                 let ignore = rest.iter().any(|a| a == "--ignore-file");
@@ -4599,7 +4599,7 @@ fn build_bootloader_with_features_unwrapped(
     features: &[&str],
 ) -> Result<PathBuf> {
     // **全検査の間は、組ごとに 1 回だけ作ってコピーを使う**（2026-09-29。案 A。項目ごとに cargo を呼ぶと、
-    // 裏の流れが持つ `target/` の鍵を待たされる）。**コピーは [`build_bootloader_now`] が錠の中で作る**（案 B の ①）
+    // 裏の流れが持つ `target/` のキーを待たされる）。**コピーは [`build_bootloader_now`] がロックの中で作る**（案 B の ①）
     // ——**ここでもう一度コピーすると、コピー元とコピー先が同じファイルになる**（[`keep_a_copy`] が断る）。
     kernel_builds::bootloader(features, || build_bootloader_now(workspace_root, features))
 }
@@ -8669,7 +8669,7 @@ fn report_inverted_judgement(check: &str, key: &str, label: &str, failed: &mut F
     report_inverted_judgement_for(check, &[key], label, failed);
 }
 
-/// [`report_inverted_judgement`] の、鍵を複数で引く形（2026-10-03。直に打つ入口が `--sabotage` を複数受けるので）。
+/// [`report_inverted_judgement`] の、キーを複数で引く形（2026-10-03。直に打つ入口が `--sabotage` を複数受けるので）。
 fn report_inverted_judgement_for(check: &str, keys: &[&str], label: &str, failed: &mut Failures) {
     if failed_on_the_run_side(label, check, keys, failed) {
         return;
@@ -9002,7 +9002,7 @@ enum SabotageForm {
     Falls,
     /// 検査の関数が自分の判定を反転させ、`Ok` が検出（[`report_inverted_judgement_for`]）。
     Inverted,
-    /// 反転させる永続の形（[`report_inverted_sabotage_verdict`]。鍵は項目の文脈の名前）。
+    /// 反転させる永続の形（[`report_inverted_sabotage_verdict`]。キーは項目の文脈の名前）。
     InvertedPersist { key: &'static str },
 }
 
@@ -9015,8 +9015,8 @@ enum SabotageForm {
 /// 落ちた**（2026-10-01 と 10-02。`docs/verification-coverage.md` の「全検査に破壊テストの項目を足すときの確かめ」）。
 ///
 /// **出す行は全検査と同じ形である**（`--- <検査> (<feature>): OK (...)` か `FAILED (...)`）。**落ちたら、その行の
-/// 後に `Err` で終わる。** **`check` は全検査がその破壊テストに使う検査の名前と同じにする**——**表は検査の名前と鍵の組で
-/// 引く**（同じ鍵を別の検査が別の判定で見る。`NamedJudgement::check` の doc）。
+/// 後に `Err` で終わる。** **`check` は全検査がその破壊テストに使う検査の名前と同じにする**——**表は検査の名前とキーの組で
+/// 引く**（同じキーを別の検査が別の判定で見る。`NamedJudgement::check` の doc）。
 fn finish_direct_sabotage(
     check: &str,
     keys: &[&str],
@@ -9147,7 +9147,7 @@ const TOOL_CHECKS_FULL: [(&str, &str, ToolCheck); 3] = [
 ];
 
 /// 既定のイメージを回の置き場へ置き、道具が使う既定のイメージとして示す（2026-09-25。手の道具が起動するイメージ。2026-09-29 から回の
-/// 置き場に置き、その道を返す）。
+/// 置き場に置き、そのパスを返す）。
 fn stage_default_image(workspace_root: &Path) -> Result<PathBuf> {
     let run = RunDir::create(workspace_root, "default-image")?;
     let bootloader_efi = build_bootloader(workspace_root, false)?;
@@ -12741,18 +12741,18 @@ fn cmd_image(contents: MediaContents) -> Result<()> {
     Ok(())
 }
 
-/// 基本の検査の項目——**ext2 のイメージのバイトが、キャッシュの当たり・外れ・使わないの 3 通りで同じこと**（2026-10-08）。
+/// 基本の検査の項目——**ext2 のイメージのバイトが、キャッシュのヒット・ミス・使わないの 3 通りで同じこと**（2026-10-08）。
 ///
 /// # なぜ在るのか
 ///
-/// **イメージのバイトは起動ログの参照（巻の名前と、superblock のセクタの検査値）に出る。** キャッシュの当たりは読み取り専用の
-/// キャッシュへのハードリンクで、`fs::copy` が権限をコピーし、`mke2fs -d` がそれを inode へ入れていたので、当たりだけ `/bin` の
+/// **イメージのバイトは起動ログの参照（巻の名前と、superblock のセクタの検査値）に出る。** キャッシュのヒットは読み取り専用の
+/// キャッシュへのハードリンクで、`fs::copy` が権限をコピーし、`mke2fs -d` がそれを inode へ入れていたので、ヒットだけ `/bin` の
 /// プログラムが 0444 になり、参照と食い違った（`docs/troubleshooting.md` の 2026-10-08 の項）。いまは `build.rs` が seed の
 /// 権限を決める。**この項目は、決め忘れや、権限のほかにコピー元から混ざるものを、全検査を待たずに捕まえる。**
 ///
 /// # 形
 ///
-/// 既定の構成で `cargo check` を 3 回回す——キャッシュを使わない回、空の置き場で全部が外れる回、同じ置き場で全部が
+/// 既定の構成で `cargo check` を 3 回回す——キャッシュを使わない回、空の置き場で全部がミスする回、同じ置き場で全部が
 /// 当たる回。`cargo` の置き場とキャッシュはこの回の使い捨ての置き場（tmpfs）に置き、メインの `target/` と本物の
 /// キャッシュには触らない。`cargo check` でもビルドスクリプトは走るので、イメージは同じものができる（コード生成をしない分速い）。
 fn check_image_determinism(workspace_root: &Path) -> Result<String> {
@@ -24576,7 +24576,7 @@ const DIRECT_INTERRUPT_CONTROL_ALLOWLIST: &[DirectInterruptControlSite] = &[
         reason: "BSP 用アイドルタスクの本体（W2-a。ADR-0061）。**排他ではない。** \
                  `sti` と `hlt` を隣接させる形は InterruptGuard では書けない \
                  （ガードは drop で IF を戻すので、`sti` と `hlt` の間にウィンドウが空く）。 \
-                 錠は 1 つも取らないので、保持したまま眠る危険が構造的に無い",
+                 ロックは 1 つも取らないので、保持したまま眠る危険が構造的に無い",
     },
 ];
 
@@ -30680,7 +30680,7 @@ fn concurrent_build_or_qemu() -> Vec<(u32, String)> {
     found
 }
 
-/// プロセスの本体の道（`/proc/<pid>/exe`）。**ビルドし直されて消えた本体は ` (deleted)` を外して読む。**
+/// プロセスの本体のパス（`/proc/<pid>/exe`）。**ビルドし直されて消えた本体は ` (deleted)` を外して読む。**
 fn process_binary(pid: u32) -> Option<PathBuf> {
     let link = fs::read_link(format!("/proc/{pid}/exe")).ok()?;
     let text = link.to_string_lossy();
@@ -31495,7 +31495,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
     }
 
     // **裏の流れが kernel を先に作り始める**（2026-09-29。案 A）。**基本の検査の項目が終わってから**——
-    // `cargo test` や `clippy` が `target/` の鍵を待たないように、QEMU の項目の手前で始める。
+    // `cargo test` や `clippy` が `target/` のキーを待たないように、QEMU の項目の手前で始める。
     if full {
         kernel_builds::build_ahead();
     }
@@ -36835,11 +36835,11 @@ fn status_into_item_log(command: &mut Command) -> std::io::Result<std::process::
     Ok(output.status)
 }
 
-/// ビルドしてから組ごとのコピーを取るまでを、同じ種類のほかのビルドと重ねない錠（2026-09-29。案 B の ①）。
+/// ビルドしてから組ごとのコピーを取るまでを、同じ種類のほかのビルドと重ねないロック（2026-09-29。案 B の ①）。
 ///
 /// **cargo は組によらず同じ置き場へ成果物を書き直す**ので、同時に走るほかのプロセスが別の組をビルドすると、
-/// ビルドしてからコピーするまでの間にコピーするものが入れ替わりうる。**錠を持つ間にビルドとコピーを済ませる**（プロセスが終われば、
-/// 殺された場合も、カーネルが錠を放す）。錠のファイルはキャッシュ（`target/kernel-builds/`）に置く。
+/// ビルドしてからコピーするまでの間にコピーするものが入れ替わりうる。**ロックを持つ間にビルドとコピーを済ませる**（プロセスが終われば、
+/// 殺された場合も、カーネルがロックを放す）。ロックのファイルはキャッシュ（`target/kernel-builds/`）に置く。
 fn with_build_lock<T>(
     workspace_root: &Path,
     kind: &str,
@@ -36895,7 +36895,7 @@ fn keep_a_copy(
         );
     }
     // **別の名前へコピーしてから置き換える**（2026-09-29。案 B の ②）——**同時に走るほかの実行が、同じ組のコピーを
-    // ESP へコピーしている途中でも、書きかけを読ませない**（コピーを ESP へコピーするのは錠の外である）。rename は同じ
+    // ESP へコピーしている途中でも、書きかけを読ませない**（コピーを ESP へコピーするのはロックの外である）。rename は同じ
     // ディレクトリの中なので、置き換えは一度に起きる。
     let partial = directory.join(format!(".{file_name}.{}.partial", std::process::id()));
     fs::copy(built, &partial).with_context(|| {
@@ -36915,7 +36915,7 @@ fn keep_a_copy(
     Ok(copy)
 }
 
-/// 2 つの道が同じファイルを指すか（**同じ装置の同じ inode**。リンクは辿る。**どちらかが読めなければ偽**）。
+/// 2 つのパスが同じファイルを指すか（**同じ装置の同じ inode**。リンクは辿る。**どちらかが読めなければ偽**）。
 fn is_same_file(a: &Path, b: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
     match (fs::metadata(a), fs::metadata(b)) {
@@ -37170,7 +37170,7 @@ fn run_kernel_build_unwrapped(workspace_root: &Path, features: &[&str]) -> Resul
         return received_kernel_build(features, received);
     }
     // **組ごとのコピーしから取る**（2026-09-29。案 B の ①。案 A のコピーの守りと同じ考え方）——**同時に走るほかの
-    // プロセスが、組によらず同じ置き場の ELF を別の組で書き直しても取り違えない。** ビルドとコピーは錠の中で行い
+    // プロセスが、組によらず同じ置き場の ELF を別の組で書き直しても取り違えない。** ビルドとコピーはロックの中で行い
     // （[`with_build_lock`]）、コピーがその組の cargo の成果物と同じかを確かめる（[`kernel_builds::confirm_the_copy`]）。
     let table = KernelFeatures::read(workspace_root)?;
     let key = kernel_builds::canonical_key(features, &|feature: &str| table.reached(feature));
@@ -37933,7 +37933,7 @@ thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack
         assert_eq!(cache_tally("cache: off\n"), None);
     }
 
-    /// イメージの 3 通りの比べ方は、同じなら通し、違うバイトと、外れ・当たりになっていない回を名指しで落とす（2026-10-08）。
+    /// イメージの 3 通りの比べ方は、同じなら通し、違うバイトと、ミス・ヒットになっていない回を名指しで落とす（2026-10-08）。
     #[test]
     fn image_determinism_names_the_difference() {
         let off = "cache: off\nhits: 0\nmisses: 3\n".to_string();
@@ -37953,7 +37953,7 @@ thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack
         let problem = image_determinism_problem(&images(changed, &hit)).unwrap();
         assert!(problem.contains("the hit build made a different image"));
         assert!(problem.contains("byte 4100, block 1"));
-        // 当たりの回が外れていたら（置き場が効いていない）、比べたことにならない。
+        // ヒットの回がミスしていたら（置き場が効いていない）、比べたことにならない。
         assert!(image_determinism_problem(&images(same.clone(), &miss))
             .unwrap()
             .contains("did not miss and then hit"));
@@ -38099,12 +38099,12 @@ thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack
         );
     }
 
-    /// **`cargo xtask run` は、知らない旗と、どの旗の値でもない位置の引数を名前つきで断る**（2026-10-03）。
-    /// **知っている旗の列は通す**——値が要る旗は直後の 1 語を取り、値が任意の旗は `-` で始まらない語だけを取る。
+    /// **`cargo xtask run` は、知らないフラグと、どのフラグの値でもない位置の引数を名前つきで断る**（2026-10-03）。
+    /// **知っているフラグの列は通す**——値が要るフラグは直後の 1 語を取り、値が任意のフラグは `-` で始まらない語だけを取る。
     #[test]
     fn run_refuses_unknown_options_and_stray_arguments_by_name() {
         let args = |list: &[&str]| -> Vec<String> { list.iter().map(|s| s.to_string()).collect() };
-        // 知らない旗。
+        // 知らないフラグ。
         let problem = run_arguments_problem(&args(&["--help"])).expect("--help is not an option");
         assert!(
             problem.contains("unknown option(s) [\"--help\"]"),
@@ -38113,7 +38113,7 @@ thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack
         // 打ち間違い。
         let problem = run_arguments_problem(&args(&["--socket-tset", "--sabotage", "x"])).unwrap();
         assert!(problem.contains("\"--socket-tset\""), "{problem}");
-        // どの旗の値でもない位置の引数。
+        // どのフラグの値でもない位置の引数。
         let problem = run_arguments_problem(&args(&["--socket-test", "extra"])).unwrap();
         assert!(
             problem.contains("belong to no option [\"extra\"]"),
@@ -38355,7 +38355,7 @@ thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack
     }
 
     /// **`USAGE` と docs の `cargo xtask run …` の行は、全部が受け付けられる**（2026-10-03。断られる行が 0）。
-    /// **表（`RUN_FLAGS`）の旗は、全部が `run` の処理に出てくる**（表だけに残った旗が無い）。
+    /// **表（`RUN_FLAGS`）のフラグは、全部が `run` の処理に出てくる**（表だけに残ったフラグが無い）。
     #[test]
     fn every_documented_run_command_is_accepted() {
         let root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -38398,13 +38398,13 @@ thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack
                         .unwrap_or(after.len());
                     let command = after[..end].split("\\n").next().unwrap_or("");
                     rest = &after[end..];
-                    // **旗の形そのものを書いた所（`--<名前>-test`）は命令ではない。** **`--persist-probe` は
+                    // **フラグの形そのものを書いた所（`--<名前>-test`）は命令ではない。** **`--persist-probe` は
                     // `804a35d` で `--persist-test` に替わった探りで、ADR-0034 がその時点の記録として残している。**
                     if command.contains("--<") || command.contains("--persist-probe") {
                         continue;
                     }
                     // 書き方の記号（`[` `]` `|`）と、置き場の印（`<kind>`・`FEATURE`・`NAME`・大文字の語）は、
-                    // 値の位置に在るものとして読む。旗の名前そのものだけを確かめる。
+                    // 値の位置に在るものとして読む。フラグの名前そのものだけを確かめる。
                     // `a | b | c` の `|` の後ろの語は、同じ位置の別の値である（ADR-0018 の例外の種別の並び）。
                     let mut after_a_bar = false;
                     let mut tokens: Vec<String> = Vec::new();
@@ -38448,7 +38448,7 @@ thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack
             refused.len(),
             refused.join("\n")
         );
-        // 表の旗は、全部が `run` の処理に出てくる。
+        // 表のフラグは、全部が `run` の処理に出てくる。
         let source = include_str!("main.rs");
         for (flag, _) in RUN_FLAGS {
             let quoted = format!("\"{flag}\"");

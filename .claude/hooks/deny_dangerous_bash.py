@@ -16,7 +16,7 @@ import sys
 # `env`・`command`・`exec`・`nice`・`timeout`（`timeout 60 git push`）。** **以前は判定が `git` の直前に
 # 区切りを求めていたので、これらを前に置くと 3 本の hook のどれも発火しなかった**
 # （`docs/troubleshooting.md`）。**引用は [`executable_part`] が空白に落とすので、代入の値は `\S*` で
-# 足りる。** **値を取る旗（`timeout -k 5 60`）の後は読まない**（限界。この形は打たない）。
+# 足りる。** **値を取るフラグ（`timeout -k 5 60`）の後は読まない**（限界。この形は打たない）。
 # **隣の 2 本もこれを使う**——**コピーしない**（片方だけが古くなる）。
 PREFIX = (
     r"(?:\w+=\S*\s+|(?:env|command|exec)\s+(?:-\S+\s+)*"

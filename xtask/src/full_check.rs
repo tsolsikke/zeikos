@@ -122,7 +122,7 @@ fn prune_before_the_run(main: &Path, worktree: &Path) {
     }
     for tree in [main, worktree] {
         // **ユーザープログラムのキャッシュ**（`kernel/build.rs` の `ProgramCache`。2026-10-07）。**7 日触られていない
-        // ものを消す**——当たるたびに触った時刻が進むので、残るのは使われなくなった鍵（消えた cfg・古い原本）のものである。
+        // ものを消す**——当たるたびに触った時刻が進むので、残るのは使われなくなったキー（消えた cfg・古い原本）のものである。
         let cache = tree.join("target").join("user-program-cache");
         if let Ok(entries) = fs::read_dir(&cache) {
             for entry in entries.flatten() {
@@ -2057,7 +2057,7 @@ pub struct Gate {
 }
 
 /// push の前の関門（運用者の足す1点。2026-09-25）。**プッシュするコミット（どのリモートにも無いもの）の
-/// それぞれに、要る検査の合格の記録が在るかを見る。** **フラグの理由が在れば、無いコミットを「旗で
+/// それぞれに、要る検査の合格の記録が在るかを見る。** **フラグの理由が在れば、無いコミットを「フラグで
 /// 越えた」と記録して通す**——**その push だけに効く**（記録は合格として数えない。[`covering`]）。
 ///
 /// **読むのは `--status` と同じ記録である**（二重に持たない）。**Claude Code の hook が呼ぶ形は HEAD から
@@ -2267,7 +2267,7 @@ const OVERRIDE_ENV: &str = "ZEIKOS_PUSH_UNCHECKED";
 
 /// `cargo xtask full [<コミット>] | --status | --watch | --select | --gate [--override <理由>] [--pre-push]`。
 pub fn command(args: &[String]) -> Result<()> {
-    // **走っている全検査の進み具合を読む**（2026-10-05。`crate::watch`。読むだけで、錠は取らない）。
+    // **走っている全検査の進み具合を読む**（2026-10-05。`crate::watch`。読むだけで、ロックは取らない）。
     if args.iter().any(|arg| arg == "--watch") {
         return crate::watch::command(&crate::workspace_root()?);
     }

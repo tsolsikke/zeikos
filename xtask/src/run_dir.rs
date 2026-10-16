@@ -180,7 +180,7 @@ const ESP: &str = "esp";
 
 /// この回の使い捨ての置き場を決める（純粋な論理ではない。tmpfs の様子を見る）。**置けなければ、理由を返す。**
 ///
-/// **道は `/dev/shm/zeikos-runs-<利用者>/<置き場の親の道から作った名前>/<番号>` である**——作業ツリーごと
+/// **道は `/dev/shm/zeikos-runs-<利用者>/<置き場の親のパスから作った名前>/<番号>` である**——作業ツリーごと
 /// （メインの木と、全検査の木）に分かれ、同じ番号でもぶつからない。
 fn scratch_for(runs: &Path, number: u64) -> Result<PathBuf, String> {
     let tmpfs = Path::new(SCRATCH_TMPFS);
@@ -278,7 +278,7 @@ fn scratch_base(runs: &Path) -> PathBuf {
     scratch_root().join(scratch_name(runs))
 }
 
-/// 置き場の親の道から、tmpfs の側のディレクトリの名前を作る（純粋な論理）。英数字のほかは `_` にする。
+/// 置き場の親のパスから、tmpfs の側のディレクトリの名前を作る（純粋な論理）。英数字のほかは `_` にする。
 fn scratch_name(runs: &Path) -> String {
     runs.to_string_lossy()
         .chars()
@@ -426,7 +426,7 @@ impl RunDir {
     }
 
     /// monitor のソケット。**名前に回の番号を入れる**——同じプロセスの中で並べても、ぶつからない。
-    /// 道の長さの上限の確かめは、呼ぶ側が今までどおり行う（`ensure_socket_path_fits`）。
+    /// パスの長さの上限の確かめは、呼ぶ側が今までどおり行う（`ensure_socket_path_fits`）。
     pub fn monitor_socket(&self, kind: &str) -> PathBuf {
         PathBuf::from(format!(
             "/tmp/zeikos-xtask-{kind}-{}-{}.sock",
@@ -631,7 +631,7 @@ fn lock_if_idle(dir: &Path) -> Option<File> {
 mod tests {
     use super::*;
 
-    /// tmpfs の側の名前は、置き場の親の道ごとに違う（メインの木と全検査の木が、同じ番号でぶつからない）。
+    /// tmpfs の側の名前は、置き場の親のパスごとに違う（メインの木と全検査の木が、同じ番号でぶつからない）。
     #[test]
     fn the_scratch_name_differs_per_runs_directory() {
         let main = scratch_name(Path::new("/home/u/zeikos/target/runs"));

@@ -11,7 +11,7 @@
 **`selftest` がそれを確かめる**——**`VBoxManage` を呼んだら失敗する走り手に差し替えて、
 拒む名前を全部のコマンドへ渡す。** **`cargo xtask check` が毎回回す。**
 
-**逃げ道は無い。** **`--force` も、名前の検査を飛ばす旗も置かない。**
+**逃げ道は無い。** **`--force` も、名前の検査を飛ばすフラグも置かない。**
 
 # `list vms` を使わない
 
@@ -53,9 +53,9 @@
 
 # 全検査の間は VM を起こさない（2026-09-25。検査の体系の改善の ③）
 
-**`start` と `run` は、`VBoxManage` を呼ぶ前に検査の錠を共有で取る**（`tools/check_lock.py`）。
-**全検査の間は 75 で断る。** **`start` は VM を起こしたまま終わるので錠を持ち続けられない**——
-**錠の置き場に「起こしたまま」の印を残し、`stop` と `delete` で消す。** **全検査の入口は、印が在れば断る**
+**`start` と `run` は、`VBoxManage` を呼ぶ前に検査のロックを共有で取る**（`tools/check_lock.py`）。
+**全検査の間は 75 で断る。** **`start` は VM を起こしたまま終わるのでロックを持ち続けられない**——
+**ロックの置き場に「起こしたまま」の印を残し、`stop` と `delete` で消す。** **全検査の入口は、印が在れば断る**
 （VM は Windows 側で走るので `/proc` では見えず、一覧を読む操作は使わない決まりである）。
 **VirtualBox の画面から止めたときは、印が残る**——**`stop` を打てば消える。**
 
@@ -568,13 +568,13 @@ def selftest():
                 assert code == 2, f"{command} {name!r} が {code} で終わった"
         assert not calls, f"VBoxManage を {len(calls)} 回呼んだ"
         locked = lock_refusals()
-        assert not calls, f"錠で断る道で VBoxManage を {len(calls)} 回呼んだ"
+        assert not calls, f"ロックで断る道で VBoxManage を {len(calls)} 回呼んだ"
     finally:
         RUNNER = _run
     refusals = sink.getvalue().count("refused:")
     print(
         f"selftest: OK（受ける名前 {len(ACCEPTED_NAMES)} 個、拒む名前 {len(REFUSED_NAMES)} 個、"
-        f"コマンドの入口での断り {refusals} 回、錠を別のプロセスが排他で持つ間の断り {locked} 回、"
+        f"コマンドの入口での断り {refusals} 回、ロックを別のプロセスが排他で持つ間の断り {locked} 回、"
         f"VBoxManage の呼び出し {len(calls)} 回）"
     )
 
@@ -590,15 +590,15 @@ HOLD_EXCLUSIVELY = (
 
 
 def lock_refusals():
-    """**別のプロセスが錠を排他で持つ間、`start` と `run` が `VBoxManage` を呼ばずに 75 で断ること。**
+    """**別のプロセスがロックを排他で持つ間、`start` と `run` が `VBoxManage` を呼ばずに 75 で断ること。**
 
-    **置き場は一時の場所へ差し替える**（本の錠には触れない——**確かめが本の全検査や `--commit` を
+    **置き場は一時の場所へ差し替える**（本のロックには触れない——**確かめが本の全検査や `--commit` を
     断らせないため**）。**「起こしたまま」の印が書けて消せることも見る。**
 
     **`start` と `run` を直に呼ぶ。`main` は通さない**——**`main` は `Vm` を作り、`Vm` は VM の置き場の
     道を `wslpath` で直すが、`wslpath` は WSL にしか無い。** **2026-09-25 に `main` を通して書き、
     CI（WSL ではない）で `FileNotFoundError` になって基底と `--commit` が赤くなった**（手元の WSL では
-    通っていた）。**名前だけを持つ VM を組んで渡す**——**錠を見る前に道を使わないことも、これで分かる。**
+    通っていた）。**名前だけを持つ VM を組んで渡す**——**ロックを見る前に道を使わないことも、これで分かる。**
     """
     vm = Vm.__new__(Vm)
     vm.name = guard("zeikos-selftest")
@@ -612,7 +612,7 @@ def lock_refusals():
         check_lock.DIR_FOR_TESTS = directory
         try:
             ready, _, _ = select.select([holder.stdout], [], [], 10)
-            assert ready and holder.stdout.readline().strip() == "held", "錠を持つ子が 10 秒で持たなかった"
+            assert ready and holder.stdout.readline().strip() == "held", "ロックを持つ子が 10 秒で持たなかった"
             count = 0
             for command, call in calls:
                 with contextlib.redirect_stderr(io.StringIO()):
@@ -624,7 +624,7 @@ def lock_refusals():
                         )
                         count += 1
                         continue
-                raise AssertionError(f"{command} が錠を別のプロセスが持つ間に断らなかった")
+                raise AssertionError(f"{command} がロックを別のプロセスが持つ間に断らなかった")
             check_lock.mark_vbox_running("zeikos-selftest")
             marker = os.path.join(check_lock.vbox_marker_dir(), "zeikos-selftest")
             assert os.path.isfile(marker), "「起こしたまま」の印が書けなかった"

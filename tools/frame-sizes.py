@@ -51,7 +51,7 @@ def run(args, cwd):
 
 
 def build(tree, features):
-    """その木でカーネルを建て、ELF の道を返す（`xtask` と同じ引数。既定の feature）。"""
+    """その木でカーネルを建て、ELF のパスを返す（`xtask` と同じ引数。既定の feature）。"""
     # **増分の置き場を使わない**——`xtask` がカーネルをビルドするときと同じ指定にする（`xtask/src/main.rs` の
     # `INCREMENTAL_OFF`）。違うと、cargo が設定の違いを見て作り直し、別のバイナリが置き場に残る。
     args = [

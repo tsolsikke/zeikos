@@ -43,12 +43,12 @@ stdout に出していたが、`exit 0` の stdout は読み手に届かない**
   横取りすることになるので採らない。**
 
 
-# 錠で断られたら「走らせなかった」と言う（2026-09-25。検査の体系の改善の ③）
+# ロックで断られたら「走らせなかった」と言う（2026-09-25。検査の体系の改善の ③）
 
-**全検査の間は、`--commit` が検査の錠で断られる**（`xtask/src/check_lock.rs`。終了の値 75）。
+**全検査の間は、`--commit` が検査のロックで断られる**（`xtask/src/check_lock.rs`。終了の値 75）。
 **断られた回は緑に数えない**——**「走らせなかった」と言い、`exit 2` で終える。** **記録には
 `xtask` が「断られた」を残し、push の前の関門（`deny_push_when_red.py`）は、そのコミットの合格の記録が
-在るまで押させない**（コミットは既に積まれているので、ここでは止められない）。**基底は錠を取らない**
+在るまでpush させない**（コミットは既に積まれているので、ここでは止められない）。**基底はロックを取らない**
 ——**全検査の間も走る。**
 
 **環境変数を前に置いたコミットも見る**（`X=1 git commit`。2026-09-25 に見つけた穴）。
@@ -57,7 +57,7 @@ stdout に出していたが、`exit 0` の stdout は読み手に届かない**
 # 検査の後に、族の選びを出す（2026-09-26。選ぶのを表示する段。運用者の回答）
 
 **`cargo xtask full --select` を呼び、HEAD の選びを出す**——**最後の緑の全検査からの累積と、このコミット
-だけの 2 つ**（比較元・対象・選んだ理由・全部へ倒した理由）。**錠を取らず、QEMU を起こさない。**
+だけの 2 つ**（比較元・対象・選んだ理由・全部へ倒した理由）。**ロックを取らず、QEMU を起こさない。**
 **回し方は変えない**（表示だけ。`ADR-0069` の決定 7 の 2）。**出せなければ「出せなかった」と言う**
 （黙らない）。**選びは git の共通の置き場の `zeikos/selections.tsv` に 1 度だけ残る**（当たりを後から数える材料）。
 
@@ -96,7 +96,7 @@ IMAGE_PATH_PREFIXES = ("kernel/", "common/")
 要る検査を決める）。**基底の確かめが一致を見る。**"""
 
 REFUSED_EXIT_CODE = 75
-"""検査の錠が取れずに `xtask` が断ったときの終了の値（`xtask/src/check_lock.rs`）。"""
+"""検査のロックが取れずに `xtask` が断ったときの終了の値（`xtask/src/check_lock.rs`）。"""
 
 SELECT_TIMEOUT_SECONDS = 30
 """族の選び（`cargo xtask full --select`）の上限（秒）。**git と表と記録を読むだけなので 1 秒かからない。**"""
@@ -117,7 +117,7 @@ def selection_from(returncode: int | None, stdout: str, stderr: str) -> list[str
 
 
 def selection_lines(root: str) -> list[str]:
-    """HEAD の族の選び（`cargo xtask full --select`）。**錠を取らず、QEMU を起こさない。**"""
+    """HEAD の族の選び（`cargo xtask full --select`）。**ロックを取らず、QEMU を起こさない。**"""
     try:
         done = subprocess.run(
             ["cargo", "xtask", "full", "--select"],
@@ -168,13 +168,13 @@ def paths_in_head(root: str) -> list[str] | None:
 
 
 def refused_notice(label: str, stderr: str) -> str:
-    """錠で断られたときに言うこと。**引数だけで決める**（`--self-test` が形を覆う）。"""
+    """ロックで断られたときに言うこと。**引数だけで決める**（`--self-test` が形を覆う）。"""
     rerun = "cargo xtask check" + (" --commit" if label == "--commit" else "")
     lines = [
-        f"post-commit check: 走らせなかった（{label}。検査の錠が取れなかった——全検査が走っている）。"
+        f"post-commit check: 走らせなかった（{label}。検査のロックが取れなかった——全検査が走っている）。"
         "緑に数えない。",
         f"  記録には「断られた」が残る。push の前の関門は、このコミットの {label} の合格の記録が"
-        "在るまで押させない。",
+        "在るまでpush させない。",
         f"  全検査が終わってから、このコミットが HEAD のうちに {rerun} を打ち直すこと"
         "（HEAD が進んだら cargo xtask full <コミット> で確かめる）。",
     ]
@@ -196,7 +196,7 @@ def decide(paths: list[str] | None) -> tuple[bool, str | None]:
 
     **読めなければ基底へ落とす**——**`--commit` を回せないより、回さないほうが
     害が小さい。** **ただし黙らない**——**落としたことを言い、`exit 2` で終える**
-    （シリアルの錠の fail open と同じ形。理由が在り、観測が残る）。
+    （シリアルのロックの fail open と同じ形。理由が在り、観測が残る）。
     """
     if paths is None:
         return False, UNREADABLE_NOTICE
@@ -278,7 +278,7 @@ def main() -> int:
         )
         return 2
     seconds = time.monotonic() - started
-    # **錠で断られた回は、緑にも赤にも数えない**——**走らせなかったと言う**（この doc の 2026-09-25）。
+    # **ロックで断られた回は、緑にも赤にも数えない**——**走らせなかったと言う**（この doc の 2026-09-25）。
     selection = selection_lines(root)
     if done.returncode == REFUSED_EXIT_CODE:
         print(refused_notice(label, done.stderr), file=sys.stderr)
@@ -390,7 +390,7 @@ def self_test() -> int:
                 f"but got ({got_commit}, notice={got_notice is not None})"
             )
             failures += 1
-    # **緑の知らせの形**（2026-09-21。運用者の足す1点）。**読み手と利用者の両方へ届く鍵が
+    # **緑の知らせの形**（2026-09-21。運用者の足す1点）。**読み手と利用者の両方へ届くキーが
     # 在り、許可の判断は入っていないこと。**
     announced = announce_payload("PostToolUse", "x")
     if (
@@ -401,7 +401,7 @@ def self_test() -> int:
     ):
         print(f"self-test: announce_payload has the wrong shape: {announced!r}")
         failures += 1
-    # **錠で断られたときの知らせ**（2026-09-25）。**走らせなかったと言い、緑に数えず、打ち直す
+    # **ロックで断られたときの知らせ**（2026-09-25）。**走らせなかったと言い、緑に数えず、打ち直す
     # 検査と持ち主の行を出す。**
     refused = refused_notice(
         "--commit",

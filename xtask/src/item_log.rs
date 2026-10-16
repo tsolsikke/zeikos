@@ -91,7 +91,7 @@ pub fn take() -> Option<String> {
     Some(text)
 }
 
-/// 塊をまとめて標準出力へ書く（**ほかの糸の出力と、塊の途中で混ざらない**——標準出力の錠を持って 1 度に書く）。
+/// 塊をまとめて標準出力へ書く（**ほかの糸の出力と、塊の途中で混ざらない**——標準出力のロックを持って 1 度に書く）。
 pub fn write(text: &str) {
     let mut stdout = std::io::stdout().lock();
     let _ = stdout.write_all(text.as_bytes());

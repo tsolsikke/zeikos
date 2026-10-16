@@ -1,30 +1,30 @@
 #!/usr/bin/env python3
-"""検査の錠の Python の側（2026-09-25。検査の体系の改善の ③。運用者の決定）。
+"""検査のロックの Python の側（2026-09-25。検査の体系の改善の ③。運用者の決定）。
 
 **本体は `xtask/src/check_lock.rs` である。** **ここは手で使う道具（`tools/`）が QEMU と VirtualBox を
-起こす前に、同じ錠を共有で取るためのものである。** **全検査の間は断る**（終了の値 75。待たない）。
+起こす前に、同じロックを共有で取るためのものである。** **全検査の間は断る**（終了の値 75。待たない）。
 
 # 道は `xtask` と同じ決め方にする
 
 **`<git rev-parse --git-common-dir>/zeikos/check.lock`。** **根はこのファイルの在り処から決め、git は
-`GIT_*` を外して呼ぶ**——**環境変数で道が変わると、錠が 2 つになって排他が黙って外れる**（運用者の
+`GIT_*` を外して呼ぶ**——**環境変数で道が変わると、ロックが 2 つになって排他が黙って外れる**（運用者の
 回答 3）。**同じ道になることは、基底の確かめが本の木・作業木・環境を減らした子で見る。**
 
 # 全検査の中から呼ばれたときは取らない
 
-**`ZEIKOS_CHECK_LOCK_OWNER` の pid が自分の祖先で、`/proc/locks` でこの錠を持っているときだけ**
+**`ZEIKOS_CHECK_LOCK_OWNER` の pid が自分の祖先で、`/proc/locks` でこのロックを持っているときだけ**
 取らずに進む（`xtask` と同じ規則）。
 
 # VirtualBox の VM を起こしたまま残すとき
 
-**`tools/vbox-vm.py start` は VM を起こしたまま終わる**——**錠を持ち続けられない。** **そこで錠の
+**`tools/vbox-vm.py start` は VM を起こしたまま終わる**——**ロックを持ち続けられない。** **そこでロックの
 置き場に「起こしたまま」の印を残し、`stop` と `delete` で消す。** **全検査の入口は、印が在れば断る。**
 **VM は Windows 側で走るので `/proc` では見えず、一覧を読む操作は使わない決まりである。**
 
 # 使い方（確かめ用）
 
     python3 tools/check_lock.py path [--root DIR]
-    python3 tools/check_lock.py try FILE    # 一時の錠を共有で取ってみる（取れれば 0、断られれば 75）
+    python3 tools/check_lock.py try FILE    # 一時のロックを共有で取ってみる（取れれば 0、断られれば 75）
 """
 import fcntl
 import os
@@ -122,7 +122,7 @@ def ancestors():
 
 
 def covering_owner(named, ancestors_list, holders):
-    """持ち主の下で走っているか（共有を求める側）。**祖先で、しかも錠を持つ pid だけ。**"""
+    """持ち主の下で走っているか（共有を求める側）。**祖先で、しかもロックを持つ pid だけ。**"""
     try:
         owner = int((named or "").strip())
     except ValueError:
@@ -141,16 +141,16 @@ def probe(directory):
             # **ロックの fd が子へ継がれないこと**（2026-09-26。4.(3)）。**Python は既定で継がせない**（PEP 446）
             # **が、確かめてから使う**——**継がれると、QEMU の子がロックを持ち続ける。**
             if os.get_inheritable(first.fileno()):
-                raise RuntimeError("錠のファイルの fd が子へ継がれる形で開いた")
+                raise RuntimeError("ロックのファイルの fd が子へ継がれる形で開いた")
             fcntl.flock(first, fcntl.LOCK_EX | fcntl.LOCK_NB)
             try:
                 fcntl.flock(second, fcntl.LOCK_SH | fcntl.LOCK_NB)
             except BlockingIOError:
                 pass
             else:
-                raise RuntimeError("同じファイルを 2 度開くと、両方が錠を取れた（flock が効いていない）")
+                raise RuntimeError("同じファイルを 2 度開くと、両方がロックを取れた（flock が効いていない）")
             if not any(pid == os.getpid() and mode == "exclusive" for pid, mode in holders_of(first)):
-                raise RuntimeError("/proc/locks に自分の錠が見えない")
+                raise RuntimeError("/proc/locks に自分のロックが見えない")
     finally:
         try:
             os.unlink(path)

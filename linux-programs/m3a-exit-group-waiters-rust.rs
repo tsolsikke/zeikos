@@ -5,9 +5,9 @@
 //! # 何をするか
 //!
 //! 1. 主スレッドが `std::sync::Mutex` を取ったまま、終えるスレッドを先に作り（池の添字 0）、次に待つスレッドを作る（添字 1）。
-//! 2. 待つスレッドは 1 行出し、旗を立ててから同じ `Mutex` を取ろうとして、必ず futex で眠る（主スレッドが持っている）。
+//! 2. 待つスレッドは 1 行出し、フラグを立ててから同じ `Mutex` を取ろうとして、必ず futex で眠る（主スレッドが持っている）。
 //! 3. 主スレッドは待つスレッドを `join` して、futex で眠る（待つスレッドは戻らない）。
-//! 4. 終えるスレッドは旗が立つまで `sched_yield` で待ち、さらに 8 回譲ってから 1 行出し、`std::process::exit(7)`
+//! 4. 終えるスレッドはフラグが立つまで `sched_yield` で待ち、さらに 8 回譲ってから 1 行出し、`std::process::exit(7)`
 //!    （`exit_group(7)`）を打つ。Linux はプロセス全体を 7 で終える。ZeikOS は、印を立てたスレッドが同じスロットの futex の
 //!    待ちを 2 本とも起こす。**終えるスレッドの次に走るのは待つスレッドである**（池の巡回は添字の順で、主スレッドは
 //!    その後）——起きた待つスレッドは `futex` の戻りで印を見て `Finished` になり、起きた主スレッドは `futex` の戻りで
@@ -16,8 +16,8 @@
 //!
 //! # 出力の順は決まっている
 //!
-//! `main starts` → `the waiter thread waits for the mutex now`（旗を立てる前）→ `the ender thread calls exit_group(7) now`
-//! （旗を見てから）。
+//! `main starts` → `the waiter thread waits for the mutex now`（フラグを立てる前）→ `the ender thread calls exit_group(7) now`
+//! （フラグを見てから）。
 //!
 //! # crate ではない
 //!

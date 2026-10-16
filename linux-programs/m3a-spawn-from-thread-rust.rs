@@ -3,10 +3,10 @@
 //!
 //! # 何をするか
 //!
-//! 1. 主スレッドが 1 行出し、スレッドを作る。スレッドは旗を待つ。
+//! 1. 主スレッドが 1 行出し、スレッドを作る。スレッドはフラグを待つ。
 //! 2. 主スレッドは、スレッドが生きている間に `spawn` を打つ。ZeikOS は `-EAGAIN`（起動ログの `thread: spawn … refused
 //!    with -EAGAIN: ThreadsAlive`）、Linux は番号を知らないので `-ENOSYS`。どちらも負なので、同じ行を出す。
-//! 3. 主スレッドが旗を立て、スレッドが `spawn` を打つ。ZeikOS は `-EAGAIN`（`FromThread`）、Linux は `-ENOSYS`。
+//! 3. 主スレッドがフラグを立て、スレッドが `spawn` を打つ。ZeikOS は `-EAGAIN`（`FromThread`）、Linux は `-ENOSYS`。
 //! 4. 主スレッドはスレッドを `join` して、引数の数で終わる。
 //!
 //! # crate ではない

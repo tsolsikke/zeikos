@@ -40,7 +40,7 @@ Seinas（wayland-server）は起動時に、ソケットのパスの隣にロッ
    余り。接続は、クライアントごとに 1 本と、シェル・IME の 1 本ずつを見込む。輪は向きごとに 1,024 バイトのまま
    （8 本 × 2 KiB = 16 KiB。`.data` に載る。deferred の「接続は同時に 2 つ、listener は 1 本」の行を閉じる）。
 
-4. **`flock` を実装する**（番号 73。`LOCK_SH`・`LOCK_EX`・`LOCK_UN` と `LOCK_NB`）。鍵は ext2 の inode 番号、持ち主は
+4. **`flock` を実装する**（番号 73。`LOCK_SH`・`LOCK_EX`・`LOCK_UN` と `LOCK_NB`）。キーは ext2 の inode 番号、持ち主は
    開いたファイル（`File::Regular` の 1 つ）である。`LOCK_EX|LOCK_NB` は、別の開いたファイルが取っていれば
    `-EWOULDBLOCK`（`-EAGAIN`）、同じ開いたファイルなら取り直しとして 0。`LOCK_NB` の無い形で取れないときは、
    `Wait::FileLock { inode }` で眠り、放されたら取り直す。**放すのは `LOCK_UN` と `close`**——プロセスの終わりは

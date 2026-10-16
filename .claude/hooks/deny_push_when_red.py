@@ -10,10 +10,10 @@
 
 # なぜ push だけ止めるのか
 
-**押した後は直せないからである。** **コミットメッセージの文体の検査は全履歴を
-見るので、違反したコミットを押すと、以後ずっと赤くなる。** **同じ形は 3 回出て、
-3 回目で実際に押した**（2026-09-06。`--amend` と `--force-with-lease` で直した。
-`docs/troubleshooting.md`）。**直前の 2 回は押す前に気づいただけで、気づき方は
+**push した後は直せないからである。** **コミットメッセージの文体の検査は全履歴を
+見るので、違反したコミットをpush すると、以後ずっと赤くなる。** **同じ形は 3 回出て、
+3 回目で実際にpush した**（2026-09-06。`--amend` と `--force-with-lease` で直した。
+`docs/troubleshooting.md`）。**直前の 2 回はpush する前に気づいただけで、気づき方は
 同じではない**——**規律では止まらないと判断した。**
 
 # 判定は 2 段である
@@ -25,42 +25,42 @@
 # コミットと同じコマンドの `push` は、検査せずに拒む（2026-09-18）
 
 **この hook は `PreToolUse` で、コマンドが始まる前に 1 度だけ検査する。** **同じコマンドの中で
-コミットを作ってから押すと、検査が見るのは「これから作るコミット」ではなく 1 つ前の木である**
-——**実測で、本文 1 行のコミットをそのまま押した**（2026-09-18。`docs/troubleshooting.md`）。
+コミットを作ってからpush すると、検査が見るのは「これから作るコミット」ではなく 1 つ前の木である**
+——**実測で、本文 1 行のコミットをそのままpush した**（2026-09-18。`docs/troubleshooting.md`）。
 **そこで、同じコマンドに `git commit` の呼び出しが在れば、検査せずに拒む。** **コミットと
-`push` は別のコマンドにすること**——**基底 check の出力を読んでから、次のコマンドで押す。**
+`push` は別のコマンドにすること**——**基底 check の出力を読んでから、次のコマンドでpush する。**
 
 # 並走していたら、検査せずに拒む
 
 **`cargo` は `target/` にファイルロックを取る。** **`--full` が走っている最中に
-検査を始めると、終わるまで返ってこない**（最大 90 分）。**待つのではなく押さない**
-——**走っているものを止めるか、終わってから押すこと。** **これは安全側である**
+検査を始めると、終わるまで返ってこない**（最大 90 分）。**待つのではなくpush しない**
+——**走っているものを止めるか、終わってからpush すること。** **これは安全側である**
 （`CLAUDE.md` の絶対ルール 1 と同じ理由で、並走そのものを避ける）。
 
 **同じ木の `xtask` だけを数える**（2026-09-25。検査の体系の改善の ③）——**全検査は別の作業木
 （メインの作業木の隣の `<名前>-full-check`）で回り、`target/` は木ごとに別である。** **作業木の全検査の間も、本の木で
-基底を回して押せる。** **同じ木かは `/proc/<pid>/exe` が本の木の `target/debug/xtask` を指すかで見る。**
+基底を回してpush できる。** **同じ木かは `/proc/<pid>/exe` が本の木の `target/debug/xtask` を指すかで見る。**
 **`cargo xtask full` の親は数えない**——**本の木の `xtask` として走るが、作業木の子を待つだけで、
 本の木では何も建てない。**
 
 # 要る検査を済ませていないコミットを止める（2026-09-25。運用者の足す1点）
 
-**コミットの後の hook は、全検査の間は `--commit` を錠で断られる**——**コミットは既に積まれている。**
-**そこで基底が緑のあと `cargo xtask full --gate` を回し、押すコミット（どのリモートにも無いもの）の
+**コミットの後の hook は、全検査の間は `--commit` をロックで断られる**——**コミットは既に積まれている。**
+**そこで基底が緑のあと `cargo xtask full --gate` を回し、push するコミット（どのリモートにも無いもの）の
 それぞれに、要る検査（`kernel/` か `common/` に触れたものは `--commit`、他は基底）の合格の記録が
 在るかを見る。** **無ければ、足りない検査とコミットを出して拒む。** **読むのは
 `cargo xtask full --status` と同じ記録である**（git の共通の置き場の `zeikos/records.tsv`。2026-09-27 に移した）。
 
-**旗で越えられる**——**`ZEIKOS_PUSH_UNCHECKED='<理由>' git push ...`**（理由は空にできない）。
+**フラグで越えられる**——**`ZEIKOS_PUSH_UNCHECKED='<理由>' git push ...`**（理由は空にできない）。
 **越えたコミットは、理由と一緒に記録へ「override」として残る。** **使うのは、要る検査を後から
-回せないときだけである**（例: 全検査の間に積んだコミットで、HEAD が先へ進んだ）。**旗はその push だけに
+回せないときだけである**（例: 全検査の間に積んだコミットで、HEAD が先へ進んだ）。**フラグはその push だけに
 効き、合格としては数えない**（2026-09-26。運用者の決定 1 の ③。**以前は記録がそのコミットを後まで満たした**）。
 
 # Git 自身の pre-push にも同じ関門を置いた（2026-09-26。運用者の決定 1 の ③）
 
 **`.githooks/pre-push` が同じ判定（`cargo xtask full --gate`）を呼ぶ**——**規則を二重に持たない。**
 **こちらは HEAD から数え、Git の側は標準入力の ref の行から実際に送るコミットを数える**（別の枝・タグ・
-削除）。**同じ push を両方が見ても、旗の記録は 1 度だけ足す。** **`git push --no-verify` は Git の側を
+削除）。**同じ push を両方が見ても、フラグの記録は 1 度だけ足す。** **`git push --no-verify` は Git の側を
 迂回できるが、この hook は迂回できない**（この hook は Claude Code が打つ `git push` の前に走る）。
 
 **環境変数を前に置いた `push` も見る**（`X=1 git push`。**以前は `git` の直前に区切りを求めていたので、
@@ -91,7 +91,7 @@ from check_after_commit import announce, announce_payload, registered_timeout  #
 # **前に置けるもの（代入・`env`・`timeout` 等）は [`PREFIX`] で読み飛ばす**（隣の hook が持つ。
 # 2026-09-25。**以前は代入や `timeout` を前に置くと、この hook が発火しなかった**）。
 START = r"(?:^|[;&|(]\s*|\n\s*)" + PREFIX
-# `git -C dir push` のような大域の旗も通す。
+# `git -C dir push` のような大域のフラグも通す。
 PUSH = re.compile(START + r"git\s+(?:-\S+\s+\S+\s+|-\S+\s+)*push\b")
 # **`commit-tree` のような下位の命令は当てない**（`\b` だと `-` の手前で切れて当たる）。
 COMMIT = re.compile(START + r"git\s+(?:-\S+\s+\S+\s+|-\S+\s+)*commit(?![-\w])")
@@ -99,7 +99,7 @@ TIMEOUT_SECONDS = 240
 GATE_TIMEOUT_SECONDS = 50
 """関門（`cargo xtask full --gate`）の上限（秒）。**基底の直後なので建てる時間は乗らない。**"""
 
-# **旗**（この doc の「要る検査を済ませていないコミットを止める」）。**実行の形に在ることを見てから、
+# **フラグ**（この doc の「要る検査を済ませていないコミットを止める」）。**実行の形に在ることを見てから、
 # 理由を元の文から読む**——**引用は実行の形では空白に落ちる。**
 OVERRIDE = re.compile(START + r"ZEIKOS_PUSH_UNCHECKED=\S*\s+git\s+(?:-\S+\s+\S+\s+|-\S+\s+)*push\b")
 OVERRIDE_REASON = re.compile(r"ZEIKOS_PUSH_UNCHECKED=(?:'([^']*)'|\"([^\"]*)\"|(\S+))")
@@ -111,7 +111,7 @@ def invokes_git_push(command: str) -> bool:
 
 
 def commits_and_pushes(command: str) -> bool:
-    """同じコマンドの中で、コミットを作ってから押す形か。**self-test が覆う。**
+    """同じコマンドの中で、コミットを作ってからpush する形か。**self-test が覆う。**
 
     **引用と heredoc の中の言及は数えない**（[`executable_part`] が落とす）。
     """
@@ -120,7 +120,7 @@ def commits_and_pushes(command: str) -> bool:
 
 
 def override_reason(command: str) -> str | None:
-    """旗の理由（旗が無ければ `None`、在って空なら `""`）。**self-test が覆う。**"""
+    """フラグの理由（フラグが無ければ `None`、在って空なら `""`）。**self-test が覆う。**"""
     if not OVERRIDE.search(executable_part(command)):
         return None
     match = OVERRIDE_REASON.search(command)
@@ -130,7 +130,7 @@ def override_reason(command: str) -> str | None:
 
 
 def same_tree_builds(processes: list, binary: str) -> list:
-    """同じ木の `xtask` を挙げる（`(pid, comm, 本体の道, 引数)` の並びから。**self-test が覆う。**）
+    """同じ木の `xtask` を挙げる（`(pid, comm, 本体のパス, 引数)` の並びから。**self-test が覆う。**）
 
     **建て直されて消えた本体は ` (deleted)` を外して比べる。** **`cargo xtask full` の親（最初の
     引数が `full`）は数えない**——**作業木の子を待つだけで、本の木では何も建てない。**
@@ -202,10 +202,10 @@ def main() -> int:
         return deny(
             "同じコマンドの中で git commit と git push を呼んでいる。この hook はコマンドの前に "
             "1 度だけ検査するので、これから作るコミットを見られない。コミットと push を別の"
-            "コマンドに分け、コミット直後の基底 check の出力を読んでから押すこと"
+            "コマンドに分け、コミット直後の基底 check の出力を読んでからpush すること"
         )
 
-    # **旗は理由を要る**（空の理由では越えさせない）。
+    # **フラグは理由を要る**（空の理由では越えさせない）。
     reason = override_reason(command)
     if reason == "":
         return deny(
@@ -214,12 +214,12 @@ def main() -> int:
         )
 
     root = os.environ.get("CLAUDE_PROJECT_DIR") or payload.get("cwd") or "."
-    # **並走を確かめられなければ押さない。** **`/proc` が読めないときに「何も
+    # **並走を確かめられなければpush しない。** **`/proc` が読めないときに「何も
     # 走っていない」と答えると、確かめていないものを確かめたことにする。**
     try:
         others = running_builds(root)
     except Exception as error:
-        return deny(f"並走を確かめられなかった（{error}）。確かめられないので押さない")
+        return deny(f"並走を確かめられなかった（{error}）。確かめられないのでpush しない")
     if others:
         return deny(
             "push の前の基底 check が走らせられない（同じ木で並走: "
@@ -259,7 +259,7 @@ def main() -> int:
                 + "\n  ".join((lines + reasons)[:20])
             )
         # **緑も言う**（2026-09-21。運用者の足す1点）。**黙って通すと、hook が読み込まれて
-        # いなくても押せてしまい、「検査して通した」と区別が付かない**
+        # いなくてもpush できてしまい、「検査して通した」と区別が付かない**
         # （`check_after_commit.py` の「緑のときも言う」と同じ族）。
         summary = [l for l in done.stdout.splitlines() if "check(s) passed" in l]
         return announce(
@@ -273,8 +273,8 @@ def main() -> int:
     detail = [line for line in done.stdout.splitlines() if "FAILED" in line]
     reasons = [line for line in done.stderr.splitlines() if line.startswith("Error:")]
     return deny(
-        "push の前の基底 check が赤である。押すと直せない（文体の検査は全履歴を"
-        "見る）。直してから押すこと:\n  " + "\n  ".join((detail + reasons)[:10])
+        "push の前の基底 check が赤である。push すると直せない（文体の検査は全履歴を"
+        "見る）。直してからpush すること:\n  " + "\n  ".join((detail + reasons)[:10])
     )
 
 
@@ -290,7 +290,7 @@ def self_test() -> int:
         (f"git {push}", True),
         (f"git {push} -q origin main", True),
         (f"git {push} --force-with-lease origin main", True),
-        # **3 回目に実際に押した形である**——**赤でも `;` は次へ進む。**
+        # **3 回目に実際にpush した形である**——**赤でも `;` は次へ進む。**
         (f"cargo xtask check ; git {push} origin main", True),
         (f"cargo xtask check && git {push} origin main", True),
         (f"(git {push} origin main)", True),
@@ -311,7 +311,7 @@ def self_test() -> int:
         (f"echo 'X=1 git {push}'", False),
         # **前に命令を置いた形も当てる**（2026-09-25）。
         (f"timeout 60 git {push} origin main", True),
-        # **値を取る旗（`-k 5`）の後は読まない**（限界。この形は打たない）。
+        # **値を取るフラグ（`-k 5`）の後は読まない**（限界。この形は打たない）。
         (f"timeout -k 5 60 git {push}", False),
         (f"env X=1 git {push}", True),
         (f"env -i PATH=/usr/bin git {push}", True),
@@ -324,7 +324,7 @@ def self_test() -> int:
     # **同じコマンドにコミットと push が在るか**（2026-09-18）。**文書の言及は通す**
     # ——**部分一致が文書の言及まで拒む形を、隣の hook で 2 度踏んでいる。**
     combined = [
-        # **2 度目に実際に押した形である**——**改行で並べていた。**
+        # **2 度目に実際にpush した形である**——**改行で並べていた。**
         (f"git add a && git {commit} -q -m x -m y\ncargo xtask check\ngit {push}", True),
         (f"git {commit} -m x && git {push}", True),
         (f"git {commit} -q --amend -m x; cargo xtask check; git {push} origin main", True),
@@ -332,11 +332,11 @@ def self_test() -> int:
         (f"git {push}", False),
         (f"git {commit} -m x", False),
         (f"git {commit}-tree abc -m x && git {push}", False),
-        (f"echo 'git {commit} の後に押す' && git {push}", False),
+        (f"echo 'git {commit} の後に push する' && git {push}", False),
         (f"git log --grep 'git {commit}' && git {push}", False),
         (f"cat <<'EOF'\ngit {commit} -m x\nEOF\ngit {push}", False),
     ]
-    # **旗の理由**（2026-09-25）。**実行の形に在るときだけ読み、引用の中の言及は旗にしない。**
+    # **フラグの理由**（2026-09-25）。**実行の形に在るときだけ読み、引用の中の言及はフラグにしない。**
     flag = "ZEIKOS_PUSH_UNCHECKED"
     overrides = [
         (f"{flag}='refused during a full' git {push} origin main", "refused during a full"),

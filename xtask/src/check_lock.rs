@@ -145,7 +145,7 @@ pub fn git_common_dir(root: &Path) -> Result<PathBuf> {
     fs::canonicalize(&path).with_context(|| format!("could not resolve {}", path.display()))
 }
 
-/// ロックのファイルの道。
+/// ロックのファイルのパス。
 pub fn lock_path(root: &Path) -> Result<PathBuf> {
     Ok(lock_dir_in(&git_common_dir(root)?).join("check.lock"))
 }
@@ -620,7 +620,7 @@ pub fn note_a_run_without_the_lock(what: &str) {
     }
 }
 
-/// 実行を 1 行残す（`<錠の置き場>/runs.tsv`）。**止めない**——**残せなくても検査は進める。**
+/// 実行を 1 行残す（`<ロックの置き場>/runs.tsv`）。**止めない**——**残せなくても検査は進める。**
 pub fn log_run(what: &str, outcome: &str) {
     let Ok(root) = crate::workspace_root() else {
         return;

@@ -97,7 +97,7 @@ frame_allocator::give_back(allocator);      // 返す
   （`verification-coverage.md`の「選べなくする」の5件目）。
 
 - **`unsafe`が1つ増える。** `static`から`&mut`を作る。
-  **`SAFETY`が名指しするのは「旗が排他を保証する」ではなく
+  **`SAFETY`が名指しするのは「フラグが排他を保証する」ではなく
   「`compare_exchange`が成功した者だけが`&mut`を持つ」である**——保証している機構を書く。
 
 - **割り込みが止まらない。** `Locked<T>`を使わないので、借りている間も割り込みは動く。

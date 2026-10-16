@@ -131,12 +131,12 @@ DOCUMENTATION_URL="https://github.com/tsolsikke/zeikos/tree/main/docs"
 決定3は、起こすスレッドが居ない間の形だった。スレッドの池（`ADR-0085`）が入ったので、`FUTEX_WAIT`で本当に待つ形にした（`kernel/src/syscall.rs`の`sys_futex`）。
 
 - **受けるもの。** `FUTEX_WAIT`と、ビットの組が全部1の`FUTEX_WAIT_BITSET`（muslの`__timedwait`は絶対時刻の期限のためにこれを打ち、ビットの組は必ず全部1である）、`FUTEX_WAKE`と、ビットの組が全部1の`FUTEX_WAKE_BITSET`。**`FUTEX_PRIVATE_FLAG`と`FUTEX_CLOCK_REALTIME`は見ない**（`ADR-0085`の決定4。futexはプロセスの中だけなので、privateでないものも同じ扱い。`docs/deferred-decisions.md`）。アドレスは4バイト境界でなければ`-EINVAL`。
-- **待ちの鍵は、プロセス（Ring 3のスロット）とユーザーのアドレスの組である**（`crate::task::Wait::Futex`）。待つ理由は今までどおり`Task`の欄（`WaitSet`）に置き、欄の外に待つ者の一覧を持たない。**鍵のスロットはプロセスの代わりである**——入れ子の`spawn`の子は同じスロットで走るが、スレッドを持つプロセスは`spawn`しない（`clone`の3段目の断り）ので、鍵はぶつからない。入れ子とスレッドが同居する段では、鍵に深さを足す。`FUTEX_WAKE`は同じ鍵で待つタスクを多くても`val`本起こし、起こした本数を返す（相手が居なければ0）。
+- **待ちのキーは、プロセス（Ring 3のスロット）とユーザーのアドレスの組である**（`crate::task::Wait::Futex`）。待つ理由は今までどおり`Task`の欄（`WaitSet`）に置き、欄の外に待つ者の一覧を持たない。**キーのスロットはプロセスの代わりである**——入れ子の`spawn`の子は同じスロットで走るが、スレッドを持つプロセスは`spawn`しない（`clone`の3段目の断り）ので、キーはぶつからない。入れ子とスレッドが同居する段では、キーに深さを足す。`FUTEX_WAKE`は同じキーで待つタスクを多くても`val`本起こし、起こした本数を返す（相手が居なければ0）。
 - **値を確かめてから眠るまでは、BKLの内側（IF=0）である。** `FUTEX_WAKE`もBKLの内側で欄を見るので、「値を見てから`Waiting`にする」までに起こしが入ることは無い（`sys_read`と同じ形）。待っている間はBKLを持たない。起こされたら0を返し、呼ぶ側が値を見直す（空振りの起こしは、`ADR-0061`でもfutexの仕様でも許される）。
 - **行き詰まりの検出は残す。** 眠ると誰も起こせないとき——同じプロセスに、ほかに`Ready`のタスクも、futex以外の理由（パイプ・ソケット・キーボード・タイマ。プロセスの外が起こせる）で待つタスクも居ないとき——は、眠らずに今までどおりアドレスを控えて137で終わらせる（`crate::task::another_task_of_the_slot_could_wake`。純粋な関数で、単体試験が固定する）。**スレッドが1本だけのプロセスは、必ずこれに当たる**ので、この段では起動ログの振る舞いが変わらない（アドレスを伏せた突き合わせで差が0）。**本当に眠る道は、この段では一度も通らない**——通すのは`clone`の3段目の確かめ（`docs/verification-coverage.md`）。`futex_deadlock_address`の欄は、`ADR-0085`の対応表で「消す」としていたが、この検出のために残す。
 - **対象外のもの（来たら`-ENOSYS`）と、来たときの扱い。**
   - 期限つきの待ち（`timeout`が0でない`FUTEX_WAIT`は相対の時刻、`FUTEX_WAIT_BITSET`は絶対の時刻）——`pthread_cond_timedwait`・`sem_timedwait`・Rustの`park_timeout`が打つ。来たら、`WaitSet`に`Wait::Timer`を一緒に入れる形で待つ（`poll`の集合と同じ作り。締切はタイマが起こす）。
-  - `FUTEX_REQUEUE`・`FUTEX_CMP_REQUEUE`——muslの`pthread_cond_broadcast`が、待ち手をmutexへ付け替えるために打つ。来たら、鍵を付け替える形（1本起こし、残りの`Wait::Futex`のアドレスを書き換える）で足す。
+  - `FUTEX_REQUEUE`・`FUTEX_CMP_REQUEUE`——muslの`pthread_cond_broadcast`が、待ち手をmutexへ付け替えるために打つ。来たら、キーを付け替える形（1本起こし、残りの`Wait::Futex`のアドレスを書き換える）で足す。
   - PI（`FUTEX_LOCK_PI`など）とrobust（`set_robust_list`は受けて控えるだけ）——muslは使わない。使う利用者が出るまで足さない。
   - 全部1でないビットの組——使う利用者が出るまで足さない。
 
