@@ -253,7 +253,7 @@ class Remote:
 
 
 def unwind(remote, rsp, rip):
-    """生きたスタックを CFA で巻き戻す。**表の無い葉（`memcpy` など）で止まっていたら、最初の戻り先を探してから辿る。**"""
+    """生きたスタックを CFA で巻き戻す。**表の無いリーフ（`memcpy` など）で止まっていたら、最初の戻り先を探してから辿る。**"""
     stack = remote.read(rsp, TOP - rsp)
     word = lambda at: struct.unpack_from("<Q", stack, at - rsp)[0]
     chain = [(TOP - rsp, rip, function_of(rip), None)]

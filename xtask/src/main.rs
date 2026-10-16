@@ -401,7 +401,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // カーネルのイメージの読むだけの区画の 1 バイトへ書く。
+    // カーネルのイメージの読むだけのセグメントの 1 バイトへ書く。
     CriticalTest {
         name: "kernel-writes-rodata",
         feature: "kernel-writes-rodata-test",
@@ -1138,7 +1138,7 @@ const PAGING_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // 2026-10-03（`ADR-0071` の手順 4 の 3 つ目の決まり）: 起動の後に、カーネルのイメージの PML4 の項目（添字 511）の下へ葉を
+    // 2026-10-03（`ADR-0071` の手順 4 の 3 つ目の決まり）: 起動の後に、カーネルのイメージの PML4 の項目（添字 511）の下へリーフを
     // 1 枚足しに行く。**添字 260 の形（PML4 の項目を作る）と違い、既に在る項目の下へ足す形である。** **決まりが、項目を
     // 1 つも書かずに `KernelMappingFrozen` で断る。**
     CriticalTest {
@@ -1204,9 +1204,9 @@ const PAGING_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // S9-a: map_4kib の書き込み可否の引数を無視し、葉を常に W=1 で作る。
+    // S9-a: map_4kib の書き込み可否の引数を無視し、リーフを常に W=1 で作る。
     //
-    // **既定ビルドの主張は「writable=false で張った葉に Ring 3 が書くと #PF になる」**
+    // **既定ビルドの主張は「writable=false で張ったリーフに Ring 3 が書くと #PF になる」**
     // で、ring3-vectors の 6 本目（#PF-write-ro）がそれを見ている。この破壊テストは
     // W=0 を作らせないので、Ring 3 の書きが通り、命令列の末尾に置いた ud2 が
     // ベクタ 6 で終了処理される。判定行が「ベクタが違う」と示して止まる。
@@ -1221,7 +1221,7 @@ const PAGING_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // 2026-10-02: ユーザーから届く葉に、アドレスより上の位置のビット（52。CPU は無視する）を立てた形でも、
+    // 2026-10-02: ユーザーから届くリーフに、アドレスより上の位置のビット（52。CPU は無視する）を立てた形でも、
     // 起動時のプログラムが今までどおり走り、フレームの会計が合うこと。**破壊ではない**——通るのが正しい。
     //
     // **項目の値をアドレスとして読む所が在ると、ここで落ちる。** `brk` の縮める側が、外した項目の値を物理のアドレスとして
@@ -1623,12 +1623,12 @@ const RING3_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // **区画の並びの確かめを通さずに写す（2026-10-01）。** 起動の途中の壊したイメージの検査は、並びの確かめが
+    // **セグメントの並びの確かめを通さずに写す（2026-10-01）。** 起動の途中の壊したイメージの検査は、並びの確かめが
     // 断るはずの 4 つのイメージのうち、最初の 1 つ（2 本目が 1 本目の中身の内側から始まる）が写す途中で断られるのを
     // 見て、「違う場所で断られた」と止まる。**残りの 3 つは、この確かめが無いと読み込まれるか、引き算の
     // あふれでカーネルが止まる**（直す前の形で実測した）。
     //
-    // **写す途中で断るのは `map_user_4kib` の「既に写っている葉は上書きしない」の判定である。** 並びの確かめを
+    // **写す途中で断るのは `map_user_4kib` の「既に写っているリーフは上書きしない」の判定である。** 並びの確かめを
     // 入れた後は、イメージからこの判定へ届く道がここだけになったので、**断った理由の行も求める**（2 枚目の守りが
     // 効いていることの確かめを兼ねる）。
     CriticalTest {
@@ -1643,7 +1643,7 @@ const RING3_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // **権限の変換が、ユーザーの側の葉に実行禁止のビットを立てない形**（2026-10-03。ユーザーの写像の W^X を
+    // **権限の変換が、ユーザーの側のリーフに実行禁止のビットを立てない形**（2026-10-03。ユーザーの写像の W^X を
     // 入れる前の形）。起動時の Ring 3 の試しで、読むだけのページへ跳ぶと、跳んだ先の `ud2` が実行されて、
     // ベクタが 14 ではなく 6 になる。
     CriticalTest {
@@ -1657,7 +1657,7 @@ const RING3_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // **ローダーが、書けない区画を、フラグに依らず実行できる形で写す形**（2026-10-03）。自分の `.rodata` へ跳ぶ
+    // **ローダーが、書けないセグメントを、フラグに依らず実行できる形で写す形**（2026-10-03）。自分の `.rodata` へ跳ぶ
     // プログラムが、跳んだ先の `ud2` を実行して、ベクタ 6 で終わる。**起動時の Ring 3 の試しは通る**（あちらは
     // ローダーを通らない）ので、止めるのは、プログラムの終わり方の判定である。
     CriticalTest {
@@ -1685,7 +1685,7 @@ const RING3_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // **位置独立のイメージの区画を、ずらさずに載せる**（2026-10-06）。入口だけがずれたアドレスを指す。**捕まえるのは、載せた
+    // **位置独立のイメージのセグメントを、ずらさずに載せる**（2026-10-06）。入口だけがずれたアドレスを指す。**捕まえるのは、載せた
     // ものを写像の表へ登録する所である**——イメージの範囲が「ずらした始まり」から「ずらさないヒープの始まり」までとなって
     // 逆さまになり、`BadRange` で名指しして止まる。写像の表（2026-10-06）の前は、入口のページフォルトで畳まれる形
     // （`spawn: /bin/pie-hello ended (Folded(14))`）で見ていた。そこへ届く前に止まるようになったので、印を替えた。
@@ -1903,7 +1903,7 @@ const SYSCALL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // **`mprotect(PROT_NONE)` で葉を外してフレームを返す**（2026-10-06。中身を捨てる形）。読める形へ戻すと 0 のページが
+    // **`mprotect(PROT_NONE)` でリーフを外してフレームを返す**（2026-10-06。中身を捨てる形）。読める形へ戻すと 0 のページが
     // 来て、`syscall-test` が 107 番で止まる。
     CriticalTest {
         name: "mprotect-none-discards",
@@ -1924,7 +1924,7 @@ const SYSCALL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // **`munmap` と `MAP_FIXED` の置き換えが、`PROT_NONE` でフレームを持ったまま残した葉を外さない**（2026-10-08。直す前の形）。
+    // **`munmap` と `MAP_FIXED` の置き換えが、`PROT_NONE` でフレームを持ったまま残したリーフを外さない**（2026-10-08。直す前の形）。
     // 同じアドレスへ写し直すと `map_4kib` が断り、`syscall-test` が 124 番で止まる。
     CriticalTest {
         name: "munmap-skips-retained",
@@ -2035,7 +2035,7 @@ const SYSCALL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // ユーザーポインタ検証（M5-f-2-1）。葉/中間の U=1 判定を外す。無効3（supervisor in
+    // ユーザーポインタ検証（M5-f-2-1）。リーフ/中間の U=1 判定を外す。無効3（supervisor in
     // user range）が受理され、battery が検出して halt する。
     CriticalTest {
         name: "validate-skip-us",
@@ -7714,7 +7714,7 @@ const SABOTAGE_JUDGEMENTS: &[NamedJudgement] = &[
     NamedJudgement {
         check: "page permissions",
         key: "user-run-writable-text",
-        // **区画 1（読むだけの区画）である**（2026-10-03）。区画 0（実行する区画）は、この破壊テストの対象から外した。
+        // **セグメント 1（読むだけのセグメント）である**（2026-10-03）。セグメント 0（実行するセグメント）は、この破壊テストの対象から外した。
         signs: &["user program hello | segment 1 | 4K: w 0 -> 1"],
         note: "",
         reached: true,
@@ -9994,7 +9994,7 @@ const SOCKET_TEST_SABOTAGES: &[&str] = &[
     "shm-ftruncate-ignores-size",
     // **close で参照を減らさない**——フレームが返らず、created != released で落ちる。
     "shm-close-keeps-refs",
-    // **mmap が葉をマップしない**——書いた模様が読めず、往復が落ちる。
+    // **mmap がリーフをマップしない**——書いた模様が読めず、往復が落ちる。
     "shm-mmap-maps-nothing",
     // **msghdr の msg_iovlen を見ない**——iovlen=2 が `-EINVAL` にならず、badmsg の判定が落ちる。
     "socket-msghdr-ignores-iovlen",
@@ -22982,7 +22982,7 @@ impl MaskedItem {
 }
 
 /// カーネルのイメージをリンクした先頭のアドレス（`kernel/link.ld` の `KERNEL_VIRT_BASE`）。**ここから上がイメージの仮想アドレス**
-/// （伏せた比べ方と、区画の配置の突き合わせが使う）。
+/// （伏せた比べ方と、セクションの配置の突き合わせが使う）。
 const KERNEL_LINK_BASE: u64 = 0xFFFF_FFFF_8000_0000;
 
 /// 直接マッピングのウィンドウの先頭のアドレス（起動ログの `direct-map:` の行が示す値）。
@@ -27869,10 +27869,10 @@ const APIC_TESTS: &[CriticalTest] = &[
     },
 ];
 
-/// カーネルのイメージの区画の配置の参照（2026-09-27。境界の段階の手順 2。`ADR-0071` の決定 1 の 2）。
+/// カーネルのイメージのセクションの配置の参照（2026-09-27。境界の段階の手順 2。`ADR-0071` の決定 1 の 2）。
 const REFERENCE_KERNEL_LAYOUT: &str = "xtask/reference/kernel-layout.txt";
 
-/// ELF の区画の見出しのうち、配置の突き合わせに使う欄。
+/// ELF のセクションヘッダのうち、配置の突き合わせに使う欄。
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ElfSection {
     name: String,
@@ -27881,7 +27881,7 @@ struct ElfSection {
     flags: u64,
 }
 
-/// ELF の区画の見出しを読む（2026-09-27）。**メモリに載る区画（`SHF_ALLOC`）で、大きさが 0 でないものだけを、
+/// ELF のセクションヘッダを読む（2026-09-27）。**メモリに載るセクション（`SHF_ALLOC`）で、大きさが 0 でないものだけを、
 /// アドレスの順に返す。** **64 ビット・リトルエンディアンだけを読む**（カーネルの形）。
 fn read_alloc_sections(elf: &[u8]) -> Result<Vec<ElfSection>> {
     const SHF_ALLOC: u64 = 0x2;
@@ -27927,7 +27927,7 @@ fn read_alloc_sections(elf: &[u8]) -> Result<Vec<ElfSection>> {
     Ok(sections)
 }
 
-/// 区画の並びと 2MiB の境界との関係を、1 区画 1 行で出す（純粋な論理）。
+/// セクションの並びと 2MiB の境界との関係を、1 セクション 1 行で出す（純粋な論理）。
 ///
 /// **名前・権限（`r`・`w`・`x`）・始めと終わりが載る 2MiB のページの番号**を出す。番号はイメージの物理アドレス
 /// （リンクした先頭のアドレスを引いた値）を 2MiB で割ったものである。**アドレスと大きさそのものは出さない**——**移すだけの
@@ -27961,9 +27961,9 @@ fn kernel_layout_lines(sections: &[ElfSection]) -> Vec<String> {
         .collect()
 }
 
-/// カーネルのイメージの区画の並びと 2MiB の境界との関係が、参照と同じであること（2026-09-27。境界の段階の手順 2）。
+/// カーネルのイメージのセクションの並びと 2MiB の境界との関係が、参照と同じであること（2026-09-27。境界の段階の手順 2）。
 ///
-/// **ファイルを移すだけのコミットで、区画の並びや、区画がどの 2MiB に載るかが変わっていないことを見る**
+/// **ファイルを移すだけのコミットで、セクションの並びや、セクションがどの 2MiB に載るかが変わっていないことを見る**
 /// （`ADR-0071` の決定 1 の 2）。**手順 4 の 2MiB の同居の判断も、この関係に依る。** 意図した変更のときは
 /// `--update-reference` で記録し直し、コミットにその旨を書く。
 fn check_kernel_layout(workspace_root: &Path, update: bool) -> Result<String> {
@@ -32529,7 +32529,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
         }
 
         // **わざと 1 つの権限を変えると、道具が違いを名前つきで示すこと。** ユーザーの側は、`hello` の
-        // 読みと実行の区画を書き込み可で写す形（`AddressSpace::map_user_4kib` の経路）。
+        // 読みと実行のセグメントを書き込み可で写す形（`AddressSpace::map_user_4kib` の経路）。
         total += 1;
         begin_item(
             Family::Memory,
@@ -32567,7 +32567,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
             &mut failed,
         );
 
-        // カーネルのイメージの読むだけの区画の 1 ページを、書き込み可で写す形（2026-10-02。イメージを区画ごとに写す経路）。
+        // カーネルのイメージの読むだけのセグメントの 1 ページを、書き込み可で写す形（2026-10-02。イメージをセグメントごとに写す経路）。
         total += 1;
         begin_item(
             Family::Memory,
@@ -33641,7 +33641,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
         }
     }
 
-    // **区画の並びと 2MiB の境界との関係**（2026-09-27。境界の段階の手順 2。静的）。
+    // **セクションの並びと 2MiB の境界との関係**（2026-09-27。境界の段階の手順 2。静的）。
     total += 1;
     begin_item(
         Family::Base,
@@ -40256,7 +40256,7 @@ fn read_cr3() -> u64 {
         assert!(read_x86_word_baseline("common 12\n").is_err());
     }
 
-    /// **区画の配置の行は、名前・権限・始めと終わりが載る 2MiB の番号だけを持つ**（2026-09-27）。**中身が伸びても
+    /// **セグメントの配置の行は、名前・権限・始めと終わりが載る 2MiB の番号だけを持つ**（2026-09-27）。**中身が伸びても
     /// 2MiB の境界を越えなければ同じ行になり、越えれば変わる。** 値はいまのカーネルの `.text`・`.rodata`・`.bss`。
     #[test]
     fn the_kernel_layout_names_each_section_and_its_two_mib_pages() {
