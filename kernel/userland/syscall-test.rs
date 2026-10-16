@@ -14,7 +14,7 @@
 //! 著者の手にある。**
 //!
 //! こちらは asm で `mov rdi, ...` と書き、**アセンブラが符号化し、リンカが配置し、
-//! ローダーが写像し、`iretq` が飛ばす。** 確かめているのは dispatch ではなく、
+//! ローダーがマッピングし、`iretq` が飛ばす。** 確かめているのは dispatch ではなく、
 //! **`ADR-0020` が決めた ABI の契約そのものが、その経路を通っても成り立つこと**
 //! である。
 //!
@@ -137,19 +137,19 @@
 //! - `93` `spawn("/bin/futex-wait")` が 137 を返さなかった（起こす者の居ない `FUTEX_WAIT` は、プロセスを終わらせる）
 //! - `94` `SA_RESTORER` の無いハンドラの `rt_sigaction(SIGUSR1, …)` が `-EINVAL` を返さなかった
 //! - `95` `mmap(NULL, 2 ページ, RW, MAP_PRIVATE|MAP_ANONYMOUS)` が、基点以上のアドレスを返さなかった（2026-10-06）
-//! - `96` 無名の写像が 0 で埋まっていなかったか、書いた値が読み戻せなかった
-//! - `97` 写像の全体の `munmap` が 0 を返さなかったか、次の `mmap` が同じアドレスを使い直さなかった
+//! - `96` 無名のマッピングが 0 で埋まっていなかったか、書いた値が読み戻せなかった
+//! - `97` マッピングの全体の `munmap` が 0 を返さなかったか、次の `mmap` が同じアドレスを使い直さなかった
 //! - `98` ページの境界に無いアドレスの `munmap` が `-EINVAL` を返さなかったか、長さ 0 の `mmap` が `-EINVAL` を返さなかった
-//! - `99` 写像の無い範囲の `munmap` が 0 を返さなかった
-//! - `100` 3 ページの写像の真ん中の `munmap` が 0 を返さなかったか、両側のページが残っていなかった（2026-10-06）
+//! - `99` マッピングの無い範囲の `munmap` が 0 を返さなかった
+//! - `100` 3 ページのマッピングの真ん中の `munmap` が 0 を返さなかったか、両側のページが残っていなかった（2026-10-06）
 //! - `101` 残った 2 つの断片の `munmap` が 0 を返さなかった
-//! - `102` 無名の写像の 2 ページ目への `MAP_FIXED` が、そのアドレスと 0 のページを返さなかった
-//! - `103` 写像の上への `MAP_FIXED_NOREPLACE` が `-EEXIST` を返さなかったか、空いた所でそのアドレスを返さなかった
+//! - `102` 無名のマッピングの 2 ページ目への `MAP_FIXED` が、そのアドレスと 0 のページを返さなかった
+//! - `103` マッピングの上への `MAP_FIXED_NOREPLACE` が `-EEXIST` を返さなかったか、空いた所でそのアドレスを返さなかった
 //! - `104` スタックとその見張りのページへの `MAP_FIXED` が `-EINVAL` を返さなかった
 //! - `105` `brk` の見張りの流れ（`brk`、ヒープの先頭への `PROT_NONE` の `MAP_FIXED`、`brk` を戻す、`munmap`）が通らなかった
 //! - `106` `PROT_READ` にして `PROT_READ|PROT_WRITE` に戻す `mprotect` が 0 を返さなかったか、値が残っていなかった（2026-10-06）
 //! - `107` `PROT_NONE` にして戻す `mprotect` の後、ページの中身が残っていなかった
-//! - `108` 写していない `PROT_NONE` の写像を `PROT_READ|PROT_WRITE` にする `mprotect` が、書ける 0 のページをくれなかった
+//! - `108` 写していない `PROT_NONE` のマッピングを `PROT_READ|PROT_WRITE` にする `mprotect` が、書ける 0 のページをくれなかった
 //! - `109` `PROT_EXEC` の `mprotect` が `-EPERM`、見張りのページへの `mprotect` が `-EINVAL`、穴を含む範囲が `-ENOMEM` を返さなかった
 //! - `110` `spawn("/bin/mprotect-ro")` が「畳まれた・ベクタ 14」を返さなかった（書けなくしたページへの書きは落ちる）
 //! - `111` 自分のコードのページへの `PROT_READ|PROT_WRITE` の `mprotect` が `-EPERM` を返さなかった（W^X）
@@ -432,7 +432,7 @@ const DT_REG: u32 = 8;
 const TINY_BUFFER: u32 = 16;
 /// `-EINVAL`。
 const MINUS_EINVAL: i32 = -22;
-/// `-EEXIST`（2026-10-06。`MAP_FIXED_NOREPLACE` が、写像の上で返す）。
+/// `-EEXIST`（2026-10-06。`MAP_FIXED_NOREPLACE` が、マッピングの上で返す）。
 const MINUS_EEXIST: i32 = -17;
 /// 期待する `argc`。**カーネルの `USER_PROGRAMS` の `argv` と対になっている。**
 const EXPECTED_ARGC: u32 = 2;
@@ -1952,7 +1952,7 @@ core::arch::global_asm!(
     "  mov edi, 97",
     "  test rax, rax",
     "  jne 7f",
-    // 99: 写像の無い範囲の munmap は 0。
+    // 99: マッピングの無い範囲の munmap は 0。
     "  mov eax, {sys_munmap}",
     "  mov rdi, r12",
     "  mov esi, 8192",
@@ -1960,7 +1960,7 @@ core::arch::global_asm!(
     "  mov edi, 99",
     "  test rax, rax",
     "  jne 7f",
-    // 100: 3 ページの無名の写像の、真ん中の 1 ページを munmap する。両側は残る。
+    // 100: 3 ページの無名のマッピングの、真ん中の 1 ページを munmap する。両側は残る。
     "  mov eax, {sys_mmap}",
     "  xor edi, edi",
     "  mov esi, 12288",
@@ -2001,7 +2001,7 @@ core::arch::global_asm!(
     "  mov edi, 101",
     "  test rax, rax",
     "  jne 7f",
-    // 102: 2 ページの無名の写像の 2 ページ目へ、MAP_FIXED で置き換える。中身は 0 に戻る。
+    // 102: 2 ページの無名のマッピングの 2 ページ目へ、MAP_FIXED で置き換える。中身は 0 に戻る。
     "  mov eax, {sys_mmap}",
     "  xor edi, edi",
     "  mov esi, 8192",
@@ -2029,7 +2029,7 @@ core::arch::global_asm!(
     "  jne 7f",
     "  cmp qword ptr [r12 + 4096], 0",
     "  jne 7f",
-    // 103: MAP_FIXED_NOREPLACE は、写像の上では -EEXIST、空いた所ではそのアドレス。
+    // 103: MAP_FIXED_NOREPLACE は、マッピングの上では -EEXIST、空いた所ではそのアドレス。
     "  mov eax, {sys_mmap}",
     "  mov rdi, r12",
     "  mov esi, 4096",
@@ -2092,8 +2092,8 @@ core::arch::global_asm!(
     "  jne 7f",
     // 121: ユーザーのアドレスの上限（0x7fff_ffff_f000）のページ・上限をまたぐ範囲・正準でないアドレス・カーネルのアドレスへの MAP_FIXED は
     //      -ENOMEM。上限のページへの MAP_FIXED_NOREPLACE も -ENOMEM。64 KiB より下（0x8000）への MAP_FIXED は -EPERM。
-    //      実測（2026-10-07）で、直す前のカーネルは、上限のページと上限をまたぐ範囲を写して書かせ、写像の無いカーネルのアドレス
-    //      （0xffff_ffff_7000_0000）には「写した」と答えた。正準でないアドレスと、写像の在るカーネルのアドレスは -ENOMEM だった。
+    //      実測（2026-10-07）で、直す前のカーネルは、上限のページと上限をまたぐ範囲を写して書かせ、マッピングの無いカーネルのアドレス
+    //      （0xffff_ffff_7000_0000）には「写した」と答えた。正準でないアドレスと、マッピングの在るカーネルのアドレスは -ENOMEM だった。
     "  mov eax, {sys_mmap}",
     "  mov rdi, 0x7ffffffff000",
     "  mov esi, 4096",
@@ -2409,7 +2409,7 @@ core::arch::global_asm!(
     "  mov edi, 107",
     "  test rax, rax",
     "  jne 7f",
-    // 108: 写していない PROT_NONE の写像を、読み書きへ。0 のページが来て、書ける。
+    // 108: 写していない PROT_NONE のマッピングを、読み書きへ。0 のページが来て、書ける。
     "  mov eax, {sys_mmap}",
     "  xor edi, edi",
     "  mov esi, 8192",

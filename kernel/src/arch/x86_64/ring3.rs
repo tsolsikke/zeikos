@@ -259,7 +259,7 @@ pub const USER_TASK_SLOTS: usize = 2;
 /// `crate::task::current_excursion_home` が、切り替えで入る側のものは `crate::task::excursion_home_of` が返す。
 ///
 /// **スロットの番号（`current_excursion_slot`）とは別である**——あちらはスレッドでも作った側のプロセスのスロットで、
-/// プロセスで共有する表（システムコールの状態・fd の表・ヒープ・写像の表）を引く。**遠征の状態と回復点はスレッドごと
+/// プロセスで共有する表（システムコールの状態・fd の表・ヒープ・マッピングテーブル）を引く。**遠征の状態と回復点はスレッドごと
 /// なので、置き場を分けた。** この段（2 段目）では池のタスクは走らないので、既定の起動では必ず `Slot` である。
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ExcursionHome {
@@ -916,12 +916,12 @@ pub fn excursion_stack_within_budget(depth: usize) -> bool {
 ///
 /// # Safety
 ///
-/// 自前のページテーブルへ切り替え済みであること（今の根の配下を、直接の写像から読む。読むだけである）。
+/// 自前のページテーブルへ切り替え済みであること（今の根の配下を、直接のマッピングから読む。読むだけである）。
 unsafe fn verify_excursion_guard_pages(log: &mut dyn FnMut(core::fmt::Arguments)) {
     use crate::arch::x86_64::paging::active::ActivePageTable;
     use crate::arch::x86_64::stack::{guarded_stack_at, GuardedStack};
 
-    // SAFETY: 呼び出し元の契約のとおり、CR3 は自前のテーブルを指し、配下は直接の写像から読める。
+    // SAFETY: 呼び出し元の契約のとおり、CR3 は自前のテーブルを指し、配下は直接のマッピングから読める。
     let table = unsafe { ActivePageTable::current(common::addr::direct_map()) };
     let (mut unmapped, mut recorded) = (0usize, 0usize);
     let mut first_bad = None;

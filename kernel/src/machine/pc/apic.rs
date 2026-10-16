@@ -72,7 +72,7 @@ struct MappedPage {
 /// マップできた APIC の MMIO。S2-a のレジスタ読みが使う。
 ///
 /// `acpi::MadtSurvey` が「MADT が名乗った所在」であるのに対し、こちらは
-/// 実際にマッピングを確認できた所在である。読む側が「MADT にあったが写像に
+/// 実際にマッピングを確認できた所在である。読む側が「MADT にあったがマッピングに
 /// 失敗したもの」を触らないよう、区別してある。
 ///
 /// # 契約（境界の型。2026-09-30）
@@ -256,7 +256,7 @@ pub fn map_and_probe<const CAP: usize>(
 /// MMIO の 1 ページを direct map ウィンドウへ 4KiB・PCD でマップする。
 ///
 /// マップする前とマップした後の両方で `translate` を撮る。前が「未マップ」で後が
-/// 「期待の物理」であることの対が、写像が実際に何かを変えたことの観測になる
+/// 「期待の物理」であることの対が、マッピングが実際に何かを変えたことの観測になる
 /// （破壊テストの feature を使わずに済む形である）。
 fn map_mmio_page<const CAP: usize>(
     logger: &mut Logger<Serial>,
@@ -284,7 +284,7 @@ fn map_mmio_page<const CAP: usize>(
         return None;
     }
     let virt = direct_map.phys_to_virt(phys);
-    // **写すページを、ページの権限の一覧（`crate::page_survey`）に登録する。** 直接写像の窓の中で、ここだけ
+    // **写すページを、ページの権限の一覧（`crate::page_survey`）に登録する。** 直接マッピングの窓の中で、ここだけ
     // キャッシュ無効で写す。
     crate::page_survey::register(
         "interrupt controller registers",
@@ -532,7 +532,7 @@ fn skip_mapping(logger: &mut Logger<Serial>, what: &str) -> bool {
 /// # この手法は破壊テスト専用である。通常経路へ持ち込まないこと
 ///
 /// ここで作るのは、同一物理ページに対するメモリ型の異なる別名である。PML4 の
-/// フレームは本流の direct map 窓から WB で写っているので、そこへ PCD の写像を
+/// フレームは本流の direct map 窓から WB で写っているので、そこへ PCD のマッピングを
 /// 重ねることになる。x86 では同一物理ページに異なるメモリ型の別名を作ることは
 /// 未定義の領域である。
 ///

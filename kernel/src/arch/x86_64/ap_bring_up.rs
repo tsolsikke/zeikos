@@ -20,7 +20,7 @@ use common::percpu::MAX_CPUS;
 ///
 /// # 契約（境界の型。2026-09-30）
 ///
-/// - 作るのは `arch`（per-CPU のスタックを写像する所）である。共通の側（`crate::smp`）は、引き継ぎの表へ入れて
+/// - 作るのは `arch`（per-CPU のスタックをマッピングする所）である。共通の側（`crate::smp`）は、引き継ぎの表へ入れて
 ///   AP の側で組み立て直すことと、通常のスタックの範囲を `arch` の関数で導くことにだけ使う。
 #[derive(Clone, Copy)]
 pub struct ApStacks {

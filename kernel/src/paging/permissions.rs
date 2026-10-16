@@ -270,7 +270,7 @@ mod tests {
         }
     }
 
-    /// **カーネルの側で、書けて実行もできるのは、起動の表の名前だけである**（写像ごとの W^X）。
+    /// **カーネルの側で、書けて実行もできるのは、起動の表の名前だけである**（マッピングごとの W^X）。
     #[test]
     fn only_the_boot_table_name_is_both_writable_and_executable_on_the_kernel_side() {
         for permissions in [

@@ -812,7 +812,7 @@ pub unsafe fn run_timer_loop(
             crate::arch::x86_64::check_aps_match_bsp(logger, report.started);
 
             // **AP を起こした後の、ページの権限の一覧**（`crate::page_survey`。`ADR-0071` の手順 3 の道具）。
-            // SAFETY: 稼働中のカーネルの表の根と、登録済みの直接写像を渡す。読み取りのみ。表を変えるのは
+            // SAFETY: 稼働中のカーネルの表の根と、登録済みの直接マッピングを渡す。読み取りのみ。表を変えるのは
             // ユーザーのプログラムのシステムコールと `spawn` だけで、この時点ではどれも走っていない。
             unsafe {
                 crate::page_survey::report_kernel(

@@ -81,7 +81,7 @@ kernel-top-write-unguarded-test = []
 # 2026-10-03（`ADR-0071` の手順 4 の 3 つ目の決まり）: 起動の後に、カーネルのイメージの PML4 の項目の下へリーフを 1 枚足しに行く。
 # 決まりが、項目を 1 つも書かずに断る。`--paging-test kernel-mapping-map-after-boot-test`。
 kernel-mapping-map-after-boot-test = []
-# 2026-10-03（同上）: 起動の後に、直接写像の 2MiB のページを割りに行く（権限を変える入口と同じ守り）。
+# 2026-10-03（同上）: 起動の後に、直接マッピングの 2MiB のページを割りに行く（権限を変える入口と同じ守り）。
 # `--paging-test kernel-mapping-change-after-boot-test`。
 kernel-mapping-change-after-boot-test = []
 # 2026-10-03（同上）: 試しの feature `smp-tlb-shootdown-probe` のビルドで、探りのページの隣を外しに行く。探りの 1 ページ
@@ -258,7 +258,7 @@ unlink-ignore-request-test = []
 # 破壊（zi-f）: zi のインサートモードで Enter を捨てる。行が増えないので、
 # 読み戻しが 2 行にならず、「enter split the line」だけが落ちる。
 zi-enter-does-nothing-test = []
-# 破壊（H-a）: brk が下げる要求で写像を外さない。上端だけ下がりフレームが
+# 破壊（H-a）: brk が下げる要求でマッピングを外さない。上端だけ下がりフレームが
 # 返らないので、「伸ばして縮めたら空きフレームの数が元へ戻る」判定が落ちる。
 brk-skip-shrink-test = []
 # 破壊（H-b-1）: zi が終わるときにヒープを返さない。取った 3 フレームが
@@ -757,7 +757,7 @@ flush-waits-without-device = ["ram-disk-write-test"]
 # 形（ID レジスタ 0、MADT は別の値）を QEMU で作る。[WARN] が出て止まらず、打鍵が届くことを見る。
 ioapic-id-mismatch-test = []
 # 破壊（ADR-0068 の HW-e-2）: I/O APIC の版を ID の添字で読む。QEMU の ID レジスタは 0 なので版が 0 に
-# 見え、写像の判定（未デコードの見え方）で止まる。
+# 見え、マッピングの判定（未デコードの見え方）で止まる。
 ioapic-reads-the-wrong-register = []
 # Y-d: 画面・入力・ソケット・共有メモリを 1 つの組で通す（ADR-0066 の設計 Q5）。init が /bin/compd を
 # 前景で起こし、compd が /bin/compc を起こしっぱなしで起こす。compc が shm のプールに描いて送り、
@@ -816,7 +816,7 @@ nx-probe-ap-without-nxe-test = ["nx-probe-only-leaf-test"]
 # AP が、本番のページテーブルへ切り替える前に、EFER.NXE を落とす（2026-10-02）。
 # 切り替える前の確かめが、名前つきで止める。
 ap-switches-without-nxe-test = []
-# 権限の違反の破壊テストの傘（2026-10-02。カーネルの写像の W^X）。試しが告げたアドレスと CR2 を突き合わせる行を、
+# 権限の違反の破壊テストの傘（2026-10-02。カーネルのマッピングの W^X）。試しが告げたアドレスと CR2 を突き合わせる行を、
 # 例外の出力に足す。下の 5 つが入れる。単独では何も起こさない。
 wx-violation-test = []
 # カーネルのイメージの .text の 1 バイトへ、カーネルが書く。#PF（書き込み・権限の違反）で止まる。
@@ -928,7 +928,7 @@ user-run-skip-load = []
 # ページを足す入口が先に断るため）。**この破壊だけが読み戻しまで到達する**
 # （map-force-writable は先に ring3-vectors が落ちる）。`--ring3-test user-writable-text`。
 user-run-writable-text = []
-# 位置独立のイメージ（ET_DYN）のセグメントを、ずらさずに載せる（2026-10-06）。入口だけが、ずれたアドレスを指す。載せたものを写像の表へ
+# 位置独立のイメージ（ET_DYN）のセグメントを、ずらさずに載せる（2026-10-06）。入口だけが、ずれたアドレスを指す。載せたものをマッピングテーブルへ
 # 登録する所が、逆さまになったイメージの範囲を `BadRange` で名指しして止まる。`--ring3-test pie-without-bias`。
 pie-load-without-bias-test = []
 # 補助ベクタの AT_ENTRY に、ずらす前のアドレスを渡す（2026-10-06）。`pie-hello` が、終了状態 1 で言う。
@@ -941,7 +941,7 @@ auxv-phdr-not-biased-test = []
 # `syscall-test` が `spawn` で起こす（2026-10-06。M1 の手元の確かめ。破壊テストではない。版が配布物に依るので
 # 既定のイメージには入れない）。`cargo xtask run --linux-c-test`。
 linux-c-test = []
-# 写像の表が、置くときに重なりを見ない（2026-10-06）。`MAP_FIXED_NOREPLACE` が写像の上でも断らず、`syscall-test` が
+# マッピングテーブルが、置くときに重なりを見ない（2026-10-06）。`MAP_FIXED_NOREPLACE` がマッピングの上でも断らず、`syscall-test` が
 # 103 番で止まる。`--syscall-test mappings-overlap-skip`。
 mappings-overlap-skip-test = []
 # 範囲の一部の `munmap` で、外す断片と前に残る部分を取り違える（2026-10-06）。残るはずのページが外れ、`syscall-test`
@@ -1132,19 +1132,19 @@ acpi-test-zero-entry-length = ["acpi-test"]
 acpi-test-unmapped-rsdp = ["acpi-test"]
 # RSDP の物理アドレスを direct map 窓の外（窓長そのもの）へ差し替える。
 acpi-test-rsdp-outside-window = ["acpi-test"]
-# S1-c: APIC MMIO の写像の破壊確認。いずれも既定ビルドには入らない。
+# S1-c: APIC MMIO のマッピングの破壊確認。いずれも既定ビルドには入らない。
 # `cargo xtask run --apic-test <kind>` が有効化する。観測は panic ではなく、
 # 「検出のログが出て、LAPIC の読みが行われないこと」である。
-# 検出経路ごとに分けてある（写像の有無 / 写像先の正しさ / MSR との突き合わせ）。
+# 検出経路ごとに分けてある（マッピングの有無 / マッピング先の正しさ / MSR との突き合わせ）。
 apic-test = []
-# 写像そのものを省く。「張った後」の translate が捕まえる。読みが写像に
+# マッピングそのものを省く。「張った後」の translate が捕まえる。読みがマッピングに
 # 依存していることの実証。
 apic-test-skip-map = ["apic-test"]
-# 写像先の物理だけを稼働中の PML4 へ差し替える。翻訳は張られるので、
+# マッピング先の物理だけを稼働中の PML4 へ差し替える。翻訳は張られるので、
 # 「翻訳がある」だけを見る検査では通ってしまう形である。
 apic-test-wrong-target = ["apic-test"]
 # MADT が名乗る Local APIC のアドレスを 1 ページずらし、IA32_APIC_BASE と
-# 食い違わせる。突き合わせが働き、写像も読みも行われないことを見る。
+# 食い違わせる。突き合わせが働き、マッピングも読みも行われないことを見る。
 apic-test-base-mismatch = ["apic-test"]
 
 # --- S2-d-1c: キーボードの配送を I/O APIC 経由へ切り替える段の破壊 ---

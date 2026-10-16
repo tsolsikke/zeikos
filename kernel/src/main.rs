@@ -1210,7 +1210,7 @@ extern "sysv64" fn kernel_main() -> ! {
     activate_direct_map_window(&mut logger);
     rehome_framebuffer_to_window(&mut logger, &mut framebuffer, boot_info);
 
-    // **直接写像の窓を持つ表の、ページの権限の一覧。** 窓と、窓の中のフレームバッファを登録する。
+    // **直接マッピングの窓を持つ表の、ページの権限の一覧。** 窓と、窓の中のフレームバッファを登録する。
     {
         let window = common::addr::direct_map();
         let base = window
@@ -1595,7 +1595,7 @@ extern "sysv64" fn kernel_main() -> ! {
     }
 
     // **カーネルのイメージのセグメントごとの権限を、稼働中の表から読み戻して出す**（2026-10-02。`ADR-0071` の手順 4）。
-    // **この後は、カーネルの写像の権限を変えない。**
+    // **この後は、カーネルのマッピングの権限を変えない。**
     report_kernel_image_permissions(&mut logger);
 
     // 破壊テスト (wx-violation-test): 書けないページへ書くか、実行できないページを実行する。#PF で止まる。
@@ -2161,7 +2161,7 @@ extern "sysv64" fn kernel_main() -> ! {
     }
 
     // 破壊テスト (2026-10-03, kernel-mapping-map-after-boot-test / kernel-mapping-change-after-boot-test): **起動の後に、
-    // カーネル側の写像を足す・変えるに行く。** **3 つ目の決まりが、項目を 1 つも書かずに断る。**
+    // カーネル側のマッピングを足す・変えるに行く。** **3 つ目の決まりが、項目を 1 つも書かずに断る。**
     #[cfg(any(
         feature = "kernel-mapping-map-after-boot-test",
         feature = "kernel-mapping-change-after-boot-test"
@@ -2247,7 +2247,7 @@ fn write_a_kernel_half_entry_after_boot(logger: &mut Logger<Serial>) {
         ActivePageTable::current(common::addr::direct_map())
             .map_4kib(virt, frame, attributes, allocator)
     };
-    // **3 つ目の決まり（起動の後はカーネル側の写像を足さない。2026-10-03）が、`ensure_child` の守りより先に、
+    // **3 つ目の決まり（起動の後はカーネル側のマッピングを足さない。2026-10-03）が、`ensure_child` の守りより先に、
     // 項目を 1 つも書かずに断る。** **守りを外した形（`kernel-top-write-unguarded-test`）では両方が外れ、書き込みが
     // 通って戻る**（次の `AddressSpace::new` の突き合わせが見つける）。
     if result == Err(kernel::arch::x86_64::paging::active::MapUpdateError::KernelMappingFrozen) {
@@ -2266,8 +2266,8 @@ fn write_a_kernel_half_entry_after_boot(logger: &mut Logger<Serial>) {
 }
 
 /// 破壊テスト `kernel-mapping-map-after-boot-test` と `kernel-mapping-change-after-boot-test` の本体（2026-10-03。
-/// `ADR-0071` の手順 4 の 3 つ目の決まり）。**起動の後に、カーネル側の写像を足す（既に在る PML4 の項目の下にリーフを
-/// 1 枚）か、変える（直接写像の 2MiB のページを割る）に行く。** **決まりが、項目を 1 つも書かずに
+/// `ADR-0071` の手順 4 の 3 つ目の決まり）。**起動の後に、カーネル側のマッピングを足す（既に在る PML4 の項目の下にリーフを
+/// 1 枚）か、変える（直接マッピングの 2MiB のページを割る）に行く。** **決まりが、項目を 1 つも書かずに
 /// `KernelMappingFrozen` で断る。** 断られたら名前つきで止まり、通ったら通ったことを出す（試験はその行とシェルの起動を
 /// 禁じている）。
 #[cfg(any(
@@ -2312,7 +2312,7 @@ fn change_a_kernel_mapping_after_boot(logger: &mut Logger<Serial>) {
     };
     #[cfg(feature = "kernel-mapping-change-after-boot-test")]
     let (what, result) = {
-        // **直接写像の 2MiB のページ（カーネルのイメージの次の 2MiB）を割りに行く。** 権限を変える入口と同じ守りを通る。
+        // **直接マッピングの 2MiB のページ（カーネルのイメージの次の 2MiB）を割りに行く。** 権限を変える入口と同じ守りを通る。
         let virt = direct_map.phys_to_virt(common::addr::PhysAddr::new(0x0080_0000).unwrap());
         logger.info(format_args!(
             "sabotage: splitting a direct-map huge page after boot ({:#x})",
@@ -5128,7 +5128,7 @@ fn demo_two_address_spaces(
         }
     }
 
-    // **書けて実行もできる権限も、項目を書く前に断る**（2026-10-03。ユーザーの写像の W^X）。上と同じく、途中の
+    // **書けて実行もできる権限も、項目を書く前に断る**（2026-10-03。ユーザーのマッピングの W^X）。上と同じく、途中の
     // 項目の表を取る前である。ELF のセグメントでこの形のものは、セグメントの並びの確かめが先に断る。ここは 2 枚目の守りである。
     {
         let free_before = allocator.free_frame_count();
@@ -9622,7 +9622,7 @@ const SYSCALL_TEST_STATUS: &[(u64, &str)] = &[
     (97, "munmap of the whole anonymous mapping did not return 0, or a second mmap did not reuse the address"),
     (98, "munmap of an unaligned address did not return -EINVAL, or mmap(len 0) did not return -EINVAL"),
     (99, "munmap of a range with no mapping did not return 0"),
-    // 100 から 105: 写像を分ける munmap と MAP_FIXED（2026-10-06）。
+    // 100 から 105: マッピングを分ける munmap と MAP_FIXED（2026-10-06）。
     (100, "munmap of the middle page of a 3-page mapping did not return 0, or the outer pages were not kept"),
     (101, "munmap of the two remaining pieces did not return 0"),
     (102, "MAP_FIXED over the second page of an anonymous mapping did not return that address with a zero page"),
@@ -9799,7 +9799,7 @@ const USER_PROGRAMS: &[UserProgram] = &[
         argv: &[b"hello"],
         enters_with_direction_flag: None,
     },
-    // **自分のスタックのページへ跳ぶ**（2026-10-03。ユーザーの写像の W^X）。**止まったアドレスと CR2 は、跳んだ先のアドレスである。**
+    // **自分のスタックのページへ跳ぶ**（2026-10-03。ユーザーのマッピングの W^X）。**止まったアドレスと CR2 は、跳んだ先のアドレスである。**
     // 実行できてしまえば、跳んだ先の `ud2` でベクタが 6 になり、判定行が食い違いとして止める。
     UserProgram {
         name: "nx-stack",
@@ -9815,7 +9815,7 @@ const USER_PROGRAMS: &[UserProgram] = &[
         argv: &[b"nx-stack"],
         enters_with_direction_flag: None,
     },
-    // **自分の `.data` へ跳ぶ**（2026-10-03。ユーザーの写像の W^X）。**止まったアドレスと CR2 は、跳んだ先のアドレスである。**
+    // **自分の `.data` へ跳ぶ**（2026-10-03。ユーザーのマッピングの W^X）。**止まったアドレスと CR2 は、跳んだ先のアドレスである。**
     // 実行できてしまえば、跳んだ先の `ud2` でベクタが 6 になり、判定行が食い違いとして止める。
     UserProgram {
         name: "nx-data",
@@ -9831,7 +9831,7 @@ const USER_PROGRAMS: &[UserProgram] = &[
         argv: &[b"nx-data"],
         enters_with_direction_flag: None,
     },
-    // **自分の `.rodata` へ跳ぶ**（2026-10-03。ユーザーの写像の W^X）。**止まったアドレスと CR2 は、跳んだ先のアドレスである。**
+    // **自分の `.rodata` へ跳ぶ**（2026-10-03。ユーザーのマッピングの W^X）。**止まったアドレスと CR2 は、跳んだ先のアドレスである。**
     // 実行できてしまえば、跳んだ先の `ud2` でベクタが 6 になり、判定行が食い違いとして止める。
     UserProgram {
         name: "nx-rodata",
@@ -12171,7 +12171,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "kernel-mapping-change-after-boot-test",
         cfg!(feature = "kernel-mapping-change-after-boot-test"),
-        "起動の後に、直接写像の 2MiB のページを割りに行く",
+        "起動の後に、直接マッピングの 2MiB のページを割りに行く",
     ),
     (
         "kernel-mapping-probe-neighbour-test",
@@ -12186,7 +12186,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "kernel-mapping-rule-off-test",
         cfg!(feature = "kernel-mapping-rule-off-test"),
-        "起動の後にカーネル側の写像を足さない決まりだけを外す（PML4 の項目を作る守りは残す）",
+        "起動の後にカーネル側のマッピングを足さない決まりだけを外す（PML4 の項目を作る守りは残す）",
     ),
     (
         "no-eoi-test",
@@ -12966,7 +12966,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "brk-skip-shrink-test",
         cfg!(feature = "brk-skip-shrink-test"),
-        "brk が下げる要求で写像を外さない",
+        "brk が下げる要求でマッピングを外さない",
     ),
     (
         "zi-enter-does-nothing-test",
@@ -13426,7 +13426,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "mappings-overlap-skip-test",
         cfg!(feature = "mappings-overlap-skip-test"),
-        "写像の表が、置くときに重なりを見ない",
+        "マッピングテーブルが、置くときに重なりを見ない",
     ),
     (
         "mappings-split-swap-test",
@@ -13911,12 +13911,12 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "smp-tlb-shootdown-probe",
         cfg!(feature = "smp-tlb-shootdown-probe"),
-        "APに探り用ページを触らせ、写像を外した後の見え方を比べる（S5-c）",
+        "APに探り用ページを触らせ、マッピングを外した後の見え方を比べる（S5-c）",
     ),
     (
         "smp-tlb-no-generation-bump",
         cfg!(feature = "smp-tlb-no-generation-bump"),
-        "写像を外しても世代を上げない（S5-c の破壊。APは古い翻訳で成功する）",
+        "マッピングを外しても世代を上げない（S5-c の破壊。APは古い翻訳で成功する）",
     ),
     (
         "smp-tlb-generation-probe",
@@ -13971,17 +13971,17 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "apic-test",
         cfg!(feature = "apic-test"),
-        "傘。APIC 写像の破壊一式を有効にする",
+        "傘。APIC マッピングの破壊一式を有効にする",
     ),
     (
         "apic-test-skip-map",
         cfg!(feature = "apic-test-skip-map"),
-        "Local APIC MMIO の写像を省く",
+        "Local APIC MMIO のマッピングを省く",
     ),
     (
         "apic-test-wrong-target",
         cfg!(feature = "apic-test-wrong-target"),
-        "写像先の物理をずらす",
+        "マッピング先の物理をずらす",
     ),
     (
         "apic-test-base-mismatch",
@@ -15145,7 +15145,7 @@ fn rehome_framebuffer_to_window(
 /// 稼働中の表を歩いて、ページの権限の一覧を出す（`kernel::page_survey`。`ADR-0071` の手順 3 の道具）。
 /// **起動の途中の 1 本の流れから呼ぶ。**
 fn survey_mappings(logger: &mut Logger<Serial>, moment: &str) {
-    // SAFETY: 根は稼働中の表で、窓は登録済みの直接写像である（切り替える前は恒等、後は高いアドレスの窓）。
+    // SAFETY: 根は稼働中の表で、窓は登録済みの直接マッピングである（切り替える前は恒等、後は高いアドレスの窓）。
     // どちらの窓でも、表のフレームは全部読める。読み取りのみ。起動の途中の 1 本の流れなので、歩いている間に
     // 表は変わらない。
     unsafe {

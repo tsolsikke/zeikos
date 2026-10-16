@@ -494,11 +494,11 @@ pub fn active_kernel_entry_stack_top() -> u64 {
 
 /// 自コアの CPU 番号を GDTR のベースから導く（S3-b-2a）。
 ///
-/// # 逆写像であること
+/// # 逆マッピングであること
 ///
 /// [`init`] は `lgdt` へ **自コアの [`GDT`] スロットの先頭**を渡す
 /// （`PerCpu::this_cpu_ptr(addr_of_mut!(GDT))`）。したがって
-/// `GDTR.base == &GDT[cpu_id]` であり、**引き算とストライドの除算がその逆写像**
+/// `GDTR.base == &GDT[cpu_id]` であり、**引き算とストライドの除算がその逆マッピング**
 /// になる。ストライドは `GDT_ENTRY_COUNT * 8` = 64 バイトで一定である。
 ///
 /// `addr_of!(GDT)` が `&GDT[0]` であることは偶然ではない。[`PerCpu`] は

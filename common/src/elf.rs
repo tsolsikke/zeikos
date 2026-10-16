@@ -1374,7 +1374,7 @@ mod tests {
         assert_eq!(headers.plan(&POLICY), Err(PlacementError::NeedsInterpreter));
     }
 
-    /// **実行できるスタックを求めるイメージは断る**（Linux は受け付ける。書けて実行もできる写像を作らない決まりのため）。
+    /// **実行できるスタックを求めるイメージは断る**（Linux は受け付ける。書けて実行もできるマッピングを作らない決まりのため）。
     #[test]
     fn an_image_that_asks_for_an_executable_stack_is_refused() {
         let mut phdrs = vec![phdr(PT_LOAD, PF_R | PF_X, 0, 0, 0x2000, 0x2000)];

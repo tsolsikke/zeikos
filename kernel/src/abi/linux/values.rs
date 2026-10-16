@@ -100,11 +100,11 @@ pub const PROT_EXEC: u64 = 4;
 /// `PROT_READ`（読めるリーフを求める。2026-10-06）。
 pub const PROT_READ: u64 = 1;
 
-/// `MAP_FIXED`（アドレスを指定して、重なる写像を外してから置く。2026-10-06）。
+/// `MAP_FIXED`（アドレスを指定して、重なるマッピングを外してから置く。2026-10-06）。
 pub const MAP_FIXED: u64 = 0x10;
-/// `MAP_FIXED_NOREPLACE`（アドレスを指定するが、重なる写像が在れば `-EEXIST`。Linux 4.17 から。2026-10-06）。
+/// `MAP_FIXED_NOREPLACE`（アドレスを指定するが、重なるマッピングが在れば `-EEXIST`。Linux 4.17 から。2026-10-06）。
 pub const MAP_FIXED_NOREPLACE: u64 = 0x10_0000;
-/// `MAP_ANONYMOUS`（fd の無い、ゼロで埋めた写像。2026-10-06）。
+/// `MAP_ANONYMOUS`（fd の無い、ゼロで埋めたマッピング。2026-10-06）。
 pub const MAP_ANONYMOUS: u64 = 0x20;
 
 /// `SOL_SOCKET`（`cmsghdr` の level）。

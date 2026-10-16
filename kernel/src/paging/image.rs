@@ -128,7 +128,7 @@ mod tests {
         );
     }
 
-    /// **コードは書けず、ほかは実行できない**（写像ごとの W^X）。
+    /// **コードは書けず、ほかは実行できない**（マッピングごとの W^X）。
     #[test]
     fn no_section_is_both_writable_and_executable() {
         let [code, read_only, data] = image_sections(MEASURED).unwrap();

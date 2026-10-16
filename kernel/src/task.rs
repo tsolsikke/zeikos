@@ -278,7 +278,7 @@ static DEMO_LOCK: common::critical::Locked<u64> = common::critical::Locked::new(
 /// # なぜ `Running` を持たないのか
 ///
 /// 「どのCPUがどのタスクを走らせているか」は [`CURRENT`] が既に持っている。
-/// `Running(cpu)` はその逆写像なので、置くと同じ事実が 2 箇所に出て片方が必ず古くなる。
+/// `Running(cpu)` はその逆マッピングなので、置くと同じ事実が 2 箇所に出て片方が必ず古くなる。
 /// 走っているかは [`CURRENT`] から導く。
 ///
 /// 走行中のタスクは [`Self::Ready`] のままである。`pick_next` が現タスクを返しうる契約

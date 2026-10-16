@@ -22,7 +22,7 @@
 //! # 表の読み方を差し替えられる
 //!
 //! 歩くループ（`walk`）は「表の物理のアドレスと添字から項目を読む」関数を引数で受ける。カーネルでは
-//! 直接写像を通して読み（[`for_each_mapped_range`]）、ホストのテストでは作った表を読む。**歩く論理は
+//! 直接マッピングを通して読み（[`for_each_mapped_range`]）、ホストのテストでは作った表を読む。**歩く論理は
 //! ホストのテストで確かめられる。**
 
 use core::ops::Range;
@@ -319,7 +319,7 @@ pub unsafe fn for_each_mapped_range(
     visit: &mut dyn FnMut(MappedRange),
 ) {
     let read = |table: u64, index: usize| -> u64 {
-        // SAFETY: 呼び出し元契約により、`table` は直接写像を通して読める表のフレームで、`index` は 512 未満。
+        // SAFETY: 呼び出し元契約により、`table` は直接マッピングを通して読める表のフレームで、`index` は 512 未満。
         // 読み取りのみ。
         unsafe {
             core::ptr::read_volatile(

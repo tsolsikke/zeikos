@@ -1,4 +1,4 @@
-//! プロセスの写像の表（2026-10-06）——`mmap` が配った範囲を、アドレスと種類で覚える。
+//! プロセスのマッピングテーブル（2026-10-06）——`mmap` が配った範囲を、アドレスと種類で覚える。
 //!
 //! # なぜ表が要るのか
 //!
@@ -14,15 +14,15 @@
 //!
 //! # 入っているもの
 //!
-//! 無名の写像を配る（first-fit。空いた所を使い直す）、写像の全体や一部を返す（分ける）、`MAP_FIXED` のために重なる
-//! 写像を外す、共有メモリと画面の写像を同じ表で覚える、イメージ・スタック・見張りのページ・ヒープも表に載せる（2026-10-06。
+//! 無名のマッピングを配る（first-fit。空いた所を使い直す）、マッピングの全体や一部を返す（分ける）、`MAP_FIXED` のために重なる
+//! マッピングを外す、共有メモリと画面のマッピングを同じ表で覚える、イメージ・スタック・見張りのページ・ヒープも表に載せる（2026-10-06。
 //! 2 つの刻みで入れた）。**`mprotect` は、まだ無い**（次の刻み）。
 
 use common::critical::Locked;
 
 use crate::arch::x86_64::{MAX_EXCURSION_DEPTH, USER_TASK_SLOTS};
 
-/// 1 つのプロセスが同時に持てる写像の数。musl の起動は 10 個ほど、Seinas の輪は数十個と見ている。
+/// 1 つのプロセスが同時に持てるマッピングの数。musl の起動は 10 個ほど、Seinas の輪は数十個と見ている。
 pub const MAX_MAPPINGS: usize = 64;
 
 /// ページの大きさ。
@@ -39,7 +39,7 @@ pub const fn page_rounded(len: u64) -> Option<u64> {
     }
 }
 
-/// 写像の 種類。
+/// マッピングの 種類。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MappingKind {
     /// 無名（`MAP_ANONYMOUS`）。フレームはこのプロセスのもので、返すときはアロケータへ戻す。
@@ -78,15 +78,15 @@ impl MappingKind {
     }
 }
 
-/// 1 つの写像。`end` は排他である。
+/// 1 つのマッピング。`end` は排他である。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Mapping {
     pub start: u64,
     pub end: u64,
     pub kind: MappingKind,
-    /// 書ける写像か（`PROT_WRITE`）。
+    /// 書けるマッピングか（`PROT_WRITE`）。
     pub writable: bool,
-    /// ページが写してあるか。**`PROT_NONE` の無名の写像は、範囲だけ取って、何も写さない**（触ればページフォルト）。
+    /// ページが写してあるか。**`PROT_NONE` の無名のマッピングは、範囲だけ取って、何も写さない**（触ればページフォルト）。
     pub present: bool,
 }
 
@@ -112,13 +112,13 @@ pub enum MapError {
     TableFull,
     /// 長さが 0 か、ページの境界に無いアドレス。`-EINVAL`。
     BadRange,
-    /// 範囲が、写像の一部にだけ掛かる（写像の全体だけを求める口で）。`-EINVAL`。
+    /// 範囲が、マッピングの一部にだけ掛かる（マッピングの全体だけを求める口で）。`-EINVAL`。
     PartOfAMapping,
-    /// 範囲に、外せない種類の写像（イメージ・スタック・見張り・共有メモリ・画面。`munmap` ではヒープも）が掛かる。`-EINVAL`。
+    /// 範囲に、外せない種類のマッピング（イメージ・スタック・見張り・共有メモリ・画面。`munmap` ではヒープも）が掛かる。`-EINVAL`。
     NotRemovable,
-    /// 置きたい範囲に、写像が在る（`MAP_FIXED_NOREPLACE`。`-EEXIST`）、または登録の範囲が重なる。
+    /// 置きたい範囲に、マッピングが在る（`MAP_FIXED_NOREPLACE`。`-EEXIST`）、または登録の範囲が重なる。
     Overlap,
-    /// 範囲の全部が写像で覆われていない（`mprotect`。Linux は `-ENOMEM`）。
+    /// 範囲の全部がマッピングで覆われていない（`mprotect`。Linux は `-ENOMEM`）。
     NotMapped,
     /// 上下に伸びる印（`mprotect` の `PROT_GROWSDOWN`・`PROT_GROWSUP`）を、そう伸びないマッピングへ求めた（[`MemoryMap::grown_start`]）。
     /// `-EINVAL`。
@@ -128,13 +128,13 @@ pub enum MapError {
 /// [`MemoryMap::release_range`] が返す、外した断片の入れ物。
 pub type Released = [Option<Mapping>; MAX_MAPPINGS];
 
-/// 1 つのプロセスの写像の表。
+/// 1 つのプロセスのマッピングテーブル。
 pub struct MemoryMap {
     active: bool,
     base: u64,
     limit: u64,
     /// この表が最初に配ったアドレス（`reserve` の 1 回目。2026-10-06）。**外されても変わらない**——`user-mmap:` の行の
-    /// 「最初の `mmap`」は、残っている写像のいちばん低い始まりではなく、カーネルが最初に選んだアドレスである
+    /// 「最初の `mmap`」は、残っているマッピングのいちばん低い始まりではなく、カーネルが最初に選んだアドレスである
     /// （Rust の `std` は、最初に取った代替スタックを終わりに外す）。
     first_reserved: Option<u64>,
     entries: [Option<Mapping>; MAX_MAPPINGS],
@@ -184,7 +184,7 @@ impl MemoryMap {
         let Some(slot) = self.entries.iter().position(Option::is_none) else {
             return Err(MapError::TableFull);
         };
-        // **候補を、重なる写像の終わりへ進める。** 表の数より多くは進まない（候補が動くたびに、重なる写像が
+        // **候補を、重なるマッピングの終わりへ進める。** 表の数より多くは進まない（候補が動くたびに、重なるマッピングが
         // 1 つ減る）。
         let mut candidate = self.base;
         for _ in 0..=MAX_MAPPINGS {
@@ -219,11 +219,11 @@ impl MemoryMap {
         Err(MapError::NoRoom)
     }
 
-    /// `start` から `bytes` の範囲を、写像の全体として返す（純粋な論理）。
+    /// `start` から `bytes` の範囲を、マッピングの全体として返す（純粋な論理）。
     ///
-    /// - 範囲がちょうど 1 つの写像なら、その写像を外して返す。
-    /// - 範囲にどの写像も掛かっていなければ `Ok(None)`（Linux の `munmap` は、写していない範囲でも 0 を返す）。
-    /// - 範囲が写像の一部にだけ掛かる、または複数の写像にまたがるなら、`PartOfAMapping`（この刻みでは断る）。
+    /// - 範囲がちょうど 1 つのマッピングなら、そのマッピングを外して返す。
+    /// - 範囲にどのマッピングも掛かっていなければ `Ok(None)`（Linux の `munmap` は、写していない範囲でも 0 を返す）。
+    /// - 範囲がマッピングの一部にだけ掛かる、または複数のマッピングにまたがるなら、`PartOfAMapping`（この刻みでは断る）。
     pub fn release_whole(&mut self, start: u64, bytes: u64) -> Result<Option<Mapping>, MapError> {
         if !self.active {
             return Err(MapError::NotActive);
@@ -264,7 +264,7 @@ impl MemoryMap {
             return Err(MapError::BadRange);
         }
         // 破壊テスト (2026-10-06, mappings-overlap-skip-test): 置くときに重なりを見ない（`overlaps_any` も）。
-        // `MAP_FIXED_NOREPLACE` が、写像の上でも断らずに置きに行く。
+        // `MAP_FIXED_NOREPLACE` が、マッピングの上でも断らずに置きに行く。
         if !cfg!(feature = "mappings-overlap-skip-test")
             && self
                 .entries
@@ -287,11 +287,11 @@ impl MemoryMap {
         Ok(())
     }
 
-    /// `start` から `bytes` の範囲に掛かる写像を外し、外した断片を `out` へ置く（純粋な論理。表だけを変える。
-    /// ページを外すのは呼ぶ側である）。**範囲の一部に掛かる写像は、残る部分を分けて表に戻す。**
+    /// `start` から `bytes` の範囲に掛かるマッピングを外し、外した断片を `out` へ置く（純粋な論理。表だけを変える。
+    /// ページを外すのは呼ぶ側である）。**範囲の一部に掛かるマッピングは、残る部分を分けて表に戻す。**
     ///
     /// `may_remove` が偽を返す種類が範囲に掛かっていれば、何も変えずに `NotRemovable`。分けるのに欄が足りなければ、
-    /// 何も変えずに `TableFull`。返すのは外した断片の数（範囲に写像が無ければ 0）。
+    /// 何も変えずに `TableFull`。返すのは外した断片の数（範囲にマッピングが無ければ 0）。
     pub fn release_range(
         &mut self,
         start: u64,
@@ -369,11 +369,11 @@ impl MemoryMap {
         Ok(released)
     }
 
-    /// `start` から `bytes` の範囲に掛かる写像の、書けるか・写してあるかを変える（純粋な論理。表だけを変える。リーフを
-    /// 書き換えるのは呼ぶ側である）。**範囲の一部に掛かる写像は、範囲の中と外で分ける。** 変える前の断片（古い
+    /// `start` から `bytes` の範囲に掛かるマッピングの、書けるか・写してあるかを変える（純粋な論理。表だけを変える。リーフを
+    /// 書き換えるのは呼ぶ側である）。**範囲の一部に掛かるマッピングは、範囲の中と外で分ける。** 変える前の断片（古い
     /// `writable`・`present` を持つ）を `out` へ置き、数を返す。
     ///
-    /// 範囲の全部が写像で覆われていなければ `NotMapped`（Linux の `mprotect` は `-ENOMEM`）。
+    /// 範囲の全部がマッピングで覆われていなければ `NotMapped`（Linux の `mprotect` は `-ENOMEM`）。
     /// `can_change_protection` が偽の種類が掛かっていれば `NotRemovable`。欄が足りなければ `TableFull`。どの失敗でも、表は
     /// 変えない。
     pub fn change_protection(
@@ -496,7 +496,7 @@ impl MemoryMap {
         }
     }
 
-    /// `start` から `bytes` の範囲に、写像が 1 つでも掛かっているか。
+    /// `start` から `bytes` の範囲に、マッピングが 1 つでも掛かっているか。
     pub fn overlaps_any(&self, start: u64, bytes: u64) -> bool {
         // 破壊テスト (2026-10-06, mappings-overlap-skip-test): `register` と同じく、重なりを見ない。
         !cfg!(feature = "mappings-overlap-skip-test")
@@ -510,7 +510,7 @@ impl MemoryMap {
 
     /// `brk` のヒープの終わりを動かす（純粋な論理）。
     ///
-    /// ヒープの欄（[`MappingKind::Heap`]）のうち、いちばん高い終わりを `end` へ動かす。伸ばす先にほかの写像が在れば
+    /// ヒープの欄（[`MappingKind::Heap`]）のうち、いちばん高い終わりを `end` へ動かす。伸ばす先にほかのマッピングが在れば
     /// `Overlap`（`brk` は伸ばさずに今の上端を返す）。縮めて欄が空になれば消す。欄が無ければ `[start, end)` を作る（`start == end`
     /// なら作らない）。**ヒープの途中が `MAP_FIXED` で置き換えられていても動く**——残った断片のうち、いちばん高いものを
     /// 伸び縮みさせる。
@@ -533,7 +533,7 @@ impl MemoryMap {
         match highest {
             Some((index, piece)) => {
                 if end > piece.end {
-                    // 伸ばす先に、ほかの写像が無いこと。
+                    // 伸ばす先に、ほかのマッピングが無いこと。
                     if self
                         .entries
                         .iter()
@@ -559,7 +559,7 @@ impl MemoryMap {
         }
     }
 
-    /// `address` を含む写像。
+    /// `address` を含むマッピング。
     pub fn find(&self, address: u64) -> Option<Mapping> {
         self.entries
             .iter()
@@ -568,7 +568,7 @@ impl MemoryMap {
             .copied()
     }
 
-    /// `mmap` が配った写像か（無名・共有メモリ・画面。イメージ・スタック・見張り・ヒープは、載せる側と `brk` のもの）。
+    /// `mmap` が配ったマッピングか（無名・共有メモリ・画面。イメージ・スタック・見張り・ヒープは、載せる側と `brk` のもの）。
     pub const fn is_mmapped(kind: MappingKind) -> bool {
         matches!(
             kind,
@@ -576,11 +576,11 @@ impl MemoryMap {
         )
     }
 
-    /// 要約——**`mmap` が配った写像**の数、最初に配ったアドレス、いちばん高い終わり、無名のページの数。**判定の行に出す**
+    /// 要約——**`mmap` が配ったマッピング**の数、最初に配ったアドレス、いちばん高い終わり、無名のページの数。**判定の行に出す**
     /// （イメージ・スタック・ヒープは数えない。`user-mmap:` の行は `mmap` のアドレスを言う）。
     ///
     /// **最初に配ったアドレスは、カーネルが選んだ 1 回目の `reserve` のアドレスで、外されても変わらない**（2026-10-06）。
-    /// **いちばん高い終わりは、`mmap` のセグメント（基点から上）に在る写像だけで数える**——`MAP_FIXED` でセグメントの外に置いたもの
+    /// **いちばん高い終わりは、`mmap` のセグメント（基点から上）に在るマッピングだけで数える**——`MAP_FIXED` でセグメントの外に置いたもの
     /// （musl の `malloc` が `brk` の先頭に置く見張り）は、数には入るがアドレスには出ない。行の「どのプロセスも基点から
     /// 配り始める」は、カーネルが選んだアドレスの話である。
     pub fn summary(&self) -> MapSummary {
@@ -771,7 +771,7 @@ mod tests {
         );
     }
 
-    /// 返すのは写像の全体だけ。一部や、またがる範囲は断る。写していない範囲は `None` で 0 になる。
+    /// 返すのはマッピングの全体だけ。一部や、またがる範囲は断る。写していない範囲は `None` で 0 になる。
     #[test]
     fn only_a_whole_mapping_is_released_and_an_empty_range_is_not_an_error() {
         let mut map = active();
@@ -848,10 +848,10 @@ mod tests {
             map.release_range(BASE, 2 * PAGE_SIZE, MappingKind::can_unmap, &mut out),
             Err(MapError::NotRemovable)
         );
-        // 要約が数えるのは `mmap` の写像だけ（スタックは入らない）。
+        // 要約が数えるのは `mmap` のマッピングだけ（スタックは入らない）。
         assert_eq!(map.summary().count, 1);
         assert_eq!(map.find(BASE).map(|m| m.kind), Some(MappingKind::Stack));
-        // 写像の無い範囲は 0。
+        // マッピングの無い範囲は 0。
         assert_eq!(
             map.release_range(
                 BASE + 8 * PAGE_SIZE,
@@ -1011,7 +1011,7 @@ mod tests {
         assert_eq!(map.summary().count, 0);
         assert_eq!(map.set_heap_end(heap, heap + 2 * PAGE_SIZE), Ok(()));
         assert_eq!(map.find(heap).map(|m| m.kind), Some(MappingKind::Heap));
-        // musl の見張り: ヒープの先頭の 1 ページを、無名の写像で置き換える。
+        // musl の見張り: ヒープの先頭の 1 ページを、無名のマッピングで置き換える。
         let mut out: Released = [None; MAX_MAPPINGS];
         assert_eq!(
             map.release_range(heap, PAGE_SIZE, MappingKind::can_be_replaced, &mut out),
@@ -1025,7 +1025,7 @@ mod tests {
             map.find(heap + 3 * PAGE_SIZE).map(|m| m.kind),
             Some(MappingKind::Heap)
         );
-        // 伸ばす先に写像が在れば断る。
+        // 伸ばす先にマッピングが在れば断る。
         map.register(
             heap + 4 * PAGE_SIZE,
             heap + 5 * PAGE_SIZE,
@@ -1082,8 +1082,8 @@ mod tests {
         );
     }
 
-    /// セグメントの外へ `MAP_FIXED` で置いた写像（`brk` の見張り）は、要約の数には入るが、アドレスには出ない。最初に配ったアドレスは、
-    /// その写像を外しても変わらない。
+    /// セグメントの外へ `MAP_FIXED` で置いたマッピング（`brk` の見張り）は、要約の数には入るが、アドレスには出ない。最初に配ったアドレスは、
+    /// そのマッピングを外しても変わらない。
     #[test]
     fn a_fixed_mapping_below_the_base_counts_but_does_not_move_the_addresses() {
         let mut map = active();
