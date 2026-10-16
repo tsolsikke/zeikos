@@ -7,7 +7,7 @@
 # RAM ディスクとして使う（ADR-0068 の HW-d）。
 # ESP の欄は、ファームウェアへ ESP をどう渡すかである（ADR-0068 の HW-e）。
 #   dir   = QEMU の fat:rw: でディレクトリを FAT に見せる（既定。QEMU だけの道である）
-#   media = GPT と FAT32 を自分で書いた 1 つの像を渡す（VirtualBox と実機と同じ形）
+#   media = GPT と FAT32 を自分で書いた 1 つのイメージを渡す（VirtualBox と実機と同じ形）
 # CPU の欄は -cpu に渡す値である（2026-09-24。運用者の決定）。- なら付けない。
 #   QEMU の既定（qemu64）の製造元は AuthenticAMD である（monitor の qom-get で実測）。
 #

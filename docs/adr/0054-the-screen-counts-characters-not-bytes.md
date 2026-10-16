@@ -129,7 +129,7 @@ Accepted
 
 ## 判定
 
-**`build.rs`がイメージへ2つ置く**（**seedのツリーへは置かない**——**ASCIIの静的検査に落ちる**。`docs/coding-standards.md`の「像へ入れるテキストはASCIIに限る」）。
+**`build.rs`がイメージへ2つ置く**（**seedのツリーへは置かない**——**ASCIIの静的検査に落ちる**。`docs/coding-standards.md`の「イメージへ入れるテキストはASCIIに限る」）。
 
 - `/data/utf8`——**日本語を含む既知のバイト列**
 - `/data/badutf8`——**不正なバイトを含む既知のバイト列**

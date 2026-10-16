@@ -382,7 +382,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
     // **「落ちた」だけにしない**——触る前に、狙うページが在ること・権限を稼働中の表から読み戻した行と、誤りコード
     // （書き込みか命令の取り出しか、権限の違反か）と、CR2 が告げた番地と同じであることを見る。
     // 触った後に戻ってきた行（守りが効いていない）が出ないことも見る。
-    // カーネルの像の `.text` の 1 バイトへ書く。
+    // カーネルのイメージの `.text` の 1 バイトへ書く。
     CriticalTest {
         name: "kernel-writes-text",
         feature: "kernel-writes-text-test",
@@ -401,7 +401,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // カーネルの像の読むだけの区画の 1 バイトへ書く。
+    // カーネルのイメージの読むだけの区画の 1 バイトへ書く。
     CriticalTest {
         name: "kernel-writes-rodata",
         feature: "kernel-writes-rodata-test",
@@ -420,7 +420,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // カーネルの像の `.data` に置いた 1 バイト（ret）を実行する。
+    // カーネルのイメージの `.data` に置いた 1 バイト（ret）を実行する。
     CriticalTest {
         name: "kernel-executes-data",
         feature: "kernel-executes-data-test",
@@ -623,7 +623,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },    // **M3a の 3-2（2026-10-15）：スレッドの破壊テスト 8 件。** 目印は 2026-10-15 の実測で決めた（落ち方は
-    // `docs/verification-coverage.md` の feature の一覧）。どれも既定の起動（起動時の Linux の像の確かめ）で落ちる。
+    // `docs/verification-coverage.md` の feature の一覧）。どれも既定の起動（起動時の Linux のイメージの確かめ）で落ちる。
     // 子が clone の戻り値を親の RAX（56）で読む。musl の __clone は 0 でない戻り値を親の道として扱い、子のスタックの番地へ ret する
     // ——スレッドが命令フェッチの #PF で落ち、プロセスは Folded(14)、起動時の確かめが名指しして止まる。
     CriticalTest {
@@ -693,8 +693,8 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
     },
     // プロセスの終わりで、残っているスレッドを終えず刈り取らない。終わったスレッドのタスクが壊される空間を指したまま残り、
     // W1-b-2 の検査（forget_task_root_before_destroy）が最初のスレッドを持つプロセス（m3a-rust。スレッドは必ず主より先に
-    // 終わる）で [ERROR] を出す。**見るのはこの名指しの行だけである**——その後、回り続けるスレッドが次の像の空間で
-    // #PF を起こして止まる形も観測しているが、どの像で起きるかは順序に依るので目印にしない（2026-10-16 の棚卸し）。
+    // 終わる）で [ERROR] を出す。**見るのはこの名指しの行だけである**——その後、回り続けるスレッドが次のイメージの空間で
+    // #PF を起こして止まる形も観測しているが、どのイメージで起きるかは順序に依るので目印にしない（2026-10-16 の棚卸し）。
     CriticalTest {
         name: "process-end-leaves-threads",
         feature: "process-end-leaves-threads-test",
@@ -725,12 +725,12 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         min_heartbeats: None,
     },
     // プロセスの終わりの印で、同じスロットの futex の待ちを起こさない。起こされない主スレッドが永久に残り、起動がそこで
-    // 止まる。**止まる像は 2 通りある**——ふつうは m3a-exit-group-join-rust（主が join で眠っている間にスレッドが exit_group
-    // を打つ。残っていた起動 223 回中 213 回）、主が眠る前に exit_group が来た回（10 回）は join の像が入口で終了の印を
+    // 止まる。**止まるイメージは 2 通りある**——ふつうは m3a-exit-group-join-rust（主が join で眠っている間にスレッドが exit_group
+    // を打つ。残っていた起動 223 回中 213 回）、主が眠る前に exit_group が来た回（10 回）は join のイメージが入口で終了の印を
     // 見て普通に終わり、次の m3a-exit-group-waiters-rust（waiter が眠ったと出してから ender が exit_group を打つので、
     // 眠る側が必ず居る）で止まる。カーネルは報告できないので、時間切れまで待って、**どちらの場合も越えられない所**
-    // （waiters の像の終わりとプロンプト）が無いことで見る。join の像の行を目印にすると 10 回の側で落ちる（2026-10-15 の
-    // full check #6）。waiters の像の行を期待にすると 213 回の側で落ちる（2026-10-16 に 5 回とも）。docs/troubleshooting.md。
+    // （waiters のイメージの終わりとプロンプト）が無いことで見る。join のイメージの行を目印にすると 10 回の側で落ちる（2026-10-15 の
+    // full check #6）。waiters のイメージの行を期待にすると 213 回の側で落ちる（2026-10-16 に 5 回とも）。docs/troubleshooting.md。
     CriticalTest {
         name: "process-end-keeps-futex-sleepers",
         feature: "process-end-keeps-futex-sleepers-test",
@@ -1138,7 +1138,7 @@ const PAGING_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // 2026-10-03（`ADR-0071` の手順 4 の 3 つ目の決まり）: 起動の後に、カーネルの像の PML4 の項目（添字 511）の下へ葉を
+    // 2026-10-03（`ADR-0071` の手順 4 の 3 つ目の決まり）: 起動の後に、カーネルのイメージの PML4 の項目（添字 511）の下へ葉を
     // 1 枚足しに行く。**添字 260 の形（PML4 の項目を作る）と違い、既に在る項目の下へ足す形である。** **決まりが、項目を
     // 1 つも書かずに `KernelMappingFrozen` で断る。**
     CriticalTest {
@@ -1623,13 +1623,13 @@ const RING3_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // **区画の並びの確かめを通さずに写す（2026-10-01）。** 起動の途中の壊した像の検査は、並びの確かめが
-    // 断るはずの 4 つの像のうち、最初の 1 つ（2 本目が 1 本目の中身の内側から始まる）が写す途中で断られるのを
+    // **区画の並びの確かめを通さずに写す（2026-10-01）。** 起動の途中の壊したイメージの検査は、並びの確かめが
+    // 断るはずの 4 つのイメージのうち、最初の 1 つ（2 本目が 1 本目の中身の内側から始まる）が写す途中で断られるのを
     // 見て、「違う場所で断られた」と止まる。**残りの 3 つは、この確かめが無いと読み込まれるか、引き算の
     // あふれでカーネルが止まる**（直す前の形で実測した）。
     //
     // **写す途中で断るのは `map_user_4kib` の「既に写っている葉は上書きしない」の判定である。** 並びの確かめを
-    // 入れた後は、像からこの判定へ届く道がここだけになったので、**断った理由の行も求める**（2 枚目の守りが
+    // 入れた後は、イメージからこの判定へ届く道がここだけになったので、**断った理由の行も求める**（2 枚目の守りが
     // 効いていることの確かめを兼ねる）。
     CriticalTest {
         name: "user-skip-layout-check",
@@ -1685,8 +1685,8 @@ const RING3_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // **位置独立の像の区画を、ずらさずに載せる**（2026-10-06）。入口だけがずれた番地を指す。**捕まえるのは、載せた
-    // ものを写像の表へ登録する所である**——像の範囲が「ずらした始まり」から「ずらさないヒープの始まり」までとなって
+    // **位置独立のイメージの区画を、ずらさずに載せる**（2026-10-06）。入口だけがずれた番地を指す。**捕まえるのは、載せた
+    // ものを写像の表へ登録する所である**——イメージの範囲が「ずらした始まり」から「ずらさないヒープの始まり」までとなって
     // 逆さまになり、`BadRange` で名指しして止まる。写像の表（2026-10-06）の前は、入口のページフォルトで畳まれる形
     // （`spawn: /bin/pie-hello ended (Folded(14))`）で見ていた。そこへ届く前に止まるようになったので、印を替えた。
     CriticalTest {
@@ -2965,7 +2965,7 @@ fn main() -> Result<()> {
        cargo xtask run --machine-variant NAME [--sabotage FEATURE | --config FEATURE]   (ADR-0068。NAME は xtask/machine-variants.txt の名前)
        cargo xtask check [--update-reference]   (ホストテストの名前の集合を取り直す)
        cargo xtask run --boot-log-diff [--update-reference [--allow-shrink] [--only-masked]]\n       cargo xtask run --tool-checks
-       cargo xtask run --calibration-spread [N]\n       cargo xtask run --highhalf-test <kind>\n       cargo xtask screenshot [output.png] [--wait-secs N] [--gfx-test] [--kvm]\n       cargo xtask run-set [--jobs K] <一覧のファイル>   (案 B の ②。一覧の試験を K 本ずつ同時に走らせる。1 行に xtask の引数を 1 つ分)\n       cargo xtask image [--without-fs-image]   (ADR-0068 の HW-e。起動媒体の像を建てて確かめる)\n       cargo xtask gen-font\n       cargo xtask judge-vbox <記録>   (ADR-0068 の 2-2。tools/vbox-vm.py run が残した記録を判定する)";
+       cargo xtask run --calibration-spread [N]\n       cargo xtask run --highhalf-test <kind>\n       cargo xtask screenshot [output.png] [--wait-secs N] [--gfx-test] [--kvm]\n       cargo xtask run-set [--jobs K] <一覧のファイル>   (案 B の ②。一覧の試験を K 本ずつ同時に走らせる。1 行に xtask の引数を 1 つ分)\n       cargo xtask image [--without-fs-image]   (ADR-0068 の HW-e。起動媒体のイメージを建てて確かめる)\n       cargo xtask gen-font\n       cargo xtask judge-vbox <記録>   (ADR-0068 の 2-2。tools/vbox-vm.py run が残した記録を判定する)";
 
     // **コンパイルした木と別の木で動いていれば、何もせずに落ちる**（2026-09-27。[`built_elsewhere`]）。
     if let Some(problem) = built_elsewhere(
@@ -4928,7 +4928,7 @@ fn cmd_fs_image_extract(features: &[&str]) -> Result<()> {
 
     // **装置が実際に読まれた量（S13-c）。** QEMU の帳簿を、殺す前に聞く。
     // **下限で見る**——OVMF の起動時の探りが混ざる（実測 8,704 バイト。イメージの
-    // 0.4%）ので差分は取らず、「像 1 枚ぶん以上」を要求する。基線を 2 回聞く
+    // 0.4%）ので差分は取らず、「イメージ 1 枚ぶん以上」を要求する。基線を 2 回聞く
     // 形は採らない——カーネルは xtask を待たないので、タイミングの競争になる。
     // 読んだ量と**書いた量**（S13-c / S13-e）を、1 回の帳簿から取る。
     let (disk_rd_bytes, disk_wr_bytes) = match connect_monitor_with_retry(&monitor_socket) {
@@ -5248,7 +5248,7 @@ fn cmd_fs_image_extract(features: &[&str]) -> Result<()> {
         (identical && gone, clean)
     };
 
-    // **装置が像 1 枚ぶん以上を配ったこと（S13-c）。** バイト一致は
+    // **装置がイメージ 1 枚ぶん以上を配ったこと（S13-c）。** バイト一致は
     // 「複製の中身が正しい」ことしか示せない——**複製元が装置だったことは、
     // QEMU の帳簿だけが独立に示せる**（`fs-load-from-embedded` の破壊テストは
     // 中身が同一なので、ここでしか検出されない）。期待値はホスト側のイメージの
@@ -5401,7 +5401,7 @@ const FS_TRUNCATE_SABOTAGES: &[(&str, &[&str])] = &[
     ("a stale i_blocks", &["ext2-truncate-skip-blocks-test"]),
 ];
 
-/// 追記の破壊テストと、それぞれが要る構成（S12-c）。**6 つとも書いたままの像で見る。**
+/// 追記の破壊テストと、それぞれが要る構成（S12-c）。**6 つとも書いたままのイメージで見る。**
 ///
 /// **`round-size` だけは判定 A を通り抜ける**——`e2fsck` が期待する値そのものを
 /// 書くので不満が出ない。**判定 B（中身と長さ）だけが落ちる。**
@@ -9146,7 +9146,7 @@ const TOOL_CHECKS_FULL: [(&str, &str, ToolCheck); 3] = [
     ),
 ];
 
-/// 既定の像を回の置き場へ置き、道具が使う既定の像として示す（2026-09-25。手の道具が起動する像。2026-09-29 から回の
+/// 既定のイメージを回の置き場へ置き、道具が使う既定のイメージとして示す（2026-09-25。手の道具が起動するイメージ。2026-09-29 から回の
 /// 置き場に置き、その道を返す）。
 fn stage_default_image(workspace_root: &Path) -> Result<PathBuf> {
     let run = RunDir::create(workspace_root, "default-image")?;
@@ -11130,7 +11130,7 @@ fn seinas_picture_matching(image: &Option<(u32, u32, Vec<u8>)>) -> Option<u32> {
 /// （2026-10-07。M2 の受け入れ。`ADR-0083` の Addendum）。
 ///
 /// **成果物が無ければ、名指しして飛ばす**（通ったことにはしない——`skipped` の行が結果に残る。`tools/fetch-seinas.sh` が取る）。
-/// 在れば、`seinas-test` の構成（像の `/bin/linux/seinas-fbdev`）で起動し、**シェルのプロンプトへ
+/// 在れば、`seinas-test` の構成（イメージの `/bin/linux/seinas-fbdev`）で起動し、**シェルのプロンプトへ
 /// `/bin/linux/seinas-fbdev --hold-ms 3000` を打ち**、絵の在る間に `screendump` を取り、終わった後にもう 1 度取る。
 ///
 /// **判定は 5 本**——
@@ -11960,14 +11960,14 @@ const MACHINE_VARIANT_CHECKS: &[(&str, VariantExpect)] = &[
 
 /// 起動媒体の破壊テスト（`ADR-0068` の HW-e）。**カーネルの feature ではなく、イメージの中身を変える。**
 ///
-/// **`\zeikos\fs.img` を入れずにイメージをビルドする**——**装置も像も無い形になり、起動の列挙の所で
+/// **`\zeikos\fs.img` を入れずにイメージをビルドする**——**装置もイメージも無い形になり、起動の列挙の所で
 /// 止まる。** **HW-d の破壊テスト（`fs-ram-image-ignored`）とは止まる所が違う**（実測。2026-09-23）
 /// ——**あちらはイメージを渡された上で見ないので、コピーする所まで進んで止まる。** **こちらはイメージそのものが
-/// 無いので、その前の「装置も像も無い」の検査で止まる。**
+/// 無いので、その前の「装置もイメージも無い」の検査で止まる。**
 ///
 /// **既定の回（[`MACHINE_VARIANT_CHECKS`] の `media-only`）が進むことの裏返しの証明である**
 /// ——**イメージに `fs.img` が入っていなければ、既定の回もこの行で止まるはずだからである。**
-/// **理由の行も見る**——**止まった行だけでは「像から外れていた」ことは言えない**（装置の無い
+/// **理由の行も見る**——**止まった行だけでは「イメージから外れていた」ことは言えない**（装置の無い
 /// 構成なら、別の理由でも同じ行になる）。
 ///
 /// (変種の名前, イメージの中身, 何が起きれば狙いどおりか)
@@ -12032,7 +12032,7 @@ const MACHINE_VARIANT_SABOTAGES: &[(&str, &str, bool, VariantExpect)] = &[
              calibrated against the PIT ticks alone",
         ),
     ),
-    // **RAM ディスクのイメージを見ない**——**装置も像も無い形になり、読むソースが 1 つも無いと出力して止まる。**
+    // **RAM ディスクのイメージを見ない**——**装置もイメージも無い形になり、読むソースが 1 つも無いと出力して止まる。**
     // **RAM ディスクの道が実際に使われていることの裏返しの証明である**（見ていなければ、
     // 既定の回もこの行で止まるはずだからである）。
     (
@@ -12098,10 +12098,10 @@ enum VariantExpect {
     /// 狙いどおりに止まった行と、**なぜそうなったかの行**の両方が出て、プロンプトが出ない
     /// （HW-e。`ADR-0068`）。
     ///
-    /// **止まった行だけでは足りない場合が在る。** **イメージから `fs.img` を外した回は、装置も像も
+    /// **止まった行だけでは足りない場合が在る。** **イメージから `fs.img` を外した回は、装置もイメージも
     /// 無い形になって止まる**が、**装置の無い構成なら、イメージから外れていなくても同じ行で止まりうる**
     /// （ブートローダが読めなかった等）——**理由の行（ブートローダが「ESP に `fs.img` が無い」と
-    /// 出力する行）まで見て、初めて「像から外れていた」ことの観測になる。**
+    /// 出力する行）まで見て、初めて「イメージから外れていた」ことの観測になる。**
     StopsWithReason {
         line: &'static str,
         reason: &'static str,
@@ -12349,10 +12349,10 @@ fn check_the_write_cap_stops_qemu() -> Result<()> {
     let run = RunDir::create(&workspace_root, "write-cap")?;
     let ovmf_vars = prepare_ovmf_vars(&run)?;
     let bootloader_efi = build_bootloader(&workspace_root, false)?;
-    // **カーネルは、像を装置へ書き戻さない構成でビルドする**（2026-10-05。`fs-flush-skip-test`）。**この項目が見るのは
+    // **カーネルは、イメージを装置へ書き戻さない構成でビルドする**（2026-10-05。`fs-flush-skip-test`）。**この項目が見るのは
     // 書く側の上限で、書き戻しではない。** 上限（8 MiB）は QEMU が書くどのファイルにも掛かるので、既定のカーネルでは、
-    // 起動時の像の書き戻し（32 MiB）が先に上限へ当たって失敗し、カーネルが止まって、`-D` の記録が上限まで伸びない
-    // （像を 32 MiB にしたときに実際に起きた）。**上限を像より大きくする手は採らなかった**——`-D` の記録が 90 秒で
+    // 起動時のイメージの書き戻し（32 MiB）が先に上限へ当たって失敗し、カーネルが止まって、`-D` の記録が上限まで伸びない
+    // （イメージを 32 MiB にしたときに実際に起きた）。**上限をイメージより大きくする手は採らなかった**——`-D` の記録が 90 秒で
     // 12 MiB しか伸びず、40 MiB の上限には届かなかった（実測）。
     let kernel = build_kernel_with_features(&workspace_root, &["fs-flush-skip-test"])?;
     let esp_dir = stage_esp(&run, &bootloader_efi, &kernel)?;
@@ -12741,11 +12741,11 @@ fn cmd_image(contents: MediaContents) -> Result<()> {
     Ok(())
 }
 
-/// 基本の検査の項目——**ext2 の像のバイトが、写しの置き場の当たり・外れ・使わないの 3 通りで同じこと**（2026-10-08）。
+/// 基本の検査の項目——**ext2 のイメージのバイトが、写しの置き場の当たり・外れ・使わないの 3 通りで同じこと**（2026-10-08）。
 ///
 /// # なぜ在るのか
 ///
-/// **像のバイトは起動ログの参照（巻の名前と、superblock のセクタの検査値）に出る。** 写しの置き場の当たりは読み取り専用の
+/// **イメージのバイトは起動ログの参照（巻の名前と、superblock のセクタの検査値）に出る。** 写しの置き場の当たりは読み取り専用の
 /// 写しへのハードリンクで、`fs::copy` が権限を写し、`mke2fs -d` がそれを inode へ入れていたので、当たりだけ `/bin` の
 /// プログラムが 0444 になり、参照と食い違った（`docs/troubleshooting.md` の 2026-10-08 の項）。いまは `build.rs` が seed の
 /// 権限を決める。**この項目は、決め忘れや、権限のほかに写し元から混ざるものを、全検査を待たずに捕まえる。**
@@ -12754,7 +12754,7 @@ fn cmd_image(contents: MediaContents) -> Result<()> {
 ///
 /// 既定の構成で `cargo check` を 3 回回す——写しの置き場を使わない回、空の置き場で全部が外れる回、同じ置き場で全部が
 /// 当たる回。`cargo` の置き場と写しの置き場はこの回の使い捨ての置き場（tmpfs）に置き、メインの `target/` と本物の
-/// 写しの置き場には触らない。`cargo check` でもビルドスクリプトは走るので、像は同じものができる（コード生成をしない分速い）。
+/// 写しの置き場には触らない。`cargo check` でもビルドスクリプトは走るので、イメージは同じものができる（コード生成をしない分速い）。
 fn check_image_determinism(workspace_root: &Path) -> Result<String> {
     let run = RunDir::create(workspace_root, "image-determinism")?;
     let target = run.scratch_file("target");
@@ -12829,7 +12829,7 @@ fn check_image_determinism(workspace_root: &Path) -> Result<String> {
     ))
 }
 
-/// 像の確かめの `cargo check` の引数（既定の構成。全検査の裏の流れと同じく、増分の置き場を使わない）。
+/// イメージの確かめの `cargo check` の引数（既定の構成。全検査の裏の流れと同じく、増分の置き場を使わない）。
 fn image_check_cargo_args() -> Vec<String> {
     let mut args = kernel_cargo_args(&[]);
     args[0] = "check".to_string();
@@ -12847,7 +12847,7 @@ fn cache_tally(tally: &str) -> Option<(usize, usize)> {
     Some((field("hits:")?, field("misses:")?))
 }
 
-/// 3 通りの像の食い違い（純粋な論理）。**同じで、外れの回と当たりの回が本当にそうなっていれば `None`。**
+/// 3 通りのイメージの食い違い（純粋な論理）。**同じで、外れの回と当たりの回が本当にそうなっていれば `None`。**
 fn image_determinism_problem(images: &[(&str, Vec<u8>, String)]) -> Option<String> {
     let [(_, off, off_tally), (_, miss, miss_tally), (_, hit, hit_tally)] = images else {
         return Some(format!("expected 3 builds, got {}", images.len()));
@@ -12967,8 +12967,8 @@ fn cmd_machine_variant(
     let bootloader_efi = build_bootloader_with_features(&workspace_root, bootloader_features)?;
     let kernel_elf = build_kernel_with_features(&workspace_root, kernel_features)?;
     let esp_dir = stage_esp(&run, &bootloader_efi, &kernel_elf)?;
-    // **像を RAM から受け取る変種にだけ、ESP へ像を置く**（2026-10-05。[`stage_ram_image`]）。**virtio-blk を付けて
-    // ディレクトリから起動する変種には置かない。** **起動媒体から像を外す破壊テストの回にも置かない**——
+    // **イメージを RAM から受け取る変種にだけ、ESP へイメージを置く**（2026-10-05。[`stage_ram_image`]）。**virtio-blk を付けて
+    // ディレクトリから起動する変種には置かない。** **起動媒体からイメージを外す破壊テストの回にも置かない**——
     // 起動媒体へ入れるファイルの一覧（`MediaContents::paths`）に無いので、置いても載らない。
     if (!variant.virtio_disk || variant.esp == EspSource::Media) && media == MediaContents::Complete
     {
@@ -17109,14 +17109,14 @@ fn image_checksum(bytes: &[u8]) -> u32 {
     sum
 }
 
-/// 像の「管理用の部分」の検査値（2026-10-05）。**カーネルが起動ログに出す値と突き合わせる相手である。**
+/// イメージの「管理用の部分」の検査値（2026-10-05）。**カーネルが起動ログに出す値と突き合わせる相手である。**
 ///
 /// **範囲は、先頭から、グループ 0 の inode の表の終わりまでである**（`common::ext2` の `management_prefix_len`）。
-/// **以前は像の全体だった。** カーネルが像の全体を歩く時間が、像の大きさに比例して延びたので絞った
+/// **以前はイメージの全体だった。** カーネルがイメージの全体を歩く時間が、イメージの大きさに比例して延びたので絞った
 /// （`docs/adr/0077-costs-that-grow-with-the-disk-image.md`）。**ファイルの中身の違いは、ボリュームの名前の欄に
-/// 書いた全体の検査値を通して、この範囲の値に出る。** 像の全体のバイト一致は、取り出した像との比べが見る。
+/// 書いた全体の検査値を通して、この範囲の値に出る。** イメージの全体のバイト一致は、取り出したイメージとの比べが見る。
 ///
-/// **解析できない像は `None`**（カーネルの側は 0 バイトの検査値を出して、解析の失敗で止まる）。
+/// **解析できないイメージは `None`**（カーネルの側は 0 バイトの検査値を出して、解析の失敗で止まる）。
 fn management_checksum(bytes: &[u8]) -> Option<u32> {
     let fs = common::ext2::Ext2::parse(bytes).ok()?;
     let length = fs.management_prefix_len().ok()?;
@@ -17777,7 +17777,7 @@ fn judge_shell_session(
     // **落とす破壊テストは無い。** **`brk-skip-shrink-test` は縮める側を壊すもので、
     // 伸ばす側は通る**（実測でこの行は成功のままである）。**足すときに確かめた。**
     let c_heap_worked = after_shell.contains("heap ok");
-    // **Linux 向けの musl の静的な像が、シェルから起きて、Linux と同じ出力と終了の状態で終わること**（M1。2026-10-06）。
+    // **Linux 向けの musl の静的なイメージが、シェルから起きて、Linux と同じ出力と終了の状態で終わること**（M1。2026-10-06）。
     // **出力は `linux-programs/reference/m1-rust.txt` と突き合わせる**——環境変数の数の行だけは、シェルが渡す数で
     // 変わるので、数を見ずに形だけ見る。終了の状態は `zash: exit status 4`（引数の数）で見る。
     let m1_rust_matched_the_linux_reference = linux_program_output_matches(
@@ -20521,7 +20521,7 @@ const BOOT_LOG_VOLATILE_MARKERS: &[&str] = &[
     // ——**ファームウェアの配りが CPU の数で変わる**（実測で 1・2・4 が `0xd353000`・`0xd361000`・
     // `0xd36b000`）。**隠したものを見る者**: **`pc-no-virtio` の変種が、このイメージから起動する。**
     "fs-image: handed over",
-    // **ディスクの像の読み書きの、区間ごとの所要**（2026-10-05）。**TSC のサイクル数なので実行ごとに変わる。**
+    // **ディスクのイメージの読み書きの、区間ごとの所要**（2026-10-05）。**TSC のサイクル数なので実行ごとに変わる。**
     // **隠したものを見る者**: **無い。** 遅くなる退行は、全検査の所要時間でしか見えない（性能は判定に載せていない）。
     "fs-timing:",
 ];
@@ -20608,7 +20608,7 @@ const BOOT_LOG_VOLATILE_FIELDS: &[VolatileField] = &[
         before: "byte(s) of its kernel stack (",
         after: "%), over half=",
     },
-    // スレッドの中の例外と exit_group の像（3-1b）。
+    // スレッドの中の例外と exit_group のイメージ（3-1b）。
     VolatileField {
         line: "spawn: /bin/linux/m3a-fault-rust ended",
         before: " after ",
@@ -20629,7 +20629,7 @@ const BOOT_LOG_VOLATILE_FIELDS: &[VolatileField] = &[
         before: " after ",
         after: " syscall(s)",
     },
-    // futex で眠った回数と起こした本数（スレッドを作る像）。
+    // futex で眠った回数と起こした本数（スレッドを作るイメージ）。
     VolatileField {
         line: "futex: /bin/linux/m3a-rust slept",
         before: " slept ",
@@ -20690,7 +20690,7 @@ const BOOT_LOG_VOLATILE_FIELDS: &[VolatileField] = &[
         before: " woke ",
         after: " waiter(s)",
     },
-    // 3-2 の像（2026-10-15）のシステムコールの数と futex の眠り・起こし。
+    // 3-2 のイメージ（2026-10-15）のシステムコールの数と futex の眠り・起こし。
     VolatileField {
         line: "spawn: /bin/linux/m3a-exit-while-spinning-rust ended",
         before: " after ",
@@ -20838,7 +20838,7 @@ const BOOT_LOG_VOLATILE_FIELDS: &[VolatileField] = &[
         before: " roused ",
         after: " sleeper(s)",
     },
-    // 大きな空間（1,024 フレーム以上）の破棄に掛かった時間。スレッドを 2 本持つ像で初めて既定の起動に出た（3-1b）。
+    // 大きな空間（1,024 フレーム以上）の破棄に掛かった時間。スレッドを 2 本持つイメージで初めて既定の起動に出た（3-1b）。
     VolatileField {
         line: "user-destroy: /bin/linux/m3a-exit-group-waiters-rust returned",
         before: " in ",
@@ -21364,7 +21364,7 @@ fn normalize_boot_log(serial: &str, drop_core_count_lines: bool) -> Vec<String> 
 ///    カーネルとファイルシステムとシリアル）
 ///
 /// **加えて、2 度目のカーネルの検査値が、起動する前にホストが `disk0.img` から
-/// 計算した値と一致する**（P-a と同じ本。**間で像を作り直していないこと**）。
+/// 計算した値と一致する**（P-a と同じ本。**間でイメージを作り直していないこと**）。
 ///
 /// # 破壊テスト
 ///
@@ -21820,7 +21820,7 @@ fn capture_one_boot(
 ///
 /// **「上書きをやめれば残るはず」は主張にならない**——**いまのフラッシュは複製を
 /// そのまま書き戻すだけなので、2 度起動しても中身が同じなら「持ち越した」と
-/// 「毎回同じ像を建てた」が区別できない。** **1 度目に変化を作る。**
+/// 「毎回同じイメージを建てた」が区別できない。** **1 度目に変化を作る。**
 ///
 /// **1 度目は `fs-alloc-keep-test` で起動する**——**あの構成は割り当てたブロックを
 /// 解放しないので、フラッシュされるイメージがビルドしたイメージと違う。** **既定の構成では
@@ -21833,7 +21833,7 @@ fn capture_one_boot(
 /// **カーネルの側とホストの側の両方を持つ**——**片方が壊れても気づける。**
 ///
 /// - **ホストが外の道具で装置の変化を読む**（`dumpe2fs`。`Free blocks` が減っている）
-/// - **間で像を作り直していない**（`stage_esp` が出す行）
+/// - **間でイメージを作り直していない**（`stage_esp` が出す行）
 /// - **2 度目が止まっていない**（`fs-image-ready` が出る）
 /// - **2 度目のカーネルが、1 度目の変化を読んでいる**（空きブロック数が減っている）
 /// - **2 度目のカーネルの検査値が、起動する前にホストが `disk0.img` から
@@ -21867,7 +21867,7 @@ fn capture_one_boot(
 ///
 /// # 持ち越したイメージでも、壊れたイメージの検査は通る（実測）
 ///
-/// **壊したイメージの検査の前提**（作り直した像でしか走らない。`ADR-0034` の
+/// **壊したイメージの検査の前提**（作り直したイメージでしか走らない。`ADR-0034` の
 /// Addendum）**は、保守的に書いてある。** **2 度目の起動は持ち越したイメージの上で
 /// あの検査を走らせているが、通った**（実測。2026-08-28）。
 /// **理由は、あの検査が見ているのが解析の失敗**（`magic` を潰す、`rev` を落とす）
@@ -21952,7 +21952,7 @@ fn cmd_persist_test(rebuild_between: bool) -> Result<()> {
         "fs-image-ready",
     )?;
 
-    // **間で像を作り直していないこと。** **`stage_esp` が出す行で見る。**
+    // **間でイメージを作り直していないこと。** **`stage_esp` が出す行で見る。**
     let kept_the_disk = second.contains("persist: kept");
     // **行はシリアルではなく標準出力に出る**ので、モードから導く。
     let kept_the_disk = kept_the_disk || !rebuild_between;
@@ -22033,7 +22033,7 @@ fn capture_boot_log(
     let bootloader_efi = build_bootloader(workspace_root, false)?;
     let kernel_elf = build_kernel(workspace_root, false)?;
     let esp_dir = stage_esp(&run, &bootloader_efi, &kernel_elf)?;
-    // **既定の構成の像なので、道具（`tools/stack-deepest.py` など）が使う既定の像として示す。**
+    // **既定の構成のイメージなので、道具（`tools/stack-deepest.py` など）が使う既定のイメージとして示す。**
     run.publish_as_default_image()?;
 
     let serial_log = run.serial_log();
@@ -22175,7 +22175,7 @@ enum LinuxReferenceEnvironment {
 }
 
 /// 起動のたびにカーネルが起こす Linux 向けのプログラム（`kernel/src/main.rs` の `verify_linux_programs`。`m1-rust` は M1、
-/// `m3a-*` はスレッドの像で M3a。2026-10-14）。**どれも引数 4 つで起こす。** 終わり方はカーネルの側が見る（`m3a-fault-rust` は
+/// `m3a-*` はスレッドのイメージで M3a。2026-10-14）。**どれも引数 4 つで起こす。** 終わり方はカーネルの側が見る（`m3a-fault-rust` は
 /// `Folded(14)`、`m3a-exit-group-rust` は `Exited(7)`、ほかは `Exited(4)`）——ここで見るのは出力の行だけである。
 const LINUX_PROGRAMS_IN_THE_BOOT_LOG: &[&str] = &[
     "m1-rust",
@@ -23404,12 +23404,12 @@ fn field_value(line: &str, field: &str) -> Option<String> {
     Some(rest[..end].to_string())
 }
 
-/// C の Linux 向けのプログラム（`musl-gcc` で手で作った `target/linux-programs/m1-c`）を像に入れた構成（`linux-c-test`）で
+/// C の Linux 向けのプログラム（`musl-gcc` で手で作った `target/linux-programs/m1-c`）をイメージに入れた構成（`linux-c-test`）で
 /// 起動し、`syscall-test` が `spawn` で起こした `/bin/linux/m1-c` の出力と終了の状態を、Linux 上で控えた参照
 /// （`linux-programs/reference/m1-c.txt`）と突き合わせる（M1。2026-10-06）。
 ///
 /// **道具が無くて作っていなければ、名指しして飛ばす**（通ったことにはしない——「skipped」の行が結果に残る。CI には
-/// `musl-gcc` が無い）。版が配布物に依るので、既定の像には入れない。
+/// `musl-gcc` が無い）。版が配布物に依るので、既定のイメージには入れない。
 fn cmd_linux_c_test() -> Result<()> {
     let context = "linux-c-test";
     let workspace_root = workspace_root()?;
@@ -26411,7 +26411,7 @@ const FIXED_RUN_NAMES: &[(&str, &str)] = &[
     (concat!("/tmp/", "zeikos-xtask-"), "a monitor socket"),
 ];
 
-/// 道具（`tools/*.py`）が、決まった置き場の像を読む形（2026-09-29。案 B の ①）。**道具は `--image` で回の置き場を
+/// 道具（`tools/*.py`）が、決まった置き場のイメージを読む形（2026-09-29。案 B の ①）。**道具は `--image` で回の置き場を
 /// 受け取る。**
 const FIXED_RUN_NAMES_IN_TOOLS: &[(&str, &str)] = &[
     ("\"target\", \"esp\"", "the ESP directory"),
@@ -27060,7 +27060,7 @@ const SMP_AP_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // AP の CPU ごとのスタックのページに置いた 1 バイト（ret）を実行する（2026-10-02）。**像の `.data` とは別の経路
+    // AP の CPU ごとのスタックのページに置いた 1 バイト（ret）を実行する（2026-10-02）。**イメージの `.data` とは別の経路
     // （稼働中の表へ 1 枚ずつ足す経路）で写したページの実行禁止を見る。** 実行するのは BSP で、AP を起こす前である。
     CriticalTest {
         name: "kernel-executes-stack",
@@ -29322,7 +29322,7 @@ fn check_structural_guard_symbols_present(workspace_root: &Path) -> Result<Strin
 ///
 /// # 何を検出する検査か
 ///
-/// **落ちるのは「像の作り手が変わった」ときである。** `kernel/build.rs` は
+/// **落ちるのは「イメージの作り手が変わった」ときである。** `kernel/build.rs` は
 /// `mke2fs` でイメージをビルドし、**そのあと時刻の 7 箇所をゼロで上書きしている。**
 /// 上書きはイメージのバイトを直接書き換える操作なので、**別の版の `mke2fs` が
 /// 別の場所に別の大きさで時刻を置けば、無関係なバイトを潰しうる。**
@@ -29331,7 +29331,7 @@ fn check_structural_guard_symbols_present(workspace_root: &Path) -> Result<Strin
 ///
 /// **判定行に載せた `mke2fs` の版と対になる検査である。** あちらは
 /// 「作り手が変わったこと」を人が読んで気づくための記録で、こちらは
-/// 「作り手が変わって像が壊れたこと」を機械で止める側である。
+/// 「作り手が変わってイメージが壊れたこと」を機械で止める側である。
 ///
 /// # 依存はもう及んでいる
 ///
@@ -29419,7 +29419,7 @@ fn check_image_text_is_ascii(workspace_root: &Path) -> Result<String> {
                      column {column}. Text that goes into the image must be ASCII: the console \
                      font holds printable ASCII and the replacement character, so anything else \
                      renders as a box (docs/coding-standards.md, the section named \
-                     「像へ入れるテキストはASCIIに限る」)"
+                     「イメージへ入れるテキストはASCIIに限る」)"
                 );
             }
             if *byte == b'\n' {
@@ -29937,7 +29937,7 @@ fn run_e2fsck(image: &Path) -> Result<String> {
         );
     }
 
-    // 要約行（`<像>: N/M files (...), N/M blocks`）から、イメージのパスを落として返す。
+    // 要約行（`<イメージ>: N/M files (...), N/M blocks`）から、イメージのパスを落として返す。
     // **使用量が判定行に残り、パスに依らない**（`OUT_DIR` はハッシュを含む）。
     let summary = stdout
         .lines()
@@ -31360,7 +31360,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
         Family::Base,
         "the Linux program's lines in the boot log reference match the reference recorded on Linux",
     );
-    // **`m3a-rust`（スレッドを 1 つ作る像。M3a。2026-10-14）も同じ参照の形で見る。**
+    // **`m3a-rust`（スレッドを 1 つ作るイメージ。M3a。2026-10-14）も同じ参照の形で見る。**
     match fs::read_to_string(workspace_root.join(REFERENCE_BOOT_LOG))
         .context("failed to read the boot log reference")
         .and_then(|text| {
@@ -32567,7 +32567,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
             &mut failed,
         );
 
-        // カーネルの像の読むだけの区画の 1 ページを、書き込み可で写す形（2026-10-02。像を区画ごとに写す経路）。
+        // カーネルのイメージの読むだけの区画の 1 ページを、書き込み可で写す形（2026-10-02。イメージを区画ごとに写す経路）。
         total += 1;
         begin_item(
             Family::Memory,
@@ -32917,7 +32917,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
             }
         }
 
-        // **追記（S12-c）。** **書いたままの像でしか判定 A・B・D は言えない。**
+        // **追記（S12-c）。** **書いたままのイメージでしか判定 A・B・D は言えない。**
         total += 1;
         begin_item(
             Family::Fs,
@@ -35625,7 +35625,7 @@ impl Failures {
     /// もの**（呼んでいなければ実行の記録から分ける。検査装置の故障は見分けられない）。
     fn push(&mut self, name: String) {
         FAILED_SO_FAR.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-        // **この項目は失敗した**（2026-10-05）——項目の終わりに、使い捨ての置き場の像を SSD へ写す（`run_dir` の
+        // **この項目は失敗した**（2026-10-05）——項目の終わりに、使い捨ての置き場のイメージを SSD へ写す（`run_dir` の
         // `finish_item`）。
         ITEM_FAILED.with(|slot| slot.set(true));
         let category = ITEM_FAILURE_CATEGORY
@@ -35990,7 +35990,7 @@ fn begin_item(family: Family, label: &str) {
     }
     println!("=== xtask check: {label}");
     // **この項目の使い捨ての置き場は、項目の終わりまで残す**（2026-10-05。同じ項目の次の起動が、前の起動の
-    // 装置の像を読む）。
+    // 装置のイメージを読む）。
     run_dir::begin_item();
     // **項目の始まりの時刻を残す**（2026-09-29。試験の時間を縮める案の 0。全検査の間だけ）。
     sampling::note_item(label);
@@ -36041,7 +36041,7 @@ fn over_the_time_limit() -> bool {
 /// 走っている項目の所要を出す（VIEW-b の後）。**走っていなければ何もしない。**
 fn finish_item() {
     // **使い捨ての置き場（tmpfs）を片付ける**（2026-10-05。`run_dir` の型の doc）。**項目が失敗していれば、
-    // 装置の像と取り出した像を SSD の置き場へ写してから消す。**
+    // 装置のイメージと取り出したイメージを SSD の置き場へ写してから消す。**
     run_dir::finish_item(ITEM_FAILED.with(|slot| slot.replace(false)));
     let taken = item_clock(|clock| clock.take());
     if let Some((started, label, family)) = taken {
@@ -36688,7 +36688,7 @@ fn kernel_cargo_args(features: &[&str]) -> Vec<String> {
 ///
 /// 1. **SSD へ書く量。** カーネルは、破壊テストの構成ごとに 1 度ずつビルドする（約 870 組）。増分の置き場は組ごとに
 ///    でき、数十 GiB になっていた。
-/// 2. **同じバイナリになること。** 増分の置き場を使うかどうかで、コードの分け方が変わり、カーネルの像の大きさと番地が
+/// 2. **同じバイナリになること。** 増分の置き場を使うかどうかで、コードの分け方が変わり、カーネルのイメージの大きさと番地が
 ///    変わる（実測。全検査の側だけ使わない形にしたら、起動ログの参照と 1 ページ食い違った）。**起動ログとページの
 ///    権限の参照は、どの木で、どの順でビルドしても同じバイナリになることに依っている。**
 ///
@@ -37322,9 +37322,9 @@ fn stage_esp(run: &RunDir, bootloader_efi: &Path, kernel: &KernelBuild) -> Resul
 /// 起動媒体のイメージ（HW-e）にこのファイルが入る。** **中身は `disk0.img` と同じ、いま積んだカーネルがビルドした
 /// イメージである。**
 ///
-/// **呼ぶのは、像を RAM から受け取る回だけである**——起動媒体のイメージをビルドする回（`cargo xtask image`、
+/// **呼ぶのは、イメージを RAM から受け取る回だけである**——起動媒体のイメージをビルドする回（`cargo xtask image`、
 /// 基本の検査の起動媒体の項目、ESP を 1 つのイメージで渡す変種）と、virtio-blk を付けない変種。
-/// **virtio-blk を付けてディレクトリから起動する回（検査の大半）は呼ばない**——ブートローダは「像が無い。
+/// **virtio-blk を付けてディレクトリから起動する回（検査の大半）は呼ばない**——ブートローダは「イメージが無い。
 /// カーネルは装置を使う」と 1 行出して進む。
 fn stage_ram_image(esp_dir: &Path, kernel: &KernelBuild) -> Result<()> {
     let staged = esp_dir.join("zeikos").join(FS_IMAGE_NAME);
@@ -37334,21 +37334,21 @@ fn stage_ram_image(esp_dir: &Path, kernel: &KernelBuild) -> Result<()> {
     )
 }
 
-/// ディスクの像の、0 だけのブロックを見分ける単位（バイト）。ext2 のブロックと同じ大きさにしてある。
+/// ディスクのイメージの、0 だけのブロックを見分ける単位（バイト）。ext2 のブロックと同じ大きさにしてある。
 const SPARSE_COPY_BLOCK: usize = 4096;
 
-/// ディスクの像を、**0 だけのブロックを書かずに**写す（2026-10-05。`ADR-0077` の決定 6）。
+/// ディスクのイメージを、**0 だけのブロックを書かずに**写す（2026-10-05。`ADR-0077` の決定 6）。
 ///
 /// # なぜ要るか
 ///
-/// **像の大半は、使っていない 0 のブロックである**（32 MiB の像で、使っているのは約 3 MiB）。`fs::copy` は
-/// 0 も書くので、写しの 1 つ 1 つが、像の大きさだけディスクを取る。回ごとの置き場に装置の像が 1 つずつ残るので、
-/// 像を大きくすると、そのままホストのディスクに効いた（実測。全検査の木が 8.2 GiB 増えた）。
+/// **イメージの大半は、使っていない 0 のブロックである**（32 MiB のイメージで、使っているのは約 3 MiB）。`fs::copy` は
+/// 0 も書くので、写しの 1 つ 1 つが、イメージの大きさだけディスクを取る。回ごとの置き場に装置のイメージが 1 つずつ残るので、
+/// イメージを大きくすると、そのままホストのディスクに効いた（実測。全検査の木が 8.2 GiB 増えた）。
 ///
 /// # 守ること
 ///
-/// **ファイルの長さは変えない。** QEMU も検査も、像を長さで見ている（装置の容量、書き戻したバイト数、
-/// 取り出した像との比べ）。**写した後の長さが元と同じであることを、ここで確かめる**——違えば、写しを使わせずに
+/// **ファイルの長さは変えない。** QEMU も検査も、イメージを長さで見ている（装置の容量、書き戻したバイト数、
+/// 取り出したイメージとの比べ）。**写した後の長さが元と同じであることを、ここで確かめる**——違えば、写しを使わせずに
 /// 落ちる。中身は、どのバイトも元と同じである（書かなかった所は、ファイルシステムが 0 として読ませる）。
 fn copy_image_sparse(from: &Path, to: &Path) -> Result<()> {
     let bytes = fs::read(from).with_context(|| format!("failed to read {}", from.display()))?;
@@ -37457,9 +37457,9 @@ fn stage_esp_with_disk_unwrapped(
     // （16MiB に伸ばす根拠が無くなった）。
     // **RAM ディスクのイメージは、ここでは ESP に置かない**（2026-10-05）。**置くのは [`stage_ram_image`] で、
     // 要る回だけが呼ぶ**——起動媒体のイメージをビルドする回と、virtio-blk を付けずに起動する回である。
-    // **以前は常に置いていた。** virtio-blk が在る回は、ブートローダが像を読んで渡しても、カーネルは使わない。
-    // 読むのにかかる時間は像の大きさに比例し、32 MiB で約 3.6 秒だった（実測。`docs/verification-coverage.md` の
-    // 「ディスクの像の読み書きの所要」）。
+    // **以前は常に置いていた。** virtio-blk が在る回は、ブートローダがイメージを読んで渡しても、カーネルは使わない。
+    // 読むのにかかる時間はイメージの大きさに比例し、32 MiB で約 3.6 秒だった（実測。`docs/verification-coverage.md` の
+    // 「ディスクのイメージの読み書きの所要」）。
 
     let disk_image = run.disk_image();
     // **載せるイメージは、いま積んだカーネルが埋め込んでいるものと同じである**
@@ -37933,7 +37933,7 @@ thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack
         assert_eq!(cache_tally("cache: off\n"), None);
     }
 
-    /// 像の 3 通りの比べ方は、同じなら通し、違うバイトと、外れ・当たりになっていない回を名指しで落とす（2026-10-08）。
+    /// イメージの 3 通りの比べ方は、同じなら通し、違うバイトと、外れ・当たりになっていない回を名指しで落とす（2026-10-08）。
     #[test]
     fn image_determinism_names_the_difference() {
         let off = "cache: off\nhits: 0\nmisses: 3\n".to_string();
@@ -37959,7 +37959,7 @@ thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack
             .contains("did not miss and then hit"));
     }
 
-    /// 像を穴の在るファイルとして写しても、**長さと中身は元と同じである**（2026-10-05）。0 だけのブロックが
+    /// イメージを穴の在るファイルとして写しても、**長さと中身は元と同じである**（2026-10-05）。0 だけのブロックが
     /// 参照を取り直してよいのは、場面の終わりまで届き、カーネルが止まっていない回だけである（2026-10-05）。
     #[test]
     fn a_reference_is_written_only_from_a_boot_that_reached_the_end() {
@@ -37975,7 +37975,7 @@ thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack
         assert!(reference_capture_problem(true, Some("x; halting")).is_some());
     }
 
-    /// 先頭・途中・末尾に在る像と、長さがブロックの倍数でない像と、全部が 0 の像で確かめる。
+    /// 先頭・途中・末尾に在るイメージと、長さがブロックの倍数でないイメージと、全部が 0 のイメージで確かめる。
     #[test]
     fn a_sparse_image_copy_keeps_the_length_and_every_byte() {
         let dir = std::env::temp_dir().join(format!("zeikos-sparse-copy-{}", std::process::id()));

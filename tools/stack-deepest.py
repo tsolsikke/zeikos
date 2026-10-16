@@ -23,13 +23,13 @@
 
 # 使い方
 
-    cargo xtask run --boot-log-diff             # 既定の像を回の置き場へ置き、target/runs/default-image をその印にする
+    cargo xtask run --boot-log-diff             # 既定のイメージを回の置き場へ置き、target/runs/default-image をその印にする
     python3 tools/stack-deepest.py              # プロンプトの時点と、stack-water の行の深さ
     python3 tools/stack-deepest.py --depth 66816
-    python3 tools/stack-deepest.py --image target/runs/<番号>   # 別の回の像を測る
+    python3 tools/stack-deepest.py --image target/runs/<番号>   # 別の回のイメージを測る
 
-**像は、既定の像の印が指す回の置き場のものを使う**（`--image` で別の回を選べる。`tools/qemu-variants.py` と同じ注意。
-**どの像だったかは `build:` の行に出る**）。
+**イメージは、既定のイメージの印が指す回の置き場のものを使う**（`--image` で別の回を選べる。`tools/qemu-variants.py` と同じ注意。
+**どのイメージだったかは `build:` の行に出る**）。
 **起こし方は `xtask` の既定と同じ**（`-machine pc -m 256M -smp 2`）。**作業物は `target/stack-deepest/` へ置く。**
 **`target/` を `xtask` と共有するので、`--full` と並べて走らせない。** **全検査の間は錠で断る**
 （`tools/check_lock.py`。終了の値 75。2026-09-25）。**`--full` の道具の確かめから呼ばれたときは、
@@ -81,7 +81,7 @@ ANSI = re.compile(r"\x1b\[[0-9;]*m")
 FILL = 0xA5
 GUARD, SIZE = 4096, 128 * 1024
 WAIT_LIMIT = 180
-# **像は回の置き場から取る**（`xtask` の `RunDir`。2026-09-29）。既定は、`cargo xtask run --boot-log-diff` が既定の像として
+# **イメージは回の置き場から取る**（`xtask` の `RunDir`。2026-09-29）。既定は、`cargo xtask run --boot-log-diff` が既定のイメージとして
 # 示した置き場（印は `xtask/src/run_dir.rs` の `publish_as_default_image` が作る）。**ELF の表を読み込むときに要るので、
 # `--image` は引数の解釈より先に読む。** 印は最初に 1 度だけ辿る（走っている間に印が動いても、同じ置き場を使う）。
 DEFAULT_IMAGE = os.path.join(ROOT, "target", "runs", "default-image")
@@ -312,7 +312,7 @@ def main():
     parser = argparse.ArgumentParser(description="起動時のカーネルスタックの最深経路を実測する")
     parser.add_argument("--depth", type=int, action="append", help="見る深さ（バイト。繰り返せる）")
     parser.add_argument("--image", default=DEFAULT_IMAGE,
-                        help="像の置き場（回の置き場。既定は target/runs/default-image）")
+                        help="イメージの置き場（回の置き場。既定は target/runs/default-image）")
     options = parser.parse_args()
     check_lock.hold_shared_or_exit("tools/stack-deepest.py " + " ".join(sys.argv[1:]))
     os.makedirs(OUT, exist_ok=True)

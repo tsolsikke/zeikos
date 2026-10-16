@@ -143,7 +143,7 @@ pub const PATH_RULES: &[PathRule] = &[
             "common/src/time.rs",
             // **どの Ring 3 のプログラムも ELF として読む。**
             "common/src/elf.rs",
-            // **どの Ring 3 のプログラムも、像を「範囲を読む口」で受けて載せる**（2026-10-05）。
+            // **どの Ring 3 のプログラムも、イメージを「範囲を読む口」で受けて載せる**（2026-10-05）。
             "common/src/image_source.rs",
             // **境界の段階で作る CPU 固有・機械固有・外部 ABI の置き場は、はじめは全部へ倒す**（運用者の回答 2。
             // グループへ振り分けるのは、境界が落ち着いてから）。
@@ -229,19 +229,19 @@ pub const PATH_RULES: &[PathRule] = &[
             "kernel/userland/tkill-self.rs",
             "kernel/userland/fb-test.rs",
             "kernel/userland/frame-hog.rs",
-            // **Linux 向けのプログラム**（2026-10-06。既定の像の `/bin/linux` に入り、起動時の `linux-check`（カーネル。
+            // **Linux 向けのプログラム**（2026-10-06。既定のイメージの `/bin/linux` に入り、起動時の `linux-check`（カーネル。
             // `bss-check` の後）とシェルのスクリプトが起こす。2026-10-07 までは `syscall-test` が起こしていた）。
             "linux-programs/m1-rust.rs",
-            // **スレッドを 1 つ作る像**（M3a。2026-10-14。起動時の `linux-check` が `m1-rust` の次に起こす）。
+            // **スレッドを 1 つ作るイメージ**（M3a。2026-10-14。起動時の `linux-check` が `m1-rust` の次に起こす）。
             "linux-programs/m3a-rust.rs",
             "linux-programs/m3a-mutex-rust.rs",
-            // **スレッドの中の例外と、スレッドからの exit_group の像**（M3a の 3-1b。2026-10-14）。
+            // **スレッドの中の例外と、スレッドからの exit_group のイメージ**（M3a の 3-1b。2026-10-14）。
             "linux-programs/m3a-fault-rust.rs",
             "linux-programs/m3a-exit-group-rust.rs",
-            // **主スレッドが join の futex で眠る間に、スレッドが exit_group で終える像**（3-1b の直し 1）。
+            // **主スレッドが join の futex で眠る間に、スレッドが exit_group で終えるイメージ**（3-1b の直し 1）。
             "linux-programs/m3a-exit-group-join-rust.rs",
             "linux-programs/m3a-exit-group-waiters-rust.rs",
-            // **3-2 の像**（主スレッドの exit の間に回るスレッド、スレッドからの clone、スレッドを持つ間の spawn、入口の印）。
+            // **3-2 のイメージ**（主スレッドの exit の間に回るスレッド、スレッドからの clone、スレッドを持つ間の spawn、入口の印）。
             "linux-programs/m3a-exit-while-spinning-rust.rs",
             "linux-programs/m3a-nested-clone-rust.rs",
             "linux-programs/m3a-spawn-from-thread-rust.rs",
@@ -386,7 +386,7 @@ pub const PATH_RULES: &[PathRule] = &[
         patterns: &["xtask/src/tool_checks.rs", "tools/**"],
         reach: Reach::Families(&[Family::Harness]),
     },
-    // **Linux 向けのプログラムの、手で作る側と Linux 上の参照**（2026-10-06）。`m1-c` は既定の像に入らず、参照は
+    // **Linux 向けのプログラムの、手で作る側と Linux 上の参照**（2026-10-06）。`m1-c` は既定のイメージに入らず、参照は
     // ZeikOS の出力と突き合わせる側が読む。
     PathRule {
         patterns: &[

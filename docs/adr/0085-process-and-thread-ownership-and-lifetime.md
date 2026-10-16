@@ -24,7 +24,7 @@ SeinasはSmithay（0.7.0）の上のWaylandコンポジタで、musl（1.2.5）�
 - タスクごと（`kernel/src/task.rs`の`Task`。6つ）——カーネルスタック、保存したRSP、状態と待つ理由の集合、TSSへ載せるRSP0の値、遠征の深さ、CR3の写し、回復点の写し、担当のCPU（`owner`）。FP・FSベース・GSベースの保存域（`USER_REGISTER_AREAS`）もタスクごとである。
 - スロットごと（`USER_TASK_SLOTS`は2。スロット0は普通のタスク、スロット1は切り離したタスク）——`ExcursionState`（深さ、Ring 3に居るか、畳んだときの記録）、`SyscallState`（ユーザーの窓、終了の状態、futexの記録、診断の記録）、`CURRENT_FILES`、`CURRENT_HEAP`。
 - スロットと深さごと（`MAX_EXCURSION_DEPTH`は2。シェルが深さ1、その子が深さ2）——`ProcessState`（sigactionの表、シグナルのマスク、代替スタック、`tid_address`、実行ファイルの名前）、`MemoryMap`（写像の表）、遠征のスタック、回復点、`spawn`の引数の写し。
-- 読み込んだ側のスタックフレームの上（`kernel/src/userland.rs`の`UserProcess`）——アドレス空間、入口、像の底、ユーザースタックの上端、ヒープ、fdの表、走ったCPUの印（`ran_on`）。走っている間だけ、スロットごとの欄へ入れ替える。
+- 読み込んだ側のスタックフレームの上（`kernel/src/userland.rs`の`UserProcess`）——アドレス空間、入口、イメージの底、ユーザースタックの上端、ヒープ、fdの表、走ったCPUの印（`ran_on`）。走っている間だけ、スロットごとの欄へ入れ替える。
 
 ユーザーのタスクはすべてBSPの上で走る。`Task::owner`の既定はBSPで、APの担当に書き換えるのは`init_ap_idle_task`だけである。`pick_next`は担当の違うタスクを選ばない。この前提に依っている所は、下の「「全部BSP」の前提に依っている所」に並べた。
 
@@ -53,7 +53,7 @@ Linuxと同じ分け方である。今の置き場からの移し方は、下の
 ### 3. 寿命
 
 - **プロセスの共有の資源は、最後のスレッドが終わるまで残す。** 共有の資源を持つのは、今までどおり主スレッド（プロセスを読み込んだ遠征）のスタックフレームである。主スレッドの終わりの処理は、ほかのスレッドが全部`Finished`になるまで、BKLを手放して譲りながら待ってから、今までどおり畳んで破棄する。
-- **この形（案a）は、`fork`を入れる段で案b（プロセスをオブジェクトにし、スレッドの数で寿命を決め、最後のスレッドが破棄する）へ移る前提である。** 移る条件は、次のどれかが先に来たときである——`fork`を入れるとき（親と子が同じ像を別々の寿命で持つので、スタックフレームの上では表せない）、主スレッドより長く生きるスレッドが要る利用者が出たとき（主スレッドの`exit`が待つ形では足りない）、プロセスの数が遠征の深さ（`MAX_EXCURSION_DEPTH`）を越えるとき。移すものは「欄の対応表」の「プロセス（そのまま）」の行で、`UserProcess`と`spawn`の入れ子の退避（`Records`・`FoldRecord`）が中心である。
+- **この形（案a）は、`fork`を入れる段で案b（プロセスをオブジェクトにし、スレッドの数で寿命を決め、最後のスレッドが破棄する）へ移る前提である。** 移る条件は、次のどれかが先に来たときである——`fork`を入れるとき（親と子が同じイメージを別々の寿命で持つので、スタックフレームの上では表せない）、主スレッドより長く生きるスレッドが要る利用者が出たとき（主スレッドの`exit`が待つ形では足りない）、プロセスの数が遠征の深さ（`MAX_EXCURSION_DEPTH`）を越えるとき。移すものは「欄の対応表」の「プロセス（そのまま）」の行で、`UserProcess`と`spawn`の入れ子の退避（`Records`・`FoldRecord`）が中心である。
 - **スレッドの`exit`は、そのスレッドだけを終える。** `Finished`にして、`CLONE_CHILD_CLEARTID`なら`tid_address`に0を書いてその番地を1つ起こす（muslの`pthread_join`はこれを待つ）。カーネルスタックは、刈り取ったときに池へ戻す。
 - **`exit_group`は、どのスレッドから呼ばれても、プロセスを終える。** プロセスに「終わる」印と終了の状態を据え、全部のスレッドを起こす。印の付いたスレッドは、次にカーネルへ入ったとき（システムコールかティック）に戻らずに終わる。主スレッドは、上の順で待ってから畳む。Ring 3で走っていたスレッドは、最長で1ティック（10 ms）だけ走り続けうる（Linuxはすぐ止める。差として記録する）。
 - **主スレッドの`exit`は、ほかのスレッドが残っていれば、それらが終わるまで待ってから終える**（Linuxはリーダーをゾンビで残すが、M3aではこの形にする。muslの`pthread_exit`を主スレッドで呼んだときだけ通る道である）。
@@ -193,7 +193,7 @@ M3aの実装は、次の順で分ける。大きさは、1つの課題でfull ch
   - 池のタスクからの`exit_group`・`tkill`・`futex`の行き詰まり：`dispatch`が立てた印（`process_exited`と終了の状態）をスロットの表に残し、そのスレッドを`Finished`にして切り替える（`end_thread_after_process_exit`）。主スレッドは次のシステムコールの入口で見て、実行せずに出る（印の後に入った池のスレッドのタスクも同じ）。**印を立てたスレッドは、同じスロットのfutexの待ちを番地を問わず全部起こす**（`wake_futex_waiters_of_slot`。例外の道も同じ）——`join`や`Mutex`のfutexで眠っている主スレッドは起きて`futex`の戻りで印を見て出る。起きた側が別のスレッドなら、入口か戻りで印を見て`Finished`になる（印の後に入ったスレッドも、入口で見て何も実行せずに終わる）。パイプ・キーボード・タイマで待っている主スレッドは起こさない（`docs/deferred-decisions.md`）。
   - Ctrl+C：割り込まれたのが池のタスクなら畳まず、フラグも消費しない。主スレッドが次にRing 3で割り込まれたときに畳む。
   - 想定の外（上の道を通らずに`leave_user_mode`へ来る形）は、今までどおり名指しして止まる。
-  - **破壊テスト（3-2。2026-10-15）。** `clone`の道（RAX・CLEARTID・TLS・担当）、プロセスの終わり（残るスレッド・futexの待ち・入口の印）、スレッドを持つ間の`spawn`の8件を`--critical-test`に置き、落ち方は`docs/verification-coverage.md`のfeatureの一覧にある。起動のたびの像は`m3a-exit-while-spinning-rust`（主スレッドの`exit`の間に回るスレッド）、`m3a-nested-clone-rust`（スレッドからの`clone`）、`m3a-spawn-from-thread-rust`（`spawn`を`-EAGAIN`で断る）、`m3a-exit-group-spin-rust`（入口で印を見る）。
+  - **破壊テスト（3-2。2026-10-15）。** `clone`の道（RAX・CLEARTID・TLS・担当）、プロセスの終わり（残るスレッド・futexの待ち・入口の印）、スレッドを持つ間の`spawn`の8件を`--critical-test`に置き、落ち方は`docs/verification-coverage.md`のfeatureの一覧にある。起動のたびのイメージは`m3a-exit-while-spinning-rust`（主スレッドの`exit`の間に回るスレッド）、`m3a-nested-clone-rust`（スレッドからの`clone`）、`m3a-spawn-from-thread-rust`（`spawn`を`-EAGAIN`で断る）、`m3a-exit-group-spin-rust`（入口で印を見る）。
   - 確かめは`linux-programs/m3a-fault-rust.rs`（スレッドが番地8へ書く。`Folded(14)`）、`linux-programs/m3a-exit-group-rust.rs`（スレッドが`exit_group(7)`。`Exited(7)`）、`linux-programs/m3a-exit-group-join-rust.rs`（主スレッドが`join`のfutexで眠っている間にスレッドが`exit_group(7)`。起こさなければ起動が止まる）、`linux-programs/m3a-exit-group-waiters-rust.rs`（主スレッドと別のスレッドの2本がfutexで眠っている間に第3のスレッドが`exit_group(7)`）で、起動のたびにカーネルが起こす。
 
 ## 参照（2026-10-15）

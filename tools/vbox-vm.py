@@ -64,7 +64,7 @@
 **`run` は 1 回の走行を `target/vbox/<名前>/<時刻>/` に残す**——**判定はしない。** **判定は
 `cargo xtask judge-vbox <その場所>` だけが持つ**（道具は起こす・打つ・採るだけである）。
 
-- `record.txt`——git の HEAD、未コミットの変更が在るか、`git diff HEAD` の sha256、今の像の sha256、
+- `record.txt`——git の HEAD、未コミットの変更が在るか、`git diff HEAD` の sha256、今のイメージの sha256、
   作ったときの記録（`create` が残す `latest-create.txt`）、VirtualBox の版
 - `showvminfo.txt`——`showvminfo --machinereadable`（VM の設定）
 - `serial.log`——シリアルの写し。**起こす前に古いものを消す**（前の走行と混ざらない）
@@ -223,14 +223,14 @@ def write_lines(path, lines):
 
 
 def check_image(image):
-    """像が ZeikOS の起動媒体の形であることを、繋ぐ前に見る。
+    """イメージが ZeikOS の起動媒体の形であることを、繋ぐ前に見る。
 
     **保護 MBR の型が 0xEE で、LBA 1 に `EFI PART` が在ること。** **中身まで検める道具では
     ない**（それは `cargo xtask image` が読み返しで行う）——**別のファイルを渡した事故を
     止めるだけである。**
     """
     if not os.path.isfile(image):
-        raise Refused(f"起動媒体の像 {image} が無い（先に `cargo xtask image` を回すこと）")
+        raise Refused(f"起動媒体のイメージ {image} が無い（先に `cargo xtask image` を回すこと）")
     with open(image, "rb") as handle:
         head = handle.read(1024)
     if len(head) < 1024 or head[450] != 0xEE or head[512:520] != b"EFI PART":
@@ -648,7 +648,7 @@ def main(argv=None):
         choices=["create", "start", "stop", "delete", "log", "screenshot", "run", "selftest"],
     )
     parser.add_argument("--name", help="VM の名前（zeikos- で始まること）")
-    parser.add_argument("--image", default="target/media/zeikos.img", help="起動媒体の像")
+    parser.add_argument("--image", default="target/media/zeikos.img", help="起動媒体のイメージ")
     parser.add_argument("--basefolder", default=DEFAULT_BASEFOLDER, help="VDI と .vbox の置き場")
     parser.add_argument("--memory", type=int, default=2048, help="メモリ（MiB）")
     # **既定は 4 個**（運用者の判断 3。2026-09-24）。**VirtualBox の EFI は 2 個と 3 個で落ちる**

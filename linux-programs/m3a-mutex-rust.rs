@@ -19,7 +19,7 @@
 //!
 //! # crate ではない
 //!
-//! `m1-rust` と同じで、`kernel/build.rs` が `rustc` を 1 回、`--target x86_64-unknown-linux-musl` で呼び、ディスク像の
+//! `m1-rust` と同じで、`kernel/build.rs` が `rustc` を 1 回、`--target x86_64-unknown-linux-musl` で呼び、ディスクイメージの
 //! `/bin/linux` に置く。
 
 use std::sync::{Arc, Mutex};

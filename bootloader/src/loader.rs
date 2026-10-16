@@ -55,7 +55,7 @@ pub fn run(mut logger: Logger<Serial>) -> ! {
             .expect("failed to read \\zeikos\\kernel.elf from the ESP");
         // **RAM ディスクのイメージを読む（`ADR-0068` の HW-d）。** **ここでしか読めない**
         // ——**ExitBootServices の後はファイルシステムが無い。** **無ければ空のまま進む。**
-        // **像を読んで置くのにかかったサイクル数**（2026-10-05）。カーネルの `fs-timing` の行と同じ目的である。
+        // **イメージを読んで置くのにかかったサイクル数**（2026-10-05）。カーネルの `fs-timing` の行と同じ目的である。
         let read_started = common::arch::x86_64::read_timestamp_counter();
         fs_image = read_fs_image(&mut logger, &mut fs);
         logger.info(format_args!(
@@ -411,7 +411,7 @@ impl FsImage {
 /// **`LOADER_DATA` なので、アロケータは配らない**（`memory_map::classify`。HW-a の実測）。
 ///
 /// **読めたのに置けなかったときは止める。** **イメージが在るのに黙って無いことにすると、
-/// カーネルは「装置も像も無い」と出力して止まり、理由が 1 段ずれる。**
+/// カーネルは「装置もイメージも無い」と出力して止まり、理由が 1 段ずれる。**
 fn read_fs_image(logger: &mut Logger<Serial>, fs: &mut FileSystem) -> FsImage {
     let bytes = match fs.read(Path::new(FS_IMAGE_PATH)) {
         Ok(bytes) => bytes,

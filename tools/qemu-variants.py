@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""QEMU の機械の属性だけを変えて、既定の像を起こす（2026-09-22）。
+"""QEMU の機械の属性だけを変えて、既定のイメージを起こす（2026-09-22）。
 
 **実機の棚卸しの道具である**（`docs/hardware-inventory.md`）。
 
@@ -24,16 +24,16 @@
 
 # 使い方
 
-    cargo xtask run --boot-log-diff                 # 既定の像を回の置き場へ置き、target/runs/default-image をその印にする
+    cargo xtask run --boot-log-diff                 # 既定のイメージを回の置き場へ置き、target/runs/default-image をその印にする
     python3 tools/qemu-variants.py                  # 全部の変種（1 つ 60 秒）
     python3 tools/qemu-variants.py q35-6g pc-6g     # 選んだ変種だけ
     python3 tools/qemu-variants.py --wait 45 q35-2g # 待つ秒数を変える
     python3 tools/qemu-variants.py --list           # 変種の一覧
-    python3 tools/qemu-variants.py --image target/runs/<番号> q35-6g   # 別の回の像を起こす
+    python3 tools/qemu-variants.py --image target/runs/<番号> q35-6g   # 別の回のイメージを起こす
 
-**像は、既定の像の印（`target/runs/default-image`）が指す回の置き場のものを使う**（`--image` で別の回を選べる）。 **`--full` や破壊の回の後は、破壊の構成の像が残って
-いることがある**——**先に `cargo xtask run --boot-log-diff` で既定の像を置き直すこと。**
-**どの像だったかは、各変種の `build:` の行に出る。**
+**イメージは、既定のイメージの印（`target/runs/default-image`）が指す回の置き場のものを使う**（`--image` で別の回を選べる）。 **`--full` や破壊の回の後は、破壊の構成のイメージが残って
+いることがある**——**先に `cargo xtask run --boot-log-diff` で既定のイメージを置き直すこと。**
+**どのイメージだったかは、各変種の `build:` の行に出る。**
 
 **`target/` を `xtask` と共有するので、`--full` と並べて走らせない**
 （`CLAUDE.md` の絶対ルール 1）。**全検査の間は錠で断る**（`tools/check_lock.py`。終了の値 75。
@@ -214,13 +214,13 @@ def report(name, machine, mem, serial, out):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="QEMU の機械の属性だけを変えて、既定の像を起こす")
+    parser = argparse.ArgumentParser(description="QEMU の機械の属性だけを変えて、既定のイメージを起こす")
     parser.add_argument("variants", nargs="*", help="変種の名前（省くと全部）")
     parser.add_argument("--wait", type=int, default=60, help="画面を読み戻すまでの秒数（既定 60）")
     parser.add_argument("--list", action="store_true", help="変種の一覧を出して終わる")
-    # **像は回の置き場から取る**（`xtask` の `RunDir`。2026-09-29）。印は最初に 1 度だけ辿る。
+    # **イメージは回の置き場から取る**（`xtask` の `RunDir`。2026-09-29）。印は最初に 1 度だけ辿る。
     parser.add_argument("--image", default=os.path.join(ROOT, "target", "runs", "default-image"),
-                        help="像の置き場（回の置き場。既定は target/runs/default-image）")
+                        help="イメージの置き場（回の置き場。既定は target/runs/default-image）")
     options = parser.parse_args()
     if options.list:
         # **表の欄は 6 つである**（2026-09-24 に CPU の欄を足した）。**5 つで開いていたので、

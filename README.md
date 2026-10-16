@@ -42,7 +42,7 @@ Linuxディストリビューションや実用品の代替を目指すもので
 - パイプ、UNIXドメインのストリームソケット（ファイル記述子の受け渡しを含む）、共有メモリ、`poll`、無名の`mmap`
 - 画面の画素と入力の生イベントを、ユーザープロセスへ渡す口（コンポジタを載せるための土台）
 - virtio-blkの上のext2。読みと書きの両方で、**書いたものは再起動をまたいで残る**
-- 装置が無い機械では、起動媒体に置いたディスクの像をRAMから使う（VirtualBoxでの起動）
+- 装置が無い機械では、起動媒体に置いたディスクのイメージをRAMから使う（VirtualBoxでの起動）
 - 画面コンソール（文字描画・折り返し・スクロール・代替画面）とシリアルログ
 - ANSIエスケープの解釈（truecolorを含む）
 - PS/2キーボード。JIS配列とUS配列を起動時に選べる
@@ -136,7 +136,7 @@ tmpfs（`/dev/shm`）に置き、起動が終わったら`disk0.img`だけを回
 検査は毎回同じイメージから始めたいので、これが既定動作。
 残したいものが在るときは`--manual`か`--keep-disk`を使うこと。（直前の回の`disk0.img`を写して起動する）
 
-ディスクの像は32MiBのext2である。
+ディスクのイメージは32MiBのext2である。
 
 ## 検査
 
@@ -231,7 +231,7 @@ pushの前の関門は、Git自身のhook（`.githooks/pre-push`）にも設け�
 | [GNU Unifont](third_party/unifont/) | コンソールフォント | SIL OFL 1.1 |
 | [stb_truetype](third_party/stb/) | TrueTypeの読み取りとラスタライズ | MIT（パブリックドメインとの選択制） |
 | [DejaVu Sans Mono](third_party/dejavu/) | `stb_truetype`が読むフォント | Bitstream Vera |
-| [Seinas](external/seinas/)（fbdevの裏側`seinas-fbdev`。releaseの成果物を`tools/fetch-seinas.sh`が取り、`seinas-test`の構成のディスク像だけに入る） | M2の表示の確かめ | MIT。同梱する第三者（musl、pixman、Rustのクレート）の表示は、releaseの`seinas-fbdev-v0.1.0-third-party.tar.gz`を同じディスク像の成果物の隣（`/bin/linux/`）に入れ、原本は`external/seinas/THIRD-PARTY/`に在る |
+| [Seinas](external/seinas/)（fbdevの裏側`seinas-fbdev`。releaseの成果物を`tools/fetch-seinas.sh`が取り、`seinas-test`の構成のディスクイメージだけに入る） | M2の表示の確かめ | MIT。同梱する第三者（musl、pixman、Rustのクレート）の表示は、releaseの`seinas-fbdev-v0.1.0-third-party.tar.gz`を同じディスクイメージの成果物の隣（`/bin/linux/`）に入れ、原本は`external/seinas/THIRD-PARTY/`に在る |
 
 GNU UnifontのグリフデータはSIL Open Font License 1.1とGNU GPL v2以降（フォント埋め込み例外つき）のデュアルライセンスで、ZeikOSはOFL 1.1の条件で利用している。
 日本語漢字グリフの元になっているjiskan16由来の部分はパブリックドメイン。

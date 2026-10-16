@@ -7,11 +7,11 @@
 //! 2. 主スレッドは旗が立つまで譲り、さらに 8 回譲ってから 1 行出し、`std::process::exit` で終わる（`exit_group`）。
 //!    Linux はスレッドをその場で止める。ZeikOS は、主スレッドの `exit` が待たずに、残っているスレッドを `Finished` にして
 //!    刈り取ってから終える（起動ログの `thread: 1 thread(s) of … were still runnable when the process ended` の行）。
-//!    次の像の `clone` が通ることで、刈り取りが池を空けたことが分かる。
+//!    次のイメージの `clone` が通ることで、刈り取りが池を空けたことが分かる。
 //!
 //! # crate ではない
 //!
-//! `m1-rust` と同じで、`kernel/build.rs` が `rustc` を 1 回、`--target x86_64-unknown-linux-musl` で呼び、ディスク像の
+//! `m1-rust` と同じで、`kernel/build.rs` が `rustc` を 1 回、`--target x86_64-unknown-linux-musl` で呼び、ディスクイメージの
 //! `/bin/linux` に置く。
 
 use std::sync::atomic::{AtomicBool, Ordering};

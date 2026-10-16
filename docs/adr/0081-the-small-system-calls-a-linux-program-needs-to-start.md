@@ -74,7 +74,7 @@ Accepted（2026-10-06に運用者が設計案を承認し、同じ日に実装�
 
 ## Addendum（2026-10-06。M1の実測で足した小物）
 
-Linux向けのmuslの静的な像（`linux-programs/m1-rust`・`m1-c`。`ADR-0074`のM1）をLinux上で`strace`して、まだ無かったものと、Linuxと違っていたものを足した。決定1の表の続きである。
+Linux向けのmuslの静的なイメージ（`linux-programs/m1-rust`・`m1-c`。`ADR-0074`のM1）をLinux上で`strace`して、まだ無かったものと、Linuxと違っていたものを足した。決定1の表の続きである。
 
 | 呼び出し | 受ける形 |
 |---|---|

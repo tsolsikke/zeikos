@@ -362,8 +362,8 @@ pub(super) fn qemu_variants(root: &Path) -> Result<String> {
 /// `tools/stack-deepest.py`——**1 つの深さで走らせ、プロンプトの深さと最初の書き込みの経路が出る**
 /// （`--full`。QEMU を 2 回起動する。実測で 22 秒ほど）。
 ///
-/// **道具は渡した回の置き場の像を起動する**ので、**先に既定の像を置いて、その置き場を渡す**（2026-09-29。回ごとの
-/// 置き場にした。以前は `target/esp` に置かれた像をそのまま起動していた）——**ほかの回の像を測らない。**
+/// **道具は渡した回の置き場のイメージを起動する**ので、**先に既定のイメージを置いて、その置き場を渡す**（2026-09-29。回ごとの
+/// 置き場にした。以前は `target/esp` に置かれたイメージをそのまま起動していた）——**ほかの回のイメージを測らない。**
 pub(super) fn stack_deepest(root: &Path) -> Result<String> {
     let image = super::stage_default_image(root)?;
     let image = image.to_string_lossy();

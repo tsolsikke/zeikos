@@ -2,8 +2,8 @@
 # Linux（WSL）の上で linux-programs/ のプログラムを走らせ、stdout と終了の状態を参照として控える。
 #
 # ZeikOS の側は、同じプログラムを同じ引数で起こし、出た行と終了の状態をこの参照と突き合わせる。
-# 環境変数は空にする（`env -i`）。像の上では `syscall-test` が空の envp で起こす——数が参照に入るためである。
-# 読むファイルは、像の seed（kernel/fsimage/seed/etc/motd）と同じ中身を Linux 側でも渡す。
+# 環境変数は空にする（`env -i`）。イメージの上では `syscall-test` が空の envp で起こす——数が参照に入るためである。
+# 読むファイルは、イメージの seed（kernel/fsimage/seed/etc/motd）と同じ中身を Linux 側でも渡す。
 #
 # 使い方: tools/record-linux-reference.sh [プログラムの置き場]   （既定は target/linux-programs。先に build-linux-programs.sh）
 set -eu
