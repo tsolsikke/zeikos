@@ -70,7 +70,7 @@ mod vbox;
 mod watch;
 
 /// `println!` を、出したうえで項目の出力のコピー（[`item_output_copy`]）へも積む形に置き換える（2026-09-26。
-/// 族にまとめる段）。
+/// family にまとめる段）。
 ///
 /// **出す行は前と同じである**（出す先は上の置き換えと同じ。項目の塊を持つ糸なら塊へ積む）。
 /// **名前つきの判定で検出される破壊テストが、狙いの判定の行を探すため**
@@ -2952,7 +2952,7 @@ fn run_arguments_problem(rest: &[String]) -> Option<String> {
 }
 
 fn main() -> Result<()> {
-    const USAGE: &str = "usage: cargo xtask check [--full | --commit]\n       cargo xtask full [<commit>] | --status | --select   (全検査をメインの作業ツリーの隣の <名前>-full-check で実行する。--select は HEAD の族の選びを出す)\n       cargo xtask flaky\n       cargo xtask run [--panic-test] [--gui] [--gtk] [--gfx-test] [--kvm] [--no-limit] [--manual] [--key-probe] [--keep-disk | --rebuild-disk]\n       cargo xtask run --exception-test <kind>\n       cargo xtask run --critical-test <kind>\n       cargo xtask run --interrupt-test <kind>\n       cargo xtask run --paging-test <kind>\n       cargo xtask run --stack-test <kind>\n       cargo xtask run --task-test <kind>\n       cargo xtask run --ring3-test <kind>\n       cargo xtask run --syscall-test <kind>\n       cargo xtask run --acpi-test <kind>\n       cargo xtask run --acpi-smp-test\n       cargo xtask run --apic-test <kind>\n       cargo xtask run --apic-decode-test\n       cargo xtask run --ioapic-test <kind>\n       cargo xtask run --lapic-timer-test <kind>\n       cargo xtask run --drift-test [MINUTES] [--smp N]
+    const USAGE: &str = "usage: cargo xtask check [--full | --commit]\n       cargo xtask full [<commit>] | --status | --select   (全検査をメインの作業ツリーの隣の <名前>-full-check で実行する。--select は HEAD の family の選びを出す)\n       cargo xtask flaky\n       cargo xtask run [--panic-test] [--gui] [--gtk] [--gfx-test] [--kvm] [--no-limit] [--manual] [--key-probe] [--keep-disk | --rebuild-disk]\n       cargo xtask run --exception-test <kind>\n       cargo xtask run --critical-test <kind>\n       cargo xtask run --interrupt-test <kind>\n       cargo xtask run --paging-test <kind>\n       cargo xtask run --stack-test <kind>\n       cargo xtask run --task-test <kind>\n       cargo xtask run --ring3-test <kind>\n       cargo xtask run --syscall-test <kind>\n       cargo xtask run --acpi-test <kind>\n       cargo xtask run --acpi-smp-test\n       cargo xtask run --apic-test <kind>\n       cargo xtask run --apic-decode-test\n       cargo xtask run --ioapic-test <kind>\n       cargo xtask run --lapic-timer-test <kind>\n       cargo xtask run --drift-test [MINUTES] [--smp N]
        cargo xtask run --shell-test [--drop-arrows | --drop-esc]\n       cargo xtask run --ansi-test [--sabotage FEATURE]\n       cargo xtask run --zi-test [--sabotage FEATURE]\n       cargo xtask run --view-test [--sabotage FEATURE]
        cargo xtask run --fs-extract [--sabotage FEATURE]\n       cargo xtask run --boot-marker-sabotage FEATURE   (起動の判定行の値で捕まる破壊を 1 つ回す)\n       cargo xtask run --page-permissions [--scene boot|heap|screen] [--update-reference | --sabotage FEATURE]   (ページの権限の一覧を採って、参照と比べる)\n       cargo xtask run --pci-test [--sabotage FEATURE]\n       cargo xtask run --virtio-test [--sabotage FEATURE]\n       cargo xtask run --virtio-irq-test [--sabotage FEATURE]
        cargo xtask run --persist-test [--rebuild-between]
@@ -2967,7 +2967,7 @@ fn main() -> Result<()> {
        cargo xtask run --boot-log-diff [--update-reference [--allow-shrink] [--only-masked]]\n       cargo xtask run --tool-checks
        cargo xtask run --calibration-spread [N]\n       cargo xtask run --highhalf-test <kind>\n       cargo xtask screenshot [output.png] [--wait-secs N] [--gfx-test] [--kvm]\n       cargo xtask run-set [--jobs K] <一覧のファイル>   (案 B の ②。一覧の試験を K 本ずつ同時に走らせる。1 行に xtask の引数を 1 つ分)\n       cargo xtask image [--without-fs-image]   (ADR-0068 の HW-e。ブートメディアのイメージを建てて確かめる)\n       cargo xtask gen-font\n       cargo xtask judge-vbox <記録>   (ADR-0068 の 2-2。tools/vbox-vm.py run が残した記録を判定する)";
 
-    // **コンパイルした木と別の木で動いていれば、何もせずに落ちる**（2026-09-27。[`built_elsewhere`]）。
+    // **コンパイルしたツリーと別のツリーで動いていれば、何もせずに落ちる**（2026-09-27。[`built_elsewhere`]）。
     if let Some(problem) = built_elsewhere(
         env!("CARGO_MANIFEST_DIR"),
         env::var("CARGO_MANIFEST_DIR").ok().as_deref(),
@@ -6516,7 +6516,7 @@ fn cmd_boot_with_features(features: &[&str], marker: &str, wanted: &str) -> Resu
     let held = serial
         .lines()
         .any(|line| line.contains(marker) && line.contains(wanted));
-    // **見つけた行を添える**（2026-09-26。族にまとめる段）——**目印の行が出て値だけが違ったのか、
+    // **見つけた行を添える**（2026-09-26。family にまとめる段）——**目印の行が出て値だけが違ったのか、
     // 行そのものが出なかったのか（起動が届かなかった）を分ける。**
     let found = match serial.lines().find(|line| line.contains(marker)) {
         Some(line) => format!("the line: {:?}", strip_ansi(line.trim())),
@@ -7061,7 +7061,7 @@ const SABOTAGE_STOP_REASONS: &[StopReason] = &[
     },
 ];
 
-/// 名前つきの判定で検出される破壊テストと、狙いの判定の目印（2026-09-26。族にまとめる段。運用者の決定）。
+/// 名前つきの判定で検出される破壊テストと、狙いの判定の目印（2026-09-26。family にまとめる段。運用者の決定）。
 ///
 /// **この表に載る破壊テストは、「どの誤りでも捕まえた」とは数えない。** **項目の出力（[`item_output_copy`]）か
 /// 落ちた理由の 1 行に `signs` が全部在るときだけ検出したとする**——**`signs` は狙いの判定が偽になった
@@ -8634,7 +8634,7 @@ fn judge_sabotage(check: &str, features: &[&str], result: &Result<()>) -> Sabota
 /// 「どの誤りでも捕まえた」と数えた破壊テストの実行の数（2026-09-25。運用者の決定）。
 ///
 /// **理由を見ていない判定を、`--full` のまとめでグループごとに数える**（検査の体系の改善）。**狭めるのは、
-/// そのグループを「族にまとめる段」で扱うとき**——**狭めた破壊テストは [`SABOTAGE_STOP_REASONS`] に載る。**
+/// そのグループを「family にまとめる段」で扱うとき**——**狭めた破壊テストは [`SABOTAGE_STOP_REASONS`] に載る。**
 /// **キーは全検査のグループ（[`Family`]。走っている項目のグループ）と検査の名前である**（2026-09-26。**以前は
 /// 検査の名前だけをグループと呼んでいた**）。
 static ANY_ERROR_VERDICTS: std::sync::Mutex<
@@ -17430,7 +17430,7 @@ fn cmd_virtio_irq_test(features: &[&str]) -> Result<()> {
         "{context}: delivered = {delivered:?} (wanted 2), not mine = {not_mine:?} (wanted 0), \
          route read back matching the platform's declaration = {route_ok}"
     );
-    // **数の判定に名前を付ける**（2026-09-26。族にまとめる段）——**上の行は数を並べるだけで、偽の判定の
+    // **数の判定に名前を付ける**（2026-09-26。family にまとめる段）——**上の行は数を並べるだけで、偽の判定の
     // 形をしていなかった**（ISR を読まない破壊テストは数だけが狂い、`= false` の行が 1 本も出なかった）。
     println!("{context}: each read was delivered once and nothing else arrived = {counts_ok}");
     // d-2: BKL を解いてから待ったこと（§6。ADR-0036）。
@@ -28242,7 +28242,7 @@ fn module_path_of(relative: &str) -> Option<Vec<String>> {
     Some(parts)
 }
 
-/// `use` の文（`use` の位置、`;` の次の位置、木）。`#[must_use]` のような識別子の一部は拾わない。
+/// `use` の文（`use` の位置、`;` の次の位置、ツリー）。`#[must_use]` のような識別子の一部は拾わない。
 fn use_statements(code: &str) -> Vec<(usize, usize, &str)> {
     let bytes = code.as_bytes();
     let mut found = Vec::new();
@@ -28265,7 +28265,7 @@ fn use_statements(code: &str) -> Vec<(usize, usize, &str)> {
     found
 }
 
-/// `use` の木（`a::{b, c::d as e, self}`）を、(パス, 別名) の並びに展開する。
+/// `use` のツリー（`a::{b, c::d as e, self}`）を、(パス, 別名) の並びに展開する。
 fn expand_use_tree(tree: &str) -> Vec<(String, Option<String>)> {
     let mut compact = tree.split_whitespace().collect::<Vec<_>>().join(" ");
     for token in ["::", "{", "}", ","] {
@@ -28421,7 +28421,7 @@ struct PathUse {
     in_tests: bool,
 }
 
-/// ファイルが使うパスを集める（`use` の木を展開し、別名と `crate`・`self`・`super` を読み替える。コメントと文字列の中は
+/// ファイルが使うパスを集める（`use` のツリーを展開し、別名と `crate`・`self`・`super` を読み替える。コメントと文字列の中は
 /// 見ない。形は `target/` の下の一時の道具で数えた一覧と同じ読み方である）。
 fn path_uses(relative: &str, text: &str) -> Vec<PathUse> {
     let Some(file_module) = module_path_of(relative) else {
@@ -31185,7 +31185,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
         }
     }
 
-    // **変更したパスとグループの対応表**（2026-09-26。族にまとめる段。運用者の決定）。**追跡している全ファイルに
+    // **変更したパスとグループの対応表**（2026-09-26。family にまとめる段。運用者の決定）。**追跡している全ファイルに
     // 当たる行が在り、`kernel/`・`common/`・`bootloader/` の下が基底だけに当たらず、死んだ行が無いこと。**
     total += 1;
     begin_item(
@@ -34167,7 +34167,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
             others.join("; ")
         );
         report_item_time_slowness(others.len());
-        // **グループごとの項目の数と所要**（2026-09-26。族にまとめる段）。
+        // **グループごとの項目の数と所要**（2026-09-26。family にまとめる段）。
         println!("{}", family_times_line());
         // **当たりの計測**（2026-09-26。選ぶのを表示する段）。**記録にも残し、`--status` が数える。**
         let score = selection_score(chosen_before.as_deref(), &failed.kinds);
@@ -34204,7 +34204,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
     );
     // **装置（SSD）へ書いた量と、置き場の区分ごとの大きさ**（2026-10-05。止めない）。**書いた量は `/proc/diskstats` の差で
     // ある。** プロセスごとの内訳は、この環境では取れない（`/proc/<pid>/io` が無い。WSL のカーネル）。**代わりに、
-    // この木の `target/` の中を区分ごとに測る**——冷えた状態から始めた回なら、残っている大きさが、その区分へ書いた
+    // このツリーの `target/` の中を区分ごとに測る**——冷えた状態から始めた回なら、残っている大きさが、その区分へ書いた
     // 量の下限になる（書いてから消したものと、上書きしたものは入らない）。
     if let Some(total) = full_check::written_since_the_start() {
         let gib = |bytes: u64| bytes as f64 / (1u64 << 30) as f64;
@@ -34790,7 +34790,7 @@ fn check_git_pre_push_hook(workspace_root: &Path) -> Result<String> {
     ))
 }
 
-/// 変更したパスとグループの対応表が、追跡している全ファイルを覆うかを見る（2026-09-26。族にまとめる段）。
+/// 変更したパスとグループの対応表が、追跡している全ファイルを覆うかを見る（2026-09-26。family にまとめる段）。
 ///
 /// **未追跡も見る**（`--others --exclude-standard`。[`checked_files`]）——**新しいファイルは、コミットの前に落ちる。**
 /// **判定は `family::table_problems`**（ホストのテストが覆う）。
@@ -35938,7 +35938,7 @@ fn item_clock<T>(body: impl FnOnce(&mut Option<(Instant, String, Family)>) -> T)
     ITEM_CLOCK.with(|clock| body(&mut clock.borrow_mut()))
 }
 
-/// 項目の出力のコピー（2026-09-26。族にまとめる段）。**名前つきの判定で検出される破壊テストが、狙いの判定の行を
+/// 項目の出力のコピー（2026-09-26。family にまとめる段）。**名前つきの判定で検出される破壊テストが、狙いの判定の行を
 /// 探す**（[`SABOTAGE_JUDGEMENTS`]）。**`begin_item` が空にする。** **上限（[`ITEM_OUTPUT_LIMIT`]）を
 /// 越えたら積むのをやめ、越えたことを残す**——**項目を区切らない実行（`cargo xtask flaky` 等）で膨らませない。**
 /// **項目を走らせる糸ごとに持つ**（2026-09-29）——同時に走る項目の出力を混ぜない。
@@ -35973,7 +35973,7 @@ fn item_output() -> Option<String> {
 
 /// 項目の見出しを出し、時計を始める（VIEW-b の後）。
 ///
-/// **グループを取る**（2026-09-26。族にまとめる段）——**グループを名乗らない項目は作られない**（`family` の doc）。
+/// **グループを取る**（2026-09-26。family にまとめる段）——**グループを名乗らない項目は作られない**（`family` の doc）。
 fn begin_item(family: Family, label: &str) {
     finish_item();
     // **実行の記録は項目ごとに空にする**（失敗の分け方と計測が項目の単位で読む）。
@@ -36102,7 +36102,7 @@ fn finish_item() {
     }
 }
 
-/// グループごとの項目の数と所要の秒（2026-09-26。族にまとめる段。**`--full` のまとめで 1 行にする**）。
+/// グループごとの項目の数と所要の秒（2026-09-26。family にまとめる段。**`--full` のまとめで 1 行にする**）。
 static FAMILY_TIMES: std::sync::Mutex<std::collections::BTreeMap<Family, (usize, f64)>> =
     std::sync::Mutex::new(std::collections::BTreeMap::new());
 
@@ -36690,13 +36690,13 @@ fn kernel_cargo_args(features: &[&str]) -> Vec<String> {
 ///    でき、数十 GiB になっていた。
 /// 2. **同じバイナリになること。** 増分の置き場を使うかどうかで、コードの分け方が変わり、カーネルのイメージの大きさとアドレスが
 ///    変わる（実測。全検査の側だけ使わない形にしたら、起動ログの参照と 1 ページ食い違った）。**起動ログとページの
-///    権限の参照は、どの木で、どの順でビルドしても同じバイナリになることに依っている。**
+///    権限の参照は、どのツリーで、どの順でビルドしても同じバイナリになることに依っている。**
 ///
 /// **カーネルとブートローダをビルドする所の全部に付ける**——この道具の中の 5 か所と、`tools/frame-sizes.py`。
 /// **1 か所でも抜けると、cargo が設定の違いを見て作り直し、別のバイナリが置き場に残る。**
 ///
 /// **基本の検査の clippy と rustdoc（カーネルとブートローダ）にも付ける**（2026-10-06）。付けていなかった間は、
-/// この項目だけが増分の置き場を作り続けていた（木 1 つにつき約 150 MiB）。
+/// この項目だけが増分の置き場を作り続けていた（ツリー 1 つにつき約 150 MiB）。
 ///
 /// **環境変数（`CARGO_INCREMENTAL`）では渡さない。** この道具が起こす cargo の全部に届き、この道具自身（ホストの
 /// ビルド）まで作り直させる——検査の途中で、走っている実行ファイルが入れ替わった（実測）。
@@ -37343,7 +37343,7 @@ const SPARSE_COPY_BLOCK: usize = 4096;
 ///
 /// **イメージの大半は、使っていない 0 のブロックである**（32 MiB のイメージで、使っているのは約 3 MiB）。`fs::copy` は
 /// 0 も書くので、コピーの 1 つ 1 つが、イメージの大きさだけディスクを取る。回ごとの置き場に装置のイメージが 1 つずつ残るので、
-/// イメージを大きくすると、そのままホストのディスクに効いた（実測。全検査の木が 8.2 GiB 増えた）。
+/// イメージを大きくすると、そのままホストのディスクに効いた（実測。全検査のツリーが 8.2 GiB 増えた）。
 ///
 /// # 守ること
 ///
@@ -37613,14 +37613,14 @@ fn workspace_root() -> Result<PathBuf> {
         .context("failed to resolve workspace root from CARGO_MANIFEST_DIR")
 }
 
-/// xtask を、コンパイルした木とは別の木で動かしていないかを見る（2026-09-27。運用者の決定）。**食い違えば、両方の
+/// xtask を、コンパイルしたツリーとは別のツリーで動かしていないかを見る（2026-09-27。運用者の決定）。**食い違えば、両方の
 /// パスと作り直す手順を返す。**
 ///
-/// **xtask は自分の置き場を、コンパイルした時の `CARGO_MANIFEST_DIR` から知る**（[`workspace_root`]）。**木を移しても、
+/// **xtask は自分の置き場を、コンパイルした時の `CARGO_MANIFEST_DIR` から知る**（[`workspace_root`]）。**ツリーを移しても、
 /// cargo は xtask を作り直さない**——**ソースもビルドの設定も変わらないからである。** **実行ファイルは以前の置き場の
 /// パスを持ったまま、以前の置き場を見る**（実験で確かめた。2026-09-27）。
 ///
-/// **`cargo run`（`cargo xtask`）は実行時にも `CARGO_MANIFEST_DIR` を渡すので、2 つを比べる。** **同じ木をシンボリック
+/// **`cargo run`（`cargo xtask`）は実行時にも `CARGO_MANIFEST_DIR` を渡すので、2 つを比べる。** **同じツリーをシンボリック
 /// リンクで指す形は、実在のパスに直してから比べる。** **実行ファイルを直に起こしたときは実行時の値が無く、見ない**
 /// ——**xtask が自分を子として起こす検査のロックの確かめがこの形で、親が同じ実行ファイルで先に確かめている。**
 fn built_elsewhere(built: &str, runtime: Option<&str>) -> Option<String> {
@@ -38609,7 +38609,7 @@ warning: `kernel` (lib doc) generated 1 warning
         ));
     }
 
-    /// **名前つきの判定で検出される破壊テスト**（2026-09-26。族にまとめる段）。**目印が項目の出力か落ちた理由に
+    /// **名前つきの判定で検出される破壊テスト**（2026-09-26。family にまとめる段）。**目印が項目の出力か落ちた理由に
     /// 在れば検出した、無ければ落とす。色の列は落として探す。コピーが上限を越えていたら落とす。**
     #[test]
     fn a_named_judgement_needs_its_sign_in_the_output_or_the_reason() {
@@ -38839,7 +38839,7 @@ warning: `kernel` (lib doc) generated 1 warning
     }
 
     /// **「どれかの判定が偽なら捕まえた」は別の種類として数える**（2026-09-26）。**項目の外で数えた回は
-    /// 「族なし」に束ねる。**
+    /// 「family なし」に束ねる。**
     #[test]
     fn any_judgement_verdicts_are_counted_apart() {
         caught_by_any_judgement("zz judgement check", "--- zz (a): OK");
@@ -38890,7 +38890,7 @@ warning: `kernel` (lib doc) generated 1 warning
     }
 
     /// **「どの誤りでも捕まえた」をグループごとに数え、まとめの 1 行に出す**（2026-09-25。計測）。**項目の外で
-    /// 数えた回は「族なし」に束ねる**（2026-09-26。ホストのテストは項目の外で呼ぶ）。
+    /// 数えた回は「family なし」に束ねる**（2026-09-26。ホストのテストは項目の外で呼ぶ）。
     #[test]
     fn any_error_verdicts_are_counted_per_family() {
         caught_by_any_error(
@@ -39976,8 +39976,8 @@ disk0: rd_bytes=2105856 wr_bytes=2097152 rd_operations=524
         }
     }
 
-    /// **コンパイルした木と別の木で動けば、両方のパスと作り直す手順を出して落とす**（2026-09-27。運用者の決定）。
-    /// **実行時の値が無ければ見ない。** **同じ木をシンボリックリンクで指す形は通す。**
+    /// **コンパイルしたツリーと別のツリーで動けば、両方のパスと作り直す手順を出して落とす**（2026-09-27。運用者の決定）。
+    /// **実行時の値が無ければ見ない。** **同じツリーをシンボリックリンクで指す形は通す。**
     #[test]
     fn an_xtask_built_for_another_tree_refuses_to_run() {
         assert_eq!(
@@ -40053,7 +40053,7 @@ disk0: rd_bytes=2105856 wr_bytes=2097152 rd_operations=524
         assert!(!mentions_raw_port_instruction(r#"    "mov eax, 1","#));
     }
 
-    /// **依存の向きの検査が読む `use` の木は、入れ子と別名と `self` まで展開する**（2026-09-30）。
+    /// **依存の向きの検査が読む `use` のツリーは、入れ子と別名と `self` まで展開する**（2026-09-30）。
     #[test]
     fn a_use_tree_expands_into_paths_and_aliases() {
         assert_eq!(
@@ -40114,7 +40114,7 @@ disk0: rd_bytes=2105856 wr_bytes=2097152 rd_operations=524
         );
     }
 
-    /// **共通の側が直下の下のモジュールを指す所は、`use` の木の中でも別名の先でも見つかり、直下に並べた名前は通る**
+    /// **共通の側が直下の下のモジュールを指す所は、`use` のツリーの中でも別名の先でも見つかり、直下に並べた名前は通る**
     /// （2026-09-30）。
     #[test]
     fn a_path_through_a_module_under_a_root_is_found_and_a_root_name_is_not() {

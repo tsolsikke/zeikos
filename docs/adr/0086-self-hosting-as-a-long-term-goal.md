@@ -41,7 +41,7 @@ ZeikOSの上で、ZeikOSとSeinasのソースを編集し、ビルドし、で�
 
 各段の設計のときに、次を確かめる。
 
-- プロセス生成を、Linuxの`clone`・`execve`・`wait4`の形にそろえていく。ZeikOS固有の`SYS_SPAWN`の族（`kernel/src/abi/private.rs`）を増やす向きには進まない。
+- プロセス生成を、Linuxの`clone`・`execve`・`wait4`の形にそろえていく。ZeikOS固有の`SYS_SPAWN`のfamily（`kernel/src/abi/private.rs`）を増やす向きには進まない。
 - 動的リンク（`PT_INTERP`、共有ライブラリの`mmap`、`dlopen`）を、いずれ入れる（`ADR-0074`の「決めないこと」で保留していたもの）。
 - シグナル（M3b。`ADR-0081`）と、Linuxに合わせたプロセスの終わり方（`ADR-0085`の決定3で持ち越した、主スレッドの`exit`がほかのスレッドを待つ形を含む。スレッドの終わり方の課題（M3a）の完了で持ち越しにした3点——主スレッドがパイプ・キーボード・タイマで眠っている間は起こさない、主スレッドの`exit`は待たない、主スレッドの`set_tid_address`のアドレスを終わりに0にしない——は`docs/deferred-decisions.md`の行にある）。
 - `/proc`の一部（`/proc/self/exe`など）。
@@ -51,7 +51,7 @@ ZeikOSの上で、ZeikOSとSeinasのソースを編集し、ビルドし、で�
 
 ## 状況の確かめ（2026-10-15。zeikosのコードと文書を読んだ範囲）
 
-- **S0（中でソースを読み書きする）。** 一部できている。vi風のエディタ`zi`がターミナルの上で動き（`docs/roadmap.md`の「zi」）、ext2の書き込み（追記・作成・切り詰め・ディレクトリの作成。起動ログの`fs-write`・`fs-create`・`fs-mkdir`の行）と、イメージのvirtioディスクへの書き戻し（`fs-image-flush`）が在る。届いていないのは大きさである——イメージは32 MiB（`kernel/build.rs`）で、ext2の二重間接ブロックは未対応（4 MiBを超えるファイルは作れない。`kernel/src/main.rs`の`ext2-corrupt`の節のdoc）。ZeikOSの追跡下のソースは402ファイル・17 MiB（`git ls-files`。2026-10-15）で、最大のファイルは1.8 MiB（`xtask/src/main.rs`）なので、ソースだけならイメージに入るが、`target/`（ビルドの成果物。メインの木で33 GiB）は桁が違う。パスの上限は256バイト、同時に開けるファイルは16（`PATH_MAX`・`MAX_OPEN_FILES`）。
+- **S0（中でソースを読み書きする）。** 一部できている。vi風のエディタ`zi`がターミナルの上で動き（`docs/roadmap.md`の「zi」）、ext2の書き込み（追記・作成・切り詰め・ディレクトリの作成。起動ログの`fs-write`・`fs-create`・`fs-mkdir`の行）と、イメージのvirtioディスクへの書き戻し（`fs-image-flush`）が在る。届いていないのは大きさである——イメージは32 MiB（`kernel/build.rs`）で、ext2の二重間接ブロックは未対応（4 MiBを超えるファイルは作れない。`kernel/src/main.rs`の`ext2-corrupt`の節のdoc）。ZeikOSの追跡下のソースは402ファイル・17 MiB（`git ls-files`。2026-10-15）で、最大のファイルは1.8 MiB（`xtask/src/main.rs`）なので、ソースだけならイメージに入るが、`target/`（ビルドの成果物。メインのツリーで33 GiB）は桁が違う。パスの上限は256バイト、同時に開けるファイルは16（`PATH_MAX`・`MAX_OPEN_FILES`）。
 - **S1（busybox・gitが動く）。** 動かない。musl で静的にリンクしたRustとCのプログラムは走る（起動のたびに11本。`m1-rust`・`m1-c`・`m3a-*`。`ADR-0074`・`ADR-0085`）が、プロセス生成はZeikOS固有の`spawn`（親が待つ形。`ADR-0063`）だけで、`fork`・`execve`・`wait4`は無い。シグナルは登録するだけで配送しない（`ADR-0081`）。同時に走るプロセスは2スロット・深さ2、スレッドは1プロセスに4本（`USER_TASK_SLOTS`・`MAX_EXCURSION_DEPTH`・`THREAD_TASKS`）。busyboxもgitも`fork`と`execve`とシグナルを前提にするので、S1はプロセス生成とシグナルの後である（推測——どちらも動かして確かめてはいない）。
 - **S2（中でCをコンパイルする）。** 未着手。tccのような1バイナリのコンパイラなら、静的リンクのイメージとして読み込める見込みはあるが、出力を書く大きなファイル、`execve`で実行する道、ヘッダとライブラリをディスクに置く場所のどれも無い（推測——tccの要求は調べていない）。
 

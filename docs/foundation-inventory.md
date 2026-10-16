@@ -175,7 +175,7 @@
 
 **自前libcの見積もり（見積もりである。測っていない）。**
 **いまの`userlib.rs`は419行で、`open` / `read` / `write` / `close` / `getdents64` / `ioctl` / `spawn` / `exit`の包みと、`winsize`の扱いを持っている。**
-**Cから使う形にするには、これに加えて`crt0`（`_start`から`main`へ）、`malloc`、`printf`族、`str*` / `mem*`が要る。**
+**Cから使う形にするには、これに加えて`crt0`（`_start`から`main`へ）、`malloc`、`printf`family、`str*` / `mem*`が要る。**
 **`str*` / `mem*`はコンパイラの組み込みで足りる場合がある**（未確認。**測ること**）。
 **`printf`は自前で書くと大きい。** **最初は`puts`と`write`だけで進むのが現実的である。**
 

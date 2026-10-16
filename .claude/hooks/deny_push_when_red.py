@@ -25,7 +25,7 @@
 # コミットと同じコマンドの `push` は、検査せずに拒む（2026-09-18）
 
 **この hook は `PreToolUse` で、コマンドが始まる前に 1 度だけ検査する。** **同じコマンドの中で
-コミットを作ってからpush すると、検査が見るのは「これから作るコミット」ではなく 1 つ前の木である**
+コミットを作ってからpush すると、検査が見るのは「これから作るコミット」ではなく 1 つ前のツリーである**
 ——**実測で、本文 1 行のコミットをそのままpush した**（2026-09-18。`docs/troubleshooting.md`）。
 **そこで、同じコマンドに `git commit` の呼び出しが在れば、検査せずに拒む。** **コミットと
 `push` は別のコマンドにすること**——**基底 check の出力を読んでから、次のコマンドでpush する。**
@@ -37,11 +37,11 @@
 ——**走っているものを止めるか、終わってからpush すること。** **これは安全側である**
 （`CLAUDE.md` の絶対ルール 1 と同じ理由で、並走そのものを避ける）。
 
-**同じ木の `xtask` だけを数える**（2026-09-25。検査の体系の改善の ③）——**全検査は別の作業木
-（メインの作業木の隣の `<名前>-full-check`）で回り、`target/` は木ごとに別である。** **作業木の全検査の間も、本の木で
-基底を回してpush できる。** **同じ木かは `/proc/<pid>/exe` が本の木の `target/debug/xtask` を指すかで見る。**
-**`cargo xtask full` の親は数えない**——**本の木の `xtask` として走るが、作業木の子を待つだけで、
-本の木では何も建てない。**
+**同じツリーの `xtask` だけを数える**（2026-09-25。検査の体系の改善の ③）——**全検査は別の作業ツリー
+（メインの作業ツリーの隣の `<名前>-full-check`）で回り、`target/` はツリーごとに別である。** **作業ツリーの全検査の間も、本のツリーで
+基底を回してpush できる。** **同じツリーかは `/proc/<pid>/exe` が本のツリーの `target/debug/xtask` を指すかで見る。**
+**`cargo xtask full` の親は数えない**——**本のツリーの `xtask` として走るが、作業ツリーの子を待つだけで、
+本のツリーでは何も建てない。**
 
 # 要る検査を済ませていないコミットを止める（2026-09-25。運用者の足す1点）
 
@@ -130,10 +130,10 @@ def override_reason(command: str) -> str | None:
 
 
 def same_tree_builds(processes: list, binary: str) -> list:
-    """同じ木の `xtask` を挙げる（`(pid, comm, 本体のパス, 引数)` の並びから。**self-test が覆う。**）
+    """同じツリーの `xtask` を挙げる（`(pid, comm, 本体のパス, 引数)` の並びから。**self-test が覆う。**）
 
     **建て直されて消えた本体は ` (deleted)` を外して比べる。** **`cargo xtask full` の親（最初の
-    引数が `full`）は数えない**——**作業木の子を待つだけで、本の木では何も建てない。**
+    引数が `full`）は数えない**——**作業ツリーの子を待つだけで、本のツリーでは何も建てない。**
     """
     found = []
     for pid, comm, exe, args in processes:
@@ -146,7 +146,7 @@ def same_tree_builds(processes: list, binary: str) -> list:
 
 
 def running_builds(root: str) -> list:
-    """並走している同じ木の `xtask` を挙げる（`/proc` の `comm` と `exe` で見る。args では見ない）。
+    """並走している同じツリーの `xtask` を挙げる（`/proc` の `comm` と `exe` で見る。args では見ない）。
 
     **args で見ると、`git push` を含むこのシェル自身に当たる。**
     """
@@ -196,7 +196,7 @@ def main() -> int:
     if not invokes_git_push(command):
         return 0
 
-    # **コミットと同じコマンドなら、検査の前に拒む。** **検査はコミットより前の木を見るので、
+    # **コミットと同じコマンドなら、検査の前に拒む。** **検査はコミットより前のツリーを見るので、
     # 緑でも意味が無い**（この doc の「コミットと同じコマンドの `push`」）。
     if commits_and_pushes(command):
         return deny(
@@ -222,7 +222,7 @@ def main() -> int:
         return deny(f"並走を確かめられなかった（{error}）。確かめられないのでpush しない")
     if others:
         return deny(
-            "push の前の基底 check が走らせられない（同じ木で並走: "
+            "push の前の基底 check が走らせられない（同じツリーで並走: "
             + ", ".join(others)
             + "）。target/ のロックで待たされるので検査しない。"
             "止めるか終わるまで待つこと（.claude/skills/stop-a-process/SKILL.md）"
@@ -260,7 +260,7 @@ def main() -> int:
             )
         # **緑も言う**（2026-09-21。運用者の足す1点）。**黙って通すと、hook が読み込まれて
         # いなくてもpush できてしまい、「検査して通した」と区別が付かない**
-        # （`check_after_commit.py` の「緑のときも言う」と同じ族）。
+        # （`check_after_commit.py` の「緑のときも言う」と同じ family ）。
         summary = [l for l in done.stdout.splitlines() if "check(s) passed" in l]
         return announce(
             "PreToolUse",
@@ -282,7 +282,7 @@ def self_test() -> int:
     """判定表を回す（`cargo xtask check` から呼ぶ）。
 
     **見るのは「どの形で発火するか」だけである。** **実際に拒めることは、
-    赤の木で押そうとして確かめるしかない**——**hook は読み込まれていなくても
+    赤のツリーで押そうとして確かめるしかない**——**hook は読み込まれていなくても
     エラーを出さない**（`CLAUDE.md` の規律。実測で 2 回素通りしている）。
     """
     push = "push"
@@ -348,7 +348,7 @@ def self_test() -> int:
         (f"echo '{flag}=x git {push}'", None),
         (f"{flag}=x cargo xtask check", None),
     ]
-    # **同じ木の `xtask` だけを数える**（2026-09-25）。**消えた本体も同じ木に数え、別の木と QEMU は
+    # **同じツリーの `xtask` だけを数える**（2026-09-25）。**消えた本体も同じツリーに数え、別のツリーと QEMU は
     # 数えない。**
     binary = "/r/target/debug/xtask"
     xtask = "target/debug/xtask"

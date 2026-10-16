@@ -202,7 +202,7 @@ def sha256_of_file(path):
 
 
 def git_state():
-    """HEAD・未コミットの変更が無いか・`git diff HEAD` の sha256。**実行を木へ結びつける。**"""
+    """HEAD・未コミットの変更が無いか・`git diff HEAD` の sha256。**実行をツリーへ結びつける。**"""
     head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
     porcelain = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True).stdout
     diff = subprocess.run(["git", "diff", "HEAD"], capture_output=True).stdout

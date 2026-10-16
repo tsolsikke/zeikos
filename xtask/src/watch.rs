@@ -10,7 +10,7 @@
 //!
 //! **読むだけである。** 全検査の側には触らない（ロックも取らない）。
 //!
-//! - **全検査のログ**（メインの木の `target/full-check/logs/<時刻>-<木>.log`）——項目の始まりの行（`=== xtask check:`）、
+//! - **全検査のログ**（メインのツリーの `target/full-check/logs/<時刻>-<ツリー>.log`）——項目の始まりの行（`=== xtask check:`）、
 //!   判定の行（`--- …: OK` / `FAILED`）、所要の行（`(info) item time:`）。**並べて走らせる項目は、終わったときに
 //!   塊で書かれる**（`crate::batch`）ので、ログから分かるのは「終わった項目」である。
 //! - **項目の始まりの記録**（同じ名前の `-samples.tsv` の `item` の行。`crate::sampling`）——始まった時刻が載る。
@@ -18,7 +18,7 @@
 //! - **前回の緑の全検査のログ**——項目ごとの所要と、実時間。終わるまでの見込みと、「前回の 2 倍」の印に使う。
 //! - **動いている QEMU**（`/proc` の命令行）と、その回の置き場の `run.txt`（`crate::launch` が、起動のたびに
 //!   上限の秒数を書き足す）——上限の 8 割を越えた実行に印を付ける。
-//! - **ディスク**——全検査の木とメインの `target/` の大きさ（`du`）、空き。
+//! - **ディスク**——全検査のツリーとメインの `target/` の大きさ（`du`）、空き。
 //!
 //! # 状態を持つのは 2 つのファイルだけ
 //!
@@ -567,7 +567,7 @@ pub fn command(root: &Path) -> Result<()> {
             Some(now.saturating_sub(start) * 512)
         });
     let (_, host_free, _) = crate::full_check::free_spaces(&main);
-    // **使い捨てのファイルを SSD に置いた回の数**（全検査の木の置き場の `run.txt` から。全検査が始まった後の回だけ）。
+    // **使い捨てのファイルを SSD に置いた回の数**（全検査のツリーの置き場の `run.txt` から。全検査が始まった後の回だけ）。
     let fallbacks = began.map(|began| crate::run_dir::fallbacks_since(&worktree, began));
     println!(
         "watch: disk: written since the start {} GiB; scratch on the SSD in {} run(s){}; full-check tree {} GiB{}, \

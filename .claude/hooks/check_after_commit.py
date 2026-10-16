@@ -54,7 +54,7 @@ stdout に出していたが、`exit 0` の stdout は読み手に届かない**
 **環境変数を前に置いたコミットも見る**（`X=1 git commit`。2026-09-25 に見つけた穴）。
 
 
-# 検査の後に、族の選びを出す（2026-09-26。選ぶのを表示する段。運用者の回答）
+# 検査の後に、family の選びを出す（2026-09-26。選ぶのを表示する段。運用者の回答）
 
 **`cargo xtask full --select` を呼び、HEAD の選びを出す**——**最後の緑の全検査からの累積と、このコミット
 だけの 2 つ**（比較元・対象・選んだ理由・全部へ倒した理由）。**ロックを取らず、QEMU を起こさない。**
@@ -99,7 +99,7 @@ REFUSED_EXIT_CODE = 75
 """検査のロックが取れずに `xtask` が断ったときの終了の値（`xtask/src/check_lock.rs`）。"""
 
 SELECT_TIMEOUT_SECONDS = 30
-"""族の選び（`cargo xtask full --select`）の上限（秒）。**git と表と記録を読むだけなので 1 秒かからない。**"""
+"""family の選び（`cargo xtask full --select`）の上限（秒）。**git と表と記録を読むだけなので 1 秒かからない。**"""
 
 
 def selection_from(returncode: int | None, stdout: str, stderr: str) -> list[str]:
@@ -108,16 +108,16 @@ def selection_from(returncode: int | None, stdout: str, stderr: str) -> list[str
     **出せなければ「出せなかった」と言う**——**黙ると、選びが無いのか hook が動いていないのかが分からない。**
     """
     if returncode is None:
-        return [f"族の選び: 出せなかった（{stderr.strip() or '走らせられなかった'}）"]
+        return [f"family の選び: 出せなかった（{stderr.strip() or '走らせられなかった'}）"]
     if returncode != 0:
         reasons = [line for line in stderr.splitlines() if line.startswith("Error:")]
-        return [f"族の選び: 出せなかった（{reasons[-1] if reasons else f'exit {returncode}'}）"]
+        return [f"family の選び: 出せなかった（{reasons[-1] if reasons else f'exit {returncode}'}）"]
     lines = [line for line in stdout.splitlines() if line.strip()]
-    return lines if lines else ["族の選び: 出せなかった（出力が空）"]
+    return lines if lines else ["family の選び: 出せなかった（出力が空）"]
 
 
 def selection_lines(root: str) -> list[str]:
-    """HEAD の族の選び（`cargo xtask full --select`）。**ロックを取らず、QEMU を起こさない。**"""
+    """HEAD の family の選び（`cargo xtask full --select`）。**ロックを取らず、QEMU を起こさない。**"""
     try:
         done = subprocess.run(
             ["cargo", "xtask", "full", "--select"],
@@ -149,7 +149,7 @@ def paths_in_head(root: str) -> list[str] | None:
     """直前のコミットが触ったパス。**読めなければ `None` を返す。**
 
     **空の一覧と「読めなかった」を分ける**——**分けないと、読めなかったときに
-    黙って基底へ落ちる**（「失敗を空に落とすと、もっともらしい誤りが出る」の族。
+    黙って基底へ落ちる**（「失敗を空に落とすと、もっともらしい誤りが出る」の family。
     運用者の指摘。2026-09-18）。**どちらにするかは [`decide`] が決める。**
     """
     try:
@@ -417,7 +417,7 @@ def self_test() -> int:
     if "--commit" in refused_notice("基底", ""):
         print("self-test: refused_notice for the base check names --commit")
         failures += 1
-    # **族の選びの行**（2026-09-26）。**出せたらそのまま、出せなければ「出せなかった」と言う。**
+    # **family の選びの行**（2026-09-26）。**出せたらそのまま、出せなければ「出せなかった」と言う。**
     selection_cases = [
         ((0, "selection for abc\n  families selected: none (nothing changed)\n", ""), 2, None),
         ((1, "", "Error: git failed\n"), 1, "Error: git failed"),

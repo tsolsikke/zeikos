@@ -53,7 +53,7 @@ const SCRATCH_FLOOR_BYTES: u64 = 1 << 30;
 
 /// 検査が tmpfs に置いてよい量の上限（バイト）。**置いてある量に 1 回の分を足して、これを越えるなら、その回は
 /// SSD に置く**（2026-10-06）。tmpfs はメモリなので、片付けが追いつかない形になったときに、黙って食い続けない。
-/// 数えるのは、利用者ごとの親（`/dev/shm/zeikos-runs-<利用者>`）の下の全部で、メインの木と全検査の木の両方が入る。
+/// 数えるのは、利用者ごとの親（`/dev/shm/zeikos-runs-<利用者>`）の下の全部で、メインのツリーと全検査のツリーの両方が入る。
 const SCRATCH_BUDGET_BYTES: u64 = 2 << 30;
 
 /// 1 回の実行が tmpfs に置く量の見積もり（バイト。[`SCRATCH_FLOOR_BYTES`] の doc の内訳を、切り上げた値）。
@@ -181,7 +181,7 @@ const ESP: &str = "esp";
 /// この回の使い捨ての置き場を決める（純粋な論理ではない。tmpfs の様子を見る）。**置けなければ、理由を返す。**
 ///
 /// **道は `/dev/shm/zeikos-runs-<利用者>/<置き場の親のパスから作った名前>/<番号>` である**——作業ツリーごと
-/// （メインの木と、全検査の木）に分かれ、同じ番号でもぶつからない。
+/// （メインのツリーと、全検査のツリー）に分かれ、同じ番号でもぶつからない。
 fn scratch_for(runs: &Path, number: u64) -> Result<PathBuf, String> {
     let tmpfs = Path::new(SCRATCH_TMPFS);
     let present = tmpfs.is_dir();
@@ -631,7 +631,7 @@ fn lock_if_idle(dir: &Path) -> Option<File> {
 mod tests {
     use super::*;
 
-    /// tmpfs の側の名前は、置き場の親のパスごとに違う（メインの木と全検査の木が、同じ番号でぶつからない）。
+    /// tmpfs の側の名前は、置き場の親のパスごとに違う（メインのツリーと全検査のツリーが、同じ番号でぶつからない）。
     #[test]
     fn the_scratch_name_differs_per_runs_directory() {
         let main = scratch_name(Path::new("/home/u/zeikos/target/runs"));
