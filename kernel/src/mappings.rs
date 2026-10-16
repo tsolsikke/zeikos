@@ -39,7 +39,7 @@ pub const fn page_rounded(len: u64) -> Option<u64> {
     }
 }
 
-/// 写像の seed 類。
+/// 写像の 種類。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MappingKind {
     /// 無名（`MAP_ANONYMOUS`）。フレームはこのプロセスのもので、返すときはアロケータへ戻す。
