@@ -207,8 +207,8 @@ pub enum LeafSize {
 
 /// 権限を、リーフの項目のビットへ直す（2026-10-02。`ADR-0071` の手順 3）。**アドレスは含まない。**
 ///
-/// **ページの権限をビットへ直すのは、この関数と [`table_flags`] だけである。** 起動の表、起動の途中に組む表、
-/// 稼働中の表へ足す 1 枚、ユーザーの空間へ足す 1 枚が、どれもここを通る。
+/// **ページの権限をビットへ直すのは、この関数と [`table_flags`] だけである。** 起動のページテーブル、起動の途中に組むページテーブル、
+/// 稼働中のページテーブルへ足す 1 枚、ユーザーの空間へ足す 1 枚が、どれもここを通る。
 ///
 /// | 権限の欄 | ビット |
 /// |---|---|
@@ -399,7 +399,7 @@ mod tests {
                 PagePermissions::boot_table_unrestricted(),
                 Large,
                 P | W | PS,
-                "起動の表",
+                "起動のページテーブル",
             ),
             (
                 PagePermissions::kernel_code(),
@@ -520,7 +520,7 @@ mod tests {
         assert_eq!(PDE_HUGE_BELOW_ADDRESS, 0x1F_F000);
     }
 
-    /// **起動の表が直書きしている 2 つの値と同じである**（`kernel/src/main.rs` の `global_asm!` の `0x83` と `0x03`）。
+    /// **起動のページテーブルが直書きしている 2 つの値と同じである**（`kernel/src/main.rs` の `global_asm!` の `0x83` と `0x03`）。
     #[test]
     fn the_boot_table_literals_are_what_the_conversion_gives() {
         let everything = PagePermissions::boot_table_unrestricted();

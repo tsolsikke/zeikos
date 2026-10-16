@@ -1,7 +1,7 @@
 //! マップされているページの権限を、名前つきの領域ごとの一覧にする（2026-10-01）。
 //!
 //! 権限の設定を 1 か所へ寄せる前と後で、どのページの権限も変わっていないことを比べるための道具である
-//! （`ADR-0071` の手順 3）。**表を歩くのは置き場の側**（`crate::arch` の `for_each_mapped_range`。作る側と
+//! （`ADR-0071` の手順 3）。**ページテーブルを歩くのは置き場の側**（`crate::arch` の `for_each_mapped_range`。作る側と
 //! コードを共有しない）で、ここは渡された範囲を領域に分け、行にまとめ、出す。
 //!
 //! # 領域
@@ -476,14 +476,14 @@ pub fn retire(name: &str) {
     KERNEL_REGIONS.lock().retire(name);
 }
 
-/// 稼働中のカーネルの表を歩き、登録された領域で一覧を作って出す。
+/// 稼働中のカーネルのページテーブルを歩き、登録された領域で一覧を作って出す。
 ///
 /// `moment` は時点の名前である。**起動の途中の 1 本の流れか、BKL を持っている間に呼ぶこと**（歩いている間に
 /// 表が変わらないこと）。
 ///
 /// # Safety
 ///
-/// `root` が稼働中のカーネルの表の根で、`direct_map` を通して配下の表が全部読めること。
+/// `root` が稼働中のカーネルのページテーブルの根で、`direct_map` を通して配下のテーブルが全部読めること。
 pub unsafe fn report_kernel(
     logger: &mut Logger<Serial>,
     moment: &dyn core::fmt::Display,
@@ -513,7 +513,7 @@ pub fn user_report_wanted() -> bool {
         || cfg!(feature = "page-permissions-dump")
 }
 
-/// 稼働していないユーザーの空間の表を歩き、渡された領域で一覧を作って出す。**歩くのは `top` の添字だけである**
+/// 稼働していないユーザーの空間のページテーブルを歩き、渡された領域で一覧を作って出す。**歩くのは `top` の添字だけである**
 /// （ユーザーの側だけ。カーネルと共有している側は歩かない）。
 ///
 /// **既定のビルドでは、起動時のプログラムを走らせ終えた後は何もしない**（[`boot_programs_are_done`]）。
@@ -521,7 +521,7 @@ pub fn user_report_wanted() -> bool {
 ///
 /// # Safety
 ///
-/// `root` が有効な表の根で、`direct_map` を通して配下の表が全部読めること。歩いている間に表が変わらないこと。
+/// `root` が有効なページテーブルの根で、`direct_map` を通して配下のテーブルが全部読めること。歩いている間に表が変わらないこと。
 pub unsafe fn report_user(
     logger: &mut Logger<Serial>,
     moment: &dyn core::fmt::Display,

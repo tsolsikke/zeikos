@@ -1811,7 +1811,7 @@ unsafe fn mmap_screen_from_ring3(
             outcome = (-EINVAL) as u64;
             break;
         };
-        // SAFETY: 稼働中の表へ、ユーザーの範囲を、裏バッファの物理ページでマップする。**裏バッファは
+        // SAFETY: 稼働中のページテーブルへ、ユーザーの範囲を、裏バッファの物理ページでマップする。**裏バッファは
         // 起動時に `pages` ぶん以上を連続で取ってある**（`limit` で切った）。
         if unsafe { table.map_4kib(virt, frame, attributes, allocator) }.is_err() {
             outcome = (-ENOMEM) as u64;
@@ -1821,7 +1821,7 @@ unsafe fn mmap_screen_from_ring3(
         mapped += 1;
     }
     if outcome != base {
-        // SAFETY: いまマップした裏バッファのページを、同じ稼働中の表から外す。
+        // SAFETY: いまマップした裏バッファのページを、同じ稼働中のページテーブルから外す。
         unsafe { undo_shared_mapping(&mut table, base, mapped, pages * PAGE) };
     }
     let tables_taken = free_before_map.saturating_sub(allocator.free_frame_count());
@@ -2537,7 +2537,7 @@ unsafe fn mmap_anonymous_from_ring3(
                 PAGE_SIZE as usize,
             )
         };
-        // SAFETY: 稼働中の表へ、ユーザーの範囲を、いま取ったフレームでマップする。
+        // SAFETY: 稼働中のページテーブルへ、ユーザーの範囲を、いま取ったフレームでマップする。
         if unsafe { table.map_4kib(virt, frame, attributes, allocator) }.is_err() {
             let _ = allocator.deallocate_frame(frame);
             failed = true;
@@ -2752,14 +2752,14 @@ unsafe fn mprotect_from_ring3(
             // 捨てる形。読める形へ戻すと 0 のページが来る）。
             #[cfg(feature = "mprotect-none-discards-test")]
             if !present {
-                // SAFETY: 稼働中の表から、このプロセスのページを外し、フレームを返す（破壊テストだけ）。
+                // SAFETY: 稼働中のページテーブルから、このプロセスのページを外し、フレームを返す（破壊テストだけ）。
                 if let Ok(unmapped) = unsafe { table.unmap_4kib(virt) } {
                     let _ = allocator.deallocate_frame(unmapped.frame);
                 }
                 page += PAGE_SIZE;
                 continue;
             }
-            // SAFETY: 稼働中の表の、このプロセスのリーフを書き換える（マップしていないリーフは `NotMapped` で返る）。
+            // SAFETY: 稼働中のページテーブルの、このプロセスのリーフを書き換える（マップしていないリーフは `NotMapped` で返る）。
             let changed = unsafe { table.set_leaf_access(virt, writable, present) };
             if changed.is_err() {
                 // **マップしていないページ**（`mmap(PROT_NONE)` の無名のマッピング）。読める形にするなら、ここで 0 のフレームをマップする。
@@ -2777,7 +2777,7 @@ unsafe fn mprotect_from_ring3(
                         )
                     };
                     let attributes = PagePermissions::user_program(writable, false);
-                    // SAFETY: 稼働中の表へ、ユーザーの範囲を、いま取ったフレームでマップする。
+                    // SAFETY: 稼働中のページテーブルへ、ユーザーの範囲を、いま取ったフレームでマップする。
                     if unsafe { table.map_4kib(virt, frame, attributes, allocator) }.is_err() {
                         let _ = allocator.deallocate_frame(frame);
                         outcome = (-ENOMEM) as u64;
@@ -2963,7 +2963,7 @@ unsafe fn release_range_and_unmap(
     let mut table = unsafe { ActivePageTable::current(direct_map) };
     let mut returned = 0usize;
     for piece in released.iter().take(count).flatten() {
-        // **マップしていない断片も、ページ表のリーフを見て外す**（2026-10-08）。表の `present` が偽の断片には 2 通りある——
+        // **マップしていない断片も、ページテーブルのリーフを見て外す**（2026-10-08）。表の `present` が偽の断片には 2 通りある——
         // `mmap(PROT_NONE)` で範囲だけ取って何もマップしていないページ（リーフが無い。`unmap_4kib` は `NotMapped` を返す）と、
         // `mprotect(PROT_NONE)` でフレームを持ったまま `P` を落としたページ（`PTE_RETAINED` のリーフ。`unmap_4kib` が外して
         // フレームを返す）。どちらかはリーフが知っているので、表には持たない（1 つの断片の中で混ざりうる）。
@@ -2975,7 +2975,7 @@ unsafe fn release_range_and_unmap(
         let mut page = piece.start;
         while page < piece.end {
             if let Some(virt) = common::addr::VirtAddr::new(page) {
-                // SAFETY: 稼働中の表から、このプロセスのページ（無名か `brk` の）を外し、フレームを返す（`brk` が縮む
+                // SAFETY: 稼働中のページテーブルから、このプロセスのページ（無名か `brk` の）を外し、フレームを返す（`brk` が縮む
                 // ときと同じ。この CPU の TLB からは `unmap_4kib` が消し、プロセスは 1 つの CPU に留まる）。
                 if let Ok(unmapped) = unsafe { table.unmap_4kib(virt) } {
                     // 破壊テスト (2026-10-06, munmap-keeps-frames-test): 外したフレームをアロケータへ返さない。
@@ -3180,7 +3180,7 @@ unsafe fn mmap_from_ring3(
         // 破壊テスト (`ADR-0065`, shm-mmap-maps-nothing): マップしない。
         #[cfg(not(feature = "shm-mmap-maps-nothing"))]
         {
-            // SAFETY: 稼働中の表へ、ユーザーの範囲を、共有メモリの物理ページでマップする。
+            // SAFETY: 稼働中のページテーブルへ、ユーザーの範囲を、共有メモリの物理ページでマップする。
             if unsafe { table.map_4kib(virt, *frame, attributes, allocator) }.is_err() {
                 outcome = (-ENOMEM) as u64;
                 break;
@@ -3194,7 +3194,7 @@ unsafe fn mmap_from_ring3(
         }
     }
     if outcome != base {
-        // SAFETY: いまマップした共有メモリのページを、同じ稼働中の表から外す。
+        // SAFETY: いまマップした共有メモリのページを、同じ稼働中のページテーブルから外す。
         unsafe {
             undo_shared_mapping(
                 &mut table,
@@ -4690,7 +4690,7 @@ fn errno_for_alloc(error: common::ext2::AllocError) -> i64 {
 /// **ガードページは置かない**——**スタックの下端そのものが境界なので、
 /// 越えなければ衝突しない**（ADR-0044 の決定 4）。
 ///
-/// # 稼働中の表へマップする
+/// # 稼働中のページテーブルへマップする
 ///
 /// **遠征の中では CR3 がこのプロセスのものである**
 /// （`crate::userland` の `run_loaded_program` が `set_active_page_table_root` してから入る）。
@@ -4811,7 +4811,7 @@ unsafe fn sys_brk(
                     PAGE_SIZE as usize,
                 )
             };
-            // SAFETY: 稼働中の表へ、ユーザーの範囲をマップする。
+            // SAFETY: 稼働中のページテーブルへ、ユーザーの範囲をマップする。
             if unsafe { table.map_4kib(virt, frame, attributes, allocator) }.is_err() {
                 let _ = allocator.deallocate_frame(frame);
                 grown = false;
@@ -4831,7 +4831,7 @@ unsafe fn sys_brk(
             while back > from {
                 back -= PAGE_SIZE;
                 if let Some(virt) = common::addr::VirtAddr::new(back) {
-                    // SAFETY: いまこの呼び出しでマップしたページを、稼働中の表から外し、フレームを返す。
+                    // SAFETY: いまこの呼び出しでマップしたページを、稼働中のページテーブルから外し、フレームを返す。
                     if let Ok(unmapped) = unsafe { table.unmap_4kib(virt) } {
                         let _ = allocator.deallocate_frame(unmapped.frame);
                         crate::userland::with_current_heap(|heap| heap.note_given());
@@ -4870,7 +4870,7 @@ unsafe fn sys_brk(
                     continue;
                 }
                 if let Some(virt) = common::addr::VirtAddr::new(page) {
-                    // SAFETY: 稼働中の表から外し、フレームを返す。
+                    // SAFETY: 稼働中のページテーブルから外し、フレームを返す。
                     if let Ok(page) = unsafe { table.unmap_4kib(virt) } {
                         // **返すのは、外したリーフが指していたフレームである**（`page.frame`）。以前は、外す前の
                         // 項目の値を物理のアドレスとして読んでいて、アドレスより上の位置にビットが立つと、

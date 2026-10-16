@@ -7,7 +7,7 @@
 //! 引けること**を、実物で確かめる。
 //!
 //! - BSP が、起動の途中（AP を起こす前）に、このビットを付けたページを 1 枚マップして読む。
-//! - AP は、本番の表へ切り替えた後に、同じページを読む（`crate::smp`）。
+//! - AP は、本番のページテーブルへ切り替えた後に、同じページを読む（`crate::smp`）。
 //! - どちらも、読めた値と、そのときの `EFER.NXE` を起動ログへ出す。
 //!
 //! **読むだけである。** 実行はしない——実行できないことは、変換が実行の欄を読むようになってから、権限の違反の
@@ -82,7 +82,7 @@ pub unsafe fn map_execute_disable_probe<const CAP: usize>(
             .as_mut_ptr::<u64>()
             .write_volatile(PROBE_PATTERN);
     }
-    // SAFETY: 呼び出し側の契約。稼働中の表へ、まだ誰も使っていないアドレスをマップする。
+    // SAFETY: 呼び出し側の契約。稼働中のページテーブルへ、まだ誰も使っていないアドレスをマップする。
     let mut table = unsafe { ActivePageTable::current(direct_map) };
     // **読むだけの権限でマップする。** 実行しない権限なので、変換が実行禁止のビットを付ける（2026-10-02。
     // 以前は、変換が実行の欄を読まなかったので、このページ専用の入口でビットを足していた）。
@@ -168,7 +168,7 @@ pub unsafe fn map_execute_disable_probe<const CAP: usize>(
 /// # 契約（境界の関数。2026-10-02）
 ///
 /// - 呼ぶのは、本番のページテーブルを載せた CPU である（BSP は [`map_execute_disable_probe`] の中から、AP は
-///   本番の表へ切り替えた後に `crate::smp` から）。割り込みの状態は問わない。BKL は要らない（読むだけで、
+///   本番のページテーブルへ切り替えた後に `crate::smp` から）。割り込みの状態は問わない。BKL は要らない（読むだけで、
 ///   ページは起動の間に 1 回マップしたきり変わらない）。
 /// - 変えるのは、破壊テストの形のときの、この CPU の `EFER.NXE` だけである。
 pub fn read_execute_disable_probe(slot: usize) -> Option<ProbeReading> {

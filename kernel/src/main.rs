@@ -64,17 +64,17 @@ extern "C" {
 // const オペランド（(a)(b)）と、同一 asm へ 1 行挿入するマクロ（(d)）で行う。
 // 検査対象の asm を複製せずに済む。
 
-/// 静的な起動の表の権限。**起動の表は、覆う範囲の全部を、書けて実行もできるメモリとしてマップする**
-/// （カーネルのイメージと、恒等の 1GiB。セグメントごとの権限は、本流の表へ切り替えた後のものである）。
+/// 静的な起動のページテーブルの権限。**起動のページテーブルは、覆う範囲の全部を、書けて実行もできるメモリとしてマップする**
+/// （カーネルのイメージと、恒等の 1GiB。セグメントごとの権限は、本流のページテーブルへ切り替えた後のものである）。
 const BOOT_TABLE_PERMISSIONS: kernel::paging::permissions::PagePermissions =
     kernel::paging::permissions::PagePermissions::boot_table_unrestricted();
 
-/// 起動の表の、途中の項目のビット（P|RW = 0x03）。**権限の変換が決める**（2026-10-02。以前は、アセンブリに
+/// 起動のページテーブルの、途中の項目のビット（P|RW = 0x03）。**権限の変換が決める**（2026-10-02。以前は、アセンブリに
 /// 直書きしていた）。値が今までと同じことは、`entry` のホストのテストが固定している。
 const BOOT_TABLE_FLAGS: u64 =
     kernel::arch::x86_64::paging::entry::table_flags(BOOT_TABLE_PERMISSIONS);
 
-/// 起動の表の、2MiB のリーフのビット（P|RW|PS = 0x83）。**権限の変換が決める**（同上）。
+/// 起動のページテーブルの、2MiB のリーフのビット（P|RW|PS = 0x83）。**権限の変換が決める**（同上）。
 const BOOT_LEAF_FLAGS: u64 = kernel::arch::x86_64::paging::entry::leaf_flags(
     BOOT_TABLE_PERMISSIONS,
     kernel::arch::x86_64::paging::entry::LeafSize::Large,
@@ -165,7 +165,7 @@ core::arch::global_asm!(
 //   PDPT_high[510]-> PD_shared （**同一 PD を共有**）
 //   PD_shared[i]  = (i << 21) | 0x83   物理 i*2MiB、P|RW|PS
 // **ビット（0x03 と 0x83）は、権限の変換が返す値を const で渡す**（`BOOT_TABLE_FLAGS`・`BOOT_LEAF_FLAGS`。
-// 2026-10-02）。権限をビットへ直す所は、起動の表を含めて 1 つである。
+// 2026-10-02）。権限をビットへ直す所は、起動のページテーブルを含めて 1 つである。
 // PD エントリは「物理ターゲット + フラグ」だけを符号化するので、恒等ウィンドウと高位ウィンドウが
 // 1 枚の PD を共有できる。両ウィンドウともフラグが同一（cacheable RW、NX なし）で成立する。
 // フレームバッファ（物理 2GiB）は [0,1GiB) の外なので、キャッシュ属性の別名は
@@ -209,7 +209,7 @@ core::arch::global_asm!(
 // ——**片方だけが動けば、受け渡しが恒等の外へ出る。**
 const _: () = assert!(common::boot_info::BOOT_IDENTITY_REACH == 512 * (2 << 20));
 
-// **起動の表のビットは、変換から来ても、今までの直書きと同じ値である。** リーフを全部書き込み可にする破壊テストは、
+// **起動のページテーブルのビットは、変換から来ても、今までの直書きと同じ値である。** リーフを全部書き込み可にする破壊テストは、
 // もともと書けるリーフには効かないので、どのビルドでも成り立つ。
 const _: () = assert!(BOOT_TABLE_FLAGS == 0x03 && BOOT_LEAF_FLAGS == 0x83);
 
@@ -611,8 +611,8 @@ extern "sysv64" fn kernel_main() -> ! {
         cpu::halt_forever();
     }
 
-    // **起動の表の、ページの権限の一覧**（`kernel::page_survey`。`ADR-0071` の手順 3 の道具）。**まだ静的な
-    // 起動の表が載っている。** 窓を登録した直後なので、表を恒等で読める。
+    // **起動のページテーブルの、ページの権限の一覧**（`kernel::page_survey`。`ADR-0071` の手順 3 の道具）。**まだ静的な
+    // 起動のページテーブルが載っている。** 窓を登録した直後なので、表を恒等で読める。
     register_image_regions();
     survey_mappings(&mut logger, "the boot table");
 
@@ -1584,7 +1584,7 @@ extern "sysv64" fn kernel_main() -> ! {
     }
 
     // **実行禁止のビットを付けた試し専用のページを 1 枚マップし、BSP で読む**（2026-10-02。`ADR-0071` の手順 4）。
-    // **AP を起こす前である**——AP は、本番の表へ切り替えた後に同じページを読む（`kernel::smp`）。
+    // **AP を起こす前である**——AP は、本番のページテーブルへ切り替えた後に同じページを読む（`kernel::smp`）。
     // SAFETY: 本番テーブルへ切り替え済みで、直接マッピングが使える。起動時の単一の文脈で、AP はまだ走っていない。
     // BSP の EFER.NXE は、起動の最初期に読み戻して確かめてある（立っていなければ、そこで止まっている）。
     unsafe {
@@ -1594,7 +1594,7 @@ extern "sysv64" fn kernel_main() -> ! {
         );
     }
 
-    // **カーネルのイメージのセグメントごとの権限を、稼働中の表から読み戻して出す**（2026-10-02。`ADR-0071` の手順 4）。
+    // **カーネルのイメージのセグメントごとの権限を、稼働中のページテーブルから読み戻して出す**（2026-10-02。`ADR-0071` の手順 4）。
     // **この後は、カーネルのマッピングの権限を変えない。**
     report_kernel_image_permissions(&mut logger);
 
@@ -1733,7 +1733,7 @@ extern "sysv64" fn kernel_main() -> ! {
 
     // **本番のカーネルの PML4 を控える（W1-c-2）。** **切り替えは、欄が 0 のタスクへ移るときに
     // これを載せる**（`task::record_kernel_page_table_root` の doc）。**恒等の除去のセグメントの外に置く**——
-    // **`paging-test` の構成は除去を通らないが、本番の表はこの時点で同じである。**
+    // **`paging-test` の構成は除去を通らないが、本番のページテーブルはこの時点で同じである。**
     kernel::task::record_kernel_page_table_root();
 
     // 破壊テスト (highhalf-panic-after-remove): 恒等除去の直後に意図的 panic する。パニック経路
@@ -2240,7 +2240,7 @@ fn write_a_kernel_half_entry_after_boot(logger: &mut Logger<Serial>) {
         "sabotage: mapping a page into the empty kernel-half PML4 slot 260 after boot"
     ));
     let attributes = PagePermissions::kernel_data();
-    // SAFETY: 破壊テスト。稼働中の表を direct map 越しに辿り、空いたカーネル側の添字へ、いま取ったフレームを
+    // SAFETY: 破壊テスト。稼働中のページテーブルを direct map 越しに辿り、空いたカーネル側の添字へ、いま取ったフレームを
     // 1 ページだけマップしに行く。**書く側の守りが、項目を作る前に止める**（守りを外した形では項目が作られ、
     // 次の `AddressSpace::new` の突き合わせが見つける。どちらの形でも、この後にシェルは起動しない）。
     let result = unsafe {
@@ -2285,7 +2285,7 @@ fn change_a_kernel_mapping_after_boot(logger: &mut Logger<Serial>) {
         return;
     };
     let direct_map = common::addr::direct_map();
-    // SAFETY: 破壊テスト。稼働中の表を direct map 越しに辿る。**決まりが、項目を読む前に断る。**
+    // SAFETY: 破壊テスト。稼働中のページテーブルを direct map 越しに辿る。**決まりが、項目を読む前に断る。**
     let mut table = unsafe { ActivePageTable::current(direct_map) };
     #[cfg(feature = "kernel-mapping-map-after-boot-test")]
     let (what, result) = {
@@ -9847,7 +9847,7 @@ const USER_PROGRAMS: &[UserProgram] = &[
         argv: &[b"nx-rodata"],
         enters_with_direction_flag: None,
     },
-    // **`brk` で伸ばしたページへ跳ぶ**（2026-10-03。`brk` の会計を直したときに足した）。**稼働中の表へ 1 枚ずつ足す
+    // **`brk` で伸ばしたページへ跳ぶ**（2026-10-03。`brk` の会計を直したときに足した）。**稼働中のページテーブルへ 1 枚ずつ足す
     // 経路のページも実行できないことと、伸ばしたまま終わっても空間ごとの会計が合うことを、起動時の経路で見る。**
     // 実行できてしまえば、跳んだ先の `ud2` でベクタが 6 になり、判定行が食い違いとして止める。
     UserProgram {
@@ -11622,7 +11622,7 @@ fn verify_ring3_fault_vectors(logger: &mut Logger<Serial>) {
     }
 
     // 実行できないページの 2 つ（2026-10-03）。読むだけのページと、スタックのページである。どちらも、
-    // `verify_ring3_excursion` が、稼働中の表へ 1 枚ずつ足す入口（`ActivePageTable::map_4kib`）でマップした。
+    // `verify_ring3_excursion` が、稼働中のページテーブルへ 1 枚ずつ足す入口（`ActivePageTable::map_4kib`）でマップした。
     // **`brk` と `mmap` のページを足すのと同じ入口である。**
     const STACK_USER_VIRT: u64 = ring3::USER_STACK_VIRT;
 
@@ -15142,11 +15142,11 @@ fn rehome_framebuffer_to_window(
 ///
 /// **分岐は登録のとおりに書いた**——2MiB なら `split_huge_page` を通してから `unmap_4kib`
 /// する。**機構は M5-a から在ったので、配線するだけである。**
-/// 稼働中の表を歩いて、ページの権限の一覧を出す（`kernel::page_survey`。`ADR-0071` の手順 3 の道具）。
+/// 稼働中のページテーブルを歩いて、ページの権限の一覧を出す（`kernel::page_survey`。`ADR-0071` の手順 3 の道具）。
 /// **起動の途中の 1 本の流れから呼ぶ。**
 fn survey_mappings(logger: &mut Logger<Serial>, moment: &str) {
-    // SAFETY: 根は稼働中の表で、窓は登録済みの直接マッピングである（切り替える前は恒等、後は高いアドレスの窓）。
-    // どちらの窓でも、表のフレームは全部読める。読み取りのみ。起動の途中の 1 本の流れなので、歩いている間に
+    // SAFETY: 根は稼働中のページテーブルで、窓は登録済みの直接マッピングである（切り替える前は恒等、後は高いアドレスの窓）。
+    // どちらの窓でも、ページテーブルのフレームは全部読める。読み取りのみ。起動の途中の 1 本の流れなので、歩いている間に
     // 表は変わらない。
     unsafe {
         kernel::page_survey::report_kernel(
@@ -15160,7 +15160,7 @@ fn survey_mappings(logger: &mut Logger<Serial>, moment: &str) {
 
 /// カーネルのイメージのセグメントと、最初から決まっている範囲を、ページの権限の一覧の領域として登録する。
 ///
-/// **セグメントの境は `kernel/link.ld` の記号から取る。** イメージの外の範囲（起動の表がマップする 1GiB の窓、恒等、起動時の
+/// **セグメントの境は `kernel/link.ld` の記号から取る。** イメージの外の範囲（起動のページテーブルがマップする 1GiB の窓、恒等、起動時の
 /// Ring 3 の試しのページ）も、名前を持たせておく——名前の無い範囲が一覧に出たら、登録が足りないか、
 /// マップするべきでない所にマップされている。
 fn register_image_regions() {
@@ -15177,7 +15177,7 @@ fn register_image_regions() {
     register("kernel rodata", rodata, data, false);
     register("kernel data", data, bss, false);
     register("kernel bss", bss, end, false);
-    // 起動の表は、イメージの外も含めて 1GiB を高いアドレスにマップする。自前の表はイメージだけをマップする。
+    // 起動のページテーブルは、イメージの外も含めて 1GiB を高いアドレスにマップする。自前のページテーブルはイメージだけをマップする。
     let window = kernel::link_symbols::KERNEL_VIRT_BASE;
     register(
         "kernel window outside the image",
@@ -15305,7 +15305,7 @@ fn map_kernel_image<const CAP: usize>(
     }
 }
 
-/// 稼働中の表から、カーネルのイメージのセグメントごとの権限を読み戻して出す（2026-10-02。`ADR-0071` の手順 4）。
+/// 稼働中のページテーブルから、カーネルのイメージのセグメントごとの権限を読み戻して出す（2026-10-02。`ADR-0071` の手順 4）。
 /// **期待と違うページが 1 枚でも在れば、名前つきで止まる。**
 ///
 /// **作る側（`map_kernel_image` と権限の変換）とは別に書いた、辿る側の関数で読む**
@@ -15329,7 +15329,7 @@ fn report_kernel_image_permissions(logger: &mut Logger<Serial>) {
             let phys = common::addr::PhysAddr::new(address)
                 .expect("a kernel image address fits in a physical address");
             let virt = kernel::kernel_virt_from_phys(phys);
-            // SAFETY: 根は稼働中の表で、登録済みの直接マッピングを通して配下の表が読める。読むだけである。
+            // SAFETY: 根は稼働中のページテーブルで、登録済みの直接マッピングを通して配下のテーブルが読める。読むだけである。
             match unsafe { verify::walk_page_table(root, direct_map, virt) } {
                 Ok(resolved) => {
                     if resolved.huge {
@@ -15404,7 +15404,7 @@ fn report_kernel_image_permissions(logger: &mut Logger<Serial>) {
 /// 権限の違反の破壊テスト（2026-10-02。`ADR-0071` の手順 4。`wx-violation-test` の傘の下の 5 つ）。
 ///
 /// **書けないページへ書く・実行できないページを実行すると、#PF で止まること**を見る。**「落ちた」だけにしない**
-/// ——触る前に、狙うページが在ること・アドレス・権限を、稼働中の表から読み戻して出し、アドレスを例外の出力へ告げる。
+/// ——触る前に、狙うページが在ること・アドレス・権限を、稼働中のページテーブルから読み戻して出し、アドレスを例外の出力へ告げる。
 /// 例外の出力は、誤りコード（書き込みか命令の取り出しか、権限の違反か）と、CR2 が告げたアドレスと同じかを出す。
 /// **触った後に戻ってきたら、守りが効いていない**——その行を出す（検査は、その行が出ないことも見る）。
 #[cfg(feature = "wx-violation-test")]
@@ -15450,7 +15450,7 @@ fn run_permission_violation_test(logger: &mut Logger<Serial>) {
             true,
         ))
     } else if cfg!(feature = "kernel-executes-stack-test") {
-        // AP の CPU ごとのスタックの、いちばん下のページ。**イメージの `.data` や `.bss` とは別の経路（稼働中の表へ
+        // AP の CPU ごとのスタックの、いちばん下のページ。**イメージの `.data` や `.bss` とは別の経路（稼働中のページテーブルへ
         // 1 枚ずつ足す経路）でマップしたページである。** AP を起こす前なので、まだ誰も使っていない。
         match kernel::smp::ap_kernel_stack_range(1) {
             Some((bottom, _)) => {
@@ -15472,7 +15472,7 @@ fn run_permission_violation_test(logger: &mut Logger<Serial>) {
         return;
     };
     let virt = common::addr::VirtAddr::new(address).expect("the target address is canonical");
-    // SAFETY: 根は稼働中の表で、登録済みの直接マッピングを通して配下の表が読める。読むだけである。
+    // SAFETY: 根は稼働中のページテーブルで、登録済みの直接マッピングを通して配下のテーブルが読める。読むだけである。
     let resolved = unsafe {
         verify::walk_page_table(paging::switch::active_page_table_root(), direct_map, virt)
     };
@@ -15520,7 +15520,7 @@ fn run_permission_violation_test(logger: &mut Logger<Serial>) {
 /// kernel イメージを高位（`KERNEL_VIRT_BASE + phys`）へマップする（B-2a）。
 ///
 /// M2-d・A-1 の両テーブルで共通に使う。**セグメントごとの権限でマップするのは [`map_kernel_image`] である。**
-/// ここは、使った表のフレームの数を数えて、起動ログへ出す。
+/// ここは、使ったページテーブルのフレームの数を数えて、起動ログへ出す。
 fn map_kernel_high_half<const CAP: usize>(
     builder: &mut PageTableBuilder<'_, CAP>,
     logger: &mut Logger<Serial>,

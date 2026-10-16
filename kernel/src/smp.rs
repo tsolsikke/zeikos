@@ -471,7 +471,7 @@ fn wait_ticks(count: u64) {
 static AP_BRINGUP: [AtomicU64; MAX_APS * AP_BRINGUP_FIELDS] =
     [const { AtomicU64::new(0) }; MAX_APS * AP_BRINGUP_FIELDS];
 
-/// 引き継ぎ表の、1 スロットぶんの欄の数（本番の表の根、通常のスタックの頂点、IST の 5 本の頂点）。
+/// 引き継ぎ表の、1 スロットぶんの欄の数（本番のページテーブルの根、通常のスタックの頂点、IST の 5 本の頂点）。
 const AP_BRINGUP_FIELDS: usize = 7;
 
 /// 引き継ぎ表へ書く（BSP 側）。

@@ -1324,7 +1324,7 @@ pub fn load_user_program_with(
         }
     }
 
-    // SAFETY: direct_map は登録済みのウィンドウ（コピー元は、`new` が稼働中の表を自分で読む）。**起動の後なので、カーネル側の
+    // SAFETY: direct_map は登録済みのウィンドウ（コピー元は、`new` が稼働中のページテーブルを自分で読む）。**起動の後なので、カーネル側の
     // PML4 の項目は誰も変えない**（`AddressSpace::new` の前提。起動の終わりの指紋と突き合わせる）。BKL は持っていない。
     let space =
         match unsafe { AddressSpace::new(allocator, direct_map, USER_PROGRAM_SUBTREE_INDEX) } {
@@ -1673,7 +1673,7 @@ fn report_user_mappings(
         }
     }
 
-    // SAFETY: この空間の根は有効で、直接マッピングが配下の表を覆っている。読み取りのみ。この空間はいま稼働して
+    // SAFETY: この空間の根は有効で、直接マッピングが配下のテーブルを覆っている。読み取りのみ。この空間はいま稼働して
     // おらず、破棄もこの後なので、歩いている間に表は変わらない。
     unsafe {
         crate::page_survey::report_user(

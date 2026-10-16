@@ -859,7 +859,7 @@ pub fn plan_nxe_on_bsp(supported: bool, efer_at_entry: u64) -> NxeOnBsp {
 ///
 /// **起動の最初期に、BSP で 1 回だけ呼ぶこと。** **PE と PG には触れない。** **CD と NW は同時に落とす**
 /// （CD が 0 で NW が 1 の組は `#GP` になる）。**EFER は NXE だけを変える**（LME を落とさない）。
-/// **載っているページテーブルは起動の表で、実行禁止のビットを立てた項目が無いこと**（NXE の値に依らず引ける）。
+/// **載っているページテーブルは起動のページテーブルで、実行禁止のビットを立てた項目が無いこと**（NXE の値に依らず引ける）。
 pub unsafe fn establish_required_bits_on_bsp() {
     use common::arch::x86_64::cpu::{
         read_cr0, read_efer, write_efer, Efer, CR0_CACHE_DISABLE, CR0_NOT_WRITE_THROUGH,
@@ -885,7 +885,7 @@ pub unsafe fn establish_required_bits_on_bsp() {
     let efer_at_entry = read_efer().raw();
     // 破壊テスト (2026-10-02, bsp-leaves-nxe-clear): **ファームウェアが NXE を落として渡し、カーネルが立てない形**を
     // 作る。**OVMF と VirtualBox の EFI は NXE を立てて渡すので、落として作る。** **立てた後の読み戻しが
-    // EFER.NXE を名指しして止まる。** 載っているのは起動の表で、実行禁止のビットを立てた項目は無い。
+    // EFER.NXE を名指しして止まる。** 載っているのは起動のページテーブルで、実行禁止のビットを立てた項目は無い。
     //
     // 試しの形 (2026-10-02, bsp-enters-with-nxe-clear。破壊ではない): **ファームウェアが NXE を落として渡す形**
     // だけを作り、カーネルには立てさせる。**立てる書き込みは、OVMF でも VirtualBox でも通らない経路である**
