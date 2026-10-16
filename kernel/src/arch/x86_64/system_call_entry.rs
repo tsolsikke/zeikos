@@ -7,7 +7,7 @@
 //! # スタックの切り替え——`swapgs` を使わない
 //!
 //! **`syscall` 命令は、スタックを切り替えない。** 入った時点の RSP は、ユーザーの値のままである。カーネルのスタックの
-//! 番地を、レジスタを 1 つも壊さずに手に入れる必要がある。
+//! アドレスを、レジスタを 1 つも壊さずに手に入れる必要がある。
 //!
 //! **CPU ごとに短いスタブを 1 つずつ持ち、それぞれが自分の CPU の置き場を RIP 相対で読む。** `LSTAR` は CPU ごとの
 //! レジスタなので、CPU ごとに自分のスタブを指させる。スタブは、ユーザーの RSP を自分の CPU の退避の欄へ置き、
@@ -27,7 +27,7 @@
 //! # 戻り方
 //!
 //! **`iretq` だけで戻る**（`int 0x80` と同じ出口を通る）。`sysretq` は使わない。`sysretq` は、戻り先（RCX）が正準で
-//! ない番地のとき、Intel の石では Ring 0 のまま `#GP` を起こし、そのとき RSP は既にユーザーの値である。`iretq` なら
+//! ないアドレスのとき、Intel の石では Ring 0 のまま `#GP` を起こし、そのとき RSP は既にユーザーの値である。`iretq` なら
 //! その形は起きない。**ただし `iretq` も、戻り先が正準でなければカーネルの中で `#GP` になる**ので、戻る直前に
 //! 戻り先を確かめ、違えばそのプロセスを終わらせる（`IrqContext::returns_to_user_address`）。
 //!
@@ -82,20 +82,20 @@ pub const FLAGS_CLEARED_ON_ENTRY: u64 = if cfg!(feature = "sfmask-keeps-nt-test"
 /// スタブが、カーネルのスタックへ切り替えるか（アセンブラの条件に渡す）。
 ///
 /// 破壊テスト (2026-10-04, syscall-stub-keeps-user-stack-test): 切り替えない。**ユーザーのスタックの上で、カーネルが
-/// 走る。** 入口の確かめ（[`IrqContext::note_system_call_entrance`]）が、スタックの番地を見て止める。
+/// 走る。** 入口の確かめ（[`IrqContext::note_system_call_entrance`]）が、スタックのアドレスを見て止める。
 const STUB_SWITCHES_STACK: usize = if cfg!(feature = "syscall-stub-keeps-user-stack-test") {
     0
 } else {
     1
 };
 
-/// ユーザーの番地の上限（これより下だけがユーザーの番地である）。**範囲の終端で、この値そのものは含まない**——範囲の末尾が
+/// ユーザーのアドレスの上限（これより下だけがユーザーのアドレスである）。**範囲の終端で、この値そのものは含まない**——範囲の末尾が
 /// この値に等しいのはよく、越えるのは断る（`crate::syscall` の `exceeds_user_limit`）。`mmap` が配る範囲の終わり
 /// （`crate::userland::ProcessLayout` の `mmap_limit`）も同じ意味で、この値を越えない（2026-10-09）。位置を決めたイメージの
 /// セグメントを置いてよいウィンドウの終わり（`ProcessLayout::load_policy`）も同じである（2026-10-10）。
 ///
-/// **正準な番地の下半分の、最後の 1 ページを使わせない。** 最後のページの末尾に `syscall` 命令を置くと、戻り先
-/// （命令の次の番地）が `0x0000_8000_0000_0000` になり、正準でなくなる。Linux も同じ値を上限にしている。
+/// **正準なアドレスの下半分の、最後の 1 ページを使わせない。** 最後のページの末尾に `syscall` 命令を置くと、戻り先
+/// （命令の次のアドレス）が `0x0000_8000_0000_0000` になり、正準でなくなる。Linux も同じ値を上限にしている。
 ///
 /// **写す側（`mmap(MAP_FIXED)`・`munmap`・`mprotect`）も、この上限を見る**（2026-10-07。`crate::syscall` の
 /// `exceeds_user_limit`。それまでは見ていなかった——`ADR-0082` の Addendum）。**戻る直前の確かめ
@@ -104,7 +104,7 @@ pub const USER_ADDRESS_LIMIT: u64 = 0x0000_7fff_ffff_f000;
 
 /// スタブが、ユーザーの RSP を退避する欄（CPU ごと）。
 ///
-/// **読み書きするのはスタブだけである**（Rust の側は番地を渡すだけ）。入ってから、カーネルのスタックへ積み直すまでの
+/// **読み書きするのはスタブだけである**（Rust の側はアドレスを渡すだけ）。入ってから、カーネルのスタックへ積み直すまでの
 /// 数命令の間だけ使う。その間は IF が落ちていて、NMI・機械チェック・デバッグ例外は専用のスタックで受けるので、
 /// 同じ CPU の上で 2 つ目の `syscall` 命令が割り込むことは無い。
 static mut USER_STACK_POINTER_AT_ENTRY: [u64; MAX_CPUS] = [0; MAX_CPUS];
@@ -298,7 +298,7 @@ impl IrqContext {
     }
 
     /// 試しの形 (2026-10-04, syscall-return-noncanonical-test。破壊ではない): `syscall` 命令から来た最初の呼び出しの
-    /// 戻り先を、正準でない番地に書き換える。**戻る直前の確かめ（[`returns_to_user_address`](Self::returns_to_user_address)）
+    /// 戻り先を、正準でないアドレスに書き換える。**戻る直前の確かめ（[`returns_to_user_address`](Self::returns_to_user_address)）
     /// が、そのプロセスを終わらせること**を見る。今は、戻り先を書き換える経路がほかに無いので、この形で作る。
     #[cfg(feature = "syscall-return-noncanonical-test")]
     pub(crate) fn corrupt_return_address_for_the_test(&mut self) {
@@ -309,13 +309,13 @@ impl IrqContext {
         }
     }
 
-    /// このフレームの戻り先が、ユーザーの範囲の正準な番地か（[`USER_ADDRESS_LIMIT`] より下か）。
+    /// このフレームの戻り先が、ユーザーの範囲の正準なアドレスか（[`USER_ADDRESS_LIMIT`] より下か）。
     ///
-    /// **Ring 3 へ戻る直前に確かめる。** 正準でない番地へ `iretq` で戻ろうとすると、カーネルの中で `#GP` になり、
-    /// カーネルが止まる。カーネルの番地へ戻ろうとするフレームも、ここで断る。**今は、戻り先を書き換える経路が無い**
+    /// **Ring 3 へ戻る直前に確かめる。** 正準でないアドレスへ `iretq` で戻ろうとすると、カーネルの中で `#GP` になり、
+    /// カーネルが止まる。カーネルのアドレスへ戻ろうとするフレームも、ここで断る。**今は、戻り先を書き換える経路が無い**
     /// ので、偽になることは無い。シグナルから戻る経路（ユーザーが戻り先を用意する）でも、同じ確かめを通す。
     pub(crate) fn returns_to_user_address(&self) -> bool {
-        // 破壊テスト (2026-10-04, syscall-return-check-off-test): 確かめない。戻り先を正準でない番地にした形と
+        // 破壊テスト (2026-10-04, syscall-return-check-off-test): 確かめない。戻り先を正準でないアドレスにした形と
         // 組み合わせる。**本物の Intel の石では、出口の `iretq` がカーネルの中で `#GP` を起こす。** **QEMU の TCG は
         // そこでは止めず、Ring 3 へ移ってからページフォルトにする**（実測）ので、検査が見るのは「確かめが終わらせた
         // 記録（13）が出ない」ことである。
@@ -326,7 +326,7 @@ impl IrqContext {
     }
 }
 
-/// 戻り先がユーザーの番地でないフレームを断り、そのプロセスを終わらせる。**戻らない。**
+/// 戻り先がユーザーのアドレスでないフレームを断り、そのプロセスを終わらせる。**戻らない。**
 ///
 /// **一般保護例外（ベクタ 13）として記録する**——確かめずに戻れば、`iretq` が同じ例外を起こす場面である。
 ///
@@ -368,13 +368,13 @@ pub fn report_entrances(logger: &mut Logger<Serial>) {
 /// - `STAR`: 上位 16 ビットが `sysret` の基点（32 ビットのユーザーのコード区画。+8 がユーザーのデータ、+16 が 64 ビットの
 ///   ユーザーのコード）、その下の 16 ビットが `syscall` の基点（カーネルのコード。+8 がカーネルのデータ）。**GDT の
 ///   並びは、この形に合わせてある**（`ADR-0020`）。
-/// - `LSTAR`・`CSTAR`: その CPU のスタブの番地。
+/// - `LSTAR`・`CSTAR`: その CPU のスタブのアドレス。
 /// - `SFMASK`: [`FLAGS_CLEARED_ON_ENTRY`]。
 /// - `IA32_SYSENTER_CS`: 0（`sysenter` 命令は `#GP` になる）。
 ///
 /// **`cpu` が範囲の外なら `None`。**
 pub fn expected_msrs(cpu: usize) -> Option<SystemCallMsrs> {
-    // `global_asm!` が定義した記号の番地を取るだけである（読まない）。
+    // `global_asm!` が定義した記号のアドレスを取るだけである（読まない）。
     let (lstar, cstar) = match cpu {
         0 => (
             addr_of!(zeikos_syscall_instruction_stub_0) as u64,

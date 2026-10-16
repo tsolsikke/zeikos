@@ -154,7 +154,7 @@ core::arch::global_asm!(
     "  cmp rax, {minus_enosys}",
     "  jne 9f",
 
-    // --- 6. 誤ったポインタ（カーネルの番地）。両方の入口で -EFAULT が返る ---
+    // --- 6. 誤ったポインタ（カーネルのアドレス）。両方の入口で -EFAULT が返る ---
     "  mov eax, {sys_write}",
     "  mov edi, 1",
     "  mov rsi, 0xffffffff80100000",
@@ -190,7 +190,7 @@ core::arch::global_asm!(
     "  mov eax, {sys_unknown}",
     "  syscall",
     "3:",
-    // 7: RCX は戻り先（`syscall` 命令の次の番地）。
+    // 7: RCX は戻り先（`syscall` 命令の次のアドレス）。
     "  lea rax, [rip + 3b]",
     "  cmp rcx, rax",
     "  mov eax, 7",

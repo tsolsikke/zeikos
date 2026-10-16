@@ -546,7 +546,7 @@ entry-stacks-not-assigned-test = []
 # 確かめが、どの AP のどの番号かを名指しして止まる。AP を起こす検査（`--smp-ap-test`）が走らせる。
 ap-entry-stack-shifted-test = []
 # `syscall` 命令の入口の試験と破壊テスト（2026-10-04）。
-# 試しの形（破壊ではない）: `syscall` 命令から来た最初の呼び出しの戻り先を、正準でない番地に書き換える。戻る直前の
+# 試しの形（破壊ではない）: `syscall` 命令から来た最初の呼び出しの戻り先を、正準でないアドレスに書き換える。戻る直前の
 # 確かめが、そのプロセスを終わらせる（カーネルは止まらない）。
 syscall-return-noncanonical-test = []
 # 戻る直前の確かめを外す。上の形と組み合わせると、確かめが終わらせた記録（13）が出なくなる。本物の Intel の石では
@@ -569,7 +569,7 @@ fs-base-switch-no-restore = []
 fs-base-spawn-no-fresh = []
 # 子から戻ったときに、親の基底を戻さない。親が、子の基底のまま走り続ける。
 fs-base-spawn-no-restore = []
-# arch_prctl が、基底にする番地を確かめない。カーネルの番地や正準でない番地が、そのまま通る。本物の石では
+# arch_prctl が、基底にするアドレスを確かめない。カーネルのアドレスや正準でないアドレスが、そのまま通る。本物の石では
 # 正準でない値の書き込みがカーネルの中で #GP になるが、QEMU の TCG は例外にしない（実測）。
 arch-prctl-skips-address-check = []
 # arch_prctl の ARCH_GET_FS が、レジスタを読まずに 0 を返す。
@@ -667,7 +667,7 @@ socket-release-keeps-slot = ["socket-test"]
 shm-ftruncate-ignores-size = ["socket-test"]
 # close で参照を減らさない（ADR-0065）。プールのページが返らない。
 shm-close-keeps-refs = ["socket-test"]
-# mmap が葉を張らずに番地だけ返す（ADR-0065）。読み書きが #PF になる。
+# mmap が葉を張らずにアドレスだけ返す（ADR-0065）。読み書きが #PF になる。
 shm-mmap-maps-nothing = ["socket-test"]
 # sendmsg/recvmsg の msghdr の msg_iovlen を見ない（ADR-0065）。iovlen が 2 でも受ける。
 socket-msghdr-ignores-iovlen = ["socket-test"]
@@ -707,7 +707,7 @@ fb-test = []
 # fb-test が close を打たずに exit する（ADR-0083）。プロセスの終わりに表ごと閉じられ、最後の転送と文字の画面が戻ることを見る。
 # 破壊テストではない（判定は全部成り立つ）。`--fb-test --ending noclose`。
 fb-test-no-close = []
-# fb-test がわざと番地 0 へ書いて畳まれる（ADR-0083）。同じく表ごと閉じられて戻ることを見る。`--fb-test --ending fold`。
+# fb-test がわざとアドレス 0 へ書いて畳まれる（ADR-0083）。同じく表ごと閉じられて戻ることを見る。`--fb-test --ending fold`。
 fb-test-fold = []
 # /dev/fb0 の間隔ごとの転送をしない（FBIOZPRESENT が無かった頃の形。ADR-0083）。四隅の色が画面に届く判定が落ちる。
 fb0-deferred-present-skip-test = []
@@ -729,7 +729,7 @@ foreground-ignores-the-slot = []
 frame-allocator-hands-out-high-first = []
 # 検査の構成（ADR-0068 の HW-a。破壊ではない）: 自前のページ表へ切り替えた後から、フレームアロケータが
 # 最も高い空きから配る。6GiB の起動で、ヒープ・ユーザーのページ・ページ表・virtio のリングが 4GiB の上から
-# 取られる。番地を 32 ビットへ切り詰める箇所を表に出す。4GiB の上から配った枚数を計器に出す。
+# 取られる。アドレスを 32 ビットへ切り詰める箇所を表に出す。4GiB の上から配った枚数を計器に出す。
 frame-allocator-high-after-switch = []
 # 破壊（ADR-0068 の HW-b）: i8042 を探って答えが無ければ止める（直す前の形）。pc の i8042=off
 # （FADT がリビジョン 1 で何も言わないので探る）で、プロンプトの前に止まる。
@@ -816,7 +816,7 @@ nx-probe-ap-without-nxe-test = ["nx-probe-only-leaf-test"]
 # AP が、本番のページテーブルへ切り替える前に、EFER.NXE を落とす（2026-10-02）。
 # 切り替える前の確かめが、名前つきで止める。
 ap-switches-without-nxe-test = []
-# 権限の違反の破壊テストの傘（2026-10-02。カーネルの写像の W^X）。試しが告げた番地と CR2 を突き合わせる行を、
+# 権限の違反の破壊テストの傘（2026-10-02。カーネルの写像の W^X）。試しが告げたアドレスと CR2 を突き合わせる行を、
 # 例外の出力に足す。下の 5 つが入れる。単独では何も起こさない。
 wx-violation-test = []
 # カーネルのイメージの .text の 1 バイトへ、カーネルが書く。#PF（書き込み・権限の違反）で止まる。
@@ -825,7 +825,7 @@ kernel-writes-text-test = ["wx-violation-test"]
 kernel-writes-rodata-test = ["wx-violation-test"]
 # カーネルのイメージの .data に置いた 1 バイト（ret）を、カーネルが実行する。#PF（命令の取り出し）で止まる。
 kernel-executes-data-test = ["wx-violation-test"]
-# カーネルの関数を、直接マッピングの番地（別名）から実行する。#PF（命令の取り出し）で止まる。
+# カーネルの関数を、直接マッピングのアドレス（別名）から実行する。#PF（命令の取り出し）で止まる。
 kernel-executes-direct-map-test = ["wx-violation-test"]
 # AP の CPU ごとのスタックのページに置いた 1 バイト（ret）を、カーネルが実行する。#PF（命令の取り出し）で止まる。
 kernel-executes-stack-test = ["wx-violation-test"]
@@ -914,8 +914,8 @@ ring3-test-corrupt-frame-cs = []
 # paging-test の傘には入れない。傘に入れると Ring 3 の検証自体が載らなくなり、
 # 破壊を観測する側が消える。`--paging-test map-force-writable`。
 map-force-writable = []
-# 試しの形（破壊ではない）: ユーザーから届く葉に、番地より上の位置のビット（52。CPU は無視する）を立てる。
-# 項目の値を番地として読む所が残っていると、フレームの会計が合わなくなって止まる。
+# 試しの形（破壊ではない）: ユーザーから届く葉に、アドレスより上の位置のビット（52。CPU は無視する）を立てる。
+# 項目の値をアドレスとして読む所が残っていると、フレームの会計が合わなくなって止まる。
 # 実行禁止のビット（63）を入れる前の確かめ。`--paging-test user-leaf-high-bit`。
 user-leaf-high-bit-test = []
 # S9-b-1: 埋め込んだユーザープログラムの破壊確認。いずれも既定ビルドには入らない。
@@ -928,13 +928,13 @@ user-run-skip-load = []
 # ページを足す入口が先に断るため）。**この破壊だけが読み戻しまで到達する**
 # （map-force-writable は先に ring3-vectors が落ちる）。`--ring3-test user-writable-text`。
 user-run-writable-text = []
-# 位置独立のイメージ（ET_DYN）の区画を、ずらさずに載せる（2026-10-06）。入口だけが、ずれた番地を指す。載せたものを写像の表へ
+# 位置独立のイメージ（ET_DYN）の区画を、ずらさずに載せる（2026-10-06）。入口だけが、ずれたアドレスを指す。載せたものを写像の表へ
 # 登録する所が、逆さまになったイメージの範囲を `BadRange` で名指しして止まる。`--ring3-test pie-without-bias`。
 pie-load-without-bias-test = []
-# 補助ベクタの AT_ENTRY に、ずらす前の番地を渡す（2026-10-06）。`pie-hello` が、終了状態 1 で言う。
+# 補助ベクタの AT_ENTRY に、ずらす前のアドレスを渡す（2026-10-06）。`pie-hello` が、終了状態 1 で言う。
 # `--ring3-test auxv-entry-not-biased`。
 auxv-entry-not-biased-test = []
-# 補助ベクタの AT_PHDR に、ずらす前の番地を渡す（2026-10-06）。`pie-hello` が、終了状態 2 で言う。
+# 補助ベクタの AT_PHDR に、ずらす前のアドレスを渡す（2026-10-06）。`pie-hello` が、終了状態 2 で言う。
 # `--ring3-test auxv-phdr-not-biased`。
 auxv-phdr-not-biased-test = []
 # C の Linux 向けのプログラム（`musl-gcc` で手で作った `target/linux-programs/m1-c`）をイメージの `/bin/linux` に入れ、
@@ -954,7 +954,7 @@ mprotect-none-discards-test = []
 # 釣り合わず、名指しして止まる。`--syscall-test munmap-keeps-frames`。
 munmap-keeps-frames-test = []
 # `munmap` と `MAP_FIXED` の置き換えが、写していない断片（`PROT_NONE`）を飛ばす（2026-10-08。直す前の形）。`mprotect(PROT_NONE)`
-# でフレームを持ったまま残した葉が外れず、同じ番地へ写し直すと `map_4kib` が断って、`syscall-test` が 124 番で止まる。
+# でフレームを持ったまま残した葉が外れず、同じアドレスへ写し直すと `map_4kib` が断って、`syscall-test` が 124 番で止まる。
 # `--syscall-test munmap-skips-retained`。
 munmap-skips-retained-test = []
 # `syscall-test` へ渡すルートの項目の数を、1 つ多くする（2026-10-09）。イメージの中身から求めた数と、`getdents64` で
@@ -963,7 +963,7 @@ root-entries-off-by-one-test = []
 # `syscall-test` へ渡すルートのディレクトリの数を、1 つ多くする（2026-10-10）。シードから求めた種類ごとの数と、
 # `getdents64` で数えた数が合わず、`syscall-test` が 27 番で止まる。`--syscall-test root-directories-off-by-one`。
 root-directories-off-by-one-test = []
-# `mmap(MAP_FIXED)`・`munmap`・`mprotect` が、ユーザーの番地の上限（`0x7fff_ffff_f000`）を見ない（2026-10-07。直す前の形）。
+# `mmap(MAP_FIXED)`・`munmap`・`mprotect` が、ユーザーのアドレスの上限（`0x7fff_ffff_f000`）を見ない（2026-10-07。直す前の形）。
 # 上限のページへの `MAP_FIXED` が通り、`syscall-test` が 121 番で止まる。`--syscall-test mmap-fixed-ignores-user-limit`。
 mmap-fixed-ignores-user-limit-test = []
 # 空間を壊すとき、どの空間も隔離の道を通す（2026-10-07。確かめ。一杯になって待つ形を踏ませる）。`--ring3-test frame-hog-through-quarantine`。
@@ -1272,8 +1272,8 @@ highhalf-panic-after-remove = []
 # 破壊（M3a の 3-2。2026-10-15）: 池のタスクの最初の文脈で RAX を 0 にせず、親の値（clone の番号）のままにする。
 # 子が clone の戻り値を親の値で読む。`--critical-test clone-keeps-parent-rax`。
 clone-keeps-parent-rax-test = []
-# 破壊（3-2）: スレッドの exit で CLONE_CHILD_CLEARTID の番地に 0 を書かず、起こしもしない。親の join が
-# 番地を待ち続ける。`--critical-test clone-no-clear-tid`。
+# 破壊（3-2）: スレッドの exit で CLONE_CHILD_CLEARTID のアドレスに 0 を書かず、起こしもしない。親の join が
+# アドレスを待ち続ける。`--critical-test clone-no-clear-tid`。
 clone-no-clear-tid-test = []
 # 破壊（3-2）: 池のタスクの FS の基底を、渡された tls ではなく 0 にする。スレッドが自分の TLS を読めない。
 # `--critical-test clone-no-settls`。

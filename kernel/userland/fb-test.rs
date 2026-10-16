@@ -21,7 +21,7 @@
 //! - 無し: 上のとおり `close` して 0 で終わる。
 //! - `noclose`: `munmap` も `close` も打たずに `exit(0)`。**プロセスの終わりに表ごと閉じられ、最後の転送と文字の画面が戻る**
 //!   ことを見る（`fb-test: exiting without close`）。
-//! - `fold`: 眠った後に番地 0 へ書いて、ページフォルトで畳まれる（`fb-test: folding on purpose`）。同じく表ごと閉じられる
+//! - `fold`: 眠った後にアドレス 0 へ書いて、ページフォルトで畳まれる（`fb-test: folding on purpose`）。同じく表ごと閉じられる
 //!   ことを見る。
 //!
 //! 終了状態: `1` 開けなかった／`2` 形が訊けなかった・32 ビットでない・小さすぎる／`3` `mmap` が失敗／`4` `nanosleep` が
@@ -138,7 +138,7 @@ pub unsafe extern "sysv64" fn zeikos_main(stack: *const u64) -> ! {
     say(b"fb-test: slept");
     if fold {
         say(b"fb-test: folding on purpose");
-        // SAFETY ではない——**わざと番地 0 へ書いて、ページフォルトで畳まれる**（`close` を打たずに終わる形の 1 つ）。
+        // SAFETY ではない——**わざとアドレス 0 へ書いて、ページフォルトで畳まれる**（`close` を打たずに終わる形の 1 つ）。
         // SAFETY: この書きは失敗するためのもので、成功したら `exit(6)` で違いが分かる。
         unsafe { core::ptr::write_volatile(core::ptr::null_mut::<u64>(), 1) };
         fail(b"fb-test: the write to address 0 did not fault", 6);

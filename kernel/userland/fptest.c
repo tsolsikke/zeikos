@@ -90,7 +90,7 @@ int main(void) {
     puts("");
 
     /* 決定2の遠征の側。**子を起動しても親の XMM が残ること。** */
-    /* **FS の基底も、子の起動を跨いで残ること**（2026-10-05）。子は基底を 0 から始め、自分の番地を入れて終わる。 */
+    /* **FS の基底も、子の起動を跨いで残ること**（2026-10-05）。子は基底を 0 から始め、自分のアドレスを入れて終わる。 */
     const unsigned long parent_base = (unsigned long)&parent_tls;
     arch_prctl(FPTEST_ARCH_SET_FS, parent_base);
 
@@ -103,7 +103,7 @@ int main(void) {
     putu((unsigned long)spawned);
     puts(")");
 
-    /* **基底を訊いてから読む**——別の番地（0 を含む）のまま `fs:0` を読むと、ページフォルトで終わる。 */
+    /* **基底を訊いてから読む**——別のアドレス（0 を含む）のまま `fs:0` を読むと、ページフォルトで終わる。 */
     unsigned long base_after = 0;
     int kept = arch_prctl(FPTEST_ARCH_GET_FS, (unsigned long)&base_after) == 0 && base_after == parent_base;
     if (kept) {

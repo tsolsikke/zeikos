@@ -1725,7 +1725,7 @@ extern "sysv64" fn kernel_main() -> ! {
         unsafe {
             remove_identity(&mut logger, direct_map, high_mapped);
         }
-        // **恒等は外した。** 以後のページの権限の一覧では、低い番地に何か写っていれば行に印が付く
+        // **恒等は外した。** 以後のページの権限の一覧では、低いアドレスに何か写っていれば行に印が付く
         // （起動時の Ring 3 の試しのページは別の領域として登録してある）。
         kernel::page_survey::retire("identity");
         kernel::page_survey::retire("framebuffer (identity)");
@@ -2169,7 +2169,7 @@ extern "sysv64" fn kernel_main() -> ! {
     change_a_kernel_mapping_after_boot(&mut logger);
 
     // 破壊テスト (2026-10-03, kernel-mapping-probe-neighbour-test): **試しの feature のビルドで、探りのページの隣を
-    // 外しに行く。** **探りの 1 ページだけが許され、隣は断られる**（許しが番地で閉じていることを見る）。
+    // 外しに行く。** **探りの 1 ページだけが許され、隣は断られる**（許しがアドレスで閉じていることを見る）。
     #[cfg(all(
         feature = "smp-tlb-shootdown-probe",
         feature = "kernel-mapping-probe-neighbour-test"
@@ -2289,7 +2289,7 @@ fn change_a_kernel_mapping_after_boot(logger: &mut Logger<Serial>) {
     let mut table = unsafe { ActivePageTable::current(direct_map) };
     #[cfg(feature = "kernel-mapping-map-after-boot-test")]
     let (what, result) = {
-        // **カーネルのイメージの PML4 の項目（添字 511）の下の、イメージより上の空いた番地。** 添字 260 の形（`ensure_child` の
+        // **カーネルのイメージの PML4 の項目（添字 511）の下の、イメージより上の空いたアドレス。** 添字 260 の形（`ensure_child` の
         // 守りが項目を作る所）とは違い、既に在る項目の下へ葉を足す形である。
         let (Some(frame), Some(virt)) = (
             allocator.allocate_frame(),
@@ -5777,7 +5777,7 @@ static NX_RODATA_ELF: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/nx-rodat
 static DEBUG_TRAP_ELF: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/debug-trap.elf"));
 
 /// `debug-trap` が止まる位置（entry からの相対。2026-10-04）。**`nop` の次の `ud2` である**——実行し終えた命令の
-/// 次の番地が報告される。**`kernel/userland/debug-trap.rs` の命令の並びと対になっている。** 例外が起きなかったときの
+/// 次のアドレスが報告される。**`kernel/userland/debug-trap.rs` の命令の並びと対になっている。** 例外が起きなかったときの
 /// 受け皿も同じ位置である（そのときは、無効な命令の例外で終わる）。
 const DEBUG_TRAP_STOP_OFFSET: u64 = 11;
 
@@ -6481,7 +6481,7 @@ fn try_copy_fs_image_to_frames(
 
     // **どこを読んでいるかを出す。** **向けたことを主張できるようにする**——
     // **複製は元のイメージとバイト単位で一致しているので、向けても向けなくても
-    // 読めるものが変わらない。** 番地だけが違う。
+    // 読めるものが変わらない。** アドレスだけが違う。
     //
     // **アドレスは、実際に返ってくるスライスから取る。** 控えた値を出し直すと、
     // **比べ方を間違えても必ず一致してしまう。**
@@ -9655,7 +9655,7 @@ const SYSCALL_TEST_STATUS: &[(u64, &str)] = &[
     (119, "spawn(\"/bin/tkill-self\") did not end with status 134 (tkill(gettid(), SIGABRT) ends the process with 128 + 6)"),
     // 120: clock_nanosleep（2026-10-07）。
     (120, "clock_nanosleep did not return 0 for a zero-length relative sleep and a past absolute deadline, or did not return -EINVAL for an unknown clock"),
-    // 121・122: ユーザーの番地の上限（2026-10-07）。
+    // 121・122: ユーザーのアドレスの上限（2026-10-07）。
     (121, "mmap(MAP_FIXED) at the user address limit, across it, at a non-canonical or kernel address was not refused with -ENOMEM, or under 64 KiB with -EPERM"),
     (122, "munmap beyond the user address limit did not return -EINVAL, or mprotect beyond it (or wrapping around) did not return -ENOMEM"),
     // 123: 切り上げると 2^64 を越える長さ（2026-10-08）。
@@ -9672,15 +9672,15 @@ const SYSCALL_TEST_STATUS: &[(u64, &str)] = &[
 /// 同じ区別である。**
 const FAULT_TEST_ERROR_CODE: u64 = 0b111;
 
-/// `nx-stack` が跳ぶ先（スタックのページの先頭。2026-10-03）。**ローダーが置くスタックの番地と、`nx-stack.rs` の
-/// 即値と対になっている。** 食い違えば、止まった番地の突き合わせが落ちる。
+/// `nx-stack` が跳ぶ先（スタックのページの先頭。2026-10-03）。**ローダーが置くスタックのアドレスと、`nx-stack.rs` の
+/// 即値と対になっている。** 食い違えば、止まったアドレスの突き合わせが落ちる。
 const NX_STACK_TARGET: u64 = 0x007f_f000;
 
 /// `nx-data` と `nx-rodata` が跳ぶ先（`.text` の次のページ。`kernel/userland/user.ld` の並び）。
 const NX_SECOND_PAGE_TARGET: u64 = 0x0040_1000;
 
 /// `nx-brk` が跳ぶ先（`brk` で伸ばした範囲の最後のページの先頭。2026-10-03）。**`nx-brk.rs` の即値
-/// （`brk` に渡す上端は、この 1 ページ上）と対になっている。** 食い違えば、止まった番地の突き合わせが落ちる。
+/// （`brk` に渡す上端は、この 1 ページ上）と対になっている。** 食い違えば、止まったアドレスの突き合わせが落ちる。
 const NX_BRK_TARGET: u64 = 0x0040_f000;
 
 /// プロセスの終わり方（S9-b-3-2a）。**期待する側の記述である。**
@@ -9713,9 +9713,9 @@ enum UserProgramOutcome {
     /// 実行できないページへ跳んで、そこから命令を取り出そうとした所で終了させられる（2026-10-03）。
     ///
     /// **判定は CPU の置き場が持つ**（`kernel::arch::x86_64::ring3::stopped_fetching_instruction_at`）。ここに
-    /// 書くのは、跳ぶ先の番地だけである。
+    /// 書くのは、跳ぶ先のアドレスだけである。
     StopsFetchingAt {
-        /// 跳ぶ先の番地。**止まる番地でもある。**
+        /// 跳ぶ先のアドレス。**止まるアドレスでもある。**
         target: u64,
     },
     /// 単発の実行の旗を自分で立て、命令を 1 つ実行した所で終了させられる（2026-10-04）。
@@ -9799,7 +9799,7 @@ const USER_PROGRAMS: &[UserProgram] = &[
         argv: &[b"hello"],
         enters_with_direction_flag: None,
     },
-    // **自分のスタックのページへ跳ぶ**（2026-10-03。ユーザーの写像の W^X）。**止まった番地と CR2 は、跳んだ先の番地である。**
+    // **自分のスタックのページへ跳ぶ**（2026-10-03。ユーザーの写像の W^X）。**止まったアドレスと CR2 は、跳んだ先のアドレスである。**
     // 実行できてしまえば、跳んだ先の `ud2` でベクタが 6 になり、判定行が食い違いとして止める。
     UserProgram {
         name: "nx-stack",
@@ -9815,7 +9815,7 @@ const USER_PROGRAMS: &[UserProgram] = &[
         argv: &[b"nx-stack"],
         enters_with_direction_flag: None,
     },
-    // **自分の `.data` へ跳ぶ**（2026-10-03。ユーザーの写像の W^X）。**止まった番地と CR2 は、跳んだ先の番地である。**
+    // **自分の `.data` へ跳ぶ**（2026-10-03。ユーザーの写像の W^X）。**止まったアドレスと CR2 は、跳んだ先のアドレスである。**
     // 実行できてしまえば、跳んだ先の `ud2` でベクタが 6 になり、判定行が食い違いとして止める。
     UserProgram {
         name: "nx-data",
@@ -9831,7 +9831,7 @@ const USER_PROGRAMS: &[UserProgram] = &[
         argv: &[b"nx-data"],
         enters_with_direction_flag: None,
     },
-    // **自分の `.rodata` へ跳ぶ**（2026-10-03。ユーザーの写像の W^X）。**止まった番地と CR2 は、跳んだ先の番地である。**
+    // **自分の `.rodata` へ跳ぶ**（2026-10-03。ユーザーの写像の W^X）。**止まったアドレスと CR2 は、跳んだ先のアドレスである。**
     // 実行できてしまえば、跳んだ先の `ud2` でベクタが 6 になり、判定行が食い違いとして止める。
     UserProgram {
         name: "nx-rodata",
@@ -10174,8 +10174,8 @@ fn load_embedded_user_program(logger: &mut Logger<Serial>) -> Result<(), UserLoa
 ///   おり、**2 本目で拒まれる。そこまでにマップしたものの後始末が要る**
 /// - **区画の並びの確かめで落ちる（`Layout`。2026-10-01）。** 写す前に断るので、ページは 1 枚も
 ///   マップされていない。4 つある——2 本目が 1 本目の中身の内側から始まる（重なり）、2 本目が 1 本目の
-///   終わりより後ろの同じページから始まる（同じページに権限の違う区画）、2 本目が 1 本目より低い番地から
-///   始まる（番地の順でない）、2 本目が番地 0 で大きさ 0（最終ページの引き算が成り立たない）
+///   終わりより後ろの同じページから始まる（同じページに権限の違う区画）、2 本目が 1 本目より低いアドレスから
+///   始まる（アドレスの順でない）、2 本目がアドレス 0 で大きさ 0（最終ページの引き算が成り立たない）
 ///
 /// **1 つ目の「重なり」は、以前は途中で落ちていた**（`Mapping { AlreadyMapped }`、S9-b-3-2b。
 /// `docs/verification-coverage.md` の「ELF の検査を 3 つに分ける」）。**後ろの 3 つは、並びの確かめを
@@ -10755,10 +10755,10 @@ fn assert_folded_at(
     cpu::halt_forever();
 }
 
-/// 起動時の Ring 3 の試しのコードのページを、カーネルが書くための番地（2026-10-02。`ADR-0071` の決定 3）。
+/// 起動時の Ring 3 の試しのコードのページを、カーネルが書くためのアドレス（2026-10-02。`ADR-0071` の決定 3）。
 ///
-/// **ユーザーの側の番地（`ring3::USER_CODE_VIRT`）は、読んで実行するだけで、書けない。** カーネルは、同じ
-/// フレームを直接マッピングの側の番地から書く。**既に在る葉の権限を、書くために後から変えることはしない。**
+/// **ユーザーの側のアドレス（`ring3::USER_CODE_VIRT`）は、読んで実行するだけで、書けない。** カーネルは、同じ
+/// フレームを直接マッピングの側のアドレスから書く。**既に在る葉の権限を、書くために後から変えることはしない。**
 ///
 /// **直接マッピングという別名からは書ける。** 実行できるページに、書ける別名が無いことまでは、まだ求めていない
 /// （実行禁止の 3 段目。保留している。`docs/deferred-decisions.md`）。
@@ -10768,7 +10768,7 @@ fn ring3_trial_code_alias(logger: &mut Logger<Serial>) -> *mut u8 {
     ring3_trial_page_alias(logger, kernel::arch::x86_64::ring3::USER_CODE_VIRT)
 }
 
-/// 起動時の Ring 3 の試しのページ（`page` はユーザーの側の番地。ページの先頭）を、カーネルが書くための番地
+/// 起動時の Ring 3 の試しのページ（`page` はユーザーの側のアドレス。ページの先頭）を、カーネルが書くためのアドレス
 /// （直接マッピングの側。2026-10-03）。**読むだけのページにも、カーネルはここから書ける**（別名。上の doc）。
 /// マップされていなければ、名前つきで止まる。
 fn ring3_trial_page_alias(logger: &mut Logger<Serial>, page: u64) -> *mut u8 {
@@ -10843,7 +10843,7 @@ fn verify_ring3_excursion<const CAP: usize>(
     // user violation として検出する。
     // **権限は用途の名前で決める**（2026-10-02）。**コードのページは、ユーザーの側では読んで実行するだけで、
     // 書けない**（`ADR-0071` の決定 3。以前は、書いてから実行するので、書けて実行もできる区画として取っていた）。
-    // **命令を書くのはカーネルで、同じフレームを直接マッピングの番地から書く**（[`ring3_trial_code_alias`]）。
+    // **命令を書くのはカーネルで、同じフレームを直接マッピングのアドレスから書く**（[`ring3_trial_code_alias`]）。
     // 3 枚目は読むだけでマップする（S9-a）。**Ring 3 からの書き込みが #PF に
     // なることを ring3-vectors の 6 本目が確かめる的である。**
     #[cfg(not(feature = "ring3-test-user-page-supervisor"))]
@@ -10873,8 +10873,8 @@ fn verify_ring3_excursion<const CAP: usize>(
         }
     }
 
-    // ユーザーコードへ cli(0xFA) を書き込む。**書くのは、直接マッピングの側の番地からである**（ユーザーの側の
-    // 番地は、書けない権限でマップした）。
+    // ユーザーコードへ cli(0xFA) を書き込む。**書くのは、直接マッピングの側のアドレスからである**（ユーザーの側の
+    // アドレスは、書けない権限でマップした）。
     // SAFETY: 今マップしたコードのページのフレームを、直接マッピング越しに書く。ほかに使う者は居ない。
     unsafe {
         core::ptr::write_volatile(ring3_trial_code_alias(logger), 0xFA);
@@ -11094,7 +11094,7 @@ fn verify_syscall_roundtrip(logger: &mut Logger<Serial>) {
     let code_len = n;
 
     // SAFETY: 今マップを確認したユーザーのコードのページのフレームを、直接マッピング越しに書く
-    // （ユーザーの側の番地は書けない）。code_len <= 64 <= 4096。
+    // （ユーザーの側のアドレスは書けない）。code_len <= 64 <= 4096。
     unsafe {
         let p = ring3_trial_code_alias(logger);
         for (i, byte) in code[..code_len].iter().enumerate() {
@@ -11284,7 +11284,7 @@ fn issue_ptr_len_syscall(logger: &mut Logger<Serial>, number: u64, buf: u64, len
     let code_len = n;
 
     // SAFETY: verify_ring3_excursion がマップしたユーザーのコードのページのフレームを、直接マッピング越しに書く
-    // （ユーザーの側の番地は書けない）。code_len <= 64 <= 4096。
+    // （ユーザーの側のアドレスは書けない）。code_len <= 64 <= 4096。
     unsafe {
         let p = ring3_trial_code_alias(logger);
         for (i, byte) in code[..code_len].iter().enumerate() {
@@ -11617,7 +11617,7 @@ fn verify_ring3_fault_vectors(logger: &mut Logger<Serial>) {
         Load,
         /// 書く（`mov [rax], al`）。
         Store,
-        /// 跳ぶ（`jmp rax`）。**止まる番地は、命令列の中ではなく、跳んだ先である。**
+        /// 跳ぶ（`jmp rax`）。**止まるアドレスは、命令列の中ではなく、跳んだ先である。**
         Jump,
     }
 
@@ -11679,7 +11679,7 @@ fn verify_ring3_fault_vectors(logger: &mut Logger<Serial>) {
             Touch::Store,
         ),
         // #PF-exec-ro: movabs rax, <跳ぶ先>/ jmp rax。跳ぶ先は、読むだけでマップしたユーザーページ。
-        // エラーコード 0x15 = 存在・ユーザー・**命令の取り出し**。**止まる番地は、跳んだ先である。**
+        // エラーコード 0x15 = 存在・ユーザー・**命令の取り出し**。**止まるアドレスは、跳んだ先である。**
         //
         // **跳ぶ先には、カーネルが `ud2` を置いておく**（破壊テストの受け皿）。実行禁止が効いていなければ、
         // そこで #UD になり、ベクタが 14 ではなく 6 になる。
@@ -11716,7 +11716,7 @@ fn verify_ring3_fault_vectors(logger: &mut Logger<Serial>) {
     }
 
     let main_rsp0_top = gdt::active_kernel_entry_stack_top();
-    // **命令を書くのは、直接マッピングの側の番地からである**（ユーザーの側の番地は、書けない権限でマップしてある）。
+    // **命令を書くのは、直接マッピングの側のアドレスからである**（ユーザーの側のアドレスは、書けない権限でマップしてある）。
     let code_ptr = ring3_trial_code_alias(logger);
 
     // **変換が実行禁止のビットを立てない破壊テストのビルドでは、跳ぶ 2 本を走らせない**（上の `USER_PROGRAMS` の
@@ -11786,7 +11786,7 @@ fn verify_ring3_fault_vectors(logger: &mut Logger<Serial>) {
         let vector = ring3::excursion_fault_number();
         let rip = ring3::fault_rip();
         let cs = ring3::fault_cs();
-        // **跳ぶ形は、跳んだ先で止まる**（命令の取り出しの違反は、取り出そうとした番地で起きる）。
+        // **跳ぶ形は、跳んだ先で止まる**（命令の取り出しの違反は、取り出そうとしたアドレスで起きる）。
         let expected_rip = if touch == Touch::Jump {
             load_target
         } else {
@@ -12491,7 +12491,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "shm-mmap-maps-nothing",
         cfg!(feature = "shm-mmap-maps-nothing"),
-        "mmap が葉を張らずに番地だけ返す",
+        "mmap が葉を張らずにアドレスだけ返す",
     ),
     (
         "socket-msghdr-ignores-iovlen",
@@ -13406,12 +13406,12 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "auxv-entry-not-biased-test",
         cfg!(feature = "auxv-entry-not-biased-test"),
-        "補助ベクタの AT_ENTRY に、ずらす前の番地を渡す",
+        "補助ベクタの AT_ENTRY に、ずらす前のアドレスを渡す",
     ),
     (
         "auxv-phdr-not-biased-test",
         cfg!(feature = "auxv-phdr-not-biased-test"),
-        "補助ベクタの AT_PHDR に、ずらす前の番地を渡す",
+        "補助ベクタの AT_PHDR に、ずらす前のアドレスを渡す",
     ),
     (
         "seinas-test",
@@ -13461,7 +13461,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "mmap-fixed-ignores-user-limit-test",
         cfg!(feature = "mmap-fixed-ignores-user-limit-test"),
-        "mmap(MAP_FIXED)・munmap・mprotect がユーザーの番地の上限を見ない",
+        "mmap(MAP_FIXED)・munmap・mprotect がユーザーのアドレスの上限を見ない",
     ),
     (
         "destroy-through-quarantine-test",
@@ -13511,7 +13511,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "syscall-return-noncanonical-test",
         cfg!(feature = "syscall-return-noncanonical-test"),
-        "命令の入口から来た最初の呼び出しの戻り先を、正準でない番地に書き換える（試しの形）",
+        "命令の入口から来た最初の呼び出しの戻り先を、正準でないアドレスに書き換える（試しの形）",
     ),
     (
         "syscall-return-check-off-test",
@@ -13556,7 +13556,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "arch-prctl-skips-address-check",
         cfg!(feature = "arch-prctl-skips-address-check"),
-        "arch_prctl が、基底にする番地を確かめない",
+        "arch_prctl が、基底にするアドレスを確かめない",
     ),
     (
         "arch-prctl-get-fs-returns-zero",
@@ -13646,7 +13646,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "user-leaf-high-bit-test",
         cfg!(feature = "user-leaf-high-bit-test"),
-        "ユーザーから届く葉に、番地より上の位置のビット（52）を立てる（破壊ではない）",
+        "ユーザーから届く葉に、アドレスより上の位置のビット（52）を立てる（破壊ではない）",
     ),
     (
         "user-run-skip-load",
@@ -13671,7 +13671,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "wx-violation-test",
         cfg!(feature = "wx-violation-test"),
-        "権限の違反の破壊テストの傘（例外の出力に、告げた番地との突き合わせの行を足す）",
+        "権限の違反の破壊テストの傘（例外の出力に、告げたアドレスとの突き合わせの行を足す）",
     ),
     (
         "kernel-writes-text-test",
@@ -13691,7 +13691,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "kernel-executes-direct-map-test",
         cfg!(feature = "kernel-executes-direct-map-test"),
-        "カーネルの関数を、直接マッピングの番地（別名）から実行する",
+        "カーネルの関数を、直接マッピングのアドレス（別名）から実行する",
     ),
     (
         "kernel-executes-stack-test",
@@ -14236,7 +14236,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "clone-no-clear-tid-test",
         cfg!(feature = "clone-no-clear-tid-test"),
-        "スレッドの exit で CLONE_CHILD_CLEARTID の番地に 0 を書かず、起こしもしない",
+        "スレッドの exit で CLONE_CHILD_CLEARTID のアドレスに 0 を書かず、起こしもしない",
     ),
     (
         "clone-no-settls-test",
@@ -15145,7 +15145,7 @@ fn rehome_framebuffer_to_window(
 /// 稼働中の表を歩いて、ページの権限の一覧を出す（`kernel::page_survey`。`ADR-0071` の手順 3 の道具）。
 /// **起動の途中の 1 本の流れから呼ぶ。**
 fn survey_mappings(logger: &mut Logger<Serial>, moment: &str) {
-    // SAFETY: 根は稼働中の表で、窓は登録済みの直接写像である（切り替える前は恒等、後は高い番地の窓）。
+    // SAFETY: 根は稼働中の表で、窓は登録済みの直接写像である（切り替える前は恒等、後は高いアドレスの窓）。
     // どちらの窓でも、表のフレームは全部読める。読み取りのみ。起動の途中の 1 本の流れなので、歩いている間に
     // 表は変わらない。
     unsafe {
@@ -15177,7 +15177,7 @@ fn register_image_regions() {
     register("kernel rodata", rodata, data, false);
     register("kernel data", data, bss, false);
     register("kernel bss", bss, end, false);
-    // 起動の表は、イメージの外も含めて 1GiB を高い番地に写す。自前の表はイメージだけを写す。
+    // 起動の表は、イメージの外も含めて 1GiB を高いアドレスに写す。自前の表はイメージだけを写す。
     let window = kernel::link_symbols::KERNEL_VIRT_BASE;
     register(
         "kernel window outside the image",
@@ -15185,7 +15185,7 @@ fn register_image_regions() {
         window + (1 << 30),
         false,
     );
-    // 恒等（低い番地の半分のうち、最初の 512GiB）。外した後は、在ってはならない領域に変える。
+    // 恒等（低いアドレスの半分のうち、最初の 512GiB）。外した後は、在ってはならない領域に変える。
     register("identity", 0, 1 << 39, false);
     // 起動時の Ring 3 の試しのページ（次の 512GiB）。
     let trial = kernel::arch::x86_64::ring3::USER_CODE_VIRT;
@@ -15215,7 +15215,7 @@ fn install_kernel_stack_guard_page(
     }
 }
 
-/// カーネルのイメージの区画の境を、物理の番地で読む（`kernel/link.ld` の記号から）。
+/// カーネルのイメージの区画の境を、物理のアドレスで読む（`kernel/link.ld` の記号から）。
 fn kernel_image_bounds() -> kernel::paging::image::ImageBounds {
     use common::addr::VirtAddr;
     let phys = |symbol: *const u8| {
@@ -15404,8 +15404,8 @@ fn report_kernel_image_permissions(logger: &mut Logger<Serial>) {
 /// 権限の違反の破壊テスト（2026-10-02。`ADR-0071` の手順 4。`wx-violation-test` の傘の下の 5 つ）。
 ///
 /// **書けないページへ書く・実行できないページを実行すると、#PF で止まること**を見る。**「落ちた」だけにしない**
-/// ——触る前に、狙うページが在ること・番地・権限を、稼働中の表から読み戻して出し、番地を例外の出力へ告げる。
-/// 例外の出力は、誤りコード（書き込みか命令の取り出しか、権限の違反か）と、CR2 が告げた番地と同じかを出す。
+/// ——触る前に、狙うページが在ること・アドレス・権限を、稼働中の表から読み戻して出し、アドレスを例外の出力へ告げる。
+/// 例外の出力は、誤りコード（書き込みか命令の取り出しか、権限の違反か）と、CR2 が告げたアドレスと同じかを出す。
 /// **触った後に戻ってきたら、守りが効いていない**——その行を出す（検査は、その行が出ないことも見る）。
 #[cfg(feature = "wx-violation-test")]
 fn run_permission_violation_test(logger: &mut Logger<Serial>) {
@@ -15419,7 +15419,7 @@ fn run_permission_violation_test(logger: &mut Logger<Serial>) {
     extern "C" fn returns_at_once() {}
 
     let direct_map = common::addr::direct_map();
-    // (何を, 番地, 実行するか（しないなら書く）)。**傘の下の 5 つのうち、入れた 1 つが的を決める。**
+    // (何を, アドレス, 実行するか（しないなら書く）)。**傘の下の 5 つのうち、入れた 1 つが的を決める。**
     let target: Option<(&str, u64, bool)> = if cfg!(feature = "kernel-writes-text-test") {
         Some((
             "write to the kernel text",
@@ -15439,7 +15439,7 @@ fn run_permission_violation_test(logger: &mut Logger<Serial>) {
             true,
         ))
     } else if cfg!(feature = "kernel-executes-direct-map-test") {
-        // カーネルの関数のフレームを、直接マッピングの側の番地（別名）で指す。
+        // カーネルの関数のフレームを、直接マッピングの側のアドレス（別名）で指す。
         let phys = kernel::kernel_phys_from_virt(
             common::addr::VirtAddr::new(returns_at_once as *const () as u64)
                 .expect("a kernel function has a canonical address"),

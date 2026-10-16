@@ -36,7 +36,7 @@ pub enum Cache {
 ///
 /// - 共通の側と機械の置き場は、ページを足すときに、用途の名前でこの型を作って渡す。ページテーブルのビットへ直すのは
 ///   CPU の置き場である。
-/// - この型は「何を許すか」だけを持つ。大きさ（4KiB か 2MiB か）や物理の番地は持たない。
+/// - この型は「何を許すか」だけを持つ。大きさ（4KiB か 2MiB か）や物理のアドレスは持たない。
 /// - `execute` は、そのままビットになる（モジュールの doc）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PagePermissions {

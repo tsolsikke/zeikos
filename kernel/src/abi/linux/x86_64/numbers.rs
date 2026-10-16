@@ -61,9 +61,9 @@ pub const SYS_ARCH_PRCTL: u64 = 158;
 pub const ARCH_SET_GS: u64 = 0x1001;
 /// `arch_prctl` の `code`。**FS の基底を入れる**（libc が、スレッドローカルの領域を据えるのに使う）。
 pub const ARCH_SET_FS: u64 = 0x1002;
-/// `arch_prctl` の `code`。**FS の基底を、渡した番地へ書く。**
+/// `arch_prctl` の `code`。**FS の基底を、渡したアドレスへ書く。**
 pub const ARCH_GET_FS: u64 = 0x1003;
-/// `arch_prctl` の `code`。**GS の基底を、渡した番地へ書く。**
+/// `arch_prctl` の `code`。**GS の基底を、渡したアドレスへ書く。**
 pub const ARCH_GET_GS: u64 = 0x1004;
 
 /// `unlink` の番号（DIR-1b。`asm/unistd_64.h` の `__NR_unlink`）。

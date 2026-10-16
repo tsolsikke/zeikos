@@ -17,11 +17,11 @@
 //!   どこか 1 つの階層に立てば効く。**葉だけを読むと、途中の階層の違いを見落とす**ので、分けて持つ
 //! - **ページの大きさ**（4KiB・2MiB・1GiB）
 //!
-//! **読まないもの**——物理の番地（ビルドごとに動く）と、CPU が立てる印（アクセス済み・書き込み済み）。
+//! **読まないもの**——物理のアドレス（ビルドごとに動く）と、CPU が立てる印（アクセス済み・書き込み済み）。
 //!
 //! # 表の読み方を差し替えられる
 //!
-//! 歩くループ（`walk`）は「表の物理の番地と添字から項目を読む」関数を引数で受ける。カーネルでは
+//! 歩くループ（`walk`）は「表の物理のアドレスと添字から項目を読む」関数を引数で受ける。カーネルでは
 //! 直接写像を通して読み（[`for_each_mapped_range`]）、ホストのテストでは作った表を読む。**歩く論理は
 //! ホストのテストで確かめられる。**
 
@@ -51,7 +51,7 @@ mod bits {
     pub const LARGE_PAT: u64 = 1 << 12;
     /// 実行の禁止（ビット 63）。`EFER.NXE` が立っていないと予約ビットである。
     pub const NO_EXECUTE: u64 = 1 << 63;
-    /// 次の表の物理の番地（ビット 12-51）。
+    /// 次の表の物理のアドレス（ビット 12-51）。
     pub const TABLE_ADDRESS: u64 = 0x000F_FFFF_FFFF_F000;
 }
 
@@ -115,7 +115,7 @@ pub struct MappingPermissions {
 /// 同じ権限・同じ大きさで続くページの範囲。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MappedRange {
-    /// 先頭の仮想の番地。
+    /// 先頭の仮想のアドレス。
     pub start: u64,
     /// ページの数（`size` の大きさのページで数える）。
     pub pages: u64,
@@ -180,7 +180,7 @@ fn permissions_of(leaf: u64, size: MappingSize, path: Path) -> MappingPermission
     }
 }
 
-/// 添字から仮想の番地を作る。**上位の半分（最上位の添字が 256 以上）は、上のビットを 1 で埋める。**
+/// 添字から仮想のアドレスを作る。**上位の半分（最上位の添字が 256 以上）は、上のビットを 1 で埋める。**
 fn address_of(top: usize, upper: usize, middle: usize, leaf: usize) -> u64 {
     let low = ((top as u64) << 39)
         | ((upper as u64) << 30)
@@ -203,7 +203,7 @@ impl Joiner<'_> {
     /// 葉を 1 つ受ける。**直前の範囲のすぐ後ろで、大きさも権限も同じなら、範囲を伸ばす。**
     fn leaf(&mut self, start: u64, size: MappingSize, permissions: MappingPermissions) {
         if let Some(pending) = &mut self.pending {
-            // 範囲の終わりは u64 を越えうる（最後のページが番地の上端に在るとき）ので、越えたら続きとみなさない。
+            // 範囲の終わりは u64 を越えうる（最後のページがアドレスの上端に在るとき）ので、越えたら続きとみなさない。
             let continues = pending.start.checked_add(pending.bytes()) == Some(start);
             if continues && pending.size == size && pending.permissions == permissions {
                 pending.pages += 1;
@@ -227,9 +227,9 @@ impl Joiner<'_> {
     }
 }
 
-/// 表を歩き、写っている範囲を番地の順に `visit` へ渡す（純粋な論理）。
+/// 表を歩き、写っている範囲をアドレスの順に `visit` へ渡す（純粋な論理）。
 ///
-/// `read` は「表の物理の番地と添字から、項目を 1 つ読む」関数である。`top` は、最上位の表のうち歩く添字の
+/// `read` は「表の物理のアドレスと添字から、項目を 1 つ読む」関数である。`top` は、最上位の表のうち歩く添字の
 /// 範囲である（全部なら `0..512`。ユーザーの側だけなら `0..256`）。**512 を越える分は読まない。**
 ///
 /// 在る（Present）項目だけを辿る。PDPT と PD の項目が「ページそのもの」なら葉として扱い、そこで降りない。
@@ -297,13 +297,13 @@ fn walk(
     joiner.flush();
 }
 
-/// 指定した根の表を歩き、写っている範囲を番地の順に `visit` へ渡す。
+/// 指定した根の表を歩き、写っている範囲をアドレスの順に `visit` へ渡す。
 ///
 /// # 契約（境界の関数）
 ///
 /// - 根から全部の階層を読むだけで、何も変えない。表が稼働中かどうかは問わない（CR3 を読まない）。
 /// - `top` は、最上位の表のうち歩く添字の範囲である（全部なら `0..512`）。
-/// - 渡す範囲は番地の順で、同じ大きさ・同じ権限で続くページは 1 つにまとめてある。
+/// - 渡す範囲はアドレスの順で、同じ大きさ・同じ権限で続くページは 1 つにまとめてある。
 /// - **答えは歩いた時点の表についてのものである。** 歩いている間に表が変わらないことは、呼ぶ側が保証する
 ///   （起動の途中の 1 本の流れか、BKL を持っている間に呼ぶ）。
 /// - メモリを確保しない。
@@ -339,7 +339,7 @@ mod tests {
     use std::cell::RefCell;
     use std::collections::HashMap;
 
-    /// 作った表。物理の番地から 512 項目を引く。
+    /// 作った表。物理のアドレスから 512 項目を引く。
     struct Tables {
         frames: RefCell<HashMap<u64, Vec<u64>>>,
         next: RefCell<u64>,
@@ -353,7 +353,7 @@ mod tests {
             }
         }
 
-        /// 空の表を 1 枚作り、その物理の番地を返す。
+        /// 空の表を 1 枚作り、その物理のアドレスを返す。
         fn table(&self) -> u64 {
             let at = *self.next.borrow();
             *self.next.borrow_mut() += 0x1000;
@@ -412,7 +412,7 @@ mod tests {
     }
 
     /// **同じ権限で続く 4KiB のページは 1 つの範囲にまとまり、権限が違う所と、間が空いた所で分かれる。**
-    /// **物理の番地と、CPU が立てる印（アクセス済み・書き込み済み）の違いでは分かれない。**
+    /// **物理のアドレスと、CPU が立てる印（アクセス済み・書き込み済み）の違いでは分かれない。**
     #[test]
     fn pages_in_a_row_with_the_same_permissions_become_one_range() {
         let tables = Tables::new();
@@ -526,7 +526,7 @@ mod tests {
         assert!(permissions.shared && !permissions.writable);
     }
 
-    /// **上位の半分の番地は、上のビットを 1 で埋めた形で渡す。** 歩く添字の範囲の外は読まない。
+    /// **上位の半分のアドレスは、上のビットを 1 で埋めた形で渡す。** 歩く添字の範囲の外は読まない。
     /// 実行の禁止の印が葉に在れば、`executable` が偽になる。
     #[test]
     fn the_upper_half_is_reported_in_its_canonical_form_and_only_the_asked_top_entries_are_walked()
@@ -557,8 +557,8 @@ mod tests {
         assert!(tables.ranges(empty, 0..512).is_empty());
     }
 
-    /// **2 つの添字が同じ下の表を指していれば、同じ中身が 2 つの番地の範囲に出る**（起動の表は、低い番地と
-    /// 高い番地で同じ PD を共有している）。**番地の上端で終わる範囲も、あふれずに渡す。**
+    /// **2 つの添字が同じ下の表を指していれば、同じ中身が 2 つのアドレスの範囲に出る**（起動の表は、低いアドレスと
+    /// 高いアドレスで同じ PD を共有している）。**アドレスの上端で終わる範囲も、あふれずに渡す。**
     #[test]
     fn a_table_shared_by_two_entries_shows_up_at_both_addresses() {
         let tables = Tables::new();
@@ -584,7 +584,7 @@ mod tests {
             .collect();
         assert_eq!(summary, vec![(0, 4), (0xFFFF_FFFF_8000_0000, 4)]);
 
-        // 番地の上端の 2 ページ。
+        // アドレスの上端の 2 ページ。
         let (root, pt) = chain(&tables, 511, 511, 511, P | W);
         tables.set(pt, 510, 0x20_0000 | P | W);
         tables.set(pt, 511, 0x20_1000 | P | W);

@@ -399,14 +399,14 @@ pub enum Wait {
         /// 待っている側。
         side: crate::socket::Side,
     },
-    /// futex の番地で待っている（`ADR-0081` の Addendum。2026-10-14。`ADR-0085` の決定 4）。**鍵はプロセス（スロット）と
-    /// ユーザーの番地の組である**——同じ番地でも別のスロットのプロセスは起こさない。**起こすのは `FUTEX_WAKE` と、
-    /// スレッドの終わり（`CLONE_CHILD_CLEARTID` の番地）である。**
+    /// futex のアドレスで待っている（`ADR-0081` の Addendum。2026-10-14。`ADR-0085` の決定 4）。**鍵はプロセス（スロット）と
+    /// ユーザーのアドレスの組である**——同じアドレスでも別のスロットのプロセスは起こさない。**起こすのは `FUTEX_WAKE` と、
+    /// スレッドの終わり（`CLONE_CHILD_CLEARTID` のアドレス）である。**
     Futex {
         /// Ring 3 のスロット（プロセス）。**`u8` にしてあるのは、`Wait` の大きさ（16 バイト。`Timer` の締切と同じ）を
         /// 増やさないため**——`WaitSet` は `TaskState` に入り、切り替えと待ちの枠に乗る。
         slot: u8,
-        /// ユーザーの番地（4 バイト境界）。
+        /// ユーザーのアドレス（4 バイト境界）。
         address: u64,
     },
     /// `flock` の取り直し待ち（`ADR-0087`。2026-10-16）。鍵は ext2 の inode 番号。放した側が起こす（空振りを許す）。
@@ -508,7 +508,7 @@ impl WaitSet {
             .any(|reason| !matches!(reason, Wait::Futex { .. }))
     }
 
-    /// そのスロット（プロセス）の futex の理由が入っているか（番地は問わない。プロセスの終わりの印で、同じスロットの
+    /// そのスロット（プロセス）の futex の理由が入っているか（アドレスは問わない。プロセスの終わりの印で、同じスロットの
     /// futex の待ちを全部起こす `wake_futex_waiters_of_slot`。M3a の 3-1b）。
     pub fn waits_on_a_futex_of_slot(&self, slot: u8) -> bool {
         self.reasons[..self.len as usize]
@@ -1202,7 +1202,7 @@ fn ring3_task_stack_high_water() -> usize {
 /// tid は使い回されない。
 static THREAD_GENERATIONS: [AtomicU64; THREAD_TASKS] = [const { AtomicU64::new(0) }; THREAD_TASKS];
 
-/// `CLONE_CHILD_CLEARTID` の番地、池のタスクごと（`ADR-0085` の決定 1 の `tid_address`。順の 4 から前倒しした）。
+/// `CLONE_CHILD_CLEARTID` のアドレス、池のタスクごと（`ADR-0085` の決定 1 の `tid_address`。順の 4 から前倒しした）。
 /// **0 なら無い。** スレッドの `exit` がそこへ 0 を書く（`crate::syscall`）。刈り取りで 0 へ戻す。
 static THREAD_TID_ADDRESSES: [AtomicU64; THREAD_TASKS] =
     [const { AtomicU64::new(0) }; THREAD_TASKS];
@@ -1240,12 +1240,12 @@ pub fn current_tid() -> u64 {
     current_thread_index().map_or(MAIN_THREAD_TID, thread_tid)
 }
 
-/// 池の `index` 本目のタスクの `CLONE_CHILD_CLEARTID` の番地（0 なら無い）。
+/// 池の `index` 本目のタスクの `CLONE_CHILD_CLEARTID` のアドレス（0 なら無い）。
 pub fn thread_tid_address(index: usize) -> u64 {
     THREAD_TID_ADDRESSES[index].load(Ordering::Relaxed)
 }
 
-/// 池の `index` 本目のタスクの `CLONE_CHILD_CLEARTID` の番地を据える（`clone` と、池のタスクからの `set_tid_address`）。
+/// 池の `index` 本目のタスクの `CLONE_CHILD_CLEARTID` のアドレスを据える（`clone` と、池のタスクからの `set_tid_address`）。
 pub fn set_thread_tid_address(index: usize, address: u64) {
     THREAD_TID_ADDRESSES[index].store(address, Ordering::Relaxed);
 }
@@ -1309,9 +1309,9 @@ pub struct ThreadStart<'a> {
     pub image: &'a crate::arch::x86_64::IrqContext,
     /// 渡されたユーザースタック（起動ログの行に出すだけ。文脈の中にも同じ値が在る）。
     pub user_stack: u64,
-    /// TLS（FS の基底）。`arch` の `is_allowed_user_segment_base` を通った番地であること。
+    /// TLS（FS の基底）。`arch` の `is_allowed_user_segment_base` を通ったアドレスであること。
     pub tls: u64,
-    /// `CLONE_CHILD_CLEARTID` の番地（0 なら無い）。
+    /// `CLONE_CHILD_CLEARTID` のアドレス（0 なら無い）。
     pub tid_address: u64,
 }
 
@@ -1371,7 +1371,7 @@ pub fn start_thread_task(start: ThreadStart<'_>) -> Result<(usize, u64), ThreadS
         report_thread_owner_mismatch(task, task_owner, parent, owners[parent], cpu);
     }
     // 破壊テスト (M3a の 3-2, clone-no-settls-test): FS の基底を、渡された tls ではなく 0 にする。スレッドは自分の TLS を
-    // 読めない（musl の `pthread_self` が番地 0 の近くを読む）。
+    // 読めない（musl の `pthread_self` がアドレス 0 の近くを読む）。
     #[cfg(not(any(feature = "clone-no-settls-test", feature = "clone-shares-tls-test")))]
     let tls = start.tls;
     #[cfg(feature = "clone-no-settls-test")]
@@ -1576,7 +1576,7 @@ pub fn park_finished_thread_task() -> ! {
 ///
 /// **刈り取るのは、走っていない側である**——`clone` の入口（遅延の刈り取り）か、プロセスの終わり
 /// （[`finish_threads_of_slot`]）。そのタスクの `exit` の経路の枠まで積まれた後なので、高水位は最大の値である。
-/// 世代を進め、欄を登録のとおりに戻し、`CLONE_CHILD_CLEARTID` の番地を 0 にする。
+/// 世代を進め、欄を登録のとおりに戻し、`CLONE_CHILD_CLEARTID` のアドレスを 0 にする。
 ///
 /// **半分の線を越えていたら止まる**（足した 1 本と同じ線。`ring3_task_main`）。
 pub fn reap_thread_task(index: usize) -> Option<(u64, usize)> {
@@ -1864,7 +1864,7 @@ static KERNEL_PAGE_TABLE_ROOT: AtomicU64 = AtomicU64::new(0);
 /// その後に本番の表は変わらない。** **最初の切り替え（協調デモ）より前である。**
 ///
 /// **判定行は出さない。** **同じ値は起動ログの `identity-removal: begin. live PML4=` が出している**
-/// ——**行を足すと、この段階の「番地だけ」が崩れる。**
+/// ——**行を足すと、この段階の「アドレスだけ」が崩れる。**
 pub fn record_kernel_page_table_root() {
     KERNEL_PAGE_TABLE_ROOT.store(
         crate::arch::x86_64::active_page_table_root().as_u64(),
@@ -2146,7 +2146,7 @@ pub(crate) fn wake_up_to_tasks_waiting_on(on: Wait, limit: usize) -> usize {
     woken
 }
 
-/// そのスロット（プロセス）の futex で待つタスクを、番地を問わず全部起こす（M3a の 3-1b。2026-10-14。`ADR-0085` の
+/// そのスロット（プロセス）の futex で待つタスクを、アドレスを問わず全部起こす（M3a の 3-1b。2026-10-14。`ADR-0085` の
 /// Addendum）。**起こした本数を返す。** 空振りの起こしである——futex の仕様は空振りを許し、起きた側は値を見直して
 /// また待つか、システムコールの出口で印を見て出る。
 ///
@@ -4626,7 +4626,7 @@ mod tests {
         }
     }
 
-    /// プロセスの終わりの印で起こすのは、同じスロットの futex の理由を持つ集合だけである（番地は問わない。別のスロットの
+    /// プロセスの終わりの印で起こすのは、同じスロットの futex の理由を持つ集合だけである（アドレスは問わない。別のスロットの
     /// futex と、futex 以外の理由は引かない。M3a の 3-1b）。
     #[test]
     fn a_wait_set_matches_a_futex_of_its_slot_at_any_address() {
@@ -4762,7 +4762,7 @@ mod tests {
         ));
     }
 
-    /// futex の鍵はスロットと番地の組である——同じ番地でも別のスロットは起こさない。
+    /// futex の鍵はスロットとアドレスの組である——同じアドレスでも別のスロットは起こさない。
     #[test]
     fn a_futex_wait_matches_only_the_same_slot_and_address() {
         use super::{Wait, WaitSet};

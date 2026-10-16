@@ -160,7 +160,7 @@ pub const UNWINDLESS_RELEASE_ENTRIES: &[(&str, &str)] = &[
          drop する。触るのは IN_RING3 と RECOVERY だけで、遠征の単一コア区間に閉じている",
     ),
     (
-        "syscall_entry (戻り先がユーザーの番地でない)",
+        "syscall_entry (戻り先がユーザーのアドレスでない)",
         "戻らずにプロセスを終わらせる（2026-10-04）。SYS_EXIT と同じく longjmp で出るので、\
          分岐の中で明示的に drop する",
     ),

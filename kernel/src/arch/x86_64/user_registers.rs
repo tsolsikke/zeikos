@@ -15,7 +15,7 @@
 //!
 //! **プロセスではなく、タスクごとに持つ**（共通の側の `crate::task` が、タスクの数だけ並べる）。スレッドが入ると、
 //! スレッドごとにタスクを持つことになり、この組は、そのままスレッドごとのものになる。プロセスが持つもの
-//! （アドレス空間・ファイルの表・ヒープと `mmap` の番地）とは、分けてある。
+//! （アドレス空間・ファイルの表・ヒープと `mmap` のアドレス）とは、分けてある。
 //!
 //! # FS と GS の基底
 //!
@@ -103,7 +103,7 @@ pub unsafe fn save_user_registers(area: &mut UserRegisters) {
 ///
 /// # Safety
 ///
-/// [`save_user_registers`] と同じ。`fs_base` は [`is_allowed_user_segment_base`] を通った番地であること（正準でない
+/// [`save_user_registers`] と同じ。`fs_base` は [`is_allowed_user_segment_base`] を通ったアドレスであること（正準でない
 /// 値を置くと、次にこのタスクへ切り替えたときの MSR の書きがカーネルの中で一般保護例外になる）。
 pub unsafe fn save_user_registers_for_thread(area: &mut UserRegisters, fs_base: u64) {
     debug_assert!(is_allowed_user_segment_base(fs_base));
@@ -122,8 +122,8 @@ pub unsafe fn save_user_registers_for_thread(area: &mut UserRegisters, fs_base: 
 /// # Safety
 ///
 /// **領域の中身が、[`save_user_registers`] が書いたものか、[`UserRegisters::fresh`] であること。**
-/// FP の部分は [`restore_fp_state`] の契約に従う。**基底は、正準な番地であること**（正準でない値を MSR へ書くと、
-/// カーネルの中で一般保護例外になる。[`set_user_fs_base`] と [`set_user_gs_base`] は、ユーザーの範囲の番地だけを
+/// FP の部分は [`restore_fp_state`] の契約に従う。**基底は、正準なアドレスであること**（正準でない値を MSR へ書くと、
+/// カーネルの中で一般保護例外になる。[`set_user_fs_base`] と [`set_user_gs_base`] は、ユーザーの範囲のアドレスだけを
 /// 通すので、読んで保存した値は正準である）。
 pub unsafe fn restore_user_registers(area: &UserRegisters) {
     // SAFETY: この関数の契約。
@@ -137,7 +137,7 @@ pub unsafe fn restore_user_registers(area: &UserRegisters) {
 ///
 /// # Safety
 ///
-/// [`restore_user_registers`] と同じ（基底が正準な番地であること）。
+/// [`restore_user_registers`] と同じ（基底が正準なアドレスであること）。
 pub unsafe fn restore_user_segment_bases(area: &UserRegisters) {
     // SAFETY: この関数の契約。
     unsafe {
@@ -146,8 +146,8 @@ pub unsafe fn restore_user_segment_bases(area: &UserRegisters) {
     }
 }
 
-/// `address` を、ユーザーが FS・GS の基底にしてよいか。**ユーザーの範囲の、正準な番地だけを通す**
-/// （[`USER_ADDRESS_LIMIT`] より下）。カーネルの番地と、正準でない番地は断る。
+/// `address` を、ユーザーが FS・GS の基底にしてよいか。**ユーザーの範囲の、正準なアドレスだけを通す**
+/// （[`USER_ADDRESS_LIMIT`] より下）。カーネルのアドレスと、正準でないアドレスは断る。
 pub const fn is_allowed_user_segment_base(address: u64) -> bool {
     address < USER_ADDRESS_LIMIT
 }
@@ -157,13 +157,13 @@ pub const fn is_allowed_user_segment_base(address: u64) -> bool {
 /// **書くのは、この CPU のレジスタである。** 走っている文脈のものなので、置き場へは、次に出るときに
 /// [`save_user_registers`] が読んで入れる。
 pub fn set_user_fs_base(address: u64) -> bool {
-    // 破壊テスト (2026-10-05, arch-prctl-skips-address-check): 番地を確かめない。**本物の石では、正準でない値を
+    // 破壊テスト (2026-10-05, arch-prctl-skips-address-check): アドレスを確かめない。**本物の石では、正準でない値を
     // MSR へ書くと、カーネルの中で一般保護例外になる。** **QEMU の TCG は例外にしない**（実測）ので、検査が見るのは
     // 「断られずに通ってしまう」ことである。
     if !is_allowed_user_segment_base(address) && !cfg!(feature = "arch-prctl-skips-address-check") {
         return false;
     }
-    // SAFETY: 上で、ユーザーの範囲の正準な番地であることを確かめた。カーネルは FS を使わない。
+    // SAFETY: 上で、ユーザーの範囲の正準なアドレスであることを確かめた。カーネルは FS を使わない。
     unsafe { cpu::write_fs_base(address) };
     true
 }
@@ -173,7 +173,7 @@ pub fn set_user_gs_base(address: u64) -> bool {
     if !is_allowed_user_segment_base(address) {
         return false;
     }
-    // SAFETY: 上で、ユーザーの範囲の正準な番地であることを確かめた。カーネルは GS を使わない（`swapgs` も無い）。
+    // SAFETY: 上で、ユーザーの範囲の正準なアドレスであることを確かめた。カーネルは GS を使わない（`swapgs` も無い）。
     unsafe { cpu::write_gs_base(address) };
     true
 }
@@ -204,7 +204,7 @@ mod tests {
         assert_eq!(fresh.gs_base(), 0);
     }
 
-    /// 基底にしてよいのは、ユーザーの範囲の正準な番地だけである。**上限ちょうど・正準でない番地・カーネルの番地は
+    /// 基底にしてよいのは、ユーザーの範囲の正準なアドレスだけである。**上限ちょうど・正準でないアドレス・カーネルのアドレスは
     /// 断る。**
     #[test]
     fn only_user_addresses_may_become_a_segment_base() {

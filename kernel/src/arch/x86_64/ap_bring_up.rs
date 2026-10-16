@@ -86,7 +86,7 @@ const INTERRUPT_STACK_NAMES: [(usize, &str); INTERRUPT_STACK_COUNT] = [
 /// # なぜ AP でも確かめるのか
 ///
 /// **TSS は CPU ごとに持つ。** BSP の確かめ（`interrupt_readiness::verify_entry_stacks`）は、BSP の TSS しか見ない。
-/// AP の TSS の欄が 0 のままだったり、別の番地を指していたりすると、その AP に NMI や機械チェックが届いた瞬間に、
+/// AP の TSS の欄が 0 のままだったり、別のアドレスを指していたりすると、その AP に NMI や機械チェックが届いた瞬間に、
 /// 当てにならないスタックへフレームを積む。**ゲートの番号は全 CPU で共有する IDT に在り、BSP が確かめている**ので、
 /// ここでは TSS の中身だけを見る。
 ///

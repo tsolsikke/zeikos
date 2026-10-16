@@ -57,27 +57,27 @@ const USER_PROGRAM_STACK_TOP: u64 = 0x0080_0000;
 /// ページを置いた（`ADR-0041` の Addendum）。
 const USER_PROGRAM_STACK_BYTES: u64 = 4 * 4096;
 
-/// プロセスの番地の配置（2026-10-05）。**イメージの 種類ごとに 1 つ在る。**
+/// プロセスのアドレスの配置（2026-10-05）。**イメージの 種類ごとに 1 つ在る。**
 ///
 /// # なぜ型にするか
 ///
 /// **以前は、スタックの上端・ヒープの上端・`mmap` の始まりが、ばらばらの定数だった**（どれも、位置を決めてリンクした
 /// 小さなイメージを前提にしている。イメージは `0x400000` から、スタックは `0x800000` の下の 1 ページ）。**Linux 向けの静的リンクの
-/// 実行ファイルは、数 MiB の位置独立のイメージで、スタックも 1 ページでは足りない。** 同じ番地に置くと、イメージがスタックに
+/// 実行ファイルは、数 MiB の位置独立のイメージで、スタックも 1 ページでは足りない。** 同じアドレスに置くと、イメージがスタックに
 /// 重なる。配置を 1 つの値にまとめて、イメージの 種類で選ぶ。
 ///
 /// # 2 つの配置
 ///
 /// | | イメージ | ヒープ | `mmap` | スタック |
 /// |---|---|---|---|---|
-/// | `ET_EXEC`（今までの形） | リンクした番地 | イメージの末尾 〜 `0x7fb000` | `0x1000_0000` 〜 | `0x7fc000..0x800000`（4 ページ） |
+/// | `ET_EXEC`（今までの形） | リンクしたアドレス | イメージの末尾 〜 `0x7fb000` | `0x1000_0000` 〜 | `0x7fc000..0x800000`（4 ページ） |
 /// | `ET_DYN`（静的 PIE） | `0x400000` だけずらす | イメージの末尾 〜 `0x0fff_f000` | `0x1000_0000` 〜 スタックの見張りの下 | `0x7f_ffff_f000` の下の 256 KiB |
 ///
 /// **どちらの配置も、スタックの下に写さないページを 1 枚置く**（見張りのページ。`ET_EXEC` は 2026-10-06 から。
 /// それまでは 1 ページのスタックのすぐ下がヒープの上限で、あふれるとヒープを黙って壊すおそれが在った）。スタックが
 /// 尽きると、そこを踏んでページフォルトになり、プロセスが終わる。`ET_DYN` の `mmap` は、そのページより下までしか配らない。
 ///
-/// **`ET_EXEC` の配置は、1 つも変えていない**（既存のプログラムは、今までと同じ番地に載る）。2 つを 1 つに揃えるか
+/// **`ET_EXEC` の配置は、1 つも変えていない**（既存のプログラムは、今までと同じアドレスに載る）。2 つを 1 つに揃えるか
 /// どうかは、後で決める（`docs/deferred-decisions.md`）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProcessLayout {
@@ -89,9 +89,9 @@ pub struct ProcessLayout {
     pub stack_guard: bool,
     /// ヒープ（`brk`）が越えられない上端。
     pub heap_limit: u64,
-    /// `mmap` が配る番地の始まり。
+    /// `mmap` が配るアドレスの始まり。
     pub mmap_base: u64,
-    /// `mmap` が配る番地の終わり。**範囲の終端で、この値そのものは含まない**（配る範囲の末尾がこの値に等しいのはよく、
+    /// `mmap` が配るアドレスの終わり。**範囲の終端で、この値そのものは含まない**（配る範囲の末尾がこの値に等しいのはよく、
     /// 越えるのは断る。`crate::mappings::MemoryMap::reserve` の `end > limit`）。[`crate::arch::x86_64::USER_ADDRESS_LIMIT`] と
     /// 同じ意味の値で、それを越えない（2026-10-09 に揃えた）。
     pub mmap_limit: u64,
@@ -108,13 +108,13 @@ impl ProcessLayout {
         stack_guard: true,
         heap_limit: HEAP_LIMIT,
         mmap_base: crate::syscall::MMAP_BASE,
-        // **ユーザーの番地の上限と同じ値**（どちらも範囲の終端で、その値を含まない）。以前は `1 << 47` で、上限より 1 ページ
+        // **ユーザーのアドレスの上限と同じ値**（どちらも範囲の終端で、その値を含まない）。以前は `1 << 47` で、上限より 1 ページ
         // 上だった——最後のページ（`0x7fff_ffff_f000` から）を配りうる形だった（今の上限の大きさの要求では届かない）。
         // `USER_ADDRESS_LIMIT - 4096` にすると、逆向きに 1 ページ狭くなる（意味を揃えずに値だけを合わせた形）。
         mmap_limit: crate::arch::x86_64::USER_ADDRESS_LIMIT,
     };
 
-    /// 位置独立のイメージ（`ET_DYN`。静的 PIE）をずらす量。**決まった値である**（番地を毎回変えることは、していない）。
+    /// 位置独立のイメージ（`ET_DYN`。静的 PIE）をずらす量。**決まった値である**（アドレスを毎回変えることは、していない）。
     pub const POSITION_INDEPENDENT_BASE: u64 = 0x0040_0000;
 
     /// 位置独立のイメージの、端から端までの上限（32 MiB）。
@@ -139,12 +139,12 @@ impl ProcessLayout {
         }
     }
 
-    /// スタックの下端（写す範囲の、いちばん低い番地）。
+    /// スタックの下端（写す範囲の、いちばん低いアドレス）。
     pub const fn stack_bottom(&self) -> u64 {
         self.stack_top - self.stack_bytes
     }
 
-    /// 見張りのページの番地（置かない配置では `None`）。
+    /// 見張りのページのアドレス（置かない配置では `None`）。
     pub const fn stack_guard_page(&self) -> Option<u64> {
         if self.stack_guard {
             Some(self.stack_bottom() - Self::PAGE)
@@ -155,7 +155,7 @@ impl ProcessLayout {
 
     /// イメージを置いてよい範囲と上限（`common::elf::ElfHeaders::plan` に渡す）。
     ///
-    /// - `ET_EXEC`——**今までと同じに、範囲では断らない**（ユーザーの番地の全体を範囲にし、大きさの上限も付けない）。
+    /// - `ET_EXEC`——**今までと同じに、範囲では断らない**（ユーザーのアドレスの全体を範囲にし、大きさの上限も付けない）。
     ///   スタックやほかの区画と重なるイメージは、今までどおり、写す所が断る。ウィンドウの終わりは
     ///   [`crate::arch::x86_64::USER_ADDRESS_LIMIT`] で、**範囲の終端で、この値そのものは含まない**（セグメントの末尾が
     ///   この値に等しいのはよく、越えるのは断る。`common::elf::ElfHeaders::plan` の `end > window.1`）。
@@ -562,7 +562,7 @@ pub fn note_post_load_frames_returned(count: usize) {
     with_current_heap(|heap| heap.post_load_frames = heap.post_load_frames.saturating_sub(count));
 }
 
-/// ヒープの下端と上端、載せた後に取ったフレームの数、`mmap` の次の番地（H-a）。**どれもプロセスごとで、Ring 3 を
+/// ヒープの下端と上端、載せた後に取ったフレームの数、`mmap` の次のアドレス（H-a）。**どれもプロセスごとで、Ring 3 を
 /// 走らせる間だけ据えられる**（[`swap_current_heap`]）。
 #[derive(Clone, Copy)]
 pub struct Heap {
@@ -745,7 +745,7 @@ pub enum UserLoadError {
     ArgumentsTooLong,
     /// `Elf::parse` が拒んだ。**イメージがバイト列として壊れている。**
     Parse(common::elf::ElfError),
-    /// 区画の並びを受け付けられない（2026-10-01。`common::elf::check_load_layout`）。**番地の順でない、
+    /// 区画の並びを受け付けられない（2026-10-01。`common::elf::check_load_layout`）。**アドレスの順でない、
     /// 重なる、計算があふれる、同じページに権限の違う区画が載る、のどれかである。**
     /// **写す前に断るので、ページは 1 枚も写していない。**
     Layout(common::elf::LayoutError),
@@ -1173,7 +1173,7 @@ pub struct UserProcess {
     /// **0 は「まだ張っていない」である**（[`load_user_program`] が 0 で作り、
     /// マップした側が埋める）。
     stack_scratch: u64,
-    /// イメージの 種類（2026-10-05）。**番地の配置は、ここから決まる**（[`ProcessLayout::for_kind`]）。イメージを読むまでは
+    /// イメージの 種類（2026-10-05）。**アドレスの配置は、ここから決まる**（[`ProcessLayout::for_kind`]）。イメージを読むまでは
     /// `Executable` が入っている。
     ///
     /// **配置の値そのものは持たない。** この値は、プログラムが走っている間ずっと、遠征スタックの上に在る。遠征スタックの
@@ -1403,10 +1403,10 @@ pub fn load_user_program_with(
              will not be equal, and that is not a failure)",
             process.name
         ));
-        // **`mmap` の番地を出す。** **写像の表はプロセスごとに持ち、どのプロセスも基点から配り始める**
-        // （`crate::mappings`。2026-10-06 に、次の番地を 1 つ持つ形から、表へ替えた）。**`mmap` しなかった
+        // **`mmap` のアドレスを出す。** **写像の表はプロセスごとに持ち、どのプロセスも基点から配り始める**
+        // （`crate::mappings`。2026-10-06 に、次のアドレスを 1 つ持つ形から、表へ替えた）。**`mmap` しなかった
         // プロセスでは出さない**——起動ログの行を増やさない。**判定はホスト側が行う**（`socket-test`。2 本の
-        // プロセスが同じ共有メモリを順にマップする）。行の形は変えていない——「次に配る番地」は、写像の
+        // プロセスが同じ共有メモリを順にマップする）。行の形は変えていない——「次に配るアドレス」は、写像の
         // いちばん高い終わりである（空いた所を使い直す形になったので、次の `mmap` がそこへ行くとは限らない）。
         let summary = crate::mappings::with_loaded(|map| map.summary());
         if let (Some(first), Some(next)) = (summary.first, summary.highest) {
@@ -1835,13 +1835,13 @@ fn forget_task_root_before_destroy(logger: &mut Logger<Serial>, process: &UserPr
 /// # 区画の並びは、写す前に確かめる（2026-10-01）
 ///
 /// **`Elf::parse` の後、1 枚も写す前に `Elf::check_load_layout` を通す。** 通らない並びは
-/// [`UserLoadError::Layout`] で断る——番地の順でない、重なる、計算があふれる（`p_memsz` が 0 の区画は
+/// [`UserLoadError::Layout`] で断る——アドレスの順でない、重なる、計算があふれる（`p_memsz` が 0 の区画は
 /// 最終ページの引き算が成り立たない）、同じページに権限の違う区画が載る、共有するページに後ろの区画が
 /// ファイルの中身を持つ、のどれかである。**下のループの計算（最終ページ、ページを進める加算、区画の終わり）は、
 /// この確かめが通ったことを前提にしている。**
 ///
 /// **以前は確かめていなかった。** 同じページに権限の違う区画が載るイメージは、前の区画の権限のまま読み込まれ、
-/// 後ろの区画の中身は写されなかった。番地の順が逆のイメージも読み込まれた。番地 0 で大きさ 0 の区画は、
+/// 後ろの区画の中身は写されなかった。アドレスの順が逆のイメージも読み込まれた。アドレス 0 で大きさ 0 の区画は、
 /// 最終ページの引き算があふれてカーネルが止まった（どれも起動の途中の検査で実測した）。
 ///
 /// # 区画が同じページを共有しているとマップできない
@@ -2002,11 +2002,11 @@ fn load_segments_and_stack(
     }
 
     for ph in elf.load_segments() {
-        // **区画の番地を、ずらした後の値にする。** 下の計算は、どれもこの値を使う。ずらしてもあふれないことは、
+        // **区画のアドレスを、ずらした後の値にする。** 下の計算は、どれもこの値を使う。ずらしてもあふれないことは、
         // 計画が確かめている。ファイルの中の位置（`p_offset`）は、ずらさない。
         //
-        // 破壊テスト (2026-10-06, pie-load-without-bias-test): 区画を、ずらさずに載せる（入口だけが、ずれた番地を
-        // 指す）。位置独立のイメージは、リンクした番地（0 から）に載ることになり、載せる途中か、入口で落ちる。
+        // 破壊テスト (2026-10-06, pie-load-without-bias-test): 区画を、ずらさずに載せる（入口だけが、ずれたアドレスを
+        // 指す）。位置独立のイメージは、リンクしたアドレス（0 から）に載ることになり、載せる途中か、入口で落ちる。
         #[cfg(feature = "pie-load-without-bias-test")]
         let plan = common::elf::LoadPlan { bias: 0, ..plan };
         let ph = common::elf::ProgramHeader {
@@ -2263,18 +2263,18 @@ fn load_segments_and_stack(
 
     // **初期スタックを Linux の形で積む（S11-1）。**
     //
-    // **補助ベクタ（`auxv`）の値は、載せた結果から作る**（2026-10-06）。入口とプログラムヘッダの表の番地は、
+    // **補助ベクタ（`auxv`）の値は、載せた結果から作る**（2026-10-06）。入口とプログラムヘッダの表のアドレスは、
     // ずらした後の値である。`AT_RANDOM` の 16 バイトは、暗号に使える値ではない（CPU の置き場の `random` の doc）。
     //
-    // 破壊テスト (2026-10-06, auxv-entry-not-biased-test): `AT_ENTRY` に、ずらす前の番地を渡す。位置を決めて
+    // 破壊テスト (2026-10-06, auxv-entry-not-biased-test): `AT_ENTRY` に、ずらす前のアドレスを渡す。位置を決めて
     // リンクしたイメージでは値が変わらないので、気づくのは位置独立のイメージだけである（`pie-hello` が、終了状態 1 で言う）。
     let aux_entry = if cfg!(feature = "auxv-entry-not-biased-test") {
         plan.entry - plan.bias
     } else {
         plan.entry
     };
-    // 破壊テスト (2026-10-06, auxv-phdr-not-biased-test): `AT_PHDR` に、ずらす前の番地を渡す（`pie-hello` が、終了状態 2 で
-    // 言う。自分の ELF ヘッダから求めた番地と比べるので、ずれた番地を読みには行かない）。
+    // 破壊テスト (2026-10-06, auxv-phdr-not-biased-test): `AT_PHDR` に、ずらす前のアドレスを渡す（`pie-hello` が、終了状態 2 で
+    // 言う。自分の ELF ヘッダから求めたアドレスと比べるので、ずれたアドレスを読みには行かない）。
     let aux_phdr = if cfg!(feature = "auxv-phdr-not-biased-test") {
         plan.program_headers_at.map(|at| at - plan.bias)
     } else {
@@ -2360,7 +2360,7 @@ fn load_segments_and_stack(
     // 飛ぶ。**詰め物の ud2 で即座に #UD になり、フォルト RIP が期待と食い違う。**
     // 詰め物が生きていることは verify_embedded_user_elf が主張している。
     //
-    // **入口は、ずらした後の番地である**（計画が持つ）。
+    // **入口は、ずらした後のアドレスである**（計画が持つ）。
     #[cfg(not(feature = "user-run-wrong-entry"))]
     let entry = plan.entry;
     #[cfg(feature = "user-run-wrong-entry")]
@@ -2546,7 +2546,7 @@ fn report_futex_deadlock(logger: &mut Logger<Serial>, name: &str, address: u64) 
 ///
 /// **`#[inline(never)]` にしてある**——**`format_args!` の一時値を [`run_loaded_program`] のフレームへ
 /// 乗せないためである。** **`dev` では、通らない分岐の一時値も呼び出しの引数の一時値も、そのままフレームを
-/// 広げる**（`docs/coding-standards.md` の「番地以外が動いたら、まず枠の大きさを静的に読む」）。
+/// 広げる**（`docs/coding-standards.md` の「アドレス以外が動いたら、まず枠の大きさを静的に読む」）。
 /// **乗せた形を 1 度実測した**——**計測自身がカーネルスタックの高水位と遠征スタックの高水位を
 /// 208 バイトずつ深くした**（2026-09-23。`tools/frame-sizes.py` でフレームを読んだ）。
 #[inline(never)]
@@ -2663,7 +2663,7 @@ unsafe fn run_loaded_program(
         not(feature = "fs-base-spawn-no-fresh")
     ))]
     // SAFETY: [`crate::arch::x86_64::UserRegisters::fresh`] の FP は `fxsave` の形に沿った並びで、
-    // MXCSR も予約ビットを立てていない（`#GP` にならない）。基底は 0 で、正準な番地である。
+    // MXCSR も予約ビットを立てていない（`#GP` にならない）。基底は 0 で、正準なアドレスである。
     unsafe {
         crate::arch::x86_64::restore_user_registers(&crate::arch::x86_64::UserRegisters::fresh())
     };
@@ -3706,7 +3706,7 @@ mod tests {
     }
 
     /// 位置を決めてリンクしたイメージの配置（2026-10-06 に、スタックを 4 ページにして、下に見張りのページを置いた）。
-    /// **イメージの番地と `mmap` の始まりは、今までの定数と同じ値である。** ヒープの上端は、見張りのページの下端である。
+    /// **イメージのアドレスと `mmap` の始まりは、今までの定数と同じ値である。** ヒープの上端は、見張りのページの下端である。
     #[test]
     fn the_executable_layout_has_a_four_page_stack_above_a_guard() {
         let layout = super::ProcessLayout::for_kind(common::elf::ElfKind::Executable);
@@ -3744,12 +3744,12 @@ mod tests {
         assert_eq!(guard + 4096, layout.stack_bottom());
         assert_eq!(layout.stack_top - layout.stack_bottom(), 256 * 1024);
         assert_eq!(layout.stack_bytes % 4096, 0);
-        // スタックの上端は、ユーザーの番地の上限より下で、ページの境界に在る。
+        // スタックの上端は、ユーザーのアドレスの上限より下で、ページの境界に在る。
         assert!(layout.stack_top <= 0x0000_7fff_ffff_f000);
         assert_eq!(layout.stack_top % 4096, 0);
     }
 
-    /// **`mmap` の終わりは、どちらの配置でもユーザーの番地の上限を越えない**（2026-10-09）。上限と `mmap_limit` は、どちらも
+    /// **`mmap` の終わりは、どちらの配置でもユーザーのアドレスの上限を越えない**（2026-10-09）。上限と `mmap_limit` は、どちらも
     /// 範囲の終端で、その値を含まない。上端に置いた小さな表で、末尾が上限ちょうどの範囲は配られ、1 ページでも越える範囲は
     /// 配られないことを見る（大きな領域は取らない）。
     #[test]

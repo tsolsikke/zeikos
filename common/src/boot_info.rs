@@ -246,7 +246,7 @@ mod tests {
         );
 
         info.fs_image = PhysAddr::new_const(0);
-        assert_eq!(info.fs_image_range(), None, "番地が 0 なら無い");
+        assert_eq!(info.fs_image_range(), None, "アドレスが 0 なら無い");
     }
 
     #[test]

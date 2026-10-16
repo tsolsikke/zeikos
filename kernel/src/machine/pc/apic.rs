@@ -80,7 +80,7 @@ struct MappedPage {
 /// - 作るのは `machine` の `map_and_probe` だけである（MADT が名乗り、マッピングを確かめた所在）。
 /// - 共通の側が使うのは、MADT の読み取りの結果（`mmio`。[`MadtSurvey`]）と、`machine` の境界の関数
 ///   （`start_processor`・`send_ipi_probe`・[`calibrate_local_timer`]・`survey_interrupt_masks` など）へ
-///   参照を渡すことだけで、中の番地は読まない。
+///   参照を渡すことだけで、中のアドレスは読まない。
 pub struct MappedInterruptController {
     local_apic: PhysAddr,
     io_apics: [Option<IoApicLocation>; MAX_MAPPED_IO_APICS],
@@ -398,7 +398,7 @@ fn map_mmio_page<const CAP: usize>(
 ///
 /// # Safety
 ///
-/// `lapic_phys` が、マッピングを確かめた Local APIC の MMIO のページであること（2026-09-30 に、番地を受ける
+/// `lapic_phys` が、マッピングを確かめた Local APIC の MMIO のページであること（2026-09-30 に、アドレスを受ける
 /// 安全な関数から unsafe fn にした）。
 unsafe fn probe_local_apic(
     logger: &mut Logger<Serial>,
@@ -871,8 +871,8 @@ pub fn survey_registers(logger: &mut Logger<Serial>, mapped: &MappedInterruptCon
     let mut irq1_covered = false;
     for slot in mapped.io_apics.iter().take(mapped.io_apic_count) {
         let Some(io_apic) = slot else { continue };
-        // SAFETY: `mapped` の I/O APIC は、`map_and_probe` がマッピングを確かめたものである。その物理の番地を
-        // direct map で写した仮想番地を渡す。
+        // SAFETY: `mapped` の I/O APIC は、`map_and_probe` がマッピングを確かめたものである。その物理のアドレスを
+        // direct map で写した仮想アドレスを渡す。
         let entries = unsafe {
             survey_io_apic(
                 logger,
@@ -942,8 +942,8 @@ fn covers_gsi(gsi_base: u32, entries: Option<u32>, gsi: u32) -> bool {
 ///
 /// # Safety
 ///
-/// `base_virt` が、`io_apic` の MMIO のページを写した、マッピングを確かめた仮想番地であること（2026-09-30 に、
-/// 番地を受ける安全な関数から unsafe fn にした。読むときに選択のレジスタへ書く）。
+/// `base_virt` が、`io_apic` の MMIO のページを写した、マッピングを確かめた仮想アドレスであること（2026-09-30 に、
+/// アドレスを受ける安全な関数から unsafe fn にした。読むときに選択のレジスタへ書く）。
 unsafe fn survey_io_apic(
     logger: &mut Logger<Serial>,
     base_virt: u64,
@@ -1221,7 +1221,7 @@ pub unsafe fn send_startup_ipi(lapic_virt: u64, apic_id: u8, vector: u8) -> bool
 ///
 /// # 前提
 ///
-/// `mapped` が [`map_and_probe`] の戻り値であること（番地を計算して返すだけで、メモリ安全の前提ではない）。
+/// `mapped` が [`map_and_probe`] の戻り値であること（アドレスを計算して返すだけで、メモリ安全の前提ではない）。
 pub fn lapic_virt_of(mapped: &MappedInterruptController) -> u64 {
     common::addr::direct_map()
         .phys_to_virt(mapped.local_apic_phys())
@@ -1952,7 +1952,7 @@ impl core::fmt::Display for PitIncomplete {
 ///
 /// # Safety
 ///
-/// `lapic` が、マッピングを確かめた Local APIC のページの仮想番地であること（2026-09-30 に、番地を受ける
+/// `lapic` が、マッピングを確かめた Local APIC のページの仮想アドレスであること（2026-09-30 に、アドレスを受ける
 /// 安全な関数から unsafe fn にした）。
 unsafe fn sample_with_pit(lapic: u64) -> PitSampling {
     let mut samples = [0u64; CALIBRATION_SAMPLES];
@@ -2068,7 +2068,7 @@ enum PmSampling {
 ///
 /// # Safety
 ///
-/// `lapic` が、マッピングを確かめた Local APIC のページの仮想番地であること。
+/// `lapic` が、マッピングを確かめた Local APIC のページの仮想アドレスであること。
 unsafe fn read_pair(
     lapic: u64,
     pm_timer: crate::machine::pc::pmtimer::PmTimer,
@@ -2129,7 +2129,7 @@ unsafe fn read_tight_pair(
 ///
 /// # Safety
 ///
-/// `lapic` が、マッピングを確かめた Local APIC のページの仮想番地であること（2026-09-30 に、番地を受ける
+/// `lapic` が、マッピングを確かめた Local APIC のページの仮想アドレスであること（2026-09-30 に、アドレスを受ける
 /// 安全な関数から unsafe fn にした）。
 unsafe fn sample_with_pm_timer(
     lapic: u64,
@@ -2289,7 +2289,7 @@ pub fn calibrate_local_timer(
     }
 
     // **1. PIT のティックで標本を取る**（S2-c。2026-10-11 からは、PM タイマがあれば突き合わせの側）。
-    // SAFETY: `lapic` は `mapped` の Local APIC のページを direct map で写した番地で、`map_and_probe` がマッピングを
+    // SAFETY: `lapic` は `mapped` の Local APIC のページを direct map で写したアドレスで、`map_and_probe` がマッピングを
     // 確かめた（下の PM タイマの側も同じ）。
     let pit = unsafe { sample_with_pit(lapic) };
     if let PitSampling::Done {
@@ -2330,7 +2330,7 @@ pub fn calibrate_local_timer(
         None => Err(PmUnavailable::Absent),
         Some(timer) => match timer.check_consistency() {
             Err(failure) => Err(PmUnavailable::Inconsistent(timer, failure)),
-            // SAFETY: 上の `sample_with_pit` と同じ番地である。
+            // SAFETY: 上の `sample_with_pit` と同じアドレスである。
             Ok(()) => match unsafe { sample_with_pm_timer(lapic, timer) } {
                 PmSampling::Done { samples, stats } => Ok(PmSampled {
                     timer,

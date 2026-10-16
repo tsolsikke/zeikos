@@ -921,7 +921,11 @@ mod tests {
         allocator.insert_free_range(0x100, 16).unwrap();
 
         let starts: Vec<u64> = allocator.free_ranges().map(|(start, _)| start).collect();
-        assert_eq!(starts, vec![0x100, 0x8_0000, 0x10_0000], "番地の順に並ぶ");
+        assert_eq!(
+            starts,
+            vec![0x100, 0x8_0000, 0x10_0000],
+            "アドレスの順に並ぶ"
+        );
         assert_eq!(
             allocator.allocate_frame(),
             Some(f(0x100)),

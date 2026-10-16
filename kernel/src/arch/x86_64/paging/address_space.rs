@@ -108,10 +108,10 @@ pub const fn kernel_top_write_is_refused(index: usize, frozen: bool) -> bool {
 /// 起動の後に、カーネル側の写像を足す・変える書き込みを断るか（純粋な論理。2026-10-03。`ADR-0071` の手順 4 の
 /// 3 つ目の決まり「起動の後は、カーネル側の写像を一切足さない・変えない」）。
 ///
-/// **起動の後（`finished`）に、番地の PML4 の添字がカーネル側（256〜511）なら断る。** **ユーザー側の番地は、
+/// **起動の後（`finished`）に、アドレスの PML4 の添字がカーネル側（256〜511）なら断る。** **ユーザー側のアドレスは、
 /// 起動の後も各空間が自分で足し引きする**（`brk`・`mmap`）。**`allowed_probe` は、試しの feature
 /// （`smp-tlb-shootdown-probe`）が起動の後に外す探りの 1 ページだけを許す印である**——その feature のビルドで、
-/// 番地が探りのページに一致するときだけ真になる（`ActivePageTable` が決める）。
+/// アドレスが探りのページに一致するときだけ真になる（`ActivePageTable` が決める）。
 pub const fn kernel_mapping_write_is_refused(
     pml4_index: usize,
     finished: bool,
@@ -659,7 +659,7 @@ mod tests {
         }
     }
 
-    /// **起動の後は、カーネル側の写像を足す・変える書き込みを断る。起動の間と、ユーザー側の番地は断らない。
+    /// **起動の後は、カーネル側の写像を足す・変える書き込みを断る。起動の間と、ユーザー側のアドレスは断らない。
     /// 探りの 1 ページの印が立っているときだけ通す**（2026-10-03。3 つ目の決まり）。
     #[test]
     fn a_kernel_mapping_write_is_refused_only_after_boot_unless_it_is_the_probe() {

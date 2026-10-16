@@ -117,10 +117,10 @@
 //! - `72` `arch_prctl(ARCH_SET_FS)` が 0 を返さなかった、または `fs:0` から、基底の先に置いた値が読めなかった（2026-10-05）
 //! - `73` `arch_prctl(ARCH_GET_FS)` が、入れた基底を返さなかった
 //! - `74` GS で同じこと（`ARCH_SET_GS`・`gs:0`・`ARCH_GET_GS`）ができなかった
-//! - `75` 正準でない番地を基底にする求めが `-EPERM` を返さなかった、または基底が変わってしまった
-//! - `76` カーネルの番地を基底にする求めが `-EPERM` を返さなかった
+//! - `75` 正準でないアドレスを基底にする求めが `-EPERM` を返さなかった、または基底が変わってしまった
+//! - `76` カーネルのアドレスを基底にする求めが `-EPERM` を返さなかった
 //! - `77` 知らない `code` が `-EINVAL` を返さなかった
-//! - `78` 書けない番地を渡した `ARCH_GET_FS` が `-EFAULT` を返さなかった
+//! - `78` 書けないアドレスを渡した `ARCH_GET_FS` が `-EFAULT` を返さなかった
 //! - `80` `set_tid_address` が 1（唯一のスレッドの番号）を返さなかった（2026-10-06）
 //! - `81` `rt_sigaction(SIGPIPE, SIG_IGN)` が 0 を返さなかったか、読み戻した登録が `SIG_IGN` でなかった
 //! - `82` `rt_sigaction(SIGKILL, …)` が `-EINVAL` を返さなかった
@@ -136,15 +136,15 @@
 //! - `92` `fcntl(F_GETFD)` が 0 を返さなかったか、`F_DUPFD_CLOEXEC` が下限以上の番号を返さなかった
 //! - `93` `spawn("/bin/futex-wait")` が 137 を返さなかった（起こす者の居ない `FUTEX_WAIT` は、プロセスを終わらせる）
 //! - `94` `SA_RESTORER` の無いハンドラの `rt_sigaction(SIGUSR1, …)` が `-EINVAL` を返さなかった
-//! - `95` `mmap(NULL, 2 ページ, RW, MAP_PRIVATE|MAP_ANONYMOUS)` が、基点以上の番地を返さなかった（2026-10-06）
+//! - `95` `mmap(NULL, 2 ページ, RW, MAP_PRIVATE|MAP_ANONYMOUS)` が、基点以上のアドレスを返さなかった（2026-10-06）
 //! - `96` 無名の写像が 0 で埋まっていなかったか、書いた値が読み戻せなかった
-//! - `97` 写像の全体の `munmap` が 0 を返さなかったか、次の `mmap` が同じ番地を使い直さなかった
-//! - `98` ページの境界に無い番地の `munmap` が `-EINVAL` を返さなかったか、長さ 0 の `mmap` が `-EINVAL` を返さなかった
+//! - `97` 写像の全体の `munmap` が 0 を返さなかったか、次の `mmap` が同じアドレスを使い直さなかった
+//! - `98` ページの境界に無いアドレスの `munmap` が `-EINVAL` を返さなかったか、長さ 0 の `mmap` が `-EINVAL` を返さなかった
 //! - `99` 写像の無い範囲の `munmap` が 0 を返さなかった
 //! - `100` 3 ページの写像の真ん中の `munmap` が 0 を返さなかったか、両側のページが残っていなかった（2026-10-06）
 //! - `101` 残った 2 つの断片の `munmap` が 0 を返さなかった
-//! - `102` 無名の写像の 2 ページ目への `MAP_FIXED` が、その番地と 0 のページを返さなかった
-//! - `103` 写像の上への `MAP_FIXED_NOREPLACE` が `-EEXIST` を返さなかったか、空いた所でその番地を返さなかった
+//! - `102` 無名の写像の 2 ページ目への `MAP_FIXED` が、そのアドレスと 0 のページを返さなかった
+//! - `103` 写像の上への `MAP_FIXED_NOREPLACE` が `-EEXIST` を返さなかったか、空いた所でそのアドレスを返さなかった
 //! - `104` スタックとその見張りのページへの `MAP_FIXED` が `-EINVAL` を返さなかった
 //! - `105` `brk` の見張りの流れ（`brk`、ヒープの先頭への `PROT_NONE` の `MAP_FIXED`、`brk` を戻す、`munmap`）が通らなかった
 //! - `106` `PROT_READ` にして `PROT_READ|PROT_WRITE` に戻す `mprotect` が 0 を返さなかったか、値が残っていなかった（2026-10-06）
@@ -158,8 +158,8 @@
 //! - `115` `/etc/motd` への `readv`（2 本）が、ファイルの長さを返して先頭の本に先頭のバイトを置かなかった
 //! - `125` 先頭は正しく 2 本目の `iov_len` が不正な `writev` が、-1 と 1<<63 で `-EINVAL` を、`SSIZE_MAX` で `-EFAULT` を
 //!   返さなかったか、`-EINVAL` で断られたのに先頭の本を書いていた（2026-10-09。I/O の前に全部を確かめる）
-//! - `126` 長さ 0 の `mprotect` が、整列した番地で（何も写っていなくても、`PROT_EXEC` でも）0 を返さなかったか、整列して
-//!   いない番地と、`PROT_GROWSDOWN|PROT_GROWSUP` で `-EINVAL` を返さなかった（2026-10-09。Linux と同じ順序）
+//! - `126` 長さ 0 の `mprotect` が、整列したアドレスで（何も写っていなくても、`PROT_EXEC` でも）0 を返さなかったか、整列して
+//!   いないアドレスと、`PROT_GROWSDOWN|PROT_GROWSUP` で `-EINVAL` を返さなかった（2026-10-09。Linux と同じ順序）
 //! - `127` `prot` に知らないビット（0x10）を立てた `mprotect` が `-EINVAL` を返さなかったか、長さ 0 なら知らないビットでも
 //!   0、`PROT_SEM` を足した `PROT_READ|PROT_WRITE` は 0 を返さなかった（2026-10-09。Linux の `arch_validate_prot`）
 //! - `128` 無名のページへの `PROT_GROWSDOWN` と `PROT_GROWSUP` が `-EINVAL` を（外した後の `PROT_GROWSDOWN` は `-ENOMEM` を）
@@ -172,13 +172,13 @@
 //! - `119` `spawn("/bin/tkill-self")` が 134（`tkill(gettid(), SIGABRT)` で終わらせた。128 + 6）で終わらなかった
 //! - `120` `clock_nanosleep` が、長さ 0 の相対の眠りと過ぎた絶対の時刻で 0 を返さなかったか、知らない時計で `-EINVAL` を返さなかった
 //!   （起動時のこのプログラムは、本当に眠ると戻ってこない——スケジューラの刻みで起こされる形は、シェルの `sleep` が確かめる）
-//! - `121` ユーザーの番地の上限のページ・上限をまたぐ範囲・正準でない番地・カーネルの番地への `MAP_FIXED`（と上限のページへの
+//! - `121` ユーザーのアドレスの上限のページ・上限をまたぐ範囲・正準でないアドレス・カーネルのアドレスへの `MAP_FIXED`（と上限のページへの
 //!   `MAP_FIXED_NOREPLACE`）が `-ENOMEM` を返さなかったか、64 KiB より下への `MAP_FIXED` が `-EPERM` を返さなかった（2026-10-07）
-//! - `122` 上限のページとカーネルの番地の `munmap` が `-EINVAL` を、上限のページと末尾があふれる範囲の `mprotect` が `-ENOMEM` を
+//! - `122` 上限のページとカーネルのアドレスの `munmap` が `-EINVAL` を、上限のページと末尾があふれる範囲の `mprotect` が `-ENOMEM` を
 //!   返さなかった（2026-10-07）
 //! - `123` 切り上げると 2^64 を越える長さ（`u64::MAX` と 2^64 - 4096 + 1）の `munmap` が `-EINVAL` を、`mprotect` が `-ENOMEM` を
 //!   返さなかった（2026-10-08）
-//! - `124` `PROT_NONE` にしたページを `munmap` して同じ番地へ `MAP_FIXED` で写し直したとき、または `PROT_NONE` のページの上へ
+//! - `124` `PROT_NONE` にしたページを `munmap` して同じアドレスへ `MAP_FIXED` で写し直したとき、または `PROT_NONE` のページの上へ
 //!   `MAP_FIXED` で写したとき、新しい 0 のページが来なかった（どれかの呼び出しが失敗したか、古い中身が見えた。2026-10-08）
 //! - `69` 方向フラグを立てたまま打った `clock_gettime` が 0 を返さなかった（2026-09-24。
 //!   **判定の本体はカーネルの入口の監視である**——こちらは前提を作り、戻り値だけを見る）
@@ -1554,7 +1554,7 @@ core::arch::global_asm!(
     "  mov rax, qword ptr fs:[0]",
     "  cmp rax, qword ptr [rsp]",
     "  jne 9f",
-    // 73: FS の基底を訊く。入れた番地（rsp）が返る。
+    // 73: FS の基底を訊く。入れたアドレス（rsp）が返る。
     "  mov eax, {sys_arch_prctl}",
     "  mov edi, {arch_get_fs}",
     "  lea rsi, [rsp + 8]",
@@ -1588,7 +1588,7 @@ core::arch::global_asm!(
     "  mov rax, qword ptr fs:[0]",
     "  cmp rax, qword ptr [rsp]",
     "  jne 9f",
-    // 75: 正準でない番地は -EPERM。**基底は変わらない。**
+    // 75: 正準でないアドレスは -EPERM。**基底は変わらない。**
     "  mov eax, {sys_arch_prctl}",
     "  mov edi, {arch_set_fs}",
     "  mov rsi, 0x0000800000000000",
@@ -1599,7 +1599,7 @@ core::arch::global_asm!(
     "  mov rax, qword ptr fs:[0]",
     "  cmp rax, qword ptr [rsp]",
     "  jne 9f",
-    // 76: カーネルの番地は -EPERM。
+    // 76: カーネルのアドレスは -EPERM。
     "  mov eax, {sys_arch_prctl}",
     "  mov edi, {arch_set_fs}",
     "  mov rsi, 0xffffffff80100000",
@@ -1615,7 +1615,7 @@ core::arch::global_asm!(
     "  mov edi, 77",
     "  cmp rax, {minus_einval}",
     "  jne 9f",
-    // 78: 書けない番地（カーネルの番地）へ訊いた結果を書かせると -EFAULT。
+    // 78: 書けないアドレス（カーネルのアドレス）へ訊いた結果を書かせると -EFAULT。
     "  mov eax, {sys_arch_prctl}",
     "  mov edi, {arch_get_fs}",
     "  mov rsi, 0xffffffff80100000",
@@ -1704,7 +1704,7 @@ core::arch::global_asm!(
     "  cmp rax, {minus_einval}",
     "  jne 8f",
     // 94: SA_RESTORER の無いハンドラは断られる。
-    "  mov qword ptr [rsp + 96], 0x401000", // sa_handler = 番地（SIG_DFL でも SIG_IGN でもない）
+    "  mov qword ptr [rsp + 96], 0x401000", // sa_handler = アドレス（SIG_DFL でも SIG_IGN でもない）
     "  mov eax, {sys_rt_sigaction}",
     "  mov edi, 10",
     "  lea rsi, [rsp + 96]",
@@ -1879,7 +1879,7 @@ core::arch::global_asm!(
     "  mov eax, {sys_close}",
     "  mov rdi, r12",
     "  int 0x80",
-    // 95: mmap(NULL, 2 ページ, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) は基点以上の番地を返す。
+    // 95: mmap(NULL, 2 ページ, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) は基点以上のアドレスを返す。
     "  mov eax, {sys_mmap}",
     "  xor edi, edi",
     "  mov esi, 8192",
@@ -1903,7 +1903,7 @@ core::arch::global_asm!(
     "  mov qword ptr [r12 + 8184], rax",
     "  cmp qword ptr [r12 + 8184], rax",
     "  jne 7f",
-    // 98: ページの境界に無い番地の munmap は -EINVAL。長さ 0 の mmap も -EINVAL。
+    // 98: ページの境界に無いアドレスの munmap は -EINVAL。長さ 0 の mmap も -EINVAL。
     "  mov eax, {sys_munmap}",
     "  lea rdi, [r12 + 8]",
     "  mov esi, 4096",
@@ -1922,7 +1922,7 @@ core::arch::global_asm!(
     "  mov edi, 98",
     "  cmp rax, {minus_einval}",
     "  jne 7f",
-    // 97: 全体の munmap は 0 で、次の mmap は同じ番地を使い直す。
+    // 97: 全体の munmap は 0 で、次の mmap は同じアドレスを使い直す。
     "  mov eax, {sys_munmap}",
     "  mov rdi, r12",
     "  mov esi, 8192",
@@ -2029,7 +2029,7 @@ core::arch::global_asm!(
     "  jne 7f",
     "  cmp qword ptr [r12 + 4096], 0",
     "  jne 7f",
-    // 103: MAP_FIXED_NOREPLACE は、写像の上では -EEXIST、空いた所ではその番地。
+    // 103: MAP_FIXED_NOREPLACE は、写像の上では -EEXIST、空いた所ではそのアドレス。
     "  mov eax, {sys_mmap}",
     "  mov rdi, r12",
     "  mov esi, 4096",
@@ -2090,10 +2090,10 @@ core::arch::global_asm!(
     "  mov edi, 104",
     "  cmp rax, {minus_einval}",
     "  jne 7f",
-    // 121: ユーザーの番地の上限（0x7fff_ffff_f000）のページ・上限をまたぐ範囲・正準でない番地・カーネルの番地への MAP_FIXED は
+    // 121: ユーザーのアドレスの上限（0x7fff_ffff_f000）のページ・上限をまたぐ範囲・正準でないアドレス・カーネルのアドレスへの MAP_FIXED は
     //      -ENOMEM。上限のページへの MAP_FIXED_NOREPLACE も -ENOMEM。64 KiB より下（0x8000）への MAP_FIXED は -EPERM。
-    //      実測（2026-10-07）で、直す前のカーネルは、上限のページと上限をまたぐ範囲を写して書かせ、写像の無いカーネルの番地
-    //      （0xffff_ffff_7000_0000）には「写した」と答えた。正準でない番地と、写像の在るカーネルの番地は -ENOMEM だった。
+    //      実測（2026-10-07）で、直す前のカーネルは、上限のページと上限をまたぐ範囲を写して書かせ、写像の無いカーネルのアドレス
+    //      （0xffff_ffff_7000_0000）には「写した」と答えた。正準でないアドレスと、写像の在るカーネルのアドレスは -ENOMEM だった。
     "  mov eax, {sys_mmap}",
     "  mov rdi, 0x7ffffffff000",
     "  mov esi, 4096",
@@ -2160,7 +2160,7 @@ core::arch::global_asm!(
     "  mov edi, 121",
     "  cmp rax, {minus_eperm}",
     "  jne 7f",
-    // 122: 上限のページとカーネルの番地の munmap は -EINVAL。上限のページと、末尾があふれる範囲（0xffff_ffff_ffff_f000 + 4096）の
+    // 122: 上限のページとカーネルのアドレスの munmap は -EINVAL。上限のページと、末尾があふれる範囲（0xffff_ffff_ffff_f000 + 4096）の
     //      mprotect は -ENOMEM。
     "  mov eax, {sys_munmap}",
     "  mov rdi, 0x7ffffffff000",
@@ -2224,7 +2224,7 @@ core::arch::global_asm!(
     "  mov edi, 123",
     "  cmp rax, {minus_enomem}",
     "  jne 7f",
-    // 124: PROT_NONE にした（フレームを持ったまま写していない）ページを munmap してから、同じ番地へ MAP_FIXED で写し直す。
+    // 124: PROT_NONE にした（フレームを持ったまま写していない）ページを munmap してから、同じアドレスへ MAP_FIXED で写し直す。
     //      もう 1 度 PROT_NONE にして、その上へ MAP_FIXED で写す。どちらも新しい 0 のページが来ること（2026-10-08。直す前は
     //      munmap と置き換えが古い葉を残し、写し直しがそれを上書きしてフレームを失っていた）。終わりに munmap する。
     "  mov eax, {sys_mmap}",
@@ -2527,7 +2527,7 @@ core::arch::global_asm!(
     "  jne 7f",
     // 125: 不正な iov_len を、I/O の前に断る（2026-10-09。Linux の import_iovec と同じ順序）。
     //      先頭は正しく（"wv-", 3）、2 本目の長さだけを変える。-1 と 1<<63（符号つきで負）は -EINVAL。
-    //      SSIZE_MAX（負ではないが、範囲がユーザーの番地に収まらない）は -EFAULT（Linux の access_ok）。
+    //      SSIZE_MAX（負ではないが、範囲がユーザーのアドレスに収まらない）は -EFAULT（Linux の access_ok）。
     "  lea rax, [rip + WRITEV_HEAD]",
     "  mov qword ptr [rsp + 136], rax",
     "  mov qword ptr [rsp + 144], 3",
@@ -2617,8 +2617,8 @@ core::arch::global_asm!(
     "  mov eax, {sys_close}",
     "  mov rdi, r12",
     "  int 0x80",
-    // 126: mprotect の長さ 0（2026-10-09。Linux の do_mprotect_pkey と同じ順序）。整列した番地なら、何も写っていなくても、
-    //      PROT_EXEC でも 0（長さ 0 は prot と範囲の確かめより前）。整列していない番地は長さ 0 でも -EINVAL。
+    // 126: mprotect の長さ 0（2026-10-09。Linux の do_mprotect_pkey と同じ順序）。整列したアドレスなら、何も写っていなくても、
+    //      PROT_EXEC でも 0（長さ 0 は prot と範囲の確かめより前）。整列していないアドレスは長さ 0 でも -EINVAL。
     //      PROT_GROWSDOWN|PROT_GROWSUP は整列の確かめより前に -EINVAL。
     "  mov eax, {sys_mprotect}",
     "  mov edi, 0x10000",

@@ -123,7 +123,7 @@ impl ActivePageTable {
     /// `set_huge_page_uncached`・`mark_leaf_execute_disable`〕の先頭で呼ぶ。項目を読む前である）。
     ///
     /// **起動の後かは共通の側の 1 つの目印（`crate::boot::finished`）で見る**（ほかの 2 つの「起動の後はしない」
-    /// 決まりと同じ）。**ユーザー側の番地は断らない**（`brk`・`mmap` は起動の後に各空間が足し引きする）。
+    /// 決まりと同じ）。**ユーザー側のアドレスは断らない**（`brk`・`mmap` は起動の後に各空間が足し引きする）。
     /// **試しの feature `smp-tlb-shootdown-probe` のビルドでは、その探りのページ（`crate::smp::shootdown_probe::virt`。
     /// 起動の後に AP の TLB を落とすために外す 1 ページ）だけを通す。** **破壊テスト `kernel-top-write-unguarded-test`
     /// は、この守りも外す**（守りを全部外して、突き合わせが実際に書かれた項目を見つけることを見る形）。
@@ -274,15 +274,15 @@ pub enum MapUpdateError {
 
 /// [`ActivePageTable::unmap_4kib`] が外した葉（2026-10-02）。
 ///
-/// **フレームの番地は `frame` で受け取る。** `entry` は外す前の項目の値で、確かめの行に出すためのものである。
-/// **`entry` を番地として読んではならない**——項目には、番地のほかに権限のビットが載っている。以前は、項目の値だけを
-/// 返していて、`brk` の縮める側がそれを物理の番地として読んでいた。フラグが下位 12 ビットにしか無い間は通るが、
-/// 番地より上の位置にビットが立つと（実行禁止のビットなど）、番地として読めず、フレームが返らなくなる。
+/// **フレームのアドレスは `frame` で受け取る。** `entry` は外す前の項目の値で、確かめの行に出すためのものである。
+/// **`entry` をアドレスとして読んではならない**——項目には、アドレスのほかに権限のビットが載っている。以前は、項目の値だけを
+/// 返していて、`brk` の縮める側がそれを物理のアドレスとして読んでいた。フラグが下位 12 ビットにしか無い間は通るが、
+/// アドレスより上の位置にビットが立つと（実行禁止のビットなど）、アドレスとして読めず、フレームが返らなくなる。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct UnmappedPage {
-    /// 外した葉が指していたフレーム（項目の番地の部分だけを取り出したもの）。
+    /// 外した葉が指していたフレーム（項目のアドレスの部分だけを取り出したもの）。
     pub frame: PhysAddr,
-    /// 外す前の項目の値（番地と、権限のビット）。
+    /// 外す前の項目の値（アドレスと、権限のビット）。
     pub entry: u64,
 }
 
@@ -535,7 +535,7 @@ impl ActivePageTable {
         if !entry::is_present(pte) {
             return Err(MapUpdateError::NotMapped);
         }
-        // SAFETY: 同上。ビットを足すだけで、番地もほかの権限も変えない。
+        // SAFETY: 同上。ビットを足すだけで、アドレスもほかの権限も変えない。
         unsafe { self.write(pt, pt_index, pte | entry::PTE_NO_EXECUTE) };
         // SAFETY: テーブルの書き換えが終わってから、変えた 1 本を落とす。
         unsafe { cpu::invalidate_tlb_entry(virt.as_u64()) };
@@ -545,7 +545,7 @@ impl ActivePageTable {
     /// `virt` を含む 4KiB の葉の、書けるか・写してあるかを書き換え、実行できない形にする（2026-10-06。`mprotect`）。
     ///
     /// - `present` が真: `P` を立て、[`entry::PTE_RETAINED`] を落とし、`W` を `writable` に合わせる。
-    /// - `present` が偽: `P` と `W` を落とし、[`entry::PTE_RETAINED`] を立てる。**フレームの番地と、ほかのビット（`U`・
+    /// - `present` が偽: `P` と `W` を落とし、[`entry::PTE_RETAINED`] を立てる。**フレームのアドレスと、ほかのビット（`U`・
     ///   共有の印）は変えない。** 読める形へ戻すときに、同じフレームが戻る。
     /// - どちらでも、実行禁止のビット（`NX`）を立てる（[`entry::LEAVES_CARRY_EXECUTE_DISABLE`] のビルドで）。
     ///   **実行できる形へ変える道は無い**——`mprotect` は `PROT_EXEC` を断るので、実行を外す向きだけが在る（W^X。
@@ -594,7 +594,7 @@ impl ActivePageTable {
         } else {
             kept | entry::PTE_RETAINED | no_execute
         };
-        // SAFETY: 同上。番地と、上で残したビットは変えない（実行禁止は足す向きだけ）。
+        // SAFETY: 同上。アドレスと、上で残したビットは変えない（実行禁止は足す向きだけ）。
         unsafe { self.write(pt, pt_index, new) };
         // SAFETY: テーブルの書き換えが終わってから、変えた 1 本を落とす。
         unsafe { cpu::invalidate_tlb_entry(virt.as_u64()) };
@@ -606,8 +606,8 @@ impl ActivePageTable {
     /// # 物理フレームは解放しない
     ///
     /// そのフレームが他から参照されているかを、この関数は知らない。
-    /// 解放の判断は呼び出し側が行う。**フレームの番地は、返り値の `frame` を使うこと**
-    /// （外す前の項目の値を、番地として読まない。[`UnmappedPage`] の doc）。
+    /// 解放の判断は呼び出し側が行う。**フレームのアドレスは、返り値の `frame` を使うこと**
+    /// （外す前の項目の値を、アドレスとして読まない。[`UnmappedPage`] の doc）。
     ///
     /// 2MiB ページの中を指していた場合に分割で確保した PT も解放しない。
     /// 512 本のうち 1 本を消しただけで、残り 511 本は生きている。

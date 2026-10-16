@@ -361,7 +361,7 @@ struct SyscallState {
     process_end_setter: AtomicUsize,
     /// [`SYS_EXIT`] が受け取った終了状態（RDI）。[`SyscallState::process_exited`] が真のときだけ意味を持つ。
     process_exit_status: AtomicU64,
-    /// `futex` の `FUTEX_WAIT` で、値が同じで待つ場面になった番地（2026-10-06）。**起こすスレッドが居ないので、
+    /// `futex` の `FUTEX_WAIT` で、値が同じで待つ場面になったアドレス（2026-10-06）。**起こすスレッドが居ないので、
     /// プロセスを終わらせる**。0 なら起きていない。載せる側が、判定の行に出す。
     futex_deadlock_address: AtomicU64,
     /// `syscall_entry` が呼ばれた回数（会計用。W1-c-3 で大域から移した）。
@@ -882,7 +882,7 @@ unsafe fn dispatch(
             }
         }
         // **`madvise` は助言で、どれも受けて何もしない**（2026-10-06。musl の `malloc` が返す前に `MADV_DONTNEED` を打つ
-        // ことが在る。ページの境界に無い番地は Linux と同じく `-EINVAL`）。
+        // ことが在る。ページの境界に無いアドレスは Linux と同じく `-EINVAL`）。
         SYS_MADVISE => {
             if args[0].is_multiple_of(crate::mappings::PAGE_SIZE) {
                 0
@@ -1783,7 +1783,7 @@ unsafe fn mmap_screen_from_ring3(
         return (-EINVAL) as u64;
     }
     let pages = len.div_ceil(PAGE);
-    // **番地は写像の表から取る**（2026-10-06。`crate::mappings`）。
+    // **アドレスは写像の表から取る**（2026-10-06。`crate::mappings`）。
     let base = match crate::mappings::with_current(|map| {
         map.reserve(
             pages * PAGE,
@@ -2163,7 +2163,7 @@ unsafe fn accept_from_ring3(
             return (-EFAULT) as u64;
         };
         let room = u64::from(u32::from_le_bytes(bytes)).min(2);
-        // SAFETY: 同上。書く前に、書ける番地かを見るだけである。
+        // SAFETY: 同上。書く前に、書けるアドレスかを見るだけである。
         let writable = unsafe {
             validate_user_range_for_write(page_table_root, direct_map, addr, room).is_some()
                 && validate_user_range_for_write(page_table_root, direct_map, addrlen, 4).is_some()
@@ -2177,7 +2177,7 @@ unsafe fn accept_from_ring3(
             crate::socket::AcceptOutcome::Connection(conn) => {
                 if addr != 0 {
                     let family = (AF_UNIX as u16).to_le_bytes();
-                    // SAFETY: 上で書けることを見た番地である。
+                    // SAFETY: 上で書けることを見たアドレスである。
                     let bytes =
                         unsafe { read_user_fixed::<4>(page_table_root, direct_map, addrlen) }
                             .unwrap_or([0; 4]);
@@ -2397,8 +2397,8 @@ unsafe fn write_to_socket(
 /// `mmap` がマップする基点（プロセスごと）。**イメージ・ヒープ・スタックは `0x400000..0x800000` に
 /// 収まっているので、その上（PML4\[0\] の空き）へ順にマップする**（`ADR-0065`。ウィンドウの拡張は要らない）。
 ///
-/// **配る番地は、プロセスごとの写像の表が決める**（`crate::mappings`。2026-10-06。ここから上へ、空いている所を
-/// first-fit で探す）。**2026-10-03 から 10-06 までは、プロセスごとの `Heap` が次の番地を 1 つ持っていた**（上へ進む
+/// **配るアドレスは、プロセスごとの写像の表が決める**（`crate::mappings`。2026-10-06。ここから上へ、空いている所を
+/// first-fit で探す）。**2026-10-03 から 10-06 までは、プロセスごとの `Heap` が次のアドレスを 1 つ持っていた**（上へ進む
 /// だけで、返した範囲を覚えない）。**それより前はスロットごとの `static` だった**——親と、親が起動した子と、続けて
 /// 走るプロセスが同じスロットを使うので、どのプロセスも `MMAP_BASE` から始まらなかった（実測: 起動時の
 /// `syscall-test` が 1 ページ使った後、シェルの子の最初の `mmap` は `0x10001000`、次の子は `0x10003000` から始まった）。
@@ -2452,7 +2452,7 @@ unsafe fn mmap_anonymous_from_ring3(
     let writable = prot & PROT_WRITE != 0;
     let present = prot & (PROT_READ | PROT_WRITE) != 0;
     if let Some((addr, _)) = fixed {
-        // **番地を指定する形**（2026-10-06）。ページの境界に在ること。**ユーザーの範囲に収まること**（2026-10-07。
+        // **アドレスを指定する形**（2026-10-06）。ページの境界に在ること。**ユーザーの範囲に収まること**（2026-10-07。
         // 下限より下は `-EPERM`、上限を越えれば `-ENOMEM`。Linux の `mmap_min_addr` と `TASK_SIZE_MAX` と同じ答え）。
         if !addr.is_multiple_of(PAGE_SIZE) || addr == 0 {
             return (-EINVAL) as u64;
@@ -2599,7 +2599,7 @@ unsafe fn munmap_from_ring3(
     let Some(bytes) = crate::mappings::page_rounded(len) else {
         return (-EINVAL) as u64;
     };
-    // **上限を越える範囲は `-EINVAL`**（2026-10-07。Linux と同じ答え。表に無い範囲なので外すものは無いが、番地を見ずに通すと
+    // **上限を越える範囲は `-EINVAL`**（2026-10-07。Linux と同じ答え。表に無い範囲なので外すものは無いが、アドレスを見ずに通すと
     // 「成功」と答えることになる）。
     if exceeds_user_limit(addr, bytes) {
         return (-EINVAL) as u64;
@@ -2851,7 +2851,7 @@ fn page_tables_for(addr: u64, bytes: u64, pages: usize) -> usize {
 /// `[addr, addr + bytes)` に、実行できるページ（写してあって `NX` が 0）が 1 つでも在るか（2026-10-06。W^X）。
 ///
 /// `mprotect` が `PROT_WRITE` を求めたとき、**表を変える前に**見る——一部でも在れば、何も変えずに断るためである。
-/// 写していないページと、扱えない番地は数えない（前者は `mprotect` の本体が扱い、後者は表の側が断る）。
+/// 写していないページと、扱えないアドレスは数えない（前者は `mprotect` の本体が扱い、後者は表の側が断る）。
 /// 実行できるかは、翻訳の結果（`Translation::is_executable`）で見る。
 fn range_holds_an_executable_page(
     table: &crate::arch::x86_64::ActivePageTable,
@@ -2874,14 +2874,14 @@ fn range_holds_an_executable_page(
     false
 }
 
-/// ユーザーの写像を置いてよい番地の下限（2026-10-07）。Linux の `mmap_min_addr` の既定（64 KiB）と同じ。**番地 0 の近くへ
-/// `MAP_FIXED` で写させない**（ヌルの参照が有効な番地にならないように）。
+/// ユーザーの写像を置いてよいアドレスの下限（2026-10-07）。Linux の `mmap_min_addr` の既定（64 KiB）と同じ。**アドレス 0 の近くへ
+/// `MAP_FIXED` で写させない**（ヌルの参照が有効なアドレスにならないように）。
 const USER_MAPPING_MIN: u64 = 0x1_0000;
 
-/// `addr` から `bytes` の範囲が、ユーザーの番地の上限（`USER_ADDRESS_LIMIT`。Linux の `TASK_SIZE_MAX` に同じで、`syscall`
+/// `addr` から `bytes` の範囲が、ユーザーのアドレスの上限（`USER_ADDRESS_LIMIT`。Linux の `TASK_SIZE_MAX` に同じで、`syscall`
 /// 命令の戻り先の確かめと同じ値）を越えるか（2026-10-07。`ADR-0082` の Addendum）。**`mmap(MAP_FIXED)`・`munmap`・
 /// `mprotect` の入口で見る**——実測で、`MAP_FIXED` が上限のページと上限をまたぐ範囲を写して書かせ、写像の無いカーネルの
-/// 番地にも「写した」と答えていた（写像の表は番地を見ず、ページテーブルの操作は上半分へも届く）。足し算があふれる形（末尾が 2^64 を越える）も越えたと扱う。
+/// アドレスにも「写した」と答えていた（写像の表はアドレスを見ず、ページテーブルの操作は上半分へも届く）。足し算があふれる形（末尾が 2^64 を越える）も越えたと扱う。
 /// **上限は範囲の終端で、その値を含まない**——末尾が上限ちょうどの範囲は越えていない（2026-10-09 に、`mmap` が配る範囲の
 /// 終わりと意味を揃えた。`USER_ADDRESS_LIMIT` の doc）。
 fn exceeds_user_limit(addr: u64, bytes: u64) -> bool {
@@ -2968,7 +2968,7 @@ unsafe fn release_range_and_unmap(
         // `mprotect(PROT_NONE)` でフレームを持ったまま `P` を落としたページ（`PTE_RETAINED` の葉。`unmap_4kib` が外して
         // フレームを返す）。どちらかは葉が知っているので、表には持たない（1 つの断片の中で混ざりうる）。
         // 破壊テスト (2026-10-08, munmap-skips-retained-test): 写していない断片を飛ばす（直す前の形）。`PTE_RETAINED` の葉が
-        // 残り、同じ番地へ写し直すと `map_4kib` が断って、`syscall-test` が 124 番で止まる。
+        // 残り、同じアドレスへ写し直すと `map_4kib` が断って、`syscall-test` が 124 番で止まる。
         if !piece.present && cfg!(feature = "munmap-skips-retained-test") {
             continue;
         }
@@ -3071,7 +3071,7 @@ fn report_second_ftruncate_refused(shm: u8, size: u64) -> u64 {
 /// [`SYS_MMAP`] の本体。**共有メモリの fd を自分の空間の `MMAP_BASE` から上へマップする。**
 /// **`addr` は見ない（マップする場所はカーネルが決める）。`offset` は 0 だけ。**
 ///
-/// 破壊 (`ADR-0065`, shm-mmap-maps-nothing): 張らずに番地だけ返す。**読み書きが #PF になり、
+/// 破壊 (`ADR-0065`, shm-mmap-maps-nothing): 張らずにアドレスだけ返す。**読み書きが #PF になり、
 /// 往復が成り立たない。**
 ///
 /// # 安全性
@@ -3089,7 +3089,7 @@ unsafe fn mmap_from_ring3(
     // **6 つの引数は、レジスタの順のまま受ける**（2026-10-08。BKL を渡すようにして、引数が多すぎた）。
     let [addr, len, prot, flags, fd, offset] = *args;
 
-    // **番地を指定する形は、無名の写像だけ受ける**（2026-10-06。fd を指定の番地へ写す形は `docs/deferred-decisions.md`）。
+    // **アドレスを指定する形は、無名の写像だけ受ける**（2026-10-06。fd を指定のアドレスへ写す形は `docs/deferred-decisions.md`）。
     // 指定の無い `addr`（ただのヒント）は見ない——置き場はカーネルが決める。
     let fixed = if flags & MAP_FIXED != 0 {
         Some(FixedPlacement::Replace)
@@ -3120,7 +3120,7 @@ unsafe fn mmap_from_ring3(
         return (-EPERM) as u64;
     }
     // **引数だけの確かめの直後に借りる**（2026-10-08。[`borrow_allocator`]）。ここから下は fd の表・共有メモリの表・
-    // マッピングテーブルを読むので、借りて（眠ったなら起きて）から読む。以前は番地を予約した後で借りていて、借りられないと
+    // マッピングテーブルを読むので、借りて（眠ったなら起きて）から読む。以前はアドレスを予約した後で借りていて、借りられないと
     // 予約が残った（使われない範囲が表に残り、プロセスが終わるまで塞いだ）。
     let Some(mut loan) = borrow_allocator(bkl) else {
         return (-ENOMEM) as u64;
@@ -3148,7 +3148,7 @@ unsafe fn mmap_from_ring3(
     if want_pages > pages {
         return (-EINVAL) as u64;
     }
-    // **番地は写像の表から取る**（2026-10-06。`crate::mappings`。据えられていないプロセスでは断る）。
+    // **アドレスは写像の表から取る**（2026-10-06。`crate::mappings`。据えられていないプロセスでは断る）。
     let base = match crate::mappings::with_current(|map| {
         map.reserve(
             (want_pages * crate::shm::PAGE_SIZE) as u64,
@@ -3211,7 +3211,7 @@ unsafe fn mmap_from_ring3(
 
 /// 共有のページ（共有メモリと画面の裏バッファ）を写す途中で失敗したとき、写した分を外し、表の予約を返す（2026-10-08）。
 ///
-/// 以前は、予約と写した分を残したまま失敗を返していた——表とページテーブルには、返した番地を使う者の居ない写像が残った。
+/// 以前は、予約と写した分を残したまま失敗を返していた——表とページテーブルには、返したアドレスを使う者の居ない写像が残った。
 /// **フレームは返さない**（共有メモリは参照数で、裏バッファはコンソールが持つ）。中間テーブルは残す（破棄が集め、空間の
 /// 会計にも足してある）。
 ///
@@ -4126,11 +4126,11 @@ pub(crate) unsafe extern "sysv64" fn syscall_entry(
     // 戻り値を、Linux のレジスタの形で書き戻す（`abi`）。
     crate::abi::linux::x86_64::write_return(ctx, ret);
 
-    // **戻り先が、ユーザーの範囲の正準な番地であることを確かめる**（2026-10-04）。**違えば、戻らずにそのプロセスを
-    // 終わらせる。** 正準でない番地へ戻ろうとすると、出口の `iretq` がカーネルの中で例外を起こし、カーネルが止まる。
-    // **今は、戻り先を書き換える経路が無いので、ここへは来ない**——`syscall` 命令は、命令の次の番地を戻り先にする
-    // ので、ユーザーの番地の上限いっぱいに命令を置けるようになると当たる。シグナルから戻る経路でも、同じ確かめを通す。
-    // 試しの形 (2026-10-04, syscall-return-noncanonical-test): 戻り先を、正準でない番地に書き換える（`arch`）。
+    // **戻り先が、ユーザーの範囲の正準なアドレスであることを確かめる**（2026-10-04）。**違えば、戻らずにそのプロセスを
+    // 終わらせる。** 正準でないアドレスへ戻ろうとすると、出口の `iretq` がカーネルの中で例外を起こし、カーネルが止まる。
+    // **今は、戻り先を書き換える経路が無いので、ここへは来ない**——`syscall` 命令は、命令の次のアドレスを戻り先にする
+    // ので、ユーザーのアドレスの上限いっぱいに命令を置けるようになると当たる。シグナルから戻る経路でも、同じ確かめを通す。
+    // 試しの形 (2026-10-04, syscall-return-noncanonical-test): 戻り先を、正準でないアドレスに書き換える（`arch`）。
     #[cfg(feature = "syscall-return-noncanonical-test")]
     ctx.corrupt_return_address_for_the_test();
     if !ctx.returns_to_user_address() {
@@ -4873,7 +4873,7 @@ unsafe fn sys_brk(
                     // SAFETY: 稼働中の表から外し、フレームを返す。
                     if let Ok(page) = unsafe { table.unmap_4kib(virt) } {
                         // **返すのは、外した葉が指していたフレームである**（`page.frame`）。以前は、外す前の
-                        // 項目の値を物理の番地として読んでいて、番地より上の位置にビットが立つと、
+                        // 項目の値を物理のアドレスとして読んでいて、アドレスより上の位置にビットが立つと、
                         // フレームが返らなかった（2026-10-02 に直した）。
                         let _ = allocator.deallocate_frame(page.frame);
                         crate::userland::with_current_heap(|heap| heap.note_given());
@@ -5409,13 +5409,13 @@ unsafe fn sys_clock_gettime(
 
 /// `arch_prctl(code, address)` の本体（2026-10-05）。**FS と GS の基底を、入れる・訊く。**
 ///
-/// Linux 向けの libc は、起動の途中で `ARCH_SET_FS` を呼び、スレッドローカルの領域（TLS）の番地を FS の基底に
+/// Linux 向けの libc は、起動の途中で `ARCH_SET_FS` を呼び、スレッドローカルの領域（TLS）のアドレスを FS の基底に
 /// 入れる。**基底は「ユーザーの実行の文脈が持つレジスタ」で、切り替えと、子の起動の前後で保存・復元される**
 /// （`arch` の `user_registers`）。
 ///
-/// - `ARCH_SET_FS`・`ARCH_SET_GS`: `address` を基底にする。**ユーザーの範囲の正準な番地でなければ `-EPERM`**
-///   （Linux と同じ値。カーネルの番地と、正準でない番地を断る）。
-/// - `ARCH_GET_FS`・`ARCH_GET_GS`: 今の基底を、`address` の指す 8 バイトへ書く。**書けない番地なら `-EFAULT`。**
+/// - `ARCH_SET_FS`・`ARCH_SET_GS`: `address` を基底にする。**ユーザーの範囲の正準なアドレスでなければ `-EPERM`**
+///   （Linux と同じ値。カーネルのアドレスと、正準でないアドレスを断る）。
+/// - `ARCH_GET_FS`・`ARCH_GET_GS`: 今の基底を、`address` の指す 8 バイトへ書く。**書けないアドレスなら `-EFAULT`。**
 /// - それ以外の `code`: `-EINVAL`（Linux には、影のスタックなどの `code` も在る。受けていない）。
 ///
 /// **GS も、ユーザーに使わせる。** カーネルは GS を使わず、`swapgs` も無いので、ユーザーの GS の基底はカーネルの
@@ -5433,7 +5433,7 @@ unsafe fn sys_arch_prctl(
     sys_arch_prctl_body(code, address, page_table_root, direct_map)
 }
 
-/// ユーザーの番地から、決まった長さの値を読む（2026-10-06。小物の呼び出しの共通の形）。**範囲を検証してから写す。**
+/// ユーザーのアドレスから、決まった長さの値を読む（2026-10-06。小物の呼び出しの共通の形）。**範囲を検証してから写す。**
 /// 読めなければ `None`（呼ぶ側が `-EFAULT` にする）。
 ///
 /// # Safety
@@ -5451,7 +5451,7 @@ unsafe fn read_user_fixed<const N: usize>(
     (unsafe { copy_from_user(&mut bytes, &slice) } == N).then_some(bytes)
 }
 
-/// ユーザーの番地へ、決まった長さの値を書く（2026-10-06）。**範囲を検証してから写す。** 書けなければ `false`。
+/// ユーザーのアドレスへ、決まった長さの値を書く（2026-10-06）。**範囲を検証してから写す。** 書けなければ `false`。
 ///
 /// # Safety
 ///
@@ -5676,7 +5676,7 @@ const MAX_RW_COUNT: u64 = 0x7fff_f000;
 /// 1 つ**——1 つのスロットで同時に走る `readv`・`writev` は 1 本だけである（入れ子の `spawn` の親は `spawn` の中で待つ）。
 /// 遠征スタックに置かないのは、1,024 本で 16 KiB になり、ガードページ 1 枚の前提（スタック上の 1 つの物は 4,096 バイト
 /// 以下）を越えるためである。
-/// `Locked` は割り込みを禁止するので、ユーザーの番地を読む間は持たない（1 本ずつ取って置く）。
+/// `Locked` は割り込みを禁止するので、ユーザーのアドレスを読む間は持たない（1 本ずつ取って置く）。
 static IOV_COPIES: [common::critical::Locked<[(u64, u64); UIO_MAXIOV as usize]>;
     crate::arch::x86_64::USER_TASK_SLOTS] =
     [const { common::critical::Locked::new([(0, 0); UIO_MAXIOV as usize]) };
@@ -5688,7 +5688,7 @@ static IOV_COPIES: [common::critical::Locked<[(u64, u64); UIO_MAXIOV as usize]>;
 /// （2026-10-09。Linux の `import_iovec` と同じ順序）。
 /// 1. 1 本ずつ読み（読めなければ `-EFAULT`）、`iov_len` を符号つきで見て負なら（`SSIZE_MAX` を越えるなら）`-EINVAL`。
 ///    Linux の `copy_iovec_from_user`。
-/// 2. 1 本ずつ、範囲がユーザーの番地に収まるかを見て（`access_ok`）、収まらなければ `-EFAULT`。合計が [`MAX_RW_COUNT`] を
+/// 2. 1 本ずつ、範囲がユーザーのアドレスに収まるかを見て（`access_ok`）、収まらなければ `-EFAULT`。合計が [`MAX_RW_COUNT`] を
 ///    越える分は切り詰める（足し算はあふれない）。Linux の `__import_iovec`。
 /// 3. 取り込んだ写しで、`read`・`write` を 1 本ずつ呼ぶ（`iov_len` が 0 の本は飛ばす——musl は `writev` の 2 本目に
 ///    `NULL`/0 を渡すことが在る）。
@@ -5734,7 +5734,7 @@ unsafe fn vectored_from_ring3(
         }
         copies.lock()[index] = (base, len);
     }
-    // 2. 範囲を見て、合計を切り詰める（純粋な論理で、ユーザーの番地は読まない）。
+    // 2. 範囲を見て、合計を切り詰める（純粋な論理で、ユーザーのアドレスは読まない）。
     if let Err(errno) = check_iovecs(&mut copies.lock()[..count]) {
         return (-errno) as u64;
     }
@@ -5764,8 +5764,8 @@ unsafe fn vectored_from_ring3(
 }
 
 /// 取り込んだ `iovec`（`(iov_base, iov_len)`。長さは負でないことを確かめ済み）の範囲を見て、合計を切り詰める（2026-10-09。
-/// 純粋な論理。Linux の `__import_iovec` の 2 つ目の回）。**範囲がユーザーの番地に収まらない本が在れば `Err(EFAULT)`**
-/// （長さ 0 でも番地は見る。Linux の `access_ok` と同じ）。合計が [`MAX_RW_COUNT`] を越える分は、その本の長さを縮め、
+/// 純粋な論理。Linux の `__import_iovec` の 2 つ目の回）。**範囲がユーザーのアドレスに収まらない本が在れば `Err(EFAULT)`**
+/// （長さ 0 でもアドレスは見る。Linux の `access_ok` と同じ）。合計が [`MAX_RW_COUNT`] を越える分は、その本の長さを縮め、
 /// 後ろの本は 0 にする。足し算はあふれない（合計は上限を越えない）。
 fn check_iovecs(iovecs: &mut [(u64, u64)]) -> Result<(), i64> {
     let mut total = 0u64;
@@ -5785,7 +5785,7 @@ fn check_iovecs(iovecs: &mut [(u64, u64)]) -> Result<(), i64> {
     Ok(())
 }
 
-/// `set_tid_address(tidptr)`（2026-10-06）。**番地を控えて、スレッドの番号を返す。**
+/// `set_tid_address(tidptr)`（2026-10-06）。**アドレスを控えて、スレッドの番号を返す。**
 ///
 /// **池のスレッドのタスクから呼ばれたら、そのタスクの欄に控える**（M3a。2026-10-14。`clone` の `CLONE_CHILD_CLEARTID` と
 /// 同じ欄。スレッドの `exit` がそこへ 0 を書く）。主スレッドのものはプロセスの表に控えるだけで、主スレッドの終わりに
@@ -5876,13 +5876,13 @@ fn classify_clone_flags(flags: u64) -> CloneRequest {
 /// 起こし、その tid を返す。**
 ///
 /// **受けるのは musl の `pthread_create` の組だけである**（[`classify_clone_flags`]）。Linux が `-EINVAL` にする組はそのまま
-/// `-EINVAL`、Linux では通るがここに無い組（`fork` の形）は `-ENOSYS`。**番地は、スタックが窓の外なら `-EINVAL`、TLS が
-/// ユーザーの範囲の正準な番地でなければ `-EPERM`（`arch_prctl` と同じ。Linux の `do_arch_prctl_64` も `-EPERM`）、
+/// `-EINVAL`、Linux では通るがここに無い組（`fork` の形）は `-ENOSYS`。**アドレスは、スタックが窓の外なら `-EINVAL`、TLS が
+/// ユーザーの範囲の正準なアドレスでなければ `-EPERM`（`arch_prctl` と同じ。Linux の `do_arch_prctl_64` も `-EPERM`）、
 /// `parent_tid` と `child_tid` に書けなければ `-EFAULT`。** 池が尽きていれば `-EAGAIN`（Linux の `EAGAIN` は、スレッドの数の
 /// 上限に当たったときの値である）。**断るのは全部、池を取る前である**（巻き戻すものは無い）。
 ///
 /// **`CLONE_PARENT_SETTID` は、起こした直後にここで書く**（子はまだ走っていない。IF=0 のまま）。**`CLONE_CHILD_CLEARTID` の
-/// 番地は池のタスクの欄に控え、スレッドの `exit` が 0 を書く**（[`exit_thread_from_ring3`]）。`CLONE_CHILD_SETTID` は組に
+/// アドレスは池のタスクの欄に控え、スレッドの `exit` が 0 を書く**（[`exit_thread_from_ring3`]）。`CLONE_CHILD_SETTID` は組に
 /// 無い。
 ///
 /// **[`syscall_entry`] が持つ**（[`SYS_SPAWN`] と同じ理由——親の文脈 `ctx` を写す。`dispatch` の引数では足りない）。
@@ -5930,7 +5930,7 @@ unsafe fn clone_from_ring3(
         ));
         return (-EPERM) as u64;
     }
-    // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。書く前に、書ける番地かを見るだけである。
+    // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。書く前に、書けるアドレスかを見るだけである。
     let tid_slots_writable = unsafe {
         validate_user_range_for_write(page_table_root, direct_map, parent_tid, 4).is_some()
             && validate_user_range_for_write(page_table_root, direct_map, child_tid, 4).is_some()
@@ -5958,7 +5958,7 @@ unsafe fn clone_from_ring3(
             return (-EAGAIN) as u64;
         }
     };
-    // **`CLONE_PARENT_SETTID`。** 上で書ける番地だと見ている。子はまだ走っていない（IF=0 のまま。切り替えは入らない）。
+    // **`CLONE_PARENT_SETTID`。** 上で書けるアドレスだと見ている。子はまだ走っていない（IF=0 のまま。切り替えは入らない）。
     // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
     if !unsafe {
         write_user_fixed(
@@ -5977,7 +5977,7 @@ unsafe fn clone_from_ring3(
 
 /// 池のスレッドのタスクの `exit`（M3a。2026-10-14。`ADR-0085` の決定 3）。**戻らない。**
 ///
-/// `CLONE_CHILD_CLEARTID` の番地が在れば 0 を書き（Linux と同じく、書けなくても止めない）、その番地で待つ者を 1 本起こし
+/// `CLONE_CHILD_CLEARTID` のアドレスが在れば 0 を書き（Linux と同じく、書けなくても止めない）、そのアドレスで待つ者を 1 本起こし
 /// （`FUTEX_WAKE` と同じ。`ADR-0081` の Addendum）、`Finished` にして、BKL を解き、切り替えて二度と戻らない
 /// （`crate::task::park_finished_thread_task`）。
 ///
@@ -6002,15 +6002,15 @@ unsafe fn exit_thread_from_ring3(
 ) -> ! {
     let address = crate::task::thread_tid_address(index);
     let mut cleared = None;
-    // 破壊テスト (M3a の 3-2, clone-no-clear-tid-test): `CLONE_CHILD_CLEARTID` の番地に 0 を書かず、起こしもしない。
-    // 親の `join` は番地が 0 になるのを待ち続ける。
+    // 破壊テスト (M3a の 3-2, clone-no-clear-tid-test): `CLONE_CHILD_CLEARTID` のアドレスに 0 を書かず、起こしもしない。
+    // 親の `join` はアドレスが 0 になるのを待ち続ける。
     if address != 0 && !cfg!(feature = "clone-no-clear-tid-test") {
         // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効（自分の空間のまま）。
         let written =
             unsafe { write_user_fixed(page_table_root, direct_map, address, &0u32.to_le_bytes()) };
         cleared = written.then_some(address);
-        // **書いた番地で待つ者を 1 本起こす**（Linux の `CLONE_CHILD_CLEARTID` と同じ。musl の `pthread_join` は
-        // `__thread_list_lock` のこの番地が 0 になるのを待つ）。
+        // **書いたアドレスで待つ者を 1 本起こす**（Linux の `CLONE_CHILD_CLEARTID` と同じ。musl の `pthread_join` は
+        // `__thread_list_lock` のこのアドレスが 0 になるのを待つ）。
         if written {
             wake_futex_waiters(crate::arch::x86_64::current_excursion_slot(), address, 1);
         }
@@ -6182,9 +6182,9 @@ pub fn futex_counts() -> (u64, u64, u64) {
 ///   起こし、起こした本数を返す。待つ相手が居なければ 0。
 /// - `FUTEX_WAIT`（と全部 1 の `FUTEX_WAIT_BITSET`。期限は無し）: `*uaddr` が `val` と違えば `-EAGAIN`（Linux と同じ。待たずに
 ///   戻る）。**同じなら、眠ると誰も起こせないか（[`crate::task::another_task_of_the_slot_could_wake`]）を見る**——
-///   誰も起こせなければ**行き詰まり**で、今までどおり番地を控えてプロセスを終わらせる（終了状態は [`FUTEX_DEADLOCK_STATUS`]。
+///   誰も起こせなければ**行き詰まり**で、今までどおりアドレスを控えてプロセスを終わらせる（終了状態は [`FUTEX_DEADLOCK_STATUS`]。
 ///   載せる側が判定の行に出す。行き詰まりを隠さない。**スレッドが 1 本だけのプロセスは必ずこれに当たる**）。起こしうる
-///   タスクが居れば、`Wait::Futex`（スロットと番地の組）を欄に書き、BKL を解いて眠る。起こされたら 0 を返す——**空振りで
+///   タスクが居れば、`Wait::Futex`（スロットとアドレスの組）を欄に書き、BKL を解いて眠る。起こされたら 0 を返す——**空振りで
 ///   起こしてよい**（`ADR-0061`。futex の仕様でも偽の起こしは許され、呼ぶ側が値を見直す）。
 /// - ほかの形（期限つき、全部 1 でないビットの組、PI・robust・requeue 系）は `-ENOSYS`（[`classify_futex`]）。
 ///
@@ -6203,7 +6203,7 @@ unsafe fn sys_futex(
 ) -> u64 {
     // `futex(uaddr, op, val, timeout, uaddr2, val3)`。`uaddr2` は requeue 系のもので、ここでは読まない。**局所を増やさない**
     // （`args` を直に読む）——この枠は、`futex` を打ったプログラムの遠征スタックの高水位にそのまま乗る。
-    // **番地は 4 バイト境界**（Linux は `-EINVAL`）。
+    // **アドレスは 4 バイト境界**（Linux は `-EINVAL`）。
     if !args[0].is_multiple_of(4) {
         return (-EINVAL) as u64;
     }
@@ -6240,7 +6240,7 @@ unsafe fn sys_futex(
     }
 }
 
-/// `FUTEX_WAIT` の行き詰まり——番地を控え、137 でプロセスを終わらせる印を立てる（`ADR-0081` の決定 3。載せる側が
+/// `FUTEX_WAIT` の行き詰まり——アドレスを控え、137 でプロセスを終わらせる印を立てる（`ADR-0081` の決定 3。載せる側が
 /// `futex:` の行に出す）。**別の関数にしてあるのは、`sys_futex` の枠を広げないため。**
 #[inline(never)]
 #[cold]
@@ -8087,7 +8087,7 @@ pub fn clear_futex_deadlock_address() {
     state().futex_deadlock_address.store(0, Ordering::SeqCst);
 }
 
-/// `futex` の `FUTEX_WAIT` で待つ場面になって、プロセスを終わらせたときの番地（2026-10-06。無ければ `None`）。
+/// `futex` の `FUTEX_WAIT` で待つ場面になって、プロセスを終わらせたときのアドレス（2026-10-06。無ければ `None`）。
 ///
 /// # 契約（境界の関数。2026-10-06）
 ///
@@ -8257,7 +8257,7 @@ mod tests {
         // 先頭が正しく、2 本目が上限を越える（`SSIZE_MAX` の長さ）: `-EFAULT`。
         let mut far = [(0x40_0000, 4), (0x40_1000, i64::MAX as u64)];
         assert_eq!(check_iovecs(&mut far), Err(EFAULT));
-        // 終わりが上限ちょうどは収まり、1 バイト越えると断る。長さ 0 でも番地は見る。
+        // 終わりが上限ちょうどは収まり、1 バイト越えると断る。長さ 0 でもアドレスは見る。
         assert_eq!(check_iovecs(&mut [(limit - 4, 4)]), Ok(()));
         assert_eq!(check_iovecs(&mut [(limit - 4, 5)]), Err(EFAULT));
         assert_eq!(check_iovecs(&mut [(limit + 1, 0)]), Err(EFAULT));

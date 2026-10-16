@@ -633,9 +633,9 @@ pub fn read_system_call_msrs() -> Option<SystemCallMsrs> {
 ///
 /// # Safety
 ///
-/// `msrs` が、この CPU の入口として正しいこと——`lstar` と `cstar` は、カーネルのスタックへ切り替えるスタブの番地で、
+/// `msrs` が、この CPU の入口として正しいこと——`lstar` と `cstar` は、カーネルのスタックへ切り替えるスタブのアドレスで、
 /// `star` の区画のセレクタは、載っている GDT の並びに合っていること。**誤った値を書くと、`syscall` 命令が、カーネルの
-/// 権限のまま、意図しない番地へ飛ぶ。**
+/// 権限のまま、意図しないアドレスへ飛ぶ。**
 pub unsafe fn write_system_call_msrs(msrs: SystemCallMsrs) -> bool {
     if !system_call_msrs_exist() {
         return false;
@@ -671,8 +671,8 @@ pub fn read_gs_base() -> u64 {
 ///
 /// # Safety
 ///
-/// - `value` が正準な番地であること。**正準でない値を書くと `#GP` になる。**
-/// - 走っているコードが、FS を通した番地の指定に頼っていないこと（基底が変わると、指す先が変わる）。
+/// - `value` が正準なアドレスであること。**正準でない値を書くと `#GP` になる。**
+/// - 走っているコードが、FS を通したアドレスの指定に頼っていないこと（基底が変わると、指す先が変わる）。
 pub unsafe fn write_fs_base(value: u64) {
     // SAFETY: 呼び出し側の契約。MSR は長モードの CPU に必ず在る。
     unsafe { write_msr(IA32_FS_BASE, value) }

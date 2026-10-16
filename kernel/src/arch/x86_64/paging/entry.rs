@@ -71,7 +71,7 @@ pub const PTE_GLOBAL: u64 = 1 << 8;
 pub const PTE_SHARED: u64 = 1 << 9;
 
 /// フレームを持ったまま、写していない葉の目印（ソフトウェア用の空きビット 10。2026-10-06。`mprotect(PROT_NONE)`）。
-/// **CPU は無視する**——`P` が 0 なので、触ればページフォルトになる。**番地の部分にはフレームが残っている**ので、
+/// **CPU は無視する**——`P` が 0 なので、触ればページフォルトになる。**アドレスの部分にはフレームが残っている**ので、
 /// 読める形へ戻すとき（`mprotect(PROT_READ)`）に同じ中身が戻り、外すとき（`munmap`・空間の破棄）にフレームが返る。
 /// **`P` と同時には立たない。**
 pub const PTE_RETAINED: u64 = 1 << 10;
@@ -102,9 +102,9 @@ pub const LEAVES_CARRY_EXECUTE_DISABLE: bool = !cfg!(any(
 /// 試しの形（`user-leaf-high-bit-test`）が、ユーザーの葉に立てるビット（52）。
 ///
 /// **ビット 52 は、CPU が無視する、ソフトウェア用の空きビットである**（保護キーを使わない間は、52 から 62 が空いて
-/// いる。カーネルは `CR4.PKE` を立てていない）。番地（ビット 12-51）より上に在るので、項目の値を番地として読む
-/// 所が残っていれば、この形で表に出る。**実行禁止のビット（63）も番地より上に在る**——実行禁止を入れる前に、
-/// 番地より上のビットが立った項目を、カーネルが正しく扱えることを確かめるためのものである。
+/// いる。カーネルは `CR4.PKE` を立てていない）。アドレス（ビット 12-51）より上に在るので、項目の値をアドレスとして読む
+/// 所が残っていれば、この形で表に出る。**実行禁止のビット（63）もアドレスより上に在る**——実行禁止を入れる前に、
+/// アドレスより上のビットが立った項目を、カーネルが正しく扱えることを確かめるためのものである。
 pub const PTE_HIGH_BIT_FOR_TEST: u64 = 1 << 52;
 
 /// 4KiB ページのアドレス部分（ビット 12-51）。
@@ -205,7 +205,7 @@ pub enum LeafSize {
     Large,
 }
 
-/// 権限を、葉の項目のビットへ直す（2026-10-02。`ADR-0071` の手順 3）。**番地は含まない。**
+/// 権限を、葉の項目のビットへ直す（2026-10-02。`ADR-0071` の手順 3）。**アドレスは含まない。**
 ///
 /// **ページの権限をビットへ直すのは、この関数と [`table_flags`] だけである。** 起動の表、起動の途中に組む表、
 /// 稼働中の表へ足す 1 枚、ユーザーの空間へ足す 1 枚が、どれもここを通る。
@@ -249,8 +249,8 @@ pub const fn leaf_flags(permissions: PagePermissions, size: LeafSize) -> u64 {
     if !permissions.execute() && LEAVES_CARRY_EXECUTE_DISABLE && !ignored {
         flags |= PTE_NO_EXECUTE;
     }
-    // 試しの形 (user-leaf-high-bit-test): ユーザーから届く葉に、番地より上の位置のビットを立てる。
-    // **破壊ではない**——CPU は無視するので、正しいカーネルは今までどおり動く。項目の値を番地として読む所が
+    // 試しの形 (user-leaf-high-bit-test): ユーザーから届く葉に、アドレスより上の位置のビットを立てる。
+    // **破壊ではない**——CPU は無視するので、正しいカーネルは今までどおり動く。項目の値をアドレスとして読む所が
     // 在ると、フレームの会計が合わなくなって止まる。
     if cfg!(feature = "user-leaf-high-bit-test") && permissions.user() {
         flags |= PTE_HIGH_BIT_FOR_TEST;
@@ -258,7 +258,7 @@ pub const fn leaf_flags(permissions: PagePermissions, size: LeafSize) -> u64 {
     flags
 }
 
-/// 権限を、葉へ降りる途中の項目（下の段の表を指す項目）のビットへ直す。**番地は含まない。**
+/// 権限を、葉へ降りる途中の項目（下の段の表を指す項目）のビットへ直す。**アドレスは含まない。**
 ///
 /// **P と W は常に立てる。U は、葉がユーザーから届くときだけ立てる。実行禁止のビットは立てない。**
 /// CPU は段ごとの W と U を AND で、実行禁止を OR で合成するので、途中の段は葉より緩くしておき、実際の権限は葉で決める。
@@ -285,7 +285,7 @@ const fn table_flags_for(user: bool) -> u64 {
 #[cfg(feature = "paging-test")]
 pub const UNCACHED_LEAF_FLAG: u64 = PTE_PCD;
 
-/// 葉の項目を作る。**番地は、大きさに合ったマスクを通す**（4KiB はビット 12 から、2MiB はビット 21 から）。
+/// 葉の項目を作る。**アドレスは、大きさに合ったマスクを通す**（4KiB はビット 12 から、2MiB はビット 21 から）。
 pub const fn leaf_entry(frame: PhysAddr, permissions: PagePermissions, size: LeafSize) -> u64 {
     let address = match size {
         LeafSize::Small => frame.as_u64() & ADDR_MASK_4K,
@@ -615,8 +615,8 @@ mod tests {
         assert_eq!(split_child_entry(code, 3) & PTE_NO_EXECUTE, 0);
     }
 
-    /// **項目を作る関数は、番地に、大きさに合ったマスクを通してからビットを足す。** 揃った番地では、番地と
-    /// ビットの OR と同じになる（今の書く側は、マスクする所としない所が在るが、番地が揃っているので同じ値である）。
+    /// **項目を作る関数は、アドレスに、大きさに合ったマスクを通してからビットを足す。** 揃ったアドレスでは、アドレスと
+    /// ビットの OR と同じになる（今の書く側は、マスクする所としない所が在るが、アドレスが揃っているので同じ値である）。
     #[test]
     fn entries_carry_the_masked_address_and_the_flags() {
         let user = PagePermissions::user_data();
@@ -631,7 +631,7 @@ mod tests {
             leaf_entry(large, kernel, LeafSize::Large),
             0x0000_0000_4020_0000 | 0x083
         );
-        // 2MiB の葉では、ビット 12 から 20 を番地として残さない（ビット 12 は PAT、13 から 20 は予約）。
+        // 2MiB の葉では、ビット 12 から 20 をアドレスとして残さない（ビット 12 は PAT、13 から 20 は予約）。
         let unaligned = p(0x0000_0000_4021_F000);
         assert_eq!(
             leaf_entry(unaligned, kernel, LeafSize::Large),

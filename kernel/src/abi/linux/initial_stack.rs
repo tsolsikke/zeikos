@@ -16,12 +16,12 @@
 /// `AT_PHDR` から自分の載った位置を求めて、自分で再配置する。`AT_RANDOM` は、スタックの見張りの値の seed になる。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Auxv<'a> {
-    /// プログラムヘッダの表の番地（ずらした後）。**表がどの区画にも載らないイメージでは `None`**——そのイメージには
-    /// `AT_PHDR` を積まない（番地の無いものを 0 として渡さない）。
+    /// プログラムヘッダの表のアドレス（ずらした後）。**表がどの区画にも載らないイメージでは `None`**——そのイメージには
+    /// `AT_PHDR` を積まない（アドレスの無いものを 0 として渡さない）。
     pub program_headers_at: Option<u64>,
     /// プログラムヘッダの数（`AT_PHNUM`）。
     pub program_header_count: u16,
-    /// 入口の番地（ずらした後。`AT_ENTRY`）。
+    /// 入口のアドレス（ずらした後。`AT_ENTRY`）。
     pub entry: u64,
     /// `AT_RANDOM` が指す 16 バイト。**出所は載せる側が決める。暗号に使える値ではない**（`ADR-0074` の範囲の外。
     /// `docs/deferred-decisions.md` の「`AT_RANDOM` の 16 バイトが、暗号に使える乱数ではない」）。
@@ -273,7 +273,7 @@ mod tests {
         );
     }
 
-    /// プログラムヘッダの表が載っていないイメージには、`AT_PHDR` を積まない（0 を番地として渡さない）。ほかは同じである。
+    /// プログラムヘッダの表が載っていないイメージには、`AT_PHDR` を積まない（0 をアドレスとして渡さない）。ほかは同じである。
     #[test]
     fn at_phdr_is_left_out_when_the_table_is_not_loaded() {
         let mut page = [0; 4096];

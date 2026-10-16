@@ -34,7 +34,7 @@
 //! # 区画の並びは、ページ単位で写す側のために別に確かめる
 //!
 //! **[`Elf::parse`] は区画の並びを見ない**（上の理由）。**ページ単位で写すローダーは、写す前に
-//! [`Elf::check_load_layout`] を呼ぶ**——番地の順、重なり、ページへの切り上げのあふれ、同じページに
+//! [`Elf::check_load_layout`] を呼ぶ**——アドレスの順、重なり、ページへの切り上げのあふれ、同じページに
 //! 載る区画の権限を確かめる。ユーザーのプログラムを読むカーネルが呼ぶ。`kernel.elf` を読む
 //! bootloader は呼ばない（配置の方針が違う）。
 
@@ -123,11 +123,11 @@ pub enum LayoutError {
     /// `p_memsz` が 0 の区画がある。**写すページが無く、最終ページの計算 `p_vaddr + p_memsz - 1` が
     /// 成り立たない。**
     EmptySegment { index: usize },
-    /// 終わりの番地をページの境界へ切り上げると u64 を越える（`p_vaddr + p_memsz` のあふれを含む）。
+    /// 終わりのアドレスをページの境界へ切り上げると u64 を越える（`p_vaddr + p_memsz` のあふれを含む）。
     AddressOverflow { index: usize },
-    /// 番地の順に並んでいない（前の区画より低い番地から始まる）。
+    /// アドレスの順に並んでいない（前の区画より低いアドレスから始まる）。
     OutOfOrder { index: usize },
-    /// 前の区画と番地が重なる。
+    /// 前の区画とアドレスが重なる。
     Overlap { index: usize },
     /// 前の区画の最終ページから始まり、権限（読み・書き・実行）が前の区画と違う。
     /// **1 枚のページは 1 つの権限しか持てない。**
@@ -304,9 +304,9 @@ impl<'a> Elf<'a> {
 /// イメージの 種類（[`ElfHeaders`]）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElfKind {
-    /// 決まった番地へ載せる実行ファイル（`ET_EXEC`）。
+    /// 決まったアドレスへ載せる実行ファイル（`ET_EXEC`）。
     Executable,
-    /// どの番地へ載せてもよいイメージ（`ET_DYN`）。**載せる側が、ずらす量を決める。**
+    /// どのアドレスへ載せてもよいイメージ（`ET_DYN`）。**載せる側が、ずらす量を決める。**
     PositionIndependent,
 }
 
@@ -496,7 +496,7 @@ impl<'a> ElfHeaders<'a> {
                     }
                     lowest = Some(lowest.map_or(start, |low| low.min(start)));
                     highest = highest.max(end);
-                    // **`PT_PHDR` が無いイメージのために、表を覆う区画からも番地を導く。**
+                    // **`PT_PHDR` が無いイメージのために、表を覆う区画からもアドレスを導く。**
                     let table = self.ph_off as u64;
                     if program_headers_at.is_none()
                         && ph.p_offset <= table
@@ -553,13 +553,13 @@ pub struct LoadPlan {
     pub kind: ElfKind,
     /// 区画の `p_vaddr` に足す量（`ET_EXEC` では 0）。
     pub bias: u64,
-    /// 入口の番地（ずらした後）。
+    /// 入口のアドレス（ずらした後）。
     pub entry: u64,
     /// イメージの始まり（最初の区画が載るページの先頭。ずらした後）。
     pub base: u64,
     /// イメージの終わり（最後の区画の終わり。ずらした後。ページの境界へは切り上げていない）。
     pub end: u64,
-    /// プログラムヘッダの表の番地（ずらした後）。**表がどの区画にも載らないイメージでは `None`。**
+    /// プログラムヘッダの表のアドレス（ずらした後）。**表がどの区画にも載らないイメージでは `None`。**
     /// Linux の起動の取り決めの `AT_PHDR` に渡す値である。
     pub program_headers_at: Option<u64>,
     /// プログラムヘッダの数（`AT_PHNUM` に渡す値）。
@@ -576,9 +576,9 @@ pub enum PlacementError {
     /// `PT_GNU_STACK` が、実行できるスタックを求めている。**書けるページは実行できない、という決まりで
     /// 写すので、受け付けない。** Linux は、こういうイメージも読み込む——断るのは、このカーネルの決まりである。
     ExecutableStack,
-    /// ずらした後の番地があふれる。
+    /// ずらした後のアドレスがあふれる。
     AddressOverflow { index: usize },
-    /// 入口の番地が、ずらすとあふれる。
+    /// 入口のアドレスが、ずらすとあふれる。
     EntryOverflow,
     /// 区画が、置いてよい範囲の外に在る。
     OutsideWindow { index: usize, start: u64, end: u64 },
@@ -592,7 +592,7 @@ pub enum PlacementError {
 ///
 /// - どの区画も `p_memsz > 0` で、`p_vaddr + p_memsz` も、それをページの境界へ切り上げた値も u64 に収まる
 ///   （最終ページ `(p_vaddr + p_memsz - 1)` の切り下げと、ページを 1 枚ずつ進める加算があふれない）
-/// - 区画は番地の順に並び、重ならない（`p_vaddr` が前の区画の終わり以上）
+/// - 区画はアドレスの順に並び、重ならない（`p_vaddr` が前の区画の終わり以上）
 /// - 2 つの区画が同じページに載るのは、後ろの区画が前の区画の最終ページから始まる形だけで、そのとき
 ///   2 つの権限（`p_flags` の読み・書き・実行）は同じで、後ろの区画はファイルの中身を持たない
 ///   （`.data` の直後から `.bss` が始まる形。`ADR-0039`）
@@ -1051,7 +1051,7 @@ mod tests {
         );
     }
 
-    /// 番地の順でない並びと、重なる並びを断る。**理由を分ける。**
+    /// アドレスの順でない並びと、重なる並びを断る。**理由を分ける。**
     #[test]
     fn the_layout_check_rejects_segments_out_of_order_or_overlapping() {
         let reversed = [
@@ -1071,7 +1071,7 @@ mod tests {
             check_load_layout(inside.into_iter()),
             Err(LayoutError::Overlap { index: 1 })
         );
-        // 同じ番地から始まる。
+        // 同じアドレスから始まる。
         let same = [
             load(0x400000, 0x42, 0x42, RX),
             load(0x400000, 0x12, 0x12, RX),
@@ -1085,11 +1085,11 @@ mod tests {
         assert_eq!(check_load_layout(adjacent.into_iter()), Ok(()));
     }
 
-    /// 計算があふれる値を断る——大きさ 0 の区画（最終ページの引き算）、終わりの番地のあふれ、
+    /// 計算があふれる値を断る——大きさ 0 の区画（最終ページの引き算）、終わりのアドレスのあふれ、
     /// ページの境界への切り上げのあふれ。
     #[test]
     fn the_layout_check_rejects_values_whose_arithmetic_overflows() {
-        // 番地 0 で大きさ 0。`p_vaddr + p_memsz - 1` が 0 - 1 になる形。
+        // アドレス 0 で大きさ 0。`p_vaddr + p_memsz - 1` が 0 - 1 になる形。
         assert_eq!(
             check_load_layout([load(0, 0, 0, R)].into_iter()),
             Err(LayoutError::EmptySegment { index: 0 })
@@ -1104,7 +1104,7 @@ mod tests {
             check_load_layout([load(u64::MAX, 0, 2, R)].into_iter()),
             Err(LayoutError::AddressOverflow { index: 0 })
         );
-        // 終わりの番地は収まるが、ページの境界へ切り上げると越える。
+        // 終わりのアドレスは収まるが、ページの境界へ切り上げると越える。
         assert_eq!(
             check_load_layout([load(u64::MAX - 0x800, 0, 0x100, R)].into_iter()),
             Err(LayoutError::AddressOverflow { index: 0 })
@@ -1483,7 +1483,7 @@ mod tests {
         );
     }
 
-    /// **プログラムヘッダの表の番地**——`PT_PHDR` が在ればそれを、無ければ表を覆う区画から導く。どの区画にも
+    /// **プログラムヘッダの表のアドレス**——`PT_PHDR` が在ればそれを、無ければ表を覆う区画から導く。どの区画にも
     /// 載っていなければ `None`。
     #[test]
     fn the_program_header_address_comes_from_pt_phdr_or_the_covering_segment() {

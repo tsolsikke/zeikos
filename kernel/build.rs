@@ -686,7 +686,7 @@ fn build_linux_programs(manifest_dir: &str, out_dir: &str, cache: &ProgramCache)
 /// 位置独立のユーザープログラム（`ET_DYN`）を `rustc` でビルドする（2026-10-06）。
 ///
 /// **ほかのプログラムとの違いは 3 つである**——再配置の形（`relocation-model=pie`）、リンカへの `-pie`、
-/// リンカスクリプト（`userland/pie.ld`。番地 0 からリンクし、ヘッダを最初の区画に入れる）。
+/// リンカスクリプト（`userland/pie.ld`。アドレス 0 からリンクし、ヘッダを最初の区画に入れる）。
 /// `--no-dynamic-linker` で、動的リンカの名前（`PT_INTERP`）を付けさせない。ローダーは、それを持つイメージを断る。
 ///
 /// **破壊テストの cfg は渡さない**（いまの 1 本は、どの cfg も読まない）。

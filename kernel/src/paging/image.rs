@@ -1,6 +1,6 @@
 //! カーネルのイメージの区画と、区画ごとの権限（2026-10-02。`ADR-0071` の手順 4）。**純粋な論理。**
 //!
-//! イメージを高い番地へ写すとき、区画ごとに権限を変える——コードは読んで実行する（書けない）、読むだけの区画は
+//! イメージを高いアドレスへ写すとき、区画ごとに権限を変える——コードは読んで実行する（書けない）、読むだけの区画は
 //! 読むだけ、データは書けて実行しない。**区画の境（`kernel/link.ld` の記号）から、写す範囲と権限の組を作るのが
 //! ここである。** ポインタにもレジスタにも触らない。ホストの `cargo test` で確かめる。
 //!
@@ -10,7 +10,7 @@
 use crate::frame_allocator::FRAME_SIZE;
 use crate::paging::permissions::PagePermissions;
 
-/// イメージの区画の境（物理の番地）。`kernel/link.ld` の記号から作る。
+/// イメージの区画の境（物理のアドレス）。`kernel/link.ld` の記号から作る。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImageBounds {
     /// イメージの先頭（`__kernel_start`）。コードの区画（起動のトランポリンと `.text`）の先頭である。
@@ -28,9 +28,9 @@ pub struct ImageBounds {
 pub struct ImageSection {
     /// 起動ログとページの権限の確かめに出す名前。
     pub name: &'static str,
-    /// 範囲の先頭（物理の番地。4KiB の境）。
+    /// 範囲の先頭（物理のアドレス。4KiB の境）。
     pub start: u64,
-    /// 範囲の終わり（物理の番地。4KiB の境。この番地は含まない）。
+    /// 範囲の終わり（物理のアドレス。4KiB の境。このアドレスは含まない）。
     pub end: u64,
     /// 写すときの権限。
     pub permissions: PagePermissions,
@@ -107,7 +107,7 @@ pub fn image_sections(bounds: ImageBounds) -> Result<[ImageSection; 3], ImageLay
 mod tests {
     use super::*;
 
-    /// 2026-10-02 に測った、既定のビルドの境（物理の番地）。
+    /// 2026-10-02 に測った、既定のビルドの境（物理のアドレス）。
     const MEASURED: ImageBounds = ImageBounds {
         start: 0x10_0000,
         read_only_start: 0x21_9000,

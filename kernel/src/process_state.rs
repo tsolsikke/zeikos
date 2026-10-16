@@ -1,4 +1,4 @@
-//! プロセスごとの小さな状態（2026-10-06）——シグナルの登録と、マスク、代替スタック、`set_tid_address` の番地、
+//! プロセスごとの小さな状態（2026-10-06）——シグナルの登録と、マスク、代替スタック、`set_tid_address` のアドレス、
 //! 実行ファイルの名前。
 //!
 //! # なぜ `UserProcess` に足さないのか
@@ -238,13 +238,13 @@ impl ProcessState {
         Ok(old)
     }
 
-    /// `set_tid_address` の番地を控える。**書き込みはしない**（スレッドが終わるときに 0 を書いて `futex` で起こす
+    /// `set_tid_address` のアドレスを控える。**書き込みはしない**（スレッドが終わるときに 0 を書いて `futex` で起こす
     /// 仕組みは、スレッドが無いので要らない）。
     pub fn set_tid_address(&mut self, address: u64) {
         self.tid_address = address;
     }
 
-    /// 控えた `set_tid_address` の番地（判定の行に出す）。
+    /// 控えた `set_tid_address` のアドレス（判定の行に出す）。
     pub fn tid_address(&self) -> u64 {
         self.tid_address
     }

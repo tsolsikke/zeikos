@@ -1538,24 +1538,24 @@ pub fn timer_delivery() -> TimerDelivery {
     TimerDelivery(timer_delivery_vector())
 }
 
-/// アセンブリが付けた記号の番地を、コンパイラから見えない値として取る（2026-10-01）。
+/// アセンブリが付けた記号のアドレスを、コンパイラから見えない値として取る（2026-10-01）。
 ///
 /// # なぜ `addr_of!` で足りないのか
 ///
-/// **別々の記号の番地を「等しいか」で比べると、最適化が比較を畳むことがある。** コンパイラは、別々に宣言した
-/// `static` は別の番地に在ると見なしてよい。**表の頭の記号と、表の最初の項目の記号のように、同じ番地に在る
-/// 2 つの記号を `addr_of!` で比べると、最適化したビルドは実際の番地を見ずに「等しくない」と決める。**
+/// **別々の記号のアドレスを「等しいか」で比べると、最適化が比較を畳むことがある。** コンパイラは、別々に宣言した
+/// `static` は別のアドレスに在ると見なしてよい。**表の頭の記号と、表の最初の項目の記号のように、同じアドレスに在る
+/// 2 つの記号を `addr_of!` で比べると、最適化したビルドは実際のアドレスを見ずに「等しくない」と決める。**
 /// 実測で、[`check_irq_stub_table`] の最初の比較がこの形で、最適化したビルドは割り込みを許す前の確かめで
 /// 止まった（最適化なしのビルドでは起きない）。
 ///
-/// **`lea` を `asm!` の中で実行すると、コンパイラは結果を番地として知らない。** 比較は、実行のときの番地で行われる。
+/// **`lea` を `asm!` の中で実行すると、コンパイラは結果をアドレスとして知らない。** 比較は、実行のときのアドレスで行われる。
 ///
-/// **記号どうしの番地を比べる所で使う。** 番地を実行のときに読んだ値（IDT の項目など）と比べる所は、
+/// **記号どうしのアドレスを比べる所で使う。** アドレスを実行のときに読んだ値（IDT の項目など）と比べる所は、
 /// `addr_of!` のままでよい。
 macro_rules! symbol_address {
     ($symbol:path) => {{
         let address: u64;
-        // SAFETY: `lea` は記号の番地を計算するだけで、メモリを読み書きしない。スタックもフラグも変えない。
+        // SAFETY: `lea` は記号のアドレスを計算するだけで、メモリを読み書きしない。スタックもフラグも変えない。
         // 記号はこのファイルの `global_asm!` が定義していて、カーネルのイメージの中に在る（RIP からの相対で届く）。
         unsafe {
             core::arch::asm!(
@@ -1574,8 +1574,8 @@ macro_rules! symbol_address {
 /// 例外用（[`check_stub_table`]）と別系統である。表が別の領域にある
 /// ため、片方の検証がもう片方を保証しない。
 ///
-/// **刻み幅の確かめは、記号の番地を `symbol_address!` で取って比べる**——表の頭（`zeikos_irq_stubs`）と
-/// 最初の項目（`zeikos_irq_stub_0`）は同じ番地に在る別の記号で、`addr_of!` で比べると最適化が偽に畳む。
+/// **刻み幅の確かめは、記号のアドレスを `symbol_address!` で取って比べる**——表の頭（`zeikos_irq_stubs`）と
+/// 最初の項目（`zeikos_irq_stub_0`）は同じアドレスに在る別の記号で、`addr_of!` で比べると最適化が偽に畳む。
 pub fn check_irq_stub_table() -> StubTableCheck {
     let base = symbol_address!(zeikos_irq_stubs);
     let end = symbol_address!(zeikos_irq_stubs_end);
@@ -1831,7 +1831,7 @@ pub fn check_gates_lead_to_common_entries() -> CommonEntryCheck {
 /// スタブに命令を 1 つ足して 16 バイトを超えると、終端までの距離が
 /// `256 * STUB_SIZE` からずれるため、ここで検出される。
 ///
-/// **記号の番地は `symbol_address!` で取る**（[`check_irq_stub_table`] と同じ理由。別の記号の番地を
+/// **記号のアドレスは `symbol_address!` で取る**（[`check_irq_stub_table`] と同じ理由。別の記号のアドレスを
 /// 「等しいか」で比べる形である）。
 pub fn check_stub_table() -> StubTableCheck {
     let base = symbol_address!(zeikos_exception_stubs);
@@ -1946,7 +1946,7 @@ pub unsafe fn init(double_fault_ist_index: Option<u8>, page_fault_ist_index: Opt
             // 上でハンドラを動かすとさらに #PF が起きて #DF へ昇格し、CR2 が
             // 失われる（ADR-0019 §3.1）。
             // **デバッグ例外（1）・NMI（2）・機械チェック（18）も IST を使う**（2026-10-04）。**この 3 つは
-            // 割り込みを禁じていても届く**ので、スタックの番地が当てにならない瞬間（`syscall` 命令の入口の、
+            // 割り込みを禁じていても届く**ので、スタックのアドレスが当てにならない瞬間（`syscall` 命令の入口の、
             // スタックを切り替える前の数命令）に届いても、自分のスタックの上で動くようにしておく。
             let ist = match vector {
                 1 => entry_ist(crate::arch::x86_64::gdt::DEBUG_IST_INDEX),
@@ -2537,8 +2537,8 @@ unsafe extern "sysv64" fn exception_entry(context: *const ExceptionContext, rsp_
                 let _ = writeln!(serial, "[ERROR]   cr2 is in a stack guard page = false");
             }
         }
-        // 権限の違反の破壊テスト（`wx-violation-test`）: 試しが「これから触る」と告げた番地と、CR2 を突き合わせる。
-        // **落ちた番地が狙った番地であること**を、止まる側が 1 行で示す（番地はビルドごとに動くので、外からは
+        // 権限の違反の破壊テスト（`wx-violation-test`）: 試しが「これから触る」と告げたアドレスと、CR2 を突き合わせる。
+        // **落ちたアドレスが狙ったアドレスであること**を、止まる側が 1 行で示す（アドレスはビルドごとに動くので、外からは
         // 決まった文字列で比べられない）。
         #[cfg(feature = "wx-violation-test")]
         {
@@ -2565,7 +2565,7 @@ unsafe extern "sysv64" fn exception_entry(context: *const ExceptionContext, rsp_
     // 効いていないと #DF へ昇格して CR2 が失われる。ADR-0019 §3.1）。
     //
     // **ゲートが IST を持つベクタは、どれも同じ形で確かめる**（2026-10-04。デバッグ例外・NMI・機械チェックを
-    // 足した）。**範囲は、この CPU の TSS から引く**——AP の IST のスタックは BSP のものと別の番地に在る。
+    // 足した）。**範囲は、この CPU の TSS から引く**——AP の IST のスタックは BSP のものと別のアドレスに在る。
     // **ゲートが IST を持たない構成（破壊テスト）では、この行は出ない。**
     let ist_stack = entry(vector as usize)
         .and_then(|gate| gate.ist_index())
@@ -2588,12 +2588,12 @@ unsafe extern "sysv64" fn exception_entry(context: *const ExceptionContext, rsp_
     cpu::halt_forever();
 }
 
-/// 権限の違反の破壊テストが「これから触る」と告げた番地（0 は「告げていない」）。**試しのビルドにだけ在る。**
+/// 権限の違反の破壊テストが「これから触る」と告げたアドレス（0 は「告げていない」）。**試しのビルドにだけ在る。**
 #[cfg(feature = "wx-violation-test")]
 static ANNOUNCED_FAULT_ADDRESS: core::sync::atomic::AtomicU64 =
     core::sync::atomic::AtomicU64::new(0);
 
-/// 権限の違反の破壊テストが、これから触る番地を告げる（`wx-violation-test`。2026-10-02）。**例外の出力が、CR2 と
+/// 権限の違反の破壊テストが、これから触るアドレスを告げる（`wx-violation-test`。2026-10-02）。**例外の出力が、CR2 と
 /// 突き合わせて 1 行出す。**
 #[cfg(feature = "wx-violation-test")]
 pub fn announce_expected_fault(address: u64) {

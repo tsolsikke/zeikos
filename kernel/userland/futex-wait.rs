@@ -7,7 +7,7 @@
 //!
 //! # 何をするか
 //!
-//! スタックの 1 語に 1 を書き、`futex(その番地, FUTEX_WAIT|FUTEX_PRIVATE_FLAG, 1, NULL)` を打つ。**値が同じなので、
+//! スタックの 1 語に 1 を書き、`futex(そのアドレス, FUTEX_WAIT|FUTEX_PRIVATE_FLAG, 1, NULL)` を打つ。**値が同じなので、
 //! Linux なら、誰かが起こすまで眠る。** このカーネルにはスレッドが 1 本しか無く、起こす者は居ないので、カーネルは
 //! 偽りの戻り値を返さず、名指しして、このプロセスを終わらせる（終了状態 137。`kernel/src/syscall.rs` の
 //! `FUTEX_DEADLOCK_STATUS`。`ADR-0081`）。

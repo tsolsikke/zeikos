@@ -25,7 +25,7 @@ use super::paging::entry;
 use crate::frame_allocator::FrameAllocator;
 
 /// 試しのページの仮想アドレス（`PML4[261]`）。**カーネルの側の、ほかに誰も使わない添字に置く**
-/// （256 は直接マッピング、258 は AP の CPU ごとのスタック、257・259・260 は試しの feature の番地である）。
+/// （256 は直接マッピング、258 は AP の CPU ごとのスタック、257・259・260 は試しの feature のアドレスである）。
 pub const PROBE_VIRT: u64 = 0xFFFF_8280_0000_0000;
 
 /// 試しのページの先頭に書いておく値（ASCII で `NX_PROBE`）。**読めた値がこれと同じなら、項目を引けている。**
@@ -82,7 +82,7 @@ pub unsafe fn map_execute_disable_probe<const CAP: usize>(
             .as_mut_ptr::<u64>()
             .write_volatile(PROBE_PATTERN);
     }
-    // SAFETY: 呼び出し側の契約。稼働中の表へ、まだ誰も使っていない番地をマップする。
+    // SAFETY: 呼び出し側の契約。稼働中の表へ、まだ誰も使っていないアドレスをマップする。
     let mut table = unsafe { ActivePageTable::current(direct_map) };
     // **読むだけの権限でマップする。** 実行しない権限なので、変換が実行禁止のビットを付ける（2026-10-02。
     // 以前は、変換が実行の欄を読まなかったので、このページ専用の入口でビットを足していた）。
@@ -199,7 +199,7 @@ pub fn read_execute_disable_probe(slot: usize) -> Option<ProbeReading> {
 mod tests {
     use super::*;
 
-    /// **試しのページの番地は、カーネルの側の `PML4[261]` の先頭である。**
+    /// **試しのページのアドレスは、カーネルの側の `PML4[261]` の先頭である。**
     #[test]
     fn the_probe_sits_at_the_start_of_kernel_slot_261() {
         let virt = VirtAddr::new(PROBE_VIRT).unwrap();
