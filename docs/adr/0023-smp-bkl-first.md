@@ -205,7 +205,7 @@ S4のAddendum §3は`NON_ACQUIRING_ENTRIES`の`exception`について、
 終了処理が戻る先は`ring3::enter`の末尾で、そこから`run_loaded_program`・`load_user_program`・`spawn`の順に帰る。
 **BKLの外で触るものは5種類ある。**
 
-- **`enter`の末尾が触る静的**（`EXCURSION_DEPTH`・`CURRENT_RECOVERY`・RSP0・ユーザー窓）。
+- **`enter`の末尾が触る静的**（`EXCURSION_DEPTH`・`CURRENT_RECOVERY`・RSP0・ユーザーウィンドウ）。
   **APはRing 3へ入らないので、これらを書く者は常に1つである。**
   RSP0はTSSだが、**TSSはper-CPUである**（`gdt::set_rsp0`は`PerCpu::this_cpu_ptr`を通す）
 - **`run_loaded_program`の末尾が触る前景と表**（`input`の`FOREGROUND`・`PENDING`、`vfs`の`CURRENT_FILES`）。

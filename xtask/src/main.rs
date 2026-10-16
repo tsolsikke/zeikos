@@ -3561,7 +3561,7 @@ fn main() -> Result<()> {
                     result,
                 );
             }
-            // **画面へ画素を出す判定（`ADR-0066` の Y-c）。`screendump` で画面を読み戻す。**
+            // **画面へピクセルを出す判定（`ADR-0066` の Y-c）。`screendump` で画面を読み戻す。**
             if rest.iter().any(|a| a == "--seinas-fbdev-test") {
                 return cmd_seinas_fbdev_test();
             }
@@ -10908,7 +10908,7 @@ fn cmd_poll_test(features: &[&str], expect_pass: bool) -> Result<()> {
 
 /// `--screen-test` の破壊テスト（`ADR-0066` の Y-c）。**落ちる判定は `ADR-0066` の表に在る。**
 ///
-/// - `screen-present-does-not-copy` —— 判定 1（書いた画素が MMIO に届いた）だけ
+/// - `screen-present-does-not-copy` —— 判定 1（書いたピクセルが MMIO に届いた）だけ
 /// - `screen-leave-does-not-repaint` —— 判定 2（文字コンソールが戻った）だけ
 /// - `foreground-ignores-the-slot` —— 判定 3・4（前景でない者は画面と入力を開けない）
 const SCREEN_TEST_SABOTAGES: &[&str] = &[
@@ -10925,7 +10925,7 @@ const FB_TEST_SABOTAGES: &[&str] = &[
     "fb0-deferred-ignores-interval-test",
 ];
 
-/// `fb-test` が四隅に置く四角の 1 辺（画素）。`kernel/userland/fb-test.rs` の `CORNER` と対になっている。
+/// `fb-test` が四隅に置く四角の 1 辺（ピクセル）。`kernel/userland/fb-test.rs` の `CORNER` と対になっている。
 const FB_TEST_CORNER: u32 = 80;
 /// `fb-test` が眠る長さ（ミリ秒）と、転送の間隔（ミリ秒。`kernel/src/syscall.rs` の `FB0_PRESENT_INTERVAL_TICKS` が 20 Hz）。
 /// 回数の上限は、眠る長さを間隔で割った数に、起きるまでの余白と閉じるときの 1 回を足す。
@@ -11000,7 +11000,7 @@ fn read_complete_ppm(path: &Path, timeout: Duration) -> Option<(u32, u32, Vec<u8
                 }
                 fields.push(String::from_utf8_lossy(&bytes[start..at]).to_string());
             }
-            // **最後の語の後ろの空白 1 つで画素が始まる。**
+            // **最後の語の後ろの空白 1 つでピクセルが始まる。**
             at += 1;
             if fields.len() == 4 && fields[0] == "P6" {
                 if let (Ok(width), Ok(height)) =
@@ -11018,7 +11018,7 @@ fn read_complete_ppm(path: &Path, timeout: Duration) -> Option<(u32, u32, Vec<u8
     None
 }
 
-/// 四角の中のマゼンタ（赤 255・緑 0・青 255）の画素数（`ADR-0066` の Y-c）。**読めなければ `None`。**
+/// 四角の中のマゼンタ（赤 255・緑 0・青 255）のピクセル数（`ADR-0066` の Y-c）。**読めなければ `None`。**
 fn magenta_in_square(image: &Option<(u32, u32, Vec<u8>)>) -> Option<u32> {
     let (width, height, rgb) = image.as_ref()?;
     let (x0, y0, size) = SCREEN_TEST_SQUARE;
@@ -11037,7 +11037,7 @@ fn magenta_in_square(image: &Option<(u32, u32, Vec<u8>)>) -> Option<u32> {
     Some(count)
 }
 
-/// 1 画素の色（`screendump` の PPM から。RGB）が、期待の色と近いか（各 8 ビットの差が 32 以内——QEMU の変換と BGR/RGB の
+/// 1 ピクセルの色（`screendump` の PPM から。RGB）が、期待の色と近いか（各 8 ビットの差が 32 以内——QEMU の変換と BGR/RGB の
 /// 並べ替えを許す）。
 fn pixel_near(image: &(u32, u32, Vec<u8>), x: u32, y: u32, expected: (u8, u8, u8)) -> bool {
     let (width, height, rgb) = image;
@@ -11049,7 +11049,7 @@ fn pixel_near(image: &(u32, u32, Vec<u8>), x: u32, y: u32, expected: (u8, u8, u8
     near(rgb[at], expected.0) && near(rgb[at + 1], expected.1) && near(rgb[at + 2], expected.2)
 }
 
-/// `fb-test` の四隅（左上 赤・右上 緑・左下 青・右下 黄）が、`screendump` の中で期待の色か。四角の真ん中の 1 画素で見る。
+/// `fb-test` の四隅（左上 赤・右上 緑・左下 青・右下 黄）が、`screendump` の中で期待の色か。四角の真ん中の 1 ピクセルで見る。
 /// 返すのは、合っていた隅の数（4 で全部）。
 fn fb_test_corners_matching(image: &Option<(u32, u32, Vec<u8>)>) -> Option<u32> {
     let image = image.as_ref()?;
@@ -11330,7 +11330,7 @@ fn cmd_seinas_fbdev_test() -> Result<()> {
 /// `/dev/fb0` を Linux の fbdev の形で開き、書けば映ることを検査する（2026-10-07。`ADR-0083`。M2 の最初の刻み）。
 ///
 /// **`fb-test` を前景で起動する。** `fb-test` は `open("/dev/fb0", O_RDWR)` で画面を開き、fbdev の `ioctl` で形を訊き、面を
-/// `mmap` して四隅に色を置き、**`FBIOZPRESENT` を打たずに** 1.5 秒眠って、閉じる。カーネルが間隔（20 Hz）ごとに裏バッファの
+/// `mmap` して四隅に色を置き、**`FBIOZPRESENT` を打たずに** 1.5 秒眠って、閉じる。カーネルが間隔（20 Hz）ごとにバックバッファの
 /// 全体を画面へ転送するので、眠っている間に `screendump` を取れば四隅が見える。
 ///
 /// **判定は 4 本**——
@@ -11544,16 +11544,16 @@ fn cmd_fb_test(features: &[&str], ending: FbTestEnding, expect_pass: bool) -> Re
     }
 }
 
-/// 画面へ画素を出す形を検査する（`ADR-0066` の Y-c）。
+/// 画面へピクセルを出す形を検査する（`ADR-0066` の Y-c）。
 ///
 /// **`gfxd` を前景で起動する。** **`gfxd` は `gfxc`（スロット 1）を起動して終わるまで待ち、画面を開き、
-/// 裏バッファを `mmap` して四角をマゼンタで塗り、その矩形を `present` でコピーし、打鍵を待つ。**
+/// バックバッファを `mmap` して四角をマゼンタで塗り、その矩形を `present` でコピーし、打鍵を待つ。**
 /// **打鍵を受けたら画面の fd を閉じる**（図形モードから抜ける）。
 ///
 /// **判定は 4 本**——
 ///
-/// 1. 書いた画素が MMIO に届いた（コピーした直後の `screendump` で、四角が全部マゼンタ）
-/// 2. 文字コンソールが戻った（抜けた後の `screendump` で、四角にマゼンタが 1 画素も無い）
+/// 1. 書いたピクセルが MMIO に届いた（コピーした直後の `screendump` で、四角が全部マゼンタ）
+/// 2. 文字コンソールが戻った（抜けた後の `screendump` で、四角にマゼンタが 1 ピクセルも無い）
 /// 3. 前景でない者は画面を開けない（`gfxc` の `open_screen` が `-EBADF`）
 /// 4. 前景でない者は入力の fd を開けない（`gfxc` の `open_input` が `-EBADF`。**Y-a の穴を塞いだ側**）
 ///
@@ -11692,7 +11692,7 @@ fn cmd_screen_test(features: &[&str], expect_pass: bool) -> Result<()> {
             magenta_presented == Some(square * square),
         ),
         (
-            // **抜けた後の画面で、四角にマゼンタが 1 画素も無い。** **描き直さなければ残る。**
+            // **抜けた後の画面で、四角にマゼンタが 1 ピクセルも無い。** **描き直さなければ残る。**
             "the_text_console_came_back",
             magenta_left == Some(0),
         ),
@@ -13391,7 +13391,7 @@ fn report_sabotage_reach(context: &str, serial: &str, began: &[&str]) {
 
 /// `--compose-test` の破壊テスト（`ADR-0066` の Y-d）。**各段階の既存の破壊テストを、組の中でもう 1 度実行する。**
 ///
-/// - `screen-present-does-not-copy`（Y-c）—— 判定 1（プールの画素が画面に届いた）
+/// - `screen-present-does-not-copy`（Y-c）—— 判定 1（プールのピクセルが画面に届いた）
 /// - `poll-waits-on-one-member`（Y-b）—— 判定 2（3 本の集合で待った）
 /// - `screen-leave-does-not-repaint`（Y-c）—— 判定 4（文字コンソールが戻った）
 /// - `wake-ignores-the-reason`（W2-d+）—— 判定 5（集合の外の者を起こしていない）
@@ -13451,13 +13451,13 @@ fn quadrants_matching(image: &Option<(u32, u32, Vec<u8>)>) -> Option<usize> {
 ///
 /// **`compd` を前景で起動する。** **`compd` は入力 fd と画面を開き、名前で待ち受け、`compc` を
 /// 切り離して起動し、{入力, listener, クライアント} の集合で待つ。** **`compc` は shm のプールに
-/// 4 色の四角を描いて fd を送る。** **`compd` がプールを `mmap` して裏バッファへ合成し、`present` で
+/// 4 色の四角を描いて fd を送る。** **`compd` がプールを `mmap` してバックバッファへ合成し、`present` で
 /// コピーする。** **打鍵で終わり、接続と画面を閉じる**（**`compc` は `ok` の後も閉じられるまで居残る**
 /// ——**判定 2 と判定 5 の機会を形で作る。** `COMPOSE_TEST_COMPOSITED_MARKER` の doc）。
 ///
 /// **判定は 5 本**——
 ///
-/// 1. プールの画素が画面に届いた（4 つの象限の中心が期待の色）
+/// 1. プールのピクセルが画面に届いた（4 つの象限の中心が期待の色）
 /// 2. サーバが 3 本の集合で待った（`max wait set` が 3）
 /// 3. 打鍵で終わった（合図）
 /// 4. 文字コンソールが戻った（4 つの象限の中心が、どれも四角の色でない）
@@ -13600,7 +13600,7 @@ fn cmd_compose_test(features: &[&str], expect_pass: bool) -> Result<()> {
 
     let judgements: [(&str, bool); 5] = [
         (
-            // **プールの画素が画面に届いた**——**4 つの象限の中心が全部、期待の色である。**
+            // **プールのピクセルが画面に届いた**——**4 つの象限の中心が全部、期待の色である。**
             // **位置と向き（行と桁の取り違え・上下の反転）も見分ける。**
             "the_client_pool_reached_the_screen",
             tile_after_composite == Some(COMPOSE_TEST_QUADRANTS.len()),
@@ -15793,7 +15793,7 @@ fn cmd_zi_test(features: &[&str]) -> Result<()> {
         && big_lines_after[0] == format!("Z{}", big_lines_before[0])
         && big_lines_after[1..] == big_lines_before[1..];
 
-    // **窓が動いたこと（VIEW-a）。画面の実物で見る。**
+    // **ウィンドウが動いたこと（VIEW-a）。画面の実物で見る。**
     //
     // **バッファではない。** **`zi` は `top` を診断行に出しているが、
     // それはバッファ側である**——**H-b-2 で検出できなかったのは、
@@ -16302,7 +16302,7 @@ fn program_output(segment: &str) -> String {
 /// # 判定は画面の実物である
 ///
 /// **`less` は内部状態を1つも出さない**（`zi` の判定行に当たるものが無い）。
-/// **主張は「窓の外に在った行が見えるようになったこと」と
+/// **主張は「ウィンドウの外に在った行が見えるようになったこと」と
 /// 「抜けたら元の画面へ戻ること」で、どちらも画面を読む。**
 ///
 /// **期待値をホストが持たない**——**`cat` の出した並びの中で、画面に出た行が
@@ -16452,10 +16452,10 @@ fn cmd_view_test(features: &[&str]) -> Result<()> {
 
     // **(1) 開いた直後、ファイルの先頭が見えている。**
     let opened_at_the_top = views.len() == 3 && position(&views[0].0) == Some(0);
-    // **(2) 窓の外に在った行が見えるようになった。**
+    // **(2) ウィンドウの外に在った行が見えるようになった。**
     //
     // **`Space` の後の上端が、動かす前の下端より後ろに在ること。**
-    // **これが「窓の外」の意味である**——**動かす前の画面には出ていなかった。**
+    // **これが「ウィンドウの外」の意味である**——**動かす前の画面には出ていなかった。**
     let saw_past_the_first_screen = views.len() == 3
         && match (position(&views[0].1), position(&views[1].0)) {
             (Some(was_bottom), Some(now_top)) => now_top > was_bottom,
@@ -16544,19 +16544,19 @@ fn cmd_view_test(features: &[&str]) -> Result<()> {
         .and_then(|values| values.get(3).copied())
         .is_some_and(|glyphs| glyphs <= 200);
 
-    // **消す経路が 1 画素ずつ書いていないこと（PERF-c）。**
+    // **消す経路が 1 ピクセルずつ書いていないこと（PERF-c）。**
     //
-    // # 比ではなく、道を通った画素の数で見る（2026-09-15 に直した）
+    // # 比ではなく、道を通ったピクセルの数で見る（2026-09-15 に直した）
     //
     // **以前は「消すサイクルが、同じページを送るサイクルの 30 倍以下」で見ていた**
-    // （実測で、一括の道は 9.8 倍、1 画素ずつの道は 113 倍だった）。
-    // **W1-c-1 でコードが 0x60 バイトずれたら、1 画素ずつ塗る `spec_fill` の
+    // （実測で、一括の道は 9.8 倍、1 ピクセルずつの道は 113 倍だった）。
+    // **W1-c-1 でコードが 0x60 バイトずれたら、1 ピクセルずつ塗る `spec_fill` の
     // ループが 4KiB の境界をまたぎ、TCG の上で 42 倍になって落ちた**——
     // **道は変わっていなかった**（`docs/troubleshooting.md`）。
     //
-    // **以前の doc は「ここは量の話なので回数では言えない——同じ画素数を、遅い道と
+    // **以前の doc は「ここは量の話なので回数では言えない——同じピクセル数を、遅い道と
     // 速い道のどちらで書いたかである」と書いていた。** **その「どちらの道か」は
-    // 数えられる**——**1 画素ずつの道を通った画素の数である**（`erase_single_pixels`）。
+    // 数えられる**——**1 ピクセルずつの道を通ったピクセルの数である**（`erase_single_pixels`）。
     // **バックバッファは RAM なので、一括の道なら 0 である。**
     // **サイクルと比は (info) に残す。**
     let erase_single_pixels = delta(0, 1).and_then(|values| values.get(15).copied());
@@ -20571,7 +20571,7 @@ const BOOT_LOG_CORE_COUNT_MARKERS: &[&str] = &[
 ];
 
 /// 起動ログの参照で、**行は残して値だけを伏せる所**（M3a。2026-10-14）。**スケジュールで決まる値である**——
-/// `pthread_create` の窓（`clone` から戻って `__tl_unlock` するまで）にティックが当たると、futex の待ちと起こしが増え、
+/// `pthread_create` のウィンドウ（`clone` から戻って `__tl_unlock` するまで）にティックが当たると、futex の待ちと起こしが増え、
 /// システムコールの数・池のタスクのカーネルスタックの高水位・futex の数が変わる。行ごと落とすと、同じ行に在る
 /// 決まった値（終了の状態・知らない番号の数・`over half=false (expected false)`）まで落ちるので、数だけを `<n>` に置く。
 /// **伏せた値は [`BOOT_LOG_RANGES`] が範囲で見る**——伏せたのに代わりの検査が無い値は置かない。
@@ -20860,7 +20860,7 @@ struct BootLogRange {
 }
 
 /// [`BootLogRange`] の一覧。**範囲は実測の最小から最大に、理由を説明できる余裕だけを足した幅である**（運用者の決定。
-/// 2026-10-14）——広いと、本当の異常も範囲に入って黙って通る。根拠は各 `what` に書く（実測の本数と、ティックが窓に当たった
+/// 2026-10-14）——広いと、本当の異常も範囲に入って黙って通る。根拠は各 `what` に書く（実測の本数と、ティックがウィンドウに当たった
 /// ときに動く分）。実測は 2026-10-14 の 110 本の起動ログ（`-smp` 1・2・4）。
 const BOOT_LOG_RANGES: &[BootLogRange] = &[
     BootLogRange {
@@ -24514,7 +24514,7 @@ const DIRECT_INTERRUPT_CONTROL_ALLOWLIST: &[DirectInterruptControlSite] = &[
     DirectInterruptControlSite {
         file: "kernel/src/arch/x86_64/ring3.rs",
         item: "run_excursion",
-        reason: "遠征の入口で、タスクの欄（RSP0・深さ）を据えてから iretq までの窓を閉じる \
+        reason: "遠征の入口で、タスクの欄（RSP0・深さ）を据えてから iretq までのウィンドウを閉じる \
                  cli（W1-c-3b。ADR-0060）。InterruptGuard を使うと Ring 3 に居る間ずっと \
                  入れ子の深さが残り、タイマの切り替えが止まる。IF を戻すのは iretq の RFLAGS",
     },
@@ -24575,7 +24575,7 @@ const DIRECT_INTERRUPT_CONTROL_ALLOWLIST: &[DirectInterruptControlSite] = &[
         item: "bsp_idle_main",
         reason: "BSP 用アイドルタスクの本体（W2-a。ADR-0061）。**排他ではない。** \
                  `sti` と `hlt` を隣接させる形は InterruptGuard では書けない \
-                 （ガードは drop で IF を戻すので、`sti` と `hlt` の間に窓が空く）。 \
+                 （ガードは drop で IF を戻すので、`sti` と `hlt` の間にウィンドウが空く）。 \
                  錠は 1 つも取らないので、保持したまま眠る危険が構造的に無い",
     },
 ];
@@ -24592,7 +24592,7 @@ const DIRECT_INTERRUPT_CONTROL_ALLOWLIST: &[DirectInterruptControlSite] = &[
 /// # 粒度の限界
 ///
 /// 所属は関数の名前で見る（[`DirectInterruptControlSite`] と同じ）。**同じファイルの同じ名前の関数は区別できない**
-/// （`pci.rs` の `read8` は、窓と控えの 2 つを 1 行が覆う）。
+/// （`pci.rs` の `read8` は、ウィンドウと控えの 2 つを 1 行が覆う）。
 struct DirectPortIoSite {
     /// ワークスペース相対パス。
     file: &'static str,
@@ -24674,7 +24674,7 @@ const DIRECT_PORT_IO_ALLOWLIST: &[DirectPortIoSite] = &[
         item: "configure_channel0",
         reason: "PIT のチャネル 0 を設定する手順",
     },
-    // PCI（構成空間の対と、BAR のレジスタの窓）。
+    // PCI（構成空間の対と、BAR のレジスタのウィンドウ）。
     DirectPortIoSite {
         file: "kernel/src/machine/pc/pci.rs",
         item: "config_read",
@@ -24683,32 +24683,32 @@ const DIRECT_PORT_IO_ALLOWLIST: &[DirectPortIoSite] = &[
     DirectPortIoSite {
         file: "kernel/src/machine/pc/pci.rs",
         item: "read8",
-        reason: "レジスタの窓と控えの 1 バイトの読み（位置は作る所と控える所が確かめる。同じ名前の 2 つを 1 行が覆う）",
+        reason: "レジスタのウィンドウと控えの 1 バイトの読み（位置は作る所と控える所が確かめる。同じ名前の 2 つを 1 行が覆う）",
     },
     DirectPortIoSite {
         file: "kernel/src/machine/pc/pci.rs",
         item: "read16",
-        reason: "レジスタの窓の 2 バイトの読み",
+        reason: "レジスタのウィンドウの 2 バイトの読み",
     },
     DirectPortIoSite {
         file: "kernel/src/machine/pc/pci.rs",
         item: "read32",
-        reason: "レジスタの窓の 4 バイトの読み",
+        reason: "レジスタのウィンドウの 4 バイトの読み",
     },
     DirectPortIoSite {
         file: "kernel/src/machine/pc/pci.rs",
         item: "write8",
-        reason: "レジスタの窓の 1 バイトの書き（unsafe fn）",
+        reason: "レジスタのウィンドウの 1 バイトの書き（unsafe fn）",
     },
     DirectPortIoSite {
         file: "kernel/src/machine/pc/pci.rs",
         item: "write16",
-        reason: "レジスタの窓の 2 バイトの書き（unsafe fn）",
+        reason: "レジスタのウィンドウの 2 バイトの書き（unsafe fn）",
     },
     DirectPortIoSite {
         file: "kernel/src/machine/pc/pci.rs",
         item: "write32",
-        reason: "レジスタの窓の 4 バイトの書き（unsafe fn）",
+        reason: "レジスタのウィンドウの 4 バイトの書き（unsafe fn）",
     },
     // ACPI の PM タイマ。
     DirectPortIoSite {
@@ -27223,7 +27223,7 @@ const SMP_AP_TESTS: &[CriticalTest] = &[
     // ウィンドウが閉じるので、「検出行が出ない」は守りの効きを示さない。
     // 詳細と代案は `docs/verification-coverage.md` にある。
     //
-    // **「窓があるか」は `selected task ... owned by cpu` の 1 行で見る。**
+    // **「ウィンドウがあるか」は `selected task ... owned by cpu` の 1 行で見る。**
     // ハートビートの `ap_current` は 1 秒ごとの標本なので取り逃しうる。
     // **こちらは起きた瞬間に 1 度だけ出るので、観測が運に依存しない。**
     //
@@ -28039,7 +28039,7 @@ const COMMON_ITEMS_FOR_HOMES: &[CommonItemsForHomes] = &[
             "is_canonical",
             "mark_identity_removed",
         ],
-        reason: "アドレスの型と、物理のメモリを読む窓（ページテーブル・ACPI の表・AP のスタックを扱う）",
+        reason: "アドレスの型と、物理のメモリを読むウィンドウ（ページテーブル・ACPI の表・AP のスタックを扱う）",
     },
     CommonItemsForHomes {
         module: "common::critical",
@@ -28076,7 +28076,7 @@ const COMMON_ITEMS_FOR_HOMES: &[CommonItemsForHomes] = &[
     CommonItemsForHomes {
         module: "kernel::frame_allocator",
         items: &["FRAME_SIZE", "FrameAllocator"],
-        reason: "物理のフレームを取る（ページテーブル・スタック・ACPI と Local APIC の窓）",
+        reason: "物理のフレームを取る（ページテーブル・スタック・ACPI と Local APIC のウィンドウ）",
     },
     CommonItemsForHomes {
         module: "kernel::interrupts",
@@ -28117,7 +28117,7 @@ const COMMON_ITEMS_FOR_HOMES: &[CommonItemsForHomes] = &[
     CommonItemsForHomes {
         module: "kernel::syscall",
         items: &["set_user_window", "syscall_entry"],
-        reason: "`arch` の入口が呼ぶシステムコールの入口と、遠征の間のユーザーの窓の設定",
+        reason: "`arch` の入口が呼ぶシステムコールの入口と、遠征の間のユーザーのウィンドウの設定",
     },
     CommonItemsForHomes {
         module: "kernel::boot",
@@ -30217,8 +30217,8 @@ const NOT_RUN_BY_ANY_TEST: &[(&str, &str)] = &[
     ),
     (
         "virtio-open-wakeup-window-test",
-        "QEMU の TCG では実演が一度も眠らず、取り逃しの窓が開かないので、回しても何も確かめない（持ち越しの\
-         一覧の「I/O待ちの「取り逃しの窓」を開ける破壊テストが、QEMUでは決定的に踏めない」）",
+        "QEMU の TCG では実演が一度も眠らず、取り逃しのウィンドウが開かないので、回しても何も確かめない（持ち越しの\
+         一覧の「I/O待ちの「取り逃しのウィンドウ」を開ける破壊テストが、QEMUでは決定的に踏めない」）",
     ),
 ];
 
@@ -31812,7 +31812,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
         }
         batch.run(&mut failed);
 
-        // **画面へ画素を出す形（`ADR-0066` の Y-c）。** **`gfxd` が裏バッファを `mmap` して四角を塗り、
+        // **画面へピクセルを出す形（`ADR-0066` の Y-c）。** **`gfxd` がバックバッファを `mmap` して四角を塗り、
         // `present` でコピーする。`screendump` で 2 度読み戻す。** **破壊テストは 3 つ**（`SCREEN_TEST_SABOTAGES`）。
         total += 1;
         begin_item(
@@ -32621,7 +32621,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
 
         // **`less` の破壊テスト 1 種。** **ウィンドウを動かさない**——**打鍵は届いており、
         // 状態行も描き直されるので、雑に見ると気づけない。**
-        // **狙いの判定は「窓の外に在った行が見えるようになった」である。**
+        // **狙いの判定は「ウィンドウの外に在った行が見えるようになった」である。**
         //
         // **`less` のウィンドウを止める形と、`more` が代替画面へ入る形の 2 種である。**
         // **後者は `less` の振る舞いそのもので、`more` との違いを消す**

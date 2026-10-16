@@ -1043,7 +1043,7 @@ mod tests {
             (at(20), names(&["a"])),
             (at(40), names(&["c"])),
         ];
-        // **同じ組は新しい方の時刻で並び、窓の外（いちばん新しいものから 35 秒より前）は落ちる。**
+        // **同じ組は新しい方の時刻で並び、ウィンドウの外（いちばん新しいものから 35 秒より前）は落ちる。**
         assert_eq!(
             order_by_time(found, Duration::from_secs(35)),
             vec![names(&["a"]), names(&["b"]), names(&["c"])]

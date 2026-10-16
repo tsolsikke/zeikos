@@ -1,4 +1,4 @@
-# 0083. `/dev/fb0`をLinuxのfbdevの形で開かせ、裏バッファを間隔ごとに画面へ転送する
+# 0083. `/dev/fb0`をLinuxのfbdevの形で開かせ、バックバッファを間隔ごとに画面へ転送する
 
 ## Status
 
@@ -11,7 +11,7 @@ Accepted（2026-10-06に運用者がM2の設計案を承認し、2026-10-07に�
 ## Context
 
 - M2（`ADR-0074`の順序の1）は、Seinasの共通の描画（pixman）の結果を、fbdevの裏側（`seinas-fbdev`）を通してZeikOSの画面に出すことである。`seinas-fbdev`はLinuxのfbdevのABIに従う——`/dev/fb0`を開き、`FBIOGET_VSCREENINFO`・`FBIOGET_FSCREENINFO`で形を訊き、面を`mmap`して書く。**書いた後に何かを打つことはしない**（Linuxのfbdevは、書けばそのまま映るため。`Presenter`という差し替えの口は在るが、Linux向けの`WriteThrough`は何もしない）。
-- ZeikOSの画面のfdは、`SYS_OPEN_SCREEN`（ZeikOS独自の番号）で開き、**裏バッファ**を`mmap`し、`FBIOZPRESENT`（ZeikOS独自の`ioctl`）で矩形を画面へコピーする形だった（`ADR-0066`のY-c）。MMIOをRing 3へ出さない（Q1）ので、どこかで転送が要る。
+- ZeikOSの画面のfdは、`SYS_OPEN_SCREEN`（ZeikOS独自の番号）で開き、**バックバッファ**を`mmap`し、`FBIOZPRESENT`（ZeikOS独自の`ioctl`）で矩形を画面へコピーする形だった（`ADR-0066`のY-c）。MMIOをRing 3へ出さない（Q1）ので、どこかで転送が要る。
 - Linuxのプログラムをそのまま動かす方針（`ADR-0074`）では、`seinas-fbdev`に手を入れずに映る形が要る。
 
 ## Decision
@@ -22,7 +22,7 @@ Accepted（2026-10-06に運用者がM2の設計案を承認し、2026-10-07に�
 - 中身は`SYS_OPEN_SCREEN`と同じ`File::Screen`で、同じ関所（前景の系統だけ。図形モードの持ち主は1つ）を通る。`fstat`は文字装置（`S_IFCHR`）。`close`で図形モードを抜ける。
 - `SYS_OPEN_SCREEN`は残す（`gfxd`・`compd`と、その破壊テストのため）。`/dev/fb0`へ寄せて消すのは別の課題（`docs/deferred-decisions.md`）。
 
-### 2. `/dev/fb0`で開いた間は、カーネルが間隔ごとに裏バッファの全体を画面へ転送する
+### 2. `/dev/fb0`で開いた間は、カーネルが間隔ごとにバックバッファの全体を画面へ転送する
 
 - 利用者は`FBIOZPRESENT`を打たない。**書けば映る**を、Linuxの`fb_deferred_io`（USBの表示装置などが使う。書いたページを一定の間隔で転送する）と同じ考えで作る。
 - 間隔は50 ms（20 Hz。`kernel/src/syscall.rs`の`FB0_PRESENT_INTERVAL_TICKS`）。利用者が見る遅れは最大でこの間隔。
