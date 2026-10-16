@@ -21059,9 +21059,9 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         line: "spawn: /bin/linux/m3a-exit-group-spin-rust ended",
         before: " after ",
         after: " syscall(s)",
-        min: 37,
-        max: 39,
-        what: "m3a-exit-group-spin-rust's system calls (measured 37 or 38 in 40 boots: 38 in 39 of them; 37: the cause is not identified yet (2026-10-15, 1 of 40 boots; keep that boot's log and report it if it appears again); room for one tick above)",
+        min: 38,
+        max: 40,
+        what: "m3a-exit-group-spin-rust's system calls (measured 38 or 39 in 300 boots at -smp 1 on 2026-10-17: 39 in 280; 38 in 20 when a tick right after clone let the thread reach exit_group before the main thread's rt_sigprocmask, which then ended the main thread at its entry; +1 over the earlier 37..=39 for the nanosleep that measures how long to spin after the flag; room for one above)",
     },
     BootLogRange {
         line: "futex: /bin/linux/m3a-exit-while-spinning-rust slept",
@@ -21117,7 +21117,7 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         after: " time(s)",
         min: 0,
         max: 0,
-        what: "m3a-exit-group-spin-rust's futex sleeps (measured 0 in 40 boots; the join's futex sees the end mark at the entry and never sleeps)",
+        what: "m3a-exit-group-spin-rust's futex sleeps (measured 0 in 300 boots at -smp 1 on 2026-10-17; after the flag the main thread spins as long as a 30 ms nanosleep took, which is more than two 10 ms ticks, so the thread, the only other task picked on cpu 0, reaches exit_group before the join and the join's futex sees the end mark at the entry; without that spin, 7 of 299 boots slept once, and 3 of 247 before the change)",
     },
     BootLogRange {
         line: "futex: /bin/linux/m3a-exit-group-spin-rust slept",
@@ -21125,7 +21125,7 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         after: " waiter(s)",
         min: 0,
         max: 0,
-        what: "m3a-exit-group-spin-rust's futex wakes (measured 0 in 40 boots)",
+        what: "m3a-exit-group-spin-rust's futex wakes (measured 0 in 300 boots at -smp 1 on 2026-10-17; nothing in the program calls FUTEX_WAKE)",
     },
     BootLogRange {
         line: "spawn: /bin/linux/m3a-channel-tls-rust ended",
