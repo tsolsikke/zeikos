@@ -597,7 +597,7 @@ def lock_refusals():
 
     **`start` と `run` を直に呼ぶ。`main` は通さない**——**`main` は `Vm` を作り、`Vm` は VM の置き場の
     道を `wslpath` で直すが、`wslpath` は WSL にしか無い。** **2026-09-25 に `main` を通して書き、
-    CI（WSL ではない）で `FileNotFoundError` になって基底と `--commit` が赤くなった**（手元の WSL では
+    CI（WSL ではない）で `FileNotFoundError` になって基本の検査と `--commit` が赤くなった**（手元の WSL では
     通っていた）。**名前だけを持つ VM を組んで渡す**——**ロックを見る前に道を使わないことも、これで分かる。**
     """
     vm = Vm.__new__(Vm)

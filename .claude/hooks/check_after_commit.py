@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """PostToolUse(Bash) で、コミットの直後に check を回す。
 
-**規律が「コミット直後に基底 check」と書いてある**（`CLAUDE.md` の
+**規律が「コミット直後に基本の検査」と書いてある**（`CLAUDE.md` の
 「コミットの運用」）。**忘れても気づけないので、機械で回す。**
 
 **カーネルに触ったコミットは `--commit` を回す**（運用者の承認。2026-09-18）。
@@ -12,7 +12,7 @@
 起動ログの採り方を直した後。以前は 4.5 分）、**1 回の抜けのほうが 100 倍以上高い。**
 
 **範囲は `kernel/` と `common/` である。** **`xtask/src/` はイメージに影響しない**
-（検査の側なので、壊れれば基底で見える）。
+（検査の側なので、壊れれば基本の検査で見える）。
 
 **実行の形だけを見る。** 部分一致にすると、文書に書いた文字列で発火する
 （`deny_dangerous_bash.py` が実測で踏んだ形である）。
@@ -48,7 +48,7 @@ stdout に出していたが、`exit 0` の stdout は読み手に届かない**
 **全検査の間は、`--commit` が検査のロックで断られる**（`xtask/src/check_lock.rs`。終了の値 75）。
 **断られた回は緑に数えない**——**「走らせなかった」と言い、`exit 2` で終える。** **記録には
 `xtask` が「断られた」を残し、push の前の関門（`deny_push_when_red.py`）は、そのコミットの合格の記録が
-在るまでpush させない**（コミットは既に積まれているので、ここでは止められない）。**基底はロックを取らない**
+在るまでpush させない**（コミットは既に積まれているので、ここでは止められない）。**基本の検査はロックを取らない**
 ——**全検査の間も走る。**
 
 **環境変数を前に置いたコミットも見る**（`X=1 git commit`。2026-09-25 に見つけた穴）。
@@ -83,7 +83,7 @@ from deny_dangerous_bash import PREFIX, executable_part  # noqa: E402
 # 前に置くと発火しなかった。**
 COMMIT = re.compile(r"(?:^|[;&|]\s*|\n\s*)" + PREFIX + r"git\s+commit\b")
 TIMEOUT_SECONDS = 240
-"""基底 check の上限（秒）。"""
+"""基本の検査 の上限（秒）。"""
 
 COMMIT_CHECK_TIMEOUT_SECONDS = 900
 """`--commit` の上限（秒）。**起動ログの捕獲は約 36 秒**（実測。2026-09-25 に採り方を直す前は
@@ -93,7 +93,7 @@ IMAGE_PATH_PREFIXES = ("kernel/", "common/")
 """この下に触ったコミットは `--commit` を回す。**イメージのアドレスが動く側である。**
 
 **`xtask/src/full_check.rs` の `IMAGE_PATH_PREFIXES` と同じである**（あちらは記録と push の前の関門で
-要る検査を決める）。**基底の確かめが一致を見る。**"""
+要る検査を決める）。**基本の検査の確かめが一致を見る。**"""
 
 REFUSED_EXIT_CODE = 75
 """検査のロックが取れずに `xtask` が断ったときの終了の値（`xtask/src/check_lock.rs`）。"""
@@ -149,7 +149,7 @@ def paths_in_head(root: str) -> list[str] | None:
     """直前のコミットが触ったパス。**読めなければ `None` を返す。**
 
     **空の一覧と「読めなかった」を分ける**——**分けないと、読めなかったときに
-    黙って基底へ落ちる**（「失敗を空に落とすと、もっともらしい誤りが出る」の family。
+    黙って基本の検査へ落ちる**（「失敗を空に落とすと、もっともらしい誤りが出る」の family。
     運用者の指摘。2026-09-18）。**どちらにするかは [`decide`] が決める。**
     """
     try:
@@ -194,7 +194,7 @@ UNREADABLE_NOTICE = (
 def decide(paths: list[str] | None) -> tuple[bool, str | None]:
     """どちらの check を回すかと、言うべきことを決める。**引数だけで決める。**
 
-    **読めなければ基底へ落とす**——**`--commit` を回せないより、回さないほうが
+    **読めなければ基本の検査へ落とす**——**`--commit` を回せないより、回さないほうが
     害が小さい。** **ただし黙らない**——**落としたことを言い、`exit 2` で終える**
     （シリアルのロックの fail open と同じ形。理由が在り、観測が残る）。
     """
@@ -245,11 +245,11 @@ def main() -> int:
     try:
         payload = json.load(sys.stdin)
     except Exception as error:
-        # **黙って通さない。** **読めなければ基底 check は走っていない**ので、
+        # **黙って通さない。** **読めなければ基本の検査 は走っていない**ので、
         # **その事実を言って止める**（`docs/verification-coverage.md` の
         # 「失敗を空に落とす形」。2026-09-10 に Python 側を洗って直した）。
         print(
-            f"post-commit check: 入力が読めなかった（{error}）。基底 check は走っていない",
+            f"post-commit check: 入力が読めなかった（{error}）。基本の検査 は走っていない",
             file=sys.stderr,
         )
         return 2
@@ -259,7 +259,7 @@ def main() -> int:
     root = os.environ.get("CLAUDE_PROJECT_DIR") or payload.get("cwd") or "."
     commit_check, notice = decide(paths_in_head(root))
     argv = ["cargo", "xtask", "check"] + (["--commit"] if commit_check else [])
-    label = "--commit" if commit_check else "基底"
+    label = "--commit" if commit_check else "基本の検査"
     started = time.monotonic()
     try:
         done = subprocess.run(
@@ -375,7 +375,7 @@ def self_test() -> int:
         if got != want:
             print(f"self-test: {paths!r} wanted {want} but got {got}")
             failures += 1
-    # **読めなかったときは基底へ落ちつつ、言う**（2026-09-18。運用者の足す1点）。
+    # **読めなかったときは基本の検査へ落ちつつ、言う**（2026-09-18。運用者の足す1点）。
     decide_cases = [
         (None, (False, True)),
         ([], (False, False)),
@@ -414,7 +414,7 @@ def self_test() -> int:
     if "Finished" in refused:
         print(f"self-test: refused_notice kept the cargo progress line: {refused!r}")
         failures += 1
-    if "--commit" in refused_notice("基底", ""):
+    if "--commit" in refused_notice("基本の検査", ""):
         print("self-test: refused_notice for the base check names --commit")
         failures += 1
     # **family の選びの行**（2026-09-26）。**出せたらそのまま、出せなければ「出せなかった」と言う。**

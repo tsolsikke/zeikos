@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""カーネルの関数ごとの枠の大きさを、基底の版と作業ツリーで並べる（2026-09-23）。
+"""カーネルの関数ごとの枠の大きさを、ベースの版と作業ツリーで並べる（2026-09-23）。
 
 **枠の大きさは `.debug_frame` の CFA から読む。前置きの `sub rsp` を手で読まない。**
 
@@ -20,11 +20,11 @@ HW-b で 2 度読み違えた**（HW-a の +240 を最深の経路の上に無�
     python3 tools/frame-sizes.py --base f8f07a2           # 基底の版を選ぶ
     python3 tools/frame-sizes.py kernel::kernel_main      # 名前を挙げた関数は、動いていなくても出す
     python3 tools/frame-sizes.py --largest 20             # 作業ツリーで枠の大きい関数を 20 出す
-    python3 tools/frame-sizes.py --working-tree-only --largest 3   # 基底の版を建てずに作業ツリーだけ見る
+    python3 tools/frame-sizes.py --working-tree-only --largest 3   # ベースの版を建てずに作業ツリーだけ見る
 
 **名前は `nm -C` の形で、完全一致である。** **末尾に `*` を付けると前方一致になる。**
 
-**基底の版は `target/frame-sizes/wt` に `git worktree` で取り出して建てる**（1 度建てれば次からは差分だけ）。
+**ベースの版は `target/frame-sizes/wt` に `git worktree` で取り出して建てる**（1 度建てれば次からは差分だけ）。
 **作業ツリーのイメージは `cargo build` で建て直す。** **`target/` を `xtask` と共有するので、`--full` と並べて
 走らせない**（`CLAUDE.md` の絶対ルール 1）。
 
@@ -65,7 +65,7 @@ def build(tree, features):
 
 
 def base_tree(rev):
-    """基底の版を取り出したツリーを返す。**本体のツリーには触らない。**"""
+    """ベースの版を取り出したツリーを返す。**本体のツリーには触らない。**"""
     run(["git", "worktree", "prune"], ROOT)
     commit = run(["git", "rev-parse", "--verify", f"{rev}^{{commit}}"], ROOT).strip()
     if os.path.isdir(WORKTREE):
@@ -99,17 +99,17 @@ def matches(name, pattern):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="関数ごとの枠の大きさを、基底の版と作業ツリーで並べる")
+    parser = argparse.ArgumentParser(description="関数ごとの枠の大きさを、ベースの版と作業ツリーで並べる")
     parser.add_argument("names", nargs="*", help="動いていなくても出す関数（nm -C の名前。末尾 * で前方一致）")
     parser.add_argument("--base", default="HEAD", help="基底の版（既定 HEAD）")
     parser.add_argument("--features", default="", help="両方の建てに渡す feature（既定は無し）")
     parser.add_argument("--top", type=int, default=30, help="動いた関数を大きい順にいくつ出すか（既定 30）")
     parser.add_argument("--largest", type=int, default=0, help="作業ツリーで枠の大きい関数をいくつ出すか")
     parser.add_argument("--working-tree-only", action="store_true",
-                        help="基底の版を建てず、作業ツリーの枠だけを読む（`cargo xtask check` の軽い確かめが使う）")
+                        help="ベースの版を建てず、作業ツリーの枠だけを読む（`cargo xtask check` の軽い確かめが使う）")
     options = parser.parse_args()
 
-    # **基底の版をビルドしない形**（2026-09-25）。**基底の版のチェックアウトとビルドには分の単位が掛かる**ので、
+    # **ベースの版をビルドしない形**（2026-09-25）。**ベースの版のチェックアウトとビルドには分の単位が掛かる**ので、
     # **`cargo xtask check` の基本の検査は、作業ツリーの `.debug_frame` を読めることだけを見る。**
     if options.working_tree_only:
         after = frames(build(ROOT, options.features))

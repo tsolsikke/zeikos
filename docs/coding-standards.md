@@ -1158,7 +1158,7 @@ Ring 3のプログラムのバイナリが変わり、イメージが変わる**
 **遠征スタックの高水位が動いたなら、子が走っている間ずっと載っている枠を疑う**——
 **`spawn`なら`load_user_program`と`run_loaded_program`である。**
 
-**道具は`tools/frame-sizes.py`にある**（2026-09-23）。**基底の版を`git worktree`でビルドし、作業ツリーと並べて、枠が動いた関数を出す。**
+**道具は`tools/frame-sizes.py`にある**（2026-09-23）。**ベースの版を`git worktree`でビルドし、作業ツリーと並べて、枠が動いた関数を出す。**
 
 ```
 python3 tools/frame-sizes.py                    # HEADと作業ツリーを比べる
@@ -1172,7 +1172,7 @@ python3 tools/frame-sizes.py --base f8f07a2 kernel::kernel_main
 
 **どの経路が最深かは、静的には分からない。** **実測の道具は`tools/stack-deepest.py`にある**——
 **塗りの残っていない深さへQEMUのgdbstubで書き込みの監視を置き、止まった瞬間の生きたスタックをCFAで巻き戻す。**
-**`git stash`してビルドし直す形は、もう要らない**（道具が基底の版を別の作業ツリーでビルドする）。
+**`git stash`してビルドし直す形は、もう要らない**（道具がベースの版を別の作業ツリーでビルドする）。
 
 **実例（W1-b-2。2026-09-14）。** **高水位が+96バイト動いた。** **局所変数をやめ、声を出す部分を
 `#[inline(never)]`の関数へ出して+16まで減った。** **残りを`objdump`で読むと、`load_user_program`の枠が

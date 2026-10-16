@@ -71,14 +71,14 @@ impl Family {
 }
 
 /// 変更したパスが選ぶもの（2026-09-26。**骨組みは運用者の決定**——土台は全部へ倒す／`xtask/src/main.rs`
-/// は全部／基底だけの置き場／1 つのパスに複数のグループ）。
+/// は全部／基本の検査だけの置き場／1 つのパスに複数のグループ）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reach {
     /// 全部（全検査）。**どのグループの前提にもなる土台である。**
     All,
     /// グループの集まり（基本の検査は毎回実行されるので数えない）。
     Families(&'static [Family]),
-    /// 基底だけ（グループは 0。**意図した 0 である**）。
+    /// 基本の検査だけ（グループは 0。**意図した 0 である**）。
     BaseOnly,
 }
 
@@ -104,11 +104,11 @@ const SCREEN_FAMILIES: &[Family] = &[Family::Boot, Family::Ipc, Family::Shell, F
 /// 変更したパスとグループの対応表（2026-09-26。family にまとめる段）。
 ///
 /// **読み方は和である**——**パスに当たる行を全部集め、1 つでも全部なら全部、そうでなければグループの和、
-/// どれも基底だけなら基底だけ。** **行を足しても選択が狭まることは無い**（順序で意味が変わらない）。
+/// どれも基本の検査だけなら基本の検査だけ。** **行を足しても選択が狭まることは無い**（順序で意味が変わらない）。
 ///
 /// **当たる行が無いパスは全部へ倒す**（[`select`]）。**そのうえで基本の検査が、追跡している全ファイルに
 /// 当たる行が在ることを強いる**（[`table_problems`]）——**新しいファイルを足したら、表に行を足すまで
-/// 基本の検査が落ちる。** **`kernel/`・`common/`・`bootloader/` の下は基底だけに当たってはならない。**
+/// 基本の検査が落ちる。** **`kernel/`・`common/`・`bootloader/` の下は基本の検査だけに当たってはならない。**
 ///
 /// **境界の段階で作る CPU 固有・機械固有・外部 ABI の置き場は、はじめは全部へ倒す**（運用者の回答 2）。
 /// **グループへ振り分けるのは、境界が落ち着いてから。**
@@ -406,7 +406,7 @@ pub const PATH_RULES: &[PathRule] = &[
         ],
         reach: Reach::Families(&[Family::Memory]),
     },
-    // ── 基底だけ（ホストのテストと基本の検査の確かめが覆う） ──
+    // ── 基本の検査だけ（ホストのテストと基本の検査の確かめが覆う） ──
     PathRule {
         patterns: &[
             "docs/**",
@@ -440,7 +440,7 @@ pub const PATH_RULES: &[PathRule] = &[
     },
 ];
 
-/// 基底だけに当たってはならない置き場（グループか全部）。
+/// 基本の検査だけに当たってはならない置き場（グループか全部）。
 const NEVER_BASE_ONLY: [&str; 3] = ["kernel/", "common/", "bootloader/"];
 
 /// 型がパスに当たるか（`**` は `/` をまたぎ、`*` はまたがない。**`**/` は 0 段にも当たる**）。
@@ -497,7 +497,7 @@ pub enum PathReach {
     BaseOnly,
 }
 
-/// 表の問題（基本の検査の確かめ。純粋な論理）。**当たる行が無いパス、基底だけに当たった `kernel/` 等の
+/// 表の問題（基本の検査の確かめ。純粋な論理）。**当たる行が無いパス、基本の検査だけに当たった `kernel/` 等の
 /// パス、どのパスにも当たらない型（死んだ行）を返す。**
 pub fn table_problems(rules: &[PathRule], paths: &[&str]) -> Vec<String> {
     let mut problems = Vec::new();
@@ -535,7 +535,7 @@ pub struct Selection {
     pub all: Vec<(String, &'static str)>,
     /// グループごとの、選んだ理由のパス。
     pub families: std::collections::BTreeMap<Family, Vec<String>>,
-    /// 基底だけのパス。
+    /// 基本の検査だけのパス。
     pub base_only: Vec<String>,
     /// 比べられないので全部へ倒した訳（2026-09-26。第三者レビューの取り込み）——**比較元が無い・消えた・
     /// 履歴が書き換えられた・環境（`rustc`・QEMU 等）が変わった。** **パスより先に効く。**
@@ -565,7 +565,7 @@ pub fn select(rules: &[PathRule], paths: &[String]) -> Selection {
 }
 
 impl Selection {
-    /// 選んだグループ（`None` は全部。空は基底だけ。2026-09-26）。**当たりの計測が比べる。**
+    /// 選んだグループ（`None` は全部。空は基本の検査だけ。2026-09-26）。**当たりの計測が比べる。**
     pub fn chosen(&self) -> Option<Vec<Family>> {
         (self.not_comparable.is_empty() && self.all.is_empty())
             .then(|| self.families.keys().copied().collect())
@@ -585,7 +585,7 @@ impl Selection {
     }
 
     /// 記録に書く理由の短い形（先頭の `count` 本。2026-09-26）。**全部なら倒した訳、グループならグループごとの最初の
-    /// パス、基底だけなら最初のパスである。**
+    /// パス、基本の検査だけなら最初のパスである。**
     pub fn reasons(&self, count: usize) -> String {
         let listed: Vec<String> = if !self.not_comparable.is_empty() {
             self.not_comparable.iter().take(count).cloned().collect()
@@ -734,7 +734,7 @@ mod tests {
         ));
     }
 
-    /// **表は和で読む**——**1 つでも全部なら全部、基底だけの行はグループを減らさない。**
+    /// **表は和で読む**——**1 つでも全部なら全部、基本の検査だけの行はグループを減らさない。**
     #[test]
     fn a_path_takes_the_union_of_every_row_it_matches() {
         assert_eq!(
@@ -758,7 +758,7 @@ mod tests {
                 Family::Devices
             ]))
         );
-        // **`third_party` の README は字形のグループに入る**（基底だけの `*.md` は根の直下だけ）。
+        // **`third_party` の README は字形のグループに入る**（基本の検査だけの `*.md` は根の直下だけ）。
         assert_eq!(
             reach_of(PATH_RULES, "third_party/dejavu/README.md"),
             Some(PathReach::Families(vec![Family::Apps]))
@@ -786,7 +786,7 @@ mod tests {
         assert_eq!(reach_of(&rules, "a/d.rs"), Some(PathReach::BaseOnly));
     }
 
-    /// **基本の検査の確かめ**——**行の無いパス、基底だけの `kernel/` 等、死んだ行を挙げる。**
+    /// **基本の検査の確かめ**——**行の無いパス、基本の検査だけの `kernel/` 等、死んだ行を挙げる。**
     #[test]
     fn the_table_check_names_unmatched_paths_base_only_kernel_paths_and_dead_rows() {
         let rules = [

@@ -1556,7 +1556,7 @@ VirtualBoxの計数でベクタ0x42が打鍵4バイトで+4、8259のベクタ0x
 | 基本の検査 | `tools/boot-log-compare.py` | 参照を自分と比べて0行、1行だけ変えたコピーと比べて1行 |
 | 基本の検査 | `tools/decisions-touched.py` | 最後の1コミットで走り、見出しの行を出す |
 | 基本の検査 | `tools/docstyle.py` | S1・S2・S4・S5が全部通る（CIには`markdown-it-py`を版を固定して入れる） |
-| 基本の検査 | `tools/frame-sizes.py` | 作業ツリーのフレームを読み、関数が出る（**基底の版はビルドしない**。`--working-tree-only`） |
+| 基本の検査 | `tools/frame-sizes.py` | 作業ツリーのフレームを読み、関数が出る（**ベースの版はビルドしない**。`--working-tree-only`） |
 | 基本の検査 | `tools/judgement-map.py` | 小さな抜き書きから、判定2本・偽1本と数える（カーネルの行と`(info)`を数えない） |
 | 基本の検査 | `tools/qemu-variants.py --list` | 名前の並びが`xtask`の読んだものと同じ |
 | 基本の検査 | `cargo xtask gen-font` | ツリーに在る字形の表が、生成器の出力とバイトで同じ（書かずに比べる） |
@@ -1652,7 +1652,7 @@ VirtualBoxの計数でベクタ0x42が打鍵4バイトで+4、8259のベクタ0x
 | `target/x86_64-unknown-none/debug/incremental` | よい | カーネルの作り直しを速くする控え。消すと組ごとの作り直しが長くなる |
 | `target/debug/incremental`・`target/x86_64-unknown-uefi/debug/incremental` | よい | ホストの道具とブートローダの同じ控え |
 | `target/x86_64-unknown-none/debug`（丸ごと） | よい | 作り直せる。次の`--full`で組ごとにビルドし直す |
-| `target/frame-sizes/wt` | よい（`git worktree remove`で外す） | `tools/frame-sizes.py`が基底の版をビルドする作業ツリー |
+| `target/frame-sizes/wt` | よい（`git worktree remove`で外す） | `tools/frame-sizes.py`がベースの版をビルドする作業ツリー |
 | `target/tool-checks`・`target/stack-deepest` | よい | 手の道具の確かめと道具の一時の置き場 |
 | `target/full-check/wt`（2026-09-27より前の置き場） | よい（`git worktree remove`で外す。**全検査が走っていないときだけ**） | 以前の全検査の作業ツリー。**残っていても、全検査はもう移さない**（移す処理は2026-10-01に外した。いまの作業ツリーは隣の`<名前>-full-check`で、`target/`の外なので、この表の対象の外） |
 | `target/check-lock`・`target/check-vbox-path` | よい | 基本の検査の確かめの一時の置き場 |
@@ -1739,7 +1739,7 @@ VirtualBoxの計数でベクタ0x42が打鍵4バイトで+4、8259のベクタ0x
 |---|---|
 | 分類できない変更を「対象なし」で成功扱いにしない | **表に行の無いパスは全部。基本の検査が表の網羅を強いる** |
 | 前回の全検査の合格からの累積の差分も見る | **成功した全検査のツリーからHEADまでの差で選ぶ** |
-| 対象が意図せず0件になったら検出する | **0になるのは、変更が全部「基底だけ」のときだけ。`kernel/`・`common/`・`bootloader/`は基本の検査だけにできない** |
+| 対象が意図せず0件になったら検出する | **0になるのは、変更が全部「基本の検査だけ」のときだけ。`kernel/`・`common/`・`bootloader/`は基本の検査だけにできない** |
 | 前提を失う既存の判定も対象に含める | **土台のパスを全部へ倒し、1つのパスに複数のグループを持たせる。漏れる形は全検査が受ける** |
 | 部分の合格と全検査の合格を区別する・未実行の項目を合格に数えない・選んだ理由を結果に残す | **自動で実行する段階で入れる**（この段階は表示だけ。理由のパスは表示に出る） |
 | 全検査は残す | **残す** |

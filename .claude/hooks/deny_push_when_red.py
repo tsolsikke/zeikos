@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PreToolUse(Bash) で、基底 check が赤のままの `git push` を拒む（2026-09-06）。
+"""PreToolUse(Bash) で、基本の検査 が赤のままの `git push` を拒む（2026-09-06）。
 
 # 規約と抵触しないことを先に書く
 
@@ -20,7 +20,7 @@
 
 - **`git push` を実際に呼ぶ形か**（[`invokes_git_push`]。**ここだけが判定表を
   持ち、`--self-test` が覆う**）
-- **呼ぶなら基底 `cargo xtask check` を回し、赤なら拒む**（2.3 秒。実測）
+- **呼ぶなら基本の検査 `cargo xtask check` を回し、赤なら拒む**（2.3 秒。実測）
 
 # コミットと同じコマンドの `push` は、検査せずに拒む（2026-09-18）
 
@@ -28,7 +28,7 @@
 コミットを作ってからpush すると、検査が見るのは「これから作るコミット」ではなく 1 つ前のツリーである**
 ——**実測で、本文 1 行のコミットをそのままpush した**（2026-09-18。`docs/troubleshooting.md`）。
 **そこで、同じコマンドに `git commit` の呼び出しが在れば、検査せずに拒む。** **コミットと
-`push` は別のコマンドにすること**——**基底 check の出力を読んでから、次のコマンドでpush する。**
+`push` は別のコマンドにすること**——**基本の検査 の出力を読んでから、次のコマンドでpush する。**
 
 # 並走していたら、検査せずに拒む
 
@@ -39,15 +39,15 @@
 
 **同じツリーの `xtask` だけを数える**（2026-09-25。検査の体系の改善の ③）——**全検査は別の作業ツリー
 （メインの作業ツリーの隣の `<名前>-full-check`）で回り、`target/` はツリーごとに別である。** **作業ツリーの全検査の間も、本のツリーで
-基底を回してpush できる。** **同じツリーかは `/proc/<pid>/exe` が本のツリーの `target/debug/xtask` を指すかで見る。**
+基本の検査を回してpush できる。** **同じツリーかは `/proc/<pid>/exe` が本のツリーの `target/debug/xtask` を指すかで見る。**
 **`cargo xtask full` の親は数えない**——**本のツリーの `xtask` として走るが、作業ツリーの子を待つだけで、
 本のツリーでは何も建てない。**
 
 # 要る検査を済ませていないコミットを止める（2026-09-25。運用者の足す1点）
 
 **コミットの後の hook は、全検査の間は `--commit` をロックで断られる**——**コミットは既に積まれている。**
-**そこで基底が緑のあと `cargo xtask full --gate` を回し、push するコミット（どのリモートにも無いもの）の
-それぞれに、要る検査（`kernel/` か `common/` に触れたものは `--commit`、他は基底）の合格の記録が
+**そこで基本の検査が緑のあと `cargo xtask full --gate` を回し、push するコミット（どのリモートにも無いもの）の
+それぞれに、要る検査（`kernel/` か `common/` に触れたものは `--commit`、他は基本の検査）の合格の記録が
 在るかを見る。** **無ければ、足りない検査とコミットを出して拒む。** **読むのは
 `cargo xtask full --status` と同じ記録である**（git の共通の置き場の `zeikos/records.tsv`。2026-09-27 に移した）。
 
@@ -97,7 +97,7 @@ PUSH = re.compile(START + r"git\s+(?:-\S+\s+\S+\s+|-\S+\s+)*push\b")
 COMMIT = re.compile(START + r"git\s+(?:-\S+\s+\S+\s+|-\S+\s+)*commit(?![-\w])")
 TIMEOUT_SECONDS = 240
 GATE_TIMEOUT_SECONDS = 50
-"""関門（`cargo xtask full --gate`）の上限（秒）。**基底の直後なので建てる時間は乗らない。**"""
+"""関門（`cargo xtask full --gate`）の上限（秒）。**基本の検査の直後なので建てる時間は乗らない。**"""
 
 # **フラグ**（この doc の「要る検査を済ませていないコミットを止める」）。**実行の形に在ることを見てから、
 # 理由を元の文から読む**——**引用は実行の形では空白に落ちる。**
@@ -202,7 +202,7 @@ def main() -> int:
         return deny(
             "同じコマンドの中で git commit と git push を呼んでいる。この hook はコマンドの前に "
             "1 度だけ検査するので、これから作るコミットを見られない。コミットと push を別の"
-            "コマンドに分け、コミット直後の基底 check の出力を読んでからpush すること"
+            "コマンドに分け、コミット直後の基本の検査 の出力を読んでからpush すること"
         )
 
     # **フラグは理由を要る**（空の理由では越えさせない）。
@@ -222,7 +222,7 @@ def main() -> int:
         return deny(f"並走を確かめられなかった（{error}）。確かめられないのでpush しない")
     if others:
         return deny(
-            "push の前の基底 check が走らせられない（同じツリーで並走: "
+            "push の前の基本の検査 が走らせられない（同じツリーで並走: "
             + ", ".join(others)
             + "）。target/ のロックで待たされるので検査しない。"
             "止めるか終わるまで待つこと（.claude/skills/stop-a-process/SKILL.md）"
@@ -237,9 +237,9 @@ def main() -> int:
             timeout=TIMEOUT_SECONDS,
         )
     except Exception as error:
-        return deny(f"push の前の基底 check を走らせられなかった（{error}）")
+        return deny(f"push の前の基本の検査 を走らせられなかった（{error}）")
     if done.returncode == 0:
-        # **基底が緑なら、要る検査の記録を見る**（この doc の「要る検査を済ませていないコミットを
+        # **基本の検査が緑なら、要る検査の記録を見る**（この doc の「要る検査を済ませていないコミットを
         # 止める」）。
         gate = ["cargo", "xtask", "full", "--gate"] + (["--override", reason] if reason else [])
         try:
@@ -264,7 +264,7 @@ def main() -> int:
         summary = [l for l in done.stdout.splitlines() if "check(s) passed" in l]
         return announce(
             "PreToolUse",
-            "push 前の基底 check: "
+            "push 前の基本の検査: "
             + (summary[-1] if summary else "OK")
             + f"（{time.monotonic() - started:.0f} 秒）。"
             + (lines[-1] if lines else "関門: 出力なし"),
@@ -273,7 +273,7 @@ def main() -> int:
     detail = [line for line in done.stdout.splitlines() if "FAILED" in line]
     reasons = [line for line in done.stderr.splitlines() if line.startswith("Error:")]
     return deny(
-        "push の前の基底 check が赤である。push すると直せない（文体の検査は全履歴を"
+        "push の前の基本の検査 が赤である。push すると直せない（文体の検査は全履歴を"
         "見る）。直してからpush すること:\n  " + "\n  ".join((detail + reasons)[:10])
     )
 
@@ -300,7 +300,7 @@ def self_test() -> int:
         (f"git {push}notes", False),
         (f"git {push}_all", False),
         # **文中の言及は通る**（隣の hook が 2 度踏んだ形である）。
-        (f"echo 'git {push} は基底 check の後'", False),
+        (f"echo 'git {push} は基本の検査 の後'", False),
         (f"grep -n 'git {push}' docs/troubleshooting.md", False),
         (f"cat <<'EOF'\ngit {push} origin main\nEOF", False),
         ("cargo xtask check", False),
@@ -388,7 +388,7 @@ def self_test() -> int:
     ):
         print(f"self-test: announce_payload has the wrong shape: {announced!r}")
         failures += 1
-    # **harness の上限は、基底と関門の上限の和より長いこと**（2026-09-25。関門を足した）。
+    # **harness の上限は、基本の検査と関門の上限の和より長いこと**（2026-09-25。関門を足した）。
     harness = registered_timeout("deny_push_when_red.py")
     inner = TIMEOUT_SECONDS + GATE_TIMEOUT_SECONDS
     if harness is None or harness <= inner:

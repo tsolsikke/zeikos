@@ -273,7 +273,7 @@ pub(super) fn docstyle(root: &Path) -> Result<String> {
 
 /// `tools/frame-sizes.py`——**作業ツリーの `.debug_frame` を読み、関数のフレームが 1 つ以上出る。**
 ///
-/// **基底の版はビルドしない**（`--working-tree-only`）——**チェックアウトとビルドに分の単位が掛かる。**
+/// **ベースの版はビルドしない**（`--working-tree-only`）——**チェックアウトとビルドに分の単位が掛かる。**
 pub(super) fn frame_sizes(root: &Path) -> Result<String> {
     let stdout = succeeded(
         "frame-sizes.py",

@@ -9,7 +9,7 @@
 # 記録に残る。検査の合格としては数えない。
 #
 # git push --no-verify は、この hook ごと迂回できる。すべての迂回を記録できるとは言わない——通常の操作の
-# 誤りを防ぐ仕組みである。CI が各 push で基底と --commit を回す。
+# 誤りを防ぐ仕組みである。CI が各 push で基本の検査と --commit を回す。
 #
-# 入れ方: git config core.hooksPath .githooks（clone に hook は含まれない。基底が WSL の中で設定を確かめる）。
+# 入れ方: git config core.hooksPath .githooks（clone に hook は含まれない。基本の検査が WSL の中で設定を確かめる）。
 exec cargo xtask full --gate --pre-push "$1" "$2"

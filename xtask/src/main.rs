@@ -31186,7 +31186,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
     }
 
     // **変更したパスとグループの対応表**（2026-09-26。family にまとめる段。運用者の決定）。**追跡している全ファイルに
-    // 当たる行が在り、`kernel/`・`common/`・`bootloader/` の下が基底だけに当たらず、死んだ行が無いこと。**
+    // 当たる行が在り、`kernel/`・`common/`・`bootloader/` の下が基本の検査だけに当たらず、死んだ行が無いこと。**
     total += 1;
     begin_item(
         Family::Base,
