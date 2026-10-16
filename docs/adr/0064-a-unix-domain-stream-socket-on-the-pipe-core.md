@@ -157,4 +157,5 @@ Accepted
 
 **限界の1と2を、Seinasのlistenのソケットの段で見直した**（`ADR-0087`）。listenerを4本・接続を8本にし、名前の上限を
 107バイトにする。**名前はカーネルの表のまま**（決定3は保つ。ext2にinodeは作らない）。`socket`の`SOCK_CLOEXEC`は無視して
-受け、`accept4`を足す。本体はそちらにある。
+受け、`accept4`を足す。**限界の3も見直した**——`accept`は、`addr`がNULLでなければ相手の名前として`AF_UNIX`の空の名前を
+書き、`*addrlen`を2にする（Linuxが名前の無い相手に返す形。Rustのstdは必ず置き場を渡す）。本体はそちらにある。

@@ -79,7 +79,11 @@ pub fn conflicts(entries: &[Entry], inode: u32, exclusive: bool, holding: u8) ->
 /// 取る（または同じ持ち主の取り直し）。`holding` は今持っている番号（0 なら無し）。
 pub fn acquire(inode: u32, exclusive: bool, holding: u8) -> Outcome {
     let mut locks = LOCKS.lock();
-    if conflicts(&*locks, inode, exclusive, holding) {
+    // 破壊テスト (2026-10-16, flock-ignores-holder-test): ほかの持ち主を見ない。2 本目の `LOCK_EX|LOCK_NB` が 0 で通り、
+    // 確かめのイメージが名指しして 97 で終わる。
+    let blocked = !cfg!(feature = "flock-ignores-holder-test")
+        && conflicts(&*locks, inode, exclusive, holding);
+    if blocked {
         CONFLICTS.fetch_add(1, Ordering::Relaxed);
         return Outcome::Conflict;
     }
@@ -123,6 +127,11 @@ pub fn release(token: u8) {
 /// `close` で放す。**プロセスの終わりもここを通る**（fd の表の `Drop`）。**破壊テストの入口はここと [`acquire`] に
 /// 置く**（確かめのイメージと一緒に足す）。
 pub fn release_on_close(token: u8) {
+    // 破壊テスト (2026-10-16, flock-keeps-lock-after-close-test): `close` で放さない。閉じた後の `LOCK_EX|LOCK_NB` が
+    // `-EWOULDBLOCK` のままになり、確かめのイメージが名指しして 98 で終わる。
+    if cfg!(feature = "flock-keeps-lock-after-close-test") {
+        return;
+    }
     release(token);
 }
 

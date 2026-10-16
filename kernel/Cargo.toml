@@ -1304,3 +1304,13 @@ futex-wake-dropped-test = []
 # 破壊（2026-10-15）: clone で子の FS の基底を、渡された tls ではなく親の今の基底にする。TLS が親と子で混ざる。
 # `--critical-test clone-shares-tls`。
 clone-shares-tls-test = []
+# 確かめ（2026-10-16。ADR-0087）: Seinas の listen のソケットとロックファイルの一連を通す Linux 向けのイメージ
+# （wl-socket-lock-rust）を起動時に起こす。ロックファイルを ext2 に作って消すので、既定の起動には入れない。
+# `cargo xtask run --linux-socket-test`。
+linux-socket-test = []
+# 破壊（2026-10-16。ADR-0087）: flock で、ほかの持ち主を見ずに取る。2 本目の LOCK_EX|LOCK_NB が 0 で通る。
+# `--critical-test flock-ignores-holder`。
+flock-ignores-holder-test = []
+# 破壊（2026-10-16。ADR-0087）: flock のロックを close で放さない。閉じた後の LOCK_EX|LOCK_NB が -EWOULDBLOCK のまま。
+# `--critical-test flock-keeps-lock-after-close`。
+flock-keeps-lock-after-close-test = []

@@ -1,0 +1,24 @@
+wl-socket-lock-rust: main starts with 4 argument(s)
+wl-socket-lock-rust: took the lock for s = true
+wl-socket-lock-rust: a second open of the lock for s is refused with EWOULDBLOCK = true
+wl-socket-lock-rust: the lock file for s is a regular file = true
+wl-socket-lock-rust: bound and listening on s = true
+wl-socket-lock-rust: took the lock for s-shell = true
+wl-socket-lock-rust: a second open of the lock for s-shell is refused with EWOULDBLOCK = true
+wl-socket-lock-rust: the lock file for s-shell is a regular file = true
+wl-socket-lock-rust: bound and listening on s-shell = true
+wl-socket-lock-rust: took the lock for s-ime = true
+wl-socket-lock-rust: a second open of the lock for s-ime is refused with EWOULDBLOCK = true
+wl-socket-lock-rust: the lock file for s-ime is a regular file = true
+wl-socket-lock-rust: bound and listening on s-ime = true
+wl-socket-lock-rust: 3 listeners are held at once
+wl-socket-lock-rust: a client connected to s, sent ping and got pong = true
+wl-socket-lock-rust: a client connected to s-shell, sent ping and got pong = true
+wl-socket-lock-rust: a client connected to s-ime, sent ping and got pong = true
+wl-socket-lock-rust: after closing the first, the second takes the lock for s = true
+wl-socket-lock-rust: unlock on s = true
+wl-socket-lock-rust: after closing the first, the second takes the lock for s-shell = true
+wl-socket-lock-rust: unlock on s-shell = true
+wl-socket-lock-rust: after closing the first, the second takes the lock for s-ime = true
+wl-socket-lock-rust: unlock on s-ime = true
+exit status: 4

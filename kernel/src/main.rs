@@ -6729,6 +6729,16 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
         b"/bin/linux/m3a-memfd-shrink-rust",
         b"m3a-memfd-shrink-rust\0/etc/motd\0a\0b\0",
     );
+    // **Seinas の listen のソケットとロックファイルの一連**（`ADR-0087`。2026-10-16）。`std` の `UnixListener`・`UnixStream`・
+    // `File::try_lock` で、ロック → bind → listen → connect → close で放す、を 3 組通す。ロックファイルを ext2 に作って
+    // 消すので `linux-socket-test` のビルドだけが起こす。判定は `cargo xtask run --linux-socket-test`（Linux の参照と
+    // 突き合わせる）と、flock の破壊テスト 2 つ（`--critical-test flock-ignores-holder`・`flock-keeps-lock-after-close`）。
+    #[cfg(feature = "linux-socket-test")]
+    verify_linux_program(
+        logger,
+        b"/bin/linux/wl-socket-lock-rust",
+        b"wl-socket-lock-rust\0/etc/motd\0a\0b\0",
+    );
 }
 
 /// [`verify_linux_programs`] の、終わり方を名指しする形（M3a の 3-1b。2026-10-14）。**`spawn` の結果が `wanted` と違えば
@@ -14249,6 +14259,22 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "shm-ftruncate-shrinks-mapped-test",
         cfg!(feature = "shm-ftruncate-shrinks-mapped-test"),
         "2 回目の ftruncate で、マップ中でも memfd を縮める（末尾のフレームを返す）",
+    ),
+    // Seinas の listen のソケットとロックファイルの一連（ADR-0087。2026-10-16）。
+    (
+        "linux-socket-test",
+        cfg!(feature = "linux-socket-test"),
+        "ロック → bind → listen → connect の一連を通す Linux 向けのイメージを起動時に起こす（確かめ。破壊ではない）",
+    ),
+    (
+        "flock-ignores-holder-test",
+        cfg!(feature = "flock-ignores-holder-test"),
+        "flock でほかの持ち主を見ずに取る",
+    ),
+    (
+        "flock-keeps-lock-after-close-test",
+        cfg!(feature = "flock-keeps-lock-after-close-test"),
+        "flock のロックを close で放さない",
     ),
     // スレッドの破壊テスト、スレッドの検証の5（2026-10-15）。
     (

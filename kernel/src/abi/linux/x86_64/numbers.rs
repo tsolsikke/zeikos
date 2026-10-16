@@ -116,6 +116,10 @@ pub const SYS_RT_SIGACTION: u64 = 13;
 pub const SYS_RT_SIGPROCMASK: u64 = 14;
 /// `sendto(fd, buf, len, flags, addr, addrlen)` の番号（2026-10-06。`__NR_sendto`）。
 pub const SYS_SENDTO: u64 = 44;
+
+/// `recvfrom` の番号（`ADR-0087`。`asm/unistd_64.h` の `__NR_recvfrom`。musl の `recv` はこれを打つ——Rust の std の
+/// ソケットの `read` も）。
+pub const SYS_RECVFROM: u64 = 45;
 /// `uname(buf)` の番号（2026-10-06。`__NR_uname`）。
 pub const SYS_UNAME: u64 = 63;
 /// `fcntl(fd, cmd, arg)` の番号（2026-10-06。`__NR_fcntl`）。

@@ -828,6 +828,33 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
+    // **flock の破壊テスト 2 件（`ADR-0087`。2026-10-16）。** どちらも確かめのイメージ（`wl-socket-lock-rust`）が自分で
+    // 違いを見つけ、名指しの行を出して引数の数でない状態で終わる。起動時の確かめが `expected Exited(4)` と名指しして
+    // 止まる。目印は、イメージの名指しの行と、止まるという事実（`halting`）で書く。
+    CriticalTest {
+        name: "flock-ignores-holder",
+        feature: "linux-socket-test,flock-ignores-holder-test",
+        expected_markers: &[
+            "the second open took the lock for s while the first held it; exiting with 97",
+            "ended Ok(Exited(97)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &["3 listeners are held at once", "zash: ready"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    CriticalTest {
+        name: "flock-keeps-lock-after-close",
+        feature: "linux-socket-test,flock-keeps-lock-after-close-test",
+        expected_markers: &[
+            "the lock for s stayed held after its holder closed; exiting with 98",
+            "ended Ok(Exited(98)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &["unlock on s = true", "zash: ready"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
 ];
 
 /// 逆アセンブル（`objdump -d` の AT&T 記法）の中で、棚卸しが「使わない」ことに依っているアドレス指定と
@@ -2702,6 +2729,7 @@ const RUN_FLAGS: &[(&str, RunValue)] = &[
     ("--pipe-test", RunValue::None),
     ("--socket-test", RunValue::None),
     ("--linux-c-test", RunValue::None),
+    ("--linux-socket-test", RunValue::None),
     ("--input-test", RunValue::None),
     ("--poll-test", RunValue::None),
     ("--screen-test", RunValue::None),
@@ -3472,6 +3500,10 @@ fn main() -> Result<()> {
             // **unix ドメインのストリームソケットの判定（`ADR-0064`）。台本のグループである。**
             if rest.iter().any(|a| a == "--linux-c-test") {
                 return cmd_linux_c_test();
+            }
+            // **Seinas の listen のソケットとロックファイルの一連（`ADR-0087`）。**
+            if rest.iter().any(|a| a == "--linux-socket-test") {
+                return cmd_linux_socket_test();
             }
             if rest.iter().any(|a| a == "--socket-test") {
                 let sabotage: Vec<&str> = rest
@@ -23480,6 +23512,94 @@ fn cmd_linux_c_test() -> Result<()> {
     bail!("{context}: FAIL")
 }
 
+/// Seinas の listen のソケットとロックファイルの一連を、Linux 向けのイメージ（`wl-socket-lock-rust`。`std` の
+/// `UnixListener`・`UnixStream`・`File::try_lock`）で通す（`ADR-0087`。2026-10-16）。**`linux-socket-test` のビルドだけが
+/// 起動時に起こす**（ロックファイルを ext2 に作って消すので、既定の起動には入れない）。
+///
+/// 見るのは 5 つ——引数の数（4）で終わったこと、出した行が Linux と同じこと（`linux-programs/reference`）、3 本の
+/// listener を同時に持ったこと、カーネルの知らない番号を打っていないこと、`[ERROR]` が無いこと。
+fn cmd_linux_socket_test() -> Result<()> {
+    let context = "linux-socket-test";
+    let workspace_root = workspace_root()?;
+    let run = RunDir::create(&workspace_root, "linux-socket-test")?;
+    let ovmf_vars = prepare_ovmf_vars(&run)?;
+    let bootloader_efi = build_bootloader(&workspace_root, false)?;
+    let kernel_elf = build_kernel_with_features(&workspace_root, &["linux-socket-test"])?;
+    let esp_dir = stage_esp(&run, &bootloader_efi, &kernel_elf)?;
+    let serial_log = run.serial_log();
+    let _ = fs::remove_file(&serial_log);
+    let debug_log = run.debug_log();
+    let _ = fs::remove_file(&debug_log);
+    let qemu_args = qemu_launch_args(&QemuLaunchOptions {
+        ovmf_code: Path::new(OVMF_CODE_PATH),
+        ovmf_vars: &ovmf_vars,
+        esp_dir: &esp_dir,
+        disk_image: &run.disk_image(),
+        serial: &SerialSink::File(serial_log.clone()),
+        debug_log: &debug_log,
+        display: DisplayMode::None,
+        monitor_socket: None,
+        accelerator: Accelerator::Tcg,
+        debug_events: DebugEvents::IntAndCpuReset,
+    });
+    let outputs = [serial_log.as_path(), debug_log.as_path()];
+    let mut child = launch::spawn(&launch::Spec::new(
+        &qemu_args,
+        &outputs,
+        context,
+        PIPE_TEST_TIMEOUT,
+        launch::Deadline::Failure,
+    ))?;
+    let name = "wl-socket-lock-rust";
+    let ended = format!("spawn: /bin/linux/{name} ended");
+    let deadline = Instant::now() + PIPE_TEST_TIMEOUT;
+    loop {
+        if child.was_cut() {
+            break;
+        }
+        let text = read_lossy(&serial_log);
+        if text.contains(&ended) || text.contains("[ERROR]") || Instant::now() >= deadline {
+            break;
+        }
+        metrics::sleep_poll(PANIC_TEST_POLL_INTERVAL);
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    let serial = read_lossy(&serial_log);
+    let ran = serial.contains(&format!("spawn: /bin/linux/{name} ended (Exited(4))"));
+    let matched = linux_program_output_matches(
+        &workspace_root,
+        name,
+        &serial,
+        LinuxReferenceEnvironment::ExactCount,
+    )?;
+    let three = serial.contains(&format!("{name}: 3 listeners are held at once"));
+    let unknown_free = serial
+        .lines()
+        .find(|line| line.contains(&ended))
+        .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
+    let no_error = !serial.contains("[ERROR]");
+    println!("{context}: {name} ended with status 4 = {ran}");
+    println!(
+        "{context}: {name} printed what Linux prints (linux-programs/reference/{name}.txt) = {matched}"
+    );
+    println!("{context}: {name} held 3 listeners at once = {three}");
+    println!("{context}: {name} hit no number the kernel does not know = {unknown_free}");
+    println!("{context}: no [ERROR] line = {no_error}");
+    if ran && matched && three && unknown_free && no_error {
+        println!("{context}: PASS");
+        return Ok(());
+    }
+    for line in serial
+        .lines()
+        .filter(|l| l.contains(name) || l.contains("[ERROR]"))
+        .take(32)
+    {
+        println!("{context}: (info) {}", line.trim_end());
+    }
+    bail!("{context}: FAIL")
+}
+
 fn cmd_marker_test(
     tests: &[CriticalTest],
     kind_label: &str,
@@ -32048,6 +32168,21 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
             }
         }
 
+        // **Seinas の listen のソケットとロックファイルの一連**（`ADR-0087`。2026-10-16）。Linux 向けのイメージが、
+        // ロック → bind → listen → connect → close で放す、を 3 組通し、出した行を Linux の参照と突き合わせる。
+        total += 1;
+        begin_item(
+            Family::Ipc,
+            "the Linux image takes the lock files, listens on three paths and serves a client on each",
+        );
+        match cmd_linux_socket_test() {
+            Ok(()) => println!("--- linux-socket-test: OK"),
+            Err(error) => {
+                println!("--- linux-socket-test: FAILED ({error})");
+                failed.push("linux-socket-test".to_string());
+            }
+        }
+
         total += 1;
         begin_item(Family::Process, "two Ring 3 programs run at the same time");
         match cmd_concurrent_test(&[], true) {
@@ -34557,7 +34692,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 65,
-    full: 531,
+    full: 534,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` と台本のグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

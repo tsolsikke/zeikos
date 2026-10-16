@@ -631,6 +631,9 @@ const LINUX_PROGRAMS: &[&str] = &[
     "m3a-exit-group-spin-rust",
     "m3a-channel-tls-rust",
     "m3a-exit-with-waiting-thread-rust",
+    // **Seinas の listen のソケットとロックファイルの一連**（`ADR-0087`。`linux-socket-test` のビルドだけが起動時に起こす——
+    // ロックファイルを ext2 に作って消すので、既定の起動には入れない）。
+    "wl-socket-lock-rust",
     // **ZeikOS と Linux で結果が違うイメージ**（マップ中の memfd を縮める ftruncate。`memfd-shrink-test` のビルドだけが起こす）。
     "m3a-memfd-shrink-rust",
 ];

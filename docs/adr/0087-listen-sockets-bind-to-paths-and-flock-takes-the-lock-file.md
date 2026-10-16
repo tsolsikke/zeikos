@@ -97,3 +97,14 @@ Seinas（wayland-server）は起動時に、ソケットのパスの隣にロッ
 `O_RDWR`を受けるのは、`O_TRUNC`を伴う形（`O_RDWR|O_TRUNC`と`O_RDWR|O_CREAT|O_TRUNC`。`O_CLOEXEC`の有無は見ない）だけに
 した。書きの部品が追記（`append_to_file`。`ADR-0037`）のままなので、`O_TRUNC`の無い`O_RDWR`を受けると、位置書きのつもりの
 `write`が末尾への追記になる。Seinasのロックファイルは`O_RDWR|O_CREAT|O_TRUNC|O_CLOEXEC`で開くので、この形で足りる。
+
+## Addendum（2026-10-16。実装）
+
+実装は6つのコミットで入れた（置き場と環境変数、`open`の`O_RDWR`、`flock`、listenerと接続の数、`socket`の
+`SOCK_CLOEXEC`と`accept4`、確かめのイメージ）。検査は、`cargo xtask run --linux-socket-test`（Linux向けのイメージ
+`wl-socket-lock-rust`が一連を3組通し、出した行をLinuxの参照と突き合わせる）と、`flock`の破壊テスト2件
+（`flock-ignores-holder`・`flock-keeps-lock-after-close`）である。`accept`は相手の名前として`AF_UNIX`の空の名前を書く
+（`ADR-0064`の限界3の見直し）。
+**`recvfrom`（45）も足した**——muslの`recv`（Rustのstdのソケットの`read`）はこれを打つ。`src_addr`と`flags`が0の形だけ受け、
+`read`と同じにする（`sendto`が`write`と同じなのと対になる）。確かめのイメージが最初に通らなかったのは、これが`-ENOSYS`だった
+ためである（起動ログの「カーネルの知らない番号」の欄が45を指していた）。

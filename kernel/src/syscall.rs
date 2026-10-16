@@ -47,9 +47,9 @@ use crate::abi::linux::x86_64::{
     SYS_FUTEX, SYS_GETDENTS64, SYS_GETPID, SYS_GETRANDOM, SYS_GETTID, SYS_IOCTL, SYS_LISTEN,
     SYS_LSEEK, SYS_MADVISE, SYS_MEMFD_CREATE, SYS_MKDIR, SYS_MMAP, SYS_MPROTECT, SYS_MUNMAP,
     SYS_NANOSLEEP, SYS_OPEN, SYS_POLL, SYS_PRLIMIT64, SYS_READ, SYS_READLINK, SYS_READV,
-    SYS_RECVMSG, SYS_RMDIR, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SCHED_YIELD, SYS_SENDMSG,
-    SYS_SENDTO, SYS_SET_TID_ADDRESS, SYS_SIGALTSTACK, SYS_SOCKET, SYS_STAT, SYS_TKILL, SYS_UNAME,
-    SYS_UNLINK, SYS_WRITE, SYS_WRITEV,
+    SYS_RECVFROM, SYS_RECVMSG, SYS_RMDIR, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SCHED_YIELD,
+    SYS_SENDMSG, SYS_SENDTO, SYS_SET_TID_ADDRESS, SYS_SIGALTSTACK, SYS_SOCKET, SYS_STAT, SYS_TKILL,
+    SYS_UNAME, SYS_UNLINK, SYS_WRITE, SYS_WRITEV,
 };
 use crate::abi::linux::{
     cmsg_one_fd_bytes, dirent64_record, dirent64_record_len, fb_fix_screeninfo_bytes,
@@ -1128,6 +1128,19 @@ unsafe fn dispatch(
             unsafe { sys_readlink(args[0], args[1], args[2], page_table_root, direct_map) }
         }
         SYS_FCNTL => sys_fcntl(args[0], args[1], args[2]),
+        // **繋いだ相手から受ける `recvfrom` は `read` と同じである**（`ADR-0087`。musl の `recv`——Rust の std のソケットの
+        // `read`——はこれを打つ）。`src_addr`（相手の名前の置き場）と `flags` は 0 だけ受ける（`MSG_PEEK`・`MSG_DONTWAIT` は
+        // 無い）。ソケットでなければ `-ENOTSOCK`。
+        SYS_RECVFROM => {
+            if args[3] != 0 || args[4] != 0 {
+                (-EINVAL) as u64
+            } else if let Err(errno) = socket_state_of(args[0]) {
+                errno
+            } else {
+                // SAFETY: 同上。
+                unsafe { sys_read(args[0], args[1], args[2], page_table_root, direct_map, bkl) }
+            }
+        }
         SYS_SENDTO => {
             // **繋いだ相手へ送る `sendto` は `write` と同じである**（`addr` を渡す形は、繋がないソケットの
             // ものなので断る）。`flags`（`MSG_DONTWAIT`・`MSG_NOSIGNAL`）は見ない——ソケットへの `write` は

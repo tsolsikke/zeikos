@@ -258,6 +258,15 @@ pub const PATH_RULES: &[PathRule] = &[
         ],
         reach: Reach::Families(&[Family::Boot, Family::Smp, Family::Process]),
     },
+    // **`flock` と、Seinas の listen のソケットとロックファイルの一連の確かめ**（`ADR-0087`。2026-10-16）。確かめの項目
+    // `--linux-socket-test` は ipc に、`flock` の破壊テスト 2 件は `--critical-test` の列（interrupts）に在る。
+    PathRule {
+        patterns: &[
+            "kernel/src/flock.rs",
+            "linux-programs/wl-socket-lock-rust.rs",
+        ],
+        reach: Reach::Families(&[Family::Ipc, Family::Interrupts]),
+    },
     PathRule {
         patterns: &["kernel/userland/zash.rs"],
         reach: Reach::Families(RING3_FAMILIES),
@@ -285,7 +294,6 @@ pub const PATH_RULES: &[PathRule] = &[
         patterns: &[
             "kernel/src/socket.rs",
             "kernel/src/shm.rs",
-            "kernel/src/flock.rs",
             "kernel/userland/poll*.rs",
             "kernel/userland/sock*.rs",
             "kernel/userland/comp*.rs",
