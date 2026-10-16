@@ -52,7 +52,7 @@ pub enum MappingKind {
     Image,
     /// スタック。**外せない。**
     Stack,
-    /// スタックの下の見張りのページ（写していない）。**外せないし、ここへは置けない。**
+    /// スタックの下の見張りのページ（マップしていない）。**外せないし、ここへは置けない。**
     Guard,
     /// `brk` のヒープ。終わりは `brk` が動かす。**`munmap` では外せないが、`MAP_FIXED` は上に置ける**（musl の見張り）。
     Heap,
@@ -86,7 +86,7 @@ pub struct Mapping {
     pub kind: MappingKind,
     /// 書けるマッピングか（`PROT_WRITE`）。
     pub writable: bool,
-    /// ページが写してあるか。**`PROT_NONE` の無名のマッピングは、範囲だけ取って、何も写さない**（触ればページフォルト）。
+    /// ページがマップしてあるか。**`PROT_NONE` の無名のマッピングは、範囲だけ取って、何もマップしない**（触ればページフォルト）。
     pub present: bool,
 }
 
@@ -101,7 +101,7 @@ impl Mapping {
     }
 }
 
-/// 断る理由（呼ぶ側が errno に写す）。
+/// 断る理由（呼ぶ側が errno にコピーする）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MapError {
     /// このプロセスの表が据えられていない（起動時の試しなど）。`-ENOMEM`。
@@ -222,7 +222,7 @@ impl MemoryMap {
     /// `start` から `bytes` の範囲を、マッピングの全体として返す（純粋な論理）。
     ///
     /// - 範囲がちょうど 1 つのマッピングなら、そのマッピングを外して返す。
-    /// - 範囲にどのマッピングも掛かっていなければ `Ok(None)`（Linux の `munmap` は、写していない範囲でも 0 を返す）。
+    /// - 範囲にどのマッピングも掛かっていなければ `Ok(None)`（Linux の `munmap` は、マップしていない範囲でも 0 を返す）。
     /// - 範囲がマッピングの一部にだけ掛かる、または複数のマッピングにまたがるなら、`PartOfAMapping`（この刻みでは断る）。
     pub fn release_whole(&mut self, start: u64, bytes: u64) -> Result<Option<Mapping>, MapError> {
         if !self.active {
@@ -369,7 +369,7 @@ impl MemoryMap {
         Ok(released)
     }
 
-    /// `start` から `bytes` の範囲に掛かるマッピングの、書けるか・写してあるかを変える（純粋な論理。表だけを変える。リーフを
+    /// `start` から `bytes` の範囲に掛かるマッピングの、書けるか・マップしてあるかを変える（純粋な論理。表だけを変える。リーフを
     /// 書き換えるのは呼ぶ側である）。**範囲の一部に掛かるマッピングは、範囲の中と外で分ける。** 変える前の断片（古い
     /// `writable`・`present` を持つ）を `out` へ置き、数を返す。
     ///
@@ -771,7 +771,7 @@ mod tests {
         );
     }
 
-    /// 返すのはマッピングの全体だけ。一部や、またがる範囲は断る。写していない範囲は `None` で 0 になる。
+    /// 返すのはマッピングの全体だけ。一部や、またがる範囲は断る。マップしていない範囲は `None` で 0 になる。
     #[test]
     fn only_a_whole_mapping_is_released_and_an_empty_range_is_not_an_error() {
         let mut map = active();
@@ -975,7 +975,7 @@ mod tests {
             Some(true)
         );
         assert_eq!(map.summary().count, 3);
-        // 全部を写さない形（PROT_NONE）にすると、3 つの断片が返り、どれも present が偽になる。
+        // 全部をマップしない形（PROT_NONE）にすると、3 つの断片が返り、どれも present が偽になる。
         let n = map
             .change_protection(start, 4 * PAGE_SIZE, false, false, &mut out)
             .unwrap();

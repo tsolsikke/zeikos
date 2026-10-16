@@ -31,9 +31,9 @@
 //! ので害が無いもの。
 //! 内訳は `docs/verification-coverage.md` の「ELF の検査を 3 つに分ける」にある。
 //!
-//! # セグメントの並びは、ページ単位で写す側のために別に確かめる
+//! # セグメントの並びは、ページ単位でマップする側のために別に確かめる
 //!
-//! **[`Elf::parse`] はセグメントの並びを見ない**（上の理由）。**ページ単位で写すローダーは、写す前に
+//! **[`Elf::parse`] はセグメントの並びを見ない**（上の理由）。**ページ単位でマップするローダーは、マップする前に
 //! [`Elf::check_load_layout`] を呼ぶ**——アドレスの順、重なり、ページへの切り上げのあふれ、同じページに
 //! 載るセグメントの権限を確かめる。ユーザーのプログラムを読むカーネルが呼ぶ。`kernel.elf` を読む
 //! bootloader は呼ばない（配置の方針が違う）。
@@ -57,7 +57,7 @@ pub const PT_LOAD: u32 = 1;
 pub const PT_INTERP: u32 = 3;
 /// `p_type`: プログラムヘッダの表そのものの位置。
 pub const PT_PHDR: u32 = 6;
-/// `p_type`: スレッドローカルの領域の雛形（TLS）。**置くのは libc の起動のコードで、ローダーは写さない。**
+/// `p_type`: スレッドローカルの領域の雛形（TLS）。**置くのは libc の起動のコードで、ローダーはマップしない。**
 pub const PT_TLS: u32 = 7;
 /// `p_type`: スタックの権限の求め（GNU の拡張）。`p_flags` の X が、実行できるスタックを求める印である。
 pub const PT_GNU_STACK: u32 = 0x6474_e551;
@@ -115,12 +115,12 @@ pub enum ElfError {
     ProgramHeadersBeyondHead,
 }
 
-/// ページ単位で写すローダーが、セグメントの並びを受け付けられない理由（[`Elf::check_load_layout`]）。
+/// ページ単位でマップするローダーが、セグメントの並びを受け付けられない理由（[`Elf::check_load_layout`]）。
 ///
 /// `index` は `PT_LOAD` だけを数えた番号（0 から）である。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LayoutError {
-    /// `p_memsz` が 0 のセグメントがある。**写すページが無く、最終ページの計算 `p_vaddr + p_memsz - 1` が
+    /// `p_memsz` が 0 のセグメントがある。**マップするページが無く、最終ページの計算 `p_vaddr + p_memsz - 1` が
     /// 成り立たない。**
     EmptySegment { index: usize },
     /// 終わりのアドレスをページの境界へ切り上げると u64 を越える（`p_vaddr + p_memsz` のあふれを含む）。
@@ -133,10 +133,10 @@ pub enum LayoutError {
     /// **1 枚のページは 1 つの権限しか持てない。**
     MixedPermissionsInPage { index: usize, page: u64 },
     /// 前のセグメントの最終ページから始まり、そのページに置くファイルの中身を持つ。
-    /// **共有するページは前のセグメントが写したものを使うので、後ろのセグメントの中身を重ねる経路が無い。**
+    /// **共有するページは前のセグメントがマップしたものを使うので、後ろのセグメントの中身を重ねる経路が無い。**
     FileDataInSharedPage { index: usize, page: u64 },
     /// 書けて、実行もできるセグメントがある（`p_flags` に W と X の両方が立っている。2026-10-03）。
-    /// **書けるページは実行できない、という決まりで写すので、受け付けない。** Linux は、こういうセグメントも
+    /// **書けるページは実行できない、という決まりでマップするので、受け付けない。** Linux は、こういうセグメントも
     /// 読み込む——断るのは、このカーネルの決まりである。
     WritableAndExecutable { index: usize },
 }
@@ -282,7 +282,7 @@ impl<'a> Elf<'a> {
         self.program_headers().filter(|ph| ph.p_type == PT_LOAD)
     }
 
-    /// ページ単位で写すローダーのために、`PT_LOAD` の並びを確かめる（[`check_load_layout`]）。
+    /// ページ単位でマップするローダーのために、`PT_LOAD` の並びを確かめる（[`check_load_layout`]）。
     pub fn check_load_layout(&self) -> Result<(), LayoutError> {
         check_load_layout(self.load_segments())
     }
@@ -445,7 +445,7 @@ impl<'a> ElfHeaders<'a> {
         self.program_headers().filter(|ph| ph.p_type == PT_LOAD)
     }
 
-    /// ページ単位で写すローダーのために、`PT_LOAD` の並びを確かめる（[`check_load_layout`]）。
+    /// ページ単位でマップするローダーのために、`PT_LOAD` の並びを確かめる（[`check_load_layout`]）。
     pub fn check_load_layout(&self) -> Result<(), LayoutError> {
         check_load_layout(self.load_segments())
     }
@@ -574,7 +574,7 @@ pub enum PlacementError {
     /// `PT_INTERP` を持つ。**動的リンクは扱わない。**
     NeedsInterpreter,
     /// `PT_GNU_STACK` が、実行できるスタックを求めている。**書けるページは実行できない、という決まりで
-    /// 写すので、受け付けない。** Linux は、こういうイメージも読み込む——断るのは、このカーネルの決まりである。
+    /// マップするので、受け付けない。** Linux は、こういうイメージも読み込む——断るのは、このカーネルの決まりである。
     ExecutableStack,
     /// ずらした後のアドレスがあふれる。
     AddressOverflow { index: usize },
@@ -586,7 +586,7 @@ pub enum PlacementError {
     ImageTooLarge { span: u64, limit: u64 },
 }
 
-/// ページ単位（[`LOAD_PAGE_SIZE`]）で写すローダーのために、`PT_LOAD` の並びを確かめる（純粋な論理）。
+/// ページ単位（[`LOAD_PAGE_SIZE`]）でマップするローダーのために、`PT_LOAD` の並びを確かめる（純粋な論理）。
 ///
 /// **通った並びについて、次が成り立つ。** ローダーはこれを前提に計算してよい。
 ///
@@ -598,7 +598,7 @@ pub enum PlacementError {
 ///   （`.data` の直後から `.bss` が始まる形。`ADR-0039`）
 /// - 書けて実行もできるセグメントは無い（`p_flags` の W と X の両方を持つセグメントは断る。2026-10-03）
 ///
-/// **`p_vaddr` が置いてよい範囲に在るかは見ない**（ユーザーの範囲の外は、写すときに断られる）。
+/// **`p_vaddr` が置いてよい範囲に在るかは見ない**（ユーザーの範囲の外は、マップするときに断られる）。
 ///
 /// **[`ProgramHeader`] は誰でも作れるので、[`Elf::parse`] を通った値であることを前提にしない**
 /// （加算は確かめてから行う）。`PT_LOAD` でないものが混ざっていても、同じ規則で見る。

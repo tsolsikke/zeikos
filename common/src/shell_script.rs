@@ -1,4 +1,4 @@
-//! `--shell-test` のスクリプトと、それをバイトへ写す規則（`ADR-0063` の (b3) の (b)）。
+//! `--shell-test` のスクリプトと、それをバイトへ変換する規則（`ADR-0063` の (b3) の (b)）。
 //!
 //! # なぜここに在るのか
 //!
@@ -9,7 +9,7 @@
 //! **目的は `--full` の余裕である**——**打鍵を見ない破壊テストを、1 本あたり約 50 秒縮むスクリプトのグループへ
 //! 移す**（`--shell-test` の破壊テストは 58 秒、スクリプトのグループは 8.5 秒。実測。`ADR-0063` の決定 4）。
 //!
-//! # 写す規則
+//! # 変換の規則
 //!
 //! **キー名は QEMU monitor のものである**（`slash` / `spc` / `minus` / `ret` …）。**バイトは
 //! カーネルのデコーダが同じキーに出すものと同じにする**（`kernel/src/input.rs` の
@@ -341,7 +341,7 @@ pub const DONE: u8 = 0x0c;
 /// 切れた。** **どのキーも 0xFF は作らない**（非 ASCII の字は届けない）**ので、これを逃げにする。**
 pub const LITERAL: u8 = 0xff;
 
-/// 写したバイト列の上限。**実測で 1 KiB 台なので 8 倍の余裕である。**
+/// 変換したバイト列の上限。**実測で 1 KiB 台なので 8 倍の余裕である。**
 pub const SCRIPT_CAP: usize = 8192;
 
 /// 1 つのキーが出すバイト（最大 4）と、その長さ。
@@ -406,7 +406,7 @@ const fn starts_with(a: &[u8], prefix: &[u8]) -> bool {
     true
 }
 
-/// キー名をバイトへ写す。**知らない名前は const の評価で止まる**（写し忘れをビルド時に検出する）。
+/// キー名をバイトへ変換する。**知らない名前は const の評価で止まる**（変換し忘れをビルド時に検出する）。
 ///
 /// **JIS の刻印**——`shift-4` は `$`、`shift-minus` は `=`、`shift-equal` は `~`、
 /// `shift-semicolon` は `+`、`bracket_left` は `@`、`bracket_right` は `[`、`yen` と `ro` は
@@ -497,7 +497,7 @@ pub const fn bytes_for_key(name: &str) -> KeyBytes {
     panic!("a key name in shell_script::LINES has no byte mapping");
 }
 
-/// スクリプトをバイトへ写す。**`keystrokes_only` の行は外し、キーごとに [`PAUSE`] を置き、
+/// スクリプトをバイトへ変換する。**`keystrokes_only` の行は外し、キーごとに [`PAUSE`] を置き、
 /// 末尾に [`DONE`] を置く。**
 pub const fn render() -> ([u8; SCRIPT_CAP], usize) {
     let mut out = [0u8; SCRIPT_CAP];
@@ -512,7 +512,7 @@ pub const fn render() -> ([u8; SCRIPT_CAP], usize) {
                 let mut b = 0;
                 while b < key.len {
                     let byte = key.bytes[b];
-                    // **制御のバイトは逃げつきで写す**（改行と ESC は記号と衝突しないので素のまま）。
+                    // **制御のバイトは逃げつきで変換する**（改行と ESC は記号と衝突しないので素のまま）。
                     if byte < 0x20 && byte != b'\n' && byte != 0x1b {
                         out[n] = LITERAL;
                         n += 1;
@@ -535,7 +535,7 @@ pub const fn render() -> ([u8; SCRIPT_CAP], usize) {
 
 const RENDERED: ([u8; SCRIPT_CAP], usize) = render();
 
-/// 写したスクリプトの長さ。
+/// 変換したスクリプトの長さ。
 pub const SCRIPT_LEN: usize = RENDERED.1;
 
 /// 長さちょうどの配列へもう一度コピーする（**const の中では `split_at` が使えない**）。
@@ -549,7 +549,7 @@ const SCRIPT_EXACT: [u8; SCRIPT_LEN] = {
     out
 };
 
-/// 写したスクリプト。**カーネルが `shell-script-test` の `SCRIPT` として読む。**
+/// 変換したスクリプト。**カーネルが `shell-script-test` の `SCRIPT` として読む。**
 pub const SCRIPT: &[u8] = &SCRIPT_EXACT;
 
 #[cfg(test)]
@@ -558,7 +558,7 @@ mod tests {
 
     #[test]
     fn every_key_name_in_the_lines_has_a_mapping_and_the_script_fits() {
-        // **`render` が const で評価できた時点で写し忘れは無い。** 長さだけ見る。
+        // **`render` が const で評価できた時点で変換し忘れは無い。** 長さだけ見る。
         assert!(
             SCRIPT.len() < SCRIPT_CAP / 2,
             "the script is {} byte(s)",

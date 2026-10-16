@@ -10,9 +10,9 @@
 //!
 //! 1. `open("/dev/fb0", O_RDWR)`。**`SYS_OPEN_SCREEN`（ZeikOS 独自）ではなく、Linux の道で開く**——Seinas の fbdev の裏側が
 //!    そうするため。
-//! 2. `ioctl(FBIOGET_VSCREENINFO)`・`ioctl(FBIOGET_FSCREENINFO)` で形を訊き、`mmap(MAP_SHARED)` で面を写す。
+//! 2. `ioctl(FBIOGET_VSCREENINFO)`・`ioctl(FBIOGET_FSCREENINFO)` で形を訊き、`mmap(MAP_SHARED)` で面をマップする。
 //! 3. 四隅に 80 画素の四角を置く——左上 赤、右上 緑、左下 青、右下 黄（Seinas の fbdev の確かめの絵と同じ配置。向きと
-//!    色の並びが分かる）。**`FBIOZPRESENT` は打たない**——Linux の fbdev は書けば映るので、カーネルが間隔ごとに写すはずである。
+//!    色の並びが分かる）。**`FBIOZPRESENT` は打たない**——Linux の fbdev は書けば映るので、カーネルが間隔ごとにコピーするはずである。
 //! 4. `fb-test: painted` と言って、1.5 秒眠る（`nanosleep`。その間に `xtask` が `screendump` で読む）。
 //! 5. `fb-test: slept` と言って、`munmap` し、`close` する（図形モードから抜け、文字の画面が戻る）。0 で終わる。
 //!
@@ -121,7 +121,7 @@ pub unsafe extern "sysv64" fn zeikos_main(stack: *const u64) -> ! {
         for y in y0..y0 + CORNER {
             for x in x0..x0 + CORNER {
                 let at = (y * info.line_length + x * 4) as usize;
-                // SAFETY: `at` は `mmap` で写した面（`smem_len` バイト）の中である（四隅は画面の中に収まる）。
+                // SAFETY: `at` は `mmap` でマップした面（`smem_len` バイト）の中である（四隅は画面の中に収まる）。
                 unsafe { core::ptr::write_volatile(base.add(at).cast::<u32>(), value) };
             }
         }

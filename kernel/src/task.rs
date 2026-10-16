@@ -105,7 +105,7 @@ const BSP_IDLE_TASK: usize = WORKER_COUNT + 3;
 ///
 /// **増やすのはこの定数 1 つである**（見張りのページの名前 `THREAD_GUARD_NAMES` は同じ長さなので、型が合わなくなって
 /// 足し忘れを止める）。1 本につき `.bss` が 68 KiB（スタック 64 KiB と見張りのページ）増え、`[TaskState; TASK_COUNT]`
-/// の写しも伸びる（`the_state_array_stays_small_enough_for_the_switch_frame` の上限を見直すこと）。**池が尽きたら
+/// のコピーも伸びる（`the_state_array_stays_small_enough_for_the_switch_frame` の上限を見直すこと）。**池が尽きたら
 /// `clone` は `-EAGAIN` を返す**（入口を入れる段で）。
 pub const THREAD_TASKS: usize = 4;
 
@@ -687,7 +687,7 @@ struct Task {
     /// このタスクが使う Ring 3 のスロット（M3a。`ADR-0085` の決定 2）。
     ///
     /// **以前はタスクの添字から決めていた**（[`ring3_slot_of`]。足した 1 本だけが 1）。**スレッドのタスクは、作った
-    /// スレッドのプロセスのスロットを写すので、添字からは決まらない**——欄で持つ形にした。**登録と起動で書き、切り替えの
+    /// スレッドのプロセスのスロットをコピーするので、添字からは決まらない**——欄で持つ形にした。**登録と起動で書き、切り替えの
     /// 検算（`schedule_switch`）とそのタスク自身（[`current_ring3_slot`]）が読む。** この段では、値は今までと同じである
     /// （足した 1 本が 1、ほかは 0）。
     ring3_slot: usize,
@@ -825,8 +825,8 @@ const RING3_TASK: usize = WORKER_COUNT + 2;
 /// Ring 3 へ降りないので、0 を返しても誰も読まない。**
 ///
 /// **M3a から、走っている間に読むのは `Task` の欄である**（`scheduler::ring3_slot`。[`Task::ring3_slot`] の doc）。
-/// **これは起動（[`start_ring3_task`]）が欄へ写す既定と、添字で決まる所（ハンドルと [`detached_slot`]）だけが使う。**
-/// スレッドのタスクの既定は 0 だが、起こすときに作った側のスロットを欄へ写す。
+/// **これは起動（[`start_ring3_task`]）が欄へコピーする既定と、添字で決まる所（ハンドルと [`detached_slot`]）だけが使う。**
+/// スレッドのタスクの既定は 0 だが、起こすときに作った側のスロットを欄へコピーする。
 const fn ring3_slot_of(task: usize) -> usize {
     if task == RING3_TASK {
         1
@@ -1305,7 +1305,7 @@ pub fn spawn_refusal_for_threads(slot: usize) -> Option<SpawnRefusal> {
 
 /// 池のタスクを起こす依頼（`clone` の入口が作る）。
 pub struct ThreadStart<'a> {
-    /// 最初に Ring 3 へ入る文脈（親の文脈の写し。`arch` が作る。共通の側は中身を読まない）。
+    /// 最初に Ring 3 へ入る文脈（親の文脈のコピー。`arch` が作る。共通の側は中身を読まない）。
     pub image: &'a crate::arch::x86_64::IrqContext,
     /// 渡されたユーザースタック（起動ログの行に出すだけ。文脈の中にも同じ値が在る）。
     pub user_stack: u64,
@@ -1326,7 +1326,7 @@ pub enum ThreadStartError {
 ///
 /// # 形（案 A。3 段目の設計）
 ///
-/// 最初の文脈は、親の文脈の写し（RAX=0、RSP=渡されたスタック、CS/SS=ユーザー）を池のカーネルスタックの上端に
+/// 最初の文脈は、親の文脈のコピーし（RAX=0、RSP=渡されたスタック、CS/SS=ユーザー）を池のカーネルスタックの上端に
 /// 積んだものである。**最初の切り替えで復元経路（pop 15 本 → `iretq`）が直に Ring 3 へ落とす**——`run_excursion` の枠は
 /// 無く、回復点も無い。RSP0 は自分のカーネルスタックの上端で、Ring 3 からの入場はそこへ積む。
 ///
@@ -1335,7 +1335,7 @@ pub enum ThreadStartError {
 /// - `excursion_depth` は属するプロセスの深さ（親が `clone` を打ったときの深さ）で、`ring3` 側の `ExcursionState::depth`
 ///   と同じ値である（プロセスの表を親と同じ欄で引くため。切り替えの検算は、池のタスクなら深さに依らず自分のカーネル
 ///   スタックを期待する——`ring3::excursion_stack_range_for`）。
-/// - `page_table_root` は親の値の写し（決定 1 の「スレッド（写し）」）。
+/// - `page_table_root` は親の値のコピーし（決定 1 の「スレッド（コピー）」）。
 /// - `owner` は登録のまま（BSP）で、**親の `owner` と今の CPU に一致することをここで確かめる**（決定 5。`ran_on` の
 ///   前提。違えば名指しして止まる——本番では起きない）。
 /// - `ring3_slot` は親のスロット（プロセスの表はスロットで共有する）。
@@ -1380,7 +1380,7 @@ pub fn start_thread_task(start: ThreadStart<'_>) -> Result<(usize, u64), ThreadS
     // 構造体と `thread_local!` の値）をそのまま読み書きする。**ここで読む MSR は、いつも親のものである**——`clone` の入口
     // （`bkl::acquire` は cli が先で、待つ間も割り込みを開けない）からここまでに切り替えは無く、切り替えの 1 点
     // （`schedule_switch` の `save_user_registers` と `restore_user_registers`）が FS の基底を控えて戻すので、どのタスクが
-    // カーネルに居ても MSR はそのタスクの基底である（下の `save_user_registers_for_thread` が GS の基底を親の写しに
+    // カーネルに居ても MSR はそのタスクの基底である（下の `save_user_registers_for_thread` が GS の基底を親のコピーに
     // するのと同じ前提）。
     #[cfg(feature = "clone-shares-tls-test")]
     let tls = crate::arch::x86_64::user_fs_base();
@@ -1412,7 +1412,7 @@ pub fn start_thread_task(start: ThreadStart<'_>) -> Result<(usize, u64), ThreadS
     // `image` は `arch` が作った、ユーザーの CS・SS を持つ文脈である。
     let saved_stack_pointer =
         unsafe { crate::arch::x86_64::build_initial_context_from_image(top, start.image) };
-    // **ユーザーのレジスタの置き場を、親の写しに TLS を入れたもので埋める**（`arch` の `UserRegisters`）。最初の切り替えが
+    // **ユーザーのレジスタの置き場を、親のコピーに TLS を入れたもので埋める**（`arch` の `UserRegisters`）。最初の切り替えが
     // これを載せる。
     // SAFETY: IF=0 かつ BKL の内側で、この配列に触るのは切り替えとここだけである。添字は `TASK_COUNT` 未満。`tls` は
     // 呼び手が `is_allowed_user_segment_base` を通している（契約）。
@@ -3264,7 +3264,7 @@ fn schedule_switch(current_sp: u64) -> u64 {
         // `owners` も 1 回だけ読み、`pick_next` と下の観測の両方へ渡す
         // （`currents` と同じ理由。上のコメント）。
         let owners = scheduler::owners();
-        // **状態は配列に写さず、添字から引く関数を渡す（M3a。2026-10-13）。** **配列（`scheduler::states()`）を
+        // **状態は配列にコピーせず、添字から引く関数を渡す（M3a。2026-10-13）。** **配列（`scheduler::states()`）を
         // ここに置くと、その 720 バイトがこの枠に乗り、Ring 3 の最中のティックがこの枠を遠征スタックに載せる**——
         // 池の 4 本で配列が 288 バイト伸びたことで、ティックの経路の高水位がシステムコールの経路を越え、`bss-test` の
         // 遠征スタックの高水位の行がティックの有無で揺れた（実測。2914 と、値で 3312、参照で 3232）。
@@ -3627,14 +3627,14 @@ fn report_double_selection(next: usize, cpu: usize, currents: &[usize; MAX_CPUS]
 /// メイン（0）へ戻る。
 ///
 /// **状態は、添字から引く関数（`state_of`）で受ける（2026-10-13）。** **以前は `[TaskState; TASK_COUNT]` を値で受けて
-/// いた**——その写し（1 本 72 バイト）が `schedule_switch` の枠に乗り、Ring 3 の最中のティックがこの枠を遠征スタックに
+/// いた**——そのコピーし（1 本 72 バイト）が `schedule_switch` の枠に乗り、Ring 3 の最中のティックがこの枠を遠征スタックに
 /// 載せる。池の 4 本で配列が 720 バイトになり、ティックの経路の高水位がシステムコールの経路（`bss-test` で 2914）を
 /// 越えて、起動ログの高水位の行がティックの有無で揺れた（実測。値で 3312、参照で渡しても 3232）。**関数で引けば、
 /// 枠に乗るのは読んだ 1 本ずつだけである。** 純粋関数のままで、ホストテストは配列を閉じ込めた閉包を渡す。
 ///
 /// # 同じ添字を 2 度読む所が 1 つある
 ///
-/// **以前は配列へ一度に写した状態で判断していたが、今は 1 本ずつ読む。** 1 回の判断の中で同じ添字を 2 度読むのは、
+/// **以前は配列へ一度にコピーした状態で判断していたが、今は 1 本ずつ読む。** 1 回の判断の中で同じ添字を 2 度読むのは、
 /// メインだけである——輪の最後で `is_runnable` を見て、落ち先で `Waiting` かを見る（今のタスクがメインのときは輪で
 /// 読まないので 1 度）。ワーカーと池と足した 1 本は、それぞれ 1 度しか読まない。
 ///

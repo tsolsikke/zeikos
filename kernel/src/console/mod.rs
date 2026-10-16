@@ -375,7 +375,7 @@ static GRAPHICS_PRESENTS: AtomicU64 = AtomicU64::new(0);
 
 /// `/dev/fb0` で開いた図形モードか（2026-10-07。`ADR-0083`）。**書けば映る形**——利用者は `FBIOZPRESENT` を打たず、
 /// カーネルが間隔ごとに裏バッファの全体を画面へ転送する（Linux の `fb_deferred_io` と同じ考え）。**`SYS_OPEN_SCREEN`
-/// （ZeikOS 独自）で開いた図形モードでは立てない**——そちらは利用者が `FBIOZPRESENT` で矩形を写す。
+/// （ZeikOS 独自）で開いた図形モードでは立てない**——そちらは利用者が `FBIOZPRESENT` で矩形をコピーする。
 static FB0_OPEN: AtomicBool = AtomicBool::new(false);
 /// 最後に転送した時刻（タイマの刻み）。[`present_deferred_if_due`] が間隔を数える。
 static FB0_LAST_PRESENT_TICK: AtomicU64 = AtomicU64::new(0);
@@ -443,7 +443,7 @@ pub fn present_deferred_if_due(now_ticks: u64, interval_ticks: u64) -> bool {
 }
 
 /// 裏バッファの全体を画面へ転送し、回数とサイクルを数える（[`present_deferred_if_due`] と [`close_screen_fd`] から）。
-/// **`FBIOZPRESENT` の回数（`GRAPHICS_PRESENTS`）には足さない**——利用者が打った数と、カーネルが写した数を分けて見る。
+/// **`FBIOZPRESENT` の回数（`GRAPHICS_PRESENTS`）には足さない**——利用者が打った数と、カーネルがコピーした数を分けて見る。
 ///
 /// # 呼ぶ側が BKL を持つとは限らない（2026-10-12）
 ///

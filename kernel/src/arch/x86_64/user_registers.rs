@@ -91,10 +91,10 @@ pub unsafe fn save_user_registers(area: &mut UserRegisters) {
     area.gs_base = cpu::read_gs_base();
 }
 
-/// 池のスレッドのタスクの置き場を、親（今走っている文脈）の写しに FS の基底 `fs_base` を入れたもので埋める
+/// 池のスレッドのタスクの置き場を、親（今走っている文脈）のコピーに FS の基底 `fs_base` を入れたもので埋める
 /// （M3a。2026-10-14。`clone` の `CLONE_SETTLS`）。
 ///
-/// **FP の状態と GS の基底は親の写しである**（Linux と同じ）。**FS の基底だけが、渡された TLS である。**
+/// **FP の状態と GS の基底は親のコピーである**（Linux と同じ）。**FS の基底だけが、渡された TLS である。**
 ///
 /// # 契約（境界の関数）
 ///

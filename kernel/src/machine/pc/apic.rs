@@ -178,7 +178,7 @@ pub fn map_and_probe<const CAP: usize>(
     //
     // 食い違ったらマップもしない。「MADT のアドレスに Local APIC が無い
     // かもしれない」と判断した直後にそのアドレスを PCD でマップすると、後段が
-    // 「写っているのだから正しいのだろう」と読む余地を作る。正当化できない
+    // 「マップされているのだから正しいのだろう」と読む余地を作る。正当化できない
     // マッピングを残さない。S1 は情報を集める段階なので、食い違いという情報が
     // 得られた時点で目的は達している。
     if base.base != lapic_phys.as_u64() {
@@ -284,8 +284,8 @@ fn map_mmio_page<const CAP: usize>(
         return None;
     }
     let virt = direct_map.phys_to_virt(phys);
-    // **写すページを、ページの権限の一覧（`crate::page_survey`）に登録する。** 直接マッピングの窓の中で、ここだけ
-    // キャッシュ無効で写す。
+    // **マップするページを、ページの権限の一覧（`crate::page_survey`）に登録する。** 直接マッピングの窓の中で、ここだけ
+    // キャッシュ無効でマップする。
     crate::page_survey::register(
         "interrupt controller registers",
         virt.as_u64(),
@@ -336,7 +336,7 @@ fn map_mmio_page<const CAP: usize>(
             unsafe { table.map_4kib(virt, target, PagePermissions::kernel_device(), allocator) };
         match result {
             Ok(()) => {}
-            // 一律に失敗としない。既に正しく写っているなら、その環境で
+            // 一律に失敗としない。既に正しくマップされているなら、その環境で
             // 不必要に失敗することになる。期待の物理を指しているかは下で見る。
             Err(MapUpdateError::AlreadyMapped) => already_mapped = true,
             Err(e) => {
@@ -532,7 +532,7 @@ fn skip_mapping(logger: &mut Logger<Serial>, what: &str) -> bool {
 /// # この手法は破壊テスト専用である。通常経路へ持ち込まないこと
 ///
 /// ここで作るのは、同一物理ページに対するメモリ型の異なる別名である。PML4 の
-/// フレームは本流の direct map 窓から WB で写っているので、そこへ PCD のマッピングを
+/// フレームは本流の direct map 窓から WB でマップされているので、そこへ PCD のマッピングを
 /// 重ねることになる。x86 では同一物理ページに異なるメモリ型の別名を作ることは
 /// 未定義の領域である。
 ///
@@ -678,7 +678,7 @@ const LAPIC_LVT_ENTRIES: [(&str, u64); 6] = [
 ///
 /// [`ENTRY_MASKED_BIT`] だけが `pub(crate)` なのは、割り込み層の APIC 実装
 /// （`irq` の内側）がマスクの読み書きに使うためである。レジスタの配置を
-/// 知っているのはこのモジュールだけにする。割り込み層へ定数を写すと、
+/// 知っているのはこのモジュールだけにする。割り込み層へ定数をコピーすると、
 /// 同じ事実が 2 箇所に出て片方だけが古くなる。
 ///
 /// `pub` ではなく `pub(crate)` である。現在の利用箇所は
@@ -872,7 +872,7 @@ pub fn survey_registers(logger: &mut Logger<Serial>, mapped: &MappedInterruptCon
     for slot in mapped.io_apics.iter().take(mapped.io_apic_count) {
         let Some(io_apic) = slot else { continue };
         // SAFETY: `mapped` の I/O APIC は、`map_and_probe` がマッピングを確かめたものである。その物理のアドレスを
-        // direct map で写した仮想アドレスを渡す。
+        // direct map でマップした仮想アドレスを渡す。
         let entries = unsafe {
             survey_io_apic(
                 logger,
@@ -908,7 +908,7 @@ struct IoApicVerdict {
 
 /// I/O APIC の ID と版のレジスタから判定する（純粋ロジック。HW-e-2）。
 ///
-/// # ID の一致は「写っている」の証拠にしない
+/// # ID の一致は「マップされている」の証拠にしない
 ///
 /// **VirtualBox は ID レジスタを 0 のまま置き、MADT は CPU の数を ID にする**（実測。CPU 1 個で 1、
 /// 4 個で 4）。**それでも IRQ1 はこの I/O APIC を通ってベクタ 0x42 で届く**（VirtualBox のデバッガの
@@ -942,7 +942,7 @@ fn covers_gsi(gsi_base: u32, entries: Option<u32>, gsi: u32) -> bool {
 ///
 /// # Safety
 ///
-/// `base_virt` が、`io_apic` の MMIO のページを写した、マッピングを確かめた仮想アドレスであること（2026-09-30 に、
+/// `base_virt` が、`io_apic` の MMIO のページをマップした、マッピングを確かめた仮想アドレスであること（2026-09-30 に、
 /// アドレスを受ける安全な関数から unsafe fn にした。読むときに選択のレジスタへ書く）。
 unsafe fn survey_io_apic(
     logger: &mut Logger<Serial>,
@@ -1421,7 +1421,7 @@ pub const SPURIOUS_VECTOR: u8 = 0xFF;
 ///
 /// SVR はコアごとにある。BSP の [`set_spurious_vector`] は BSP の Local APIC
 /// にしか効いていない。AP は自分で書く必要がある（S4-a）。
-/// 読み書きの本体を 2 箇所へ写すと片方が古くなるので、ここに 1 つだけ置く。
+/// 読み書きの本体を 2 箇所へコピーすると片方が古くなるので、ここに 1 つだけ置く。
 /// ログの出し方は呼び出し側が決める（BSP は `Logger`、AP はシリアルへ直接）。
 pub(crate) struct SpuriousVectorWrite {
     /// 書く前の生値。
@@ -2289,7 +2289,7 @@ pub fn calibrate_local_timer(
     }
 
     // **1. PIT のティックで標本を取る**（S2-c。2026-10-11 からは、PM タイマがあれば突き合わせの側）。
-    // SAFETY: `lapic` は `mapped` の Local APIC のページを direct map で写したアドレスで、`map_and_probe` がマッピングを
+    // SAFETY: `lapic` は `mapped` の Local APIC のページを direct map でマップしたアドレスで、`map_and_probe` がマッピングを
     // 確かめた（下の PM タイマの側も同じ）。
     let pit = unsafe { sample_with_pit(lapic) };
     if let PitSampling::Done {

@@ -261,8 +261,8 @@ fn clip_rect_area(rect: &DrmClipRect) -> Option<(u32, u32, u32, u32)> {
 }
 /// 実行ファイルの大きさの上限（2026-10-05 に 32 KiB から 16 MiB へ上げた）。
 ///
-/// **以前は、載せる前に、実行ファイルの全体を静的な配列へ写していた。** 上限の 32 KiB は、その配列の大きさだった。
-/// **いまは写さない**——載せる側は、イメージを「範囲を読む口」で受け、先頭の部分と、セグメントごとのページの分だけを読む
+/// **以前は、載せる前に、実行ファイルの全体を静的な配列へコピーしていた。** 上限の 32 KiB は、その配列の大きさだった。
+/// **いまはコピーしない**——載せる側は、イメージを「範囲を読む口」で受け、先頭の部分と、セグメントごとのページの分だけを読む
 /// （`crate::userland` の `load_user_program_from`）。上限は、器の大きさではなく、受け付ける大きさの決まりである。
 ///
 /// **16 MiB は、Linux 向けの静的リンクの実行ファイル（数 MiB）が入る大きさである。** ただし、いまの ext2 の読み手が
@@ -895,7 +895,7 @@ unsafe fn dispatch(
         // **スレッドの番号は、池のタスクなら自分の tid、主スレッドなら 1**（M3a。2026-10-14。`ADR-0085` の決定 8）。
         SYS_GETTID => crate::task::current_tid(),
         SYS_CLONE => {
-            // **ここへは来ない。** [`SYS_CLONE`] は [`syscall_entry`] が持つ——親の文脈（`IrqContext`）を写すので、
+            // **ここへは来ない。** [`SYS_CLONE`] は [`syscall_entry`] が持つ——親の文脈（`IrqContext`）をコピーするので、
             // `dispatch` の引数では足りない（[`SYS_SPAWN`] と同じ形の受け皿）。
             (-EAGAIN) as u64
         }
@@ -1625,9 +1625,9 @@ fn open_screen_from_ring3(by: ScreenOpenedBy) -> u64 {
 /// 画面の fd を、どの道で開いたか（2026-10-07。`ADR-0083`）。
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum ScreenOpenedBy {
-    /// `SYS_OPEN_SCREEN`（ZeikOS 独自の番号）。利用者が `FBIOZPRESENT` で矩形を写す。
+    /// `SYS_OPEN_SCREEN`（ZeikOS 独自の番号）。利用者が `FBIOZPRESENT` で矩形をコピーする。
     PrivateNumber,
-    /// `open("/dev/fb0")`（Linux の fbdev の道）。カーネルが間隔ごとに全体を写す。
+    /// `open("/dev/fb0")`（Linux の fbdev の道）。カーネルが間隔ごとに全体をコピーする。
     DevFb0,
 }
 
@@ -1821,7 +1821,7 @@ unsafe fn mmap_screen_from_ring3(
         mapped += 1;
     }
     if outcome != base {
-        // SAFETY: いま写した裏バッファのページを、同じ稼働中の表から外す。
+        // SAFETY: いまマップした裏バッファのページを、同じ稼働中の表から外す。
         unsafe { undo_shared_mapping(&mut table, base, mapped, pages * PAGE) };
     }
     let tables_taken = free_before_map.saturating_sub(allocator.free_frame_count());
@@ -2404,7 +2404,7 @@ unsafe fn write_to_socket(
 /// `syscall-test` が 1 ページ使った後、シェルの子の最初の `mmap` は `0x10001000`、次の子は `0x10003000` から始まった）。
 pub(crate) const MMAP_BASE: u64 = 0x1000_0000;
 
-/// [`crate::mappings::MapError`] を errno へ写す。
+/// [`crate::mappings::MapError`] を errno へコピーする。
 fn errno_for_map(error: crate::mappings::MapError) -> u64 {
     use crate::mappings::MapError;
     match error {
@@ -2414,18 +2414,18 @@ fn errno_for_map(error: crate::mappings::MapError) -> u64 {
         | MapError::NotRemovable
         | MapError::NotGrowable => (-EINVAL) as u64,
         MapError::Overlap => (-EEXIST) as u64,
-        // Linux の `mprotect` は、範囲に写していない所が在れば `-ENOMEM` を返す。
+        // Linux の `mprotect` は、範囲にマップしていない所が在れば `-ENOMEM` を返す。
         MapError::NotMapped => (-ENOMEM) as u64,
     }
 }
 
-/// 無名の `mmap`（2026-10-06。`ADR-0082`）。**ゼロで埋めたフレームを、その場で写す**（遅延はしない。musl の起動が取るのは
+/// 無名の `mmap`（2026-10-06。`ADR-0082`）。**ゼロで埋めたフレームを、その場でマップする**（遅延はしない。musl の起動が取るのは
 /// 4 KiB から 16 KiB が数個で、遅延の価値が無い。大きい要求の上限は [`ANONYMOUS_MMAP_MAX`]）。
 ///
 /// - `len` は 0 でなく、ページへ切り上げる。`PROT_EXEC` は `-EPERM`（W^X。無名のマッピングを実行させない）。
-/// - `PROT_NONE` は、範囲だけ取って何も写さない（触ればページフォルトになる。Linux と同じ）。
+/// - `PROT_NONE` は、範囲だけ取って何もマップしない（触ればページフォルトになる。Linux と同じ）。
 /// - 取ったフレームは、空間ごとの会計（`brk` と同じ `note_taken` / `note_post_load_frames`）に足す。
-///   途中で取れなくなったら、写した分を外して返し、`-ENOMEM`。
+///   途中で取れなくなったら、マップした分を外して返し、`-ENOMEM`。
 ///
 /// # Safety
 ///
@@ -2465,7 +2465,7 @@ unsafe fn mmap_anonymous_from_ring3(
         }
     }
     // **引数だけの確かめの直後に借りる**（2026-10-08。[`borrow_allocator`]）。ここから下はマッピングテーブルを読むので、
-    // 借りて（眠ったなら起きて）から読む。`MAP_FIXED` の置き換えも、写すのも、この 1 回の貸し出しで行う。
+    // 借りて（眠ったなら起きて）から読む。`MAP_FIXED` の置き換えも、マップするのも、この 1 回の貸し出しで行う。
     let Some(mut loan) = borrow_allocator(bkl) else {
         return (-ENOMEM) as u64;
     };
@@ -2528,7 +2528,7 @@ unsafe fn mmap_anonymous_from_ring3(
             failed = true;
             break;
         };
-        // **中身を 0 にしてから写す**（前の住人の中身をユーザーへ渡さない。`brk` と同じ）。
+        // **中身を 0 にしてからマップする**（前の住人の中身をユーザーへ渡さない。`brk` と同じ）。
         // SAFETY: いま取ったフレームで、direct map が覆っている。
         unsafe {
             core::ptr::write_bytes(
@@ -2537,7 +2537,7 @@ unsafe fn mmap_anonymous_from_ring3(
                 PAGE_SIZE as usize,
             )
         };
-        // SAFETY: 稼働中の表へ、ユーザーの範囲を、いま取ったフレームで写す。
+        // SAFETY: 稼働中の表へ、ユーザーの範囲を、いま取ったフレームでマップする。
         if unsafe { table.map_4kib(virt, frame, attributes, allocator) }.is_err() {
             let _ = allocator.deallocate_frame(frame);
             failed = true;
@@ -2546,11 +2546,11 @@ unsafe fn mmap_anonymous_from_ring3(
         mapped += PAGE_SIZE;
     }
     if failed {
-        // **写した分を外して返す**（中間表は破棄が集める）。
+        // **マップした分を外して返す**（中間表は破棄が集める）。
         let mut page = base;
         while page < base + mapped {
             if let Some(virt) = common::addr::VirtAddr::new(page) {
-                // SAFETY: いま写したページを外し、フレームを返す。
+                // SAFETY: いまマップしたページを外し、フレームを返す。
                 if let Ok(unmapped) = unsafe { table.unmap_4kib(virt) } {
                     let _ = allocator.deallocate_frame(unmapped.frame);
                 }
@@ -2568,8 +2568,8 @@ unsafe fn mmap_anonymous_from_ring3(
     }
 }
 
-/// 1 回の無名の `mmap` の上限（16 MiB）。その場で写すので、大きい要求は時間とフレームをまとめて取る。
-/// 越える要求は `-ENOMEM`。遅延して写す形は `docs/deferred-decisions.md`。
+/// 1 回の無名の `mmap` の上限（16 MiB）。その場でマップするので、大きい要求は時間とフレームをまとめて取る。
+/// 越える要求は `-ENOMEM`。遅延してマップする形は `docs/deferred-decisions.md`。
 const ANONYMOUS_MMAP_MAX: u64 = 16 * 1024 * 1024;
 
 /// `munmap(addr, len)`（2026-10-06。`ADR-0082`）。
@@ -2623,7 +2623,7 @@ unsafe fn munmap_from_ring3(
     }
 }
 
-/// `mprotect(addr, len, prot)`（2026-10-06。`ADR-0082`）。**範囲に掛かるマッピングの、書けるか・写してあるかを変える。**
+/// `mprotect(addr, len, prot)`（2026-10-06。`ADR-0082`）。**範囲に掛かるマッピングの、書けるか・マップしてあるかを変える。**
 ///
 /// - `addr` はページの境界（でなければ `-EINVAL`）。`len` が 0 なら、何も見ずに 0 を返す（2026-10-09。Linux の
 ///   `do_mprotect_pkey` と同じ順序で、整列の確かめの後、`prot` の確かめと範囲の確かめの前。以前は `-EINVAL` だった）。
@@ -2638,7 +2638,7 @@ unsafe fn munmap_from_ring3(
 ///   **実行できるページ（`NX` が 0）を書ける形にする求めも `-EPERM`**——範囲の一部でもそのページが在れば、何も変えずに
 ///   断る。`PROT_EXEC` を付けない `mprotect` は、ページを実行できない形にする（Linux と同じ。実行を外す向きだけを許す）。
 /// - `PROT_NONE`: リーフの `P` を落とし、フレームは持ったままにする（`entry::PTE_RETAINED`）。**読める形へ戻すと、同じ中身が戻る。**
-///   初めから写していなかった無名のマッピング（`mmap(PROT_NONE)`）を読める形にするときは、その時点で 0 のフレームを写す。
+///   初めからマップしていなかった無名のマッピング（`mmap(PROT_NONE)`）を読める形にするときは、その時点で 0 のフレームをマップする。
 /// - 変えてよい種類は、無名・ヒープ・イメージ・スタック。見張りのページ・共有メモリ・画面は `-EINVAL`（`docs/deferred-decisions.md`）。
 /// - 変えたリーフは、この CPU の TLB から 1 本ずつ落とす（`invlpg`）。**プロセスは 1 つの CPU に留まるので、ほかの CPU は
 ///   見ない**——スレッドが入ると、この前提は崩れる（`docs/deferred-decisions.md`）。
@@ -2722,8 +2722,8 @@ unsafe fn mprotect_from_ring3(
     {
         return (-EPERM) as u64;
     }
-    // **読める形にするとき、写していない無名のページに要るフレームが足りるかを、表を変える前に見る**（2026-10-08）。足りなければ
-    // 何も変えずに `-ENOMEM`。途中で尽きると、表は読める形なのに、ページが写っていない所が残る。借りている間は、ほかに
+    // **読める形にするとき、マップしていない無名のページに要るフレームが足りるかを、表を変える前に見る**（2026-10-08）。足りなければ
+    // 何も変えずに `-ENOMEM`。途中で尽きると、表は読める形なのに、ページがマップされていない所が残る。借りている間は、ほかに
     // 取る者が居ないので、数えた空きは減らない。
     if present {
         let needed = frames_for_unmapped_anonymous(&table, addr, bytes);
@@ -2759,10 +2759,10 @@ unsafe fn mprotect_from_ring3(
                 page += PAGE_SIZE;
                 continue;
             }
-            // SAFETY: 稼働中の表の、このプロセスのリーフを書き換える（写していないリーフは `NotMapped` で返る）。
+            // SAFETY: 稼働中の表の、このプロセスのリーフを書き換える（マップしていないリーフは `NotMapped` で返る）。
             let changed = unsafe { table.set_leaf_access(virt, writable, present) };
             if changed.is_err() {
-                // **写していないページ**（`mmap(PROT_NONE)` の無名のマッピング）。読める形にするなら、ここで 0 のフレームを写す。
+                // **マップしていないページ**（`mmap(PROT_NONE)` の無名のマッピング）。読める形にするなら、ここで 0 のフレームをマップする。
                 if present && piece.kind == MappingKind::Anonymous {
                     let Some(frame) = allocator.allocate_frame() else {
                         outcome = (-ENOMEM) as u64;
@@ -2777,14 +2777,14 @@ unsafe fn mprotect_from_ring3(
                         )
                     };
                     let attributes = PagePermissions::user_program(writable, false);
-                    // SAFETY: 稼働中の表へ、ユーザーの範囲を、いま取ったフレームで写す。
+                    // SAFETY: 稼働中の表へ、ユーザーの範囲を、いま取ったフレームでマップする。
                     if unsafe { table.map_4kib(virt, frame, attributes, allocator) }.is_err() {
                         let _ = allocator.deallocate_frame(frame);
                         outcome = (-ENOMEM) as u64;
                         break 'pieces;
                     }
                 } else if present {
-                    // イメージ・スタック・ヒープは、写していないページを持たないはずである。
+                    // イメージ・スタック・ヒープは、マップしていないページを持たないはずである。
                     outcome = (-ENOMEM) as u64;
                     break 'pieces;
                 }
@@ -2797,9 +2797,9 @@ unsafe fn mprotect_from_ring3(
     outcome
 }
 
-/// `[addr, addr + bytes)` のうち、無名のマッピングの中で、ページテーブルのリーフが写っていないページの数（2026-10-08）。`mprotect` が
-/// 読める形にするとき、ここで 0 のフレームを写す。**`PTE_RETAINED` のリーフ（`PROT_NONE` でフレームを持ったまま）も数える**
-/// ——翻訳では写っていないリーフと区別が付かないので、多めに見積もる（足りるかを見るだけなので、多めでよい）。
+/// `[addr, addr + bytes)` のうち、無名のマッピングの中で、ページテーブルのリーフがマップされていないページの数（2026-10-08）。`mprotect` が
+/// 読める形にするとき、ここで 0 のフレームをマップする。**`PTE_RETAINED` のリーフ（`PROT_NONE` でフレームを持ったまま）も数える**
+/// ——翻訳ではマップされていないリーフと区別が付かないので、多めに見積もる（足りるかを見るだけなので、多めでよい）。
 fn frames_for_unmapped_anonymous(
     table: &crate::arch::x86_64::ActivePageTable,
     addr: u64,
@@ -2826,11 +2826,11 @@ fn frames_for_unmapped_anonymous(
     count
 }
 
-/// `[addr, addr + bytes)` の中で `pages` 枚のリーフを新しく写すときに、多くても要る中間テーブルの数（2026-10-08）。
+/// `[addr, addr + bytes)` の中で `pages` 枚のリーフを新しくマップするときに、多くても要る中間テーブルの数（2026-10-08）。
 ///
 /// **`mprotect` は、複数のマッピングにまたがる範囲を受ける**（範囲の全部がマッピングで覆われていればよい）。マッピングはマッピングテーブルの
-/// [`crate::mappings::MAX_MAPPINGS`]（64）欄までで、無名のマッピングは 1 つ [`ANONYMOUS_MMAP_MAX`]（16 MiB）までなので、写して
-/// いない無名のページを含む範囲は、最大で 64 × 16 MiB = 1 GiB になる。写していないページは、その中に散らばりうる
+/// [`crate::mappings::MAX_MAPPINGS`]（64）欄までで、無名のマッピングは 1 つ [`ANONYMOUS_MMAP_MAX`]（16 MiB）までなので、マップして
+/// いない無名のページを含む範囲は、最大で 64 × 16 MiB = 1 GiB になる。マップしていないページは、その中に散らばりうる
 /// （1 ページずつのマッピングが、別々の 2 MiB の区切りに 64 個並ぶ形）。ヒープ・イメージ・スタックのマッピングも範囲に入りうるので、
 /// 範囲そのものはもっと長くなりうる。
 ///
@@ -2848,10 +2848,10 @@ fn page_tables_for(addr: u64, bytes: u64, pages: usize) -> usize {
     pages.min(regions(1 << 21)) + pages.min(regions(1 << 30)) + pages.min(regions(1 << 39))
 }
 
-/// `[addr, addr + bytes)` に、実行できるページ（写してあって `NX` が 0）が 1 つでも在るか（2026-10-06。W^X）。
+/// `[addr, addr + bytes)` に、実行できるページ（マップしてあって `NX` が 0）が 1 つでも在るか（2026-10-06。W^X）。
 ///
 /// `mprotect` が `PROT_WRITE` を求めたとき、**表を変える前に**見る——一部でも在れば、何も変えずに断るためである。
-/// 写していないページと、扱えないアドレスは数えない（前者は `mprotect` の本体が扱い、後者は表の側が断る）。
+/// マップしていないページと、扱えないアドレスは数えない（前者は `mprotect` の本体が扱い、後者は表の側が断る）。
 /// 実行できるかは、翻訳の結果（`Translation::is_executable`）で見る。
 fn range_holds_an_executable_page(
     table: &crate::arch::x86_64::ActivePageTable,
@@ -2875,13 +2875,13 @@ fn range_holds_an_executable_page(
 }
 
 /// ユーザーのマッピングを置いてよいアドレスの下限（2026-10-07）。Linux の `mmap_min_addr` の既定（64 KiB）と同じ。**アドレス 0 の近くへ
-/// `MAP_FIXED` で写させない**（ヌルの参照が有効なアドレスにならないように）。
+/// `MAP_FIXED` でマップさせない**（ヌルの参照が有効なアドレスにならないように）。
 const USER_MAPPING_MIN: u64 = 0x1_0000;
 
 /// `addr` から `bytes` の範囲が、ユーザーのアドレスの上限（`USER_ADDRESS_LIMIT`。Linux の `TASK_SIZE_MAX` に同じで、`syscall`
 /// 命令の戻り先の確かめと同じ値）を越えるか（2026-10-07。`ADR-0082` の Addendum）。**`mmap(MAP_FIXED)`・`munmap`・
-/// `mprotect` の入口で見る**——実測で、`MAP_FIXED` が上限のページと上限をまたぐ範囲を写して書かせ、マッピングの無いカーネルの
-/// アドレスにも「写した」と答えていた（マッピングテーブルはアドレスを見ず、ページテーブルの操作は上半分へも届く）。足し算があふれる形（末尾が 2^64 を越える）も越えたと扱う。
+/// `mprotect` の入口で見る**——実測で、`MAP_FIXED` が上限のページと上限をまたぐ範囲をマップして書かせ、マッピングの無いカーネルの
+/// アドレスにも「マップした」と答えていた（マッピングテーブルはアドレスを見ず、ページテーブルの操作は上半分へも届く）。足し算があふれる形（末尾が 2^64 を越える）も越えたと扱う。
 /// **上限は範囲の終端で、その値を含まない**——末尾が上限ちょうどの範囲は越えていない（2026-10-09 に、`mmap` が配る範囲の
 /// 終わりと意味を揃えた。`USER_ADDRESS_LIMIT` の doc）。
 fn exceeds_user_limit(addr: u64, bytes: u64) -> bool {
@@ -2930,14 +2930,14 @@ unsafe fn replace_range_for_fixed(
     }
 }
 
-/// 範囲に掛かるマッピングを表から外し（残る部分は分けて戻す）、写してあったページを外してフレームを返す（2026-10-06）。
+/// 範囲に掛かるマッピングを表から外し（残る部分は分けて戻す）、マップしてあったページを外してフレームを返す（2026-10-06）。
 /// `munmap` と `MAP_FIXED` の共通の本体。
 ///
 /// **ヒープのページを外したときは、`brk` の会計（`user-heap:` の行）には入れない**——あれは `brk` だけの会計である。
 /// 返したフレームは、空間の会計（`note_post_load_frames_returned`）から引く。
 ///
 /// **アロケータは呼び手が先に借りて渡す**（2026-10-08）。以前は表から外した後で借りていて、借りられないと、表からは消えたのに
-/// ページは写ったまま（フレームも持ったまま）で失敗を返していた。
+/// ページはマップされたまま（フレームも持ったまま）で失敗を返していた。
 ///
 /// # Safety
 ///
@@ -2963,12 +2963,12 @@ unsafe fn release_range_and_unmap(
     let mut table = unsafe { ActivePageTable::current(direct_map) };
     let mut returned = 0usize;
     for piece in released.iter().take(count).flatten() {
-        // **写していない断片も、ページ表のリーフを見て外す**（2026-10-08）。表の `present` が偽の断片には 2 通りある——
-        // `mmap(PROT_NONE)` で範囲だけ取って何も写していないページ（リーフが無い。`unmap_4kib` は `NotMapped` を返す）と、
+        // **マップしていない断片も、ページ表のリーフを見て外す**（2026-10-08）。表の `present` が偽の断片には 2 通りある——
+        // `mmap(PROT_NONE)` で範囲だけ取って何もマップしていないページ（リーフが無い。`unmap_4kib` は `NotMapped` を返す）と、
         // `mprotect(PROT_NONE)` でフレームを持ったまま `P` を落としたページ（`PTE_RETAINED` のリーフ。`unmap_4kib` が外して
         // フレームを返す）。どちらかはリーフが知っているので、表には持たない（1 つの断片の中で混ざりうる）。
-        // 破壊テスト (2026-10-08, munmap-skips-retained-test): 写していない断片を飛ばす（直す前の形）。`PTE_RETAINED` のリーフが
-        // 残り、同じアドレスへ写し直すと `map_4kib` が断って、`syscall-test` が 124 番で止まる。
+        // 破壊テスト (2026-10-08, munmap-skips-retained-test): マップしていない断片を飛ばす（直す前の形）。`PTE_RETAINED` のリーフが
+        // 残り、同じアドレスへマップし直すと `map_4kib` が断って、`syscall-test` が 124 番で止まる。
         if !piece.present && cfg!(feature = "munmap-skips-retained-test") {
             continue;
         }
@@ -3089,7 +3089,7 @@ unsafe fn mmap_from_ring3(
     // **6 つの引数は、レジスタの順のまま受ける**（2026-10-08。BKL を渡すようにして、引数が多すぎた）。
     let [addr, len, prot, flags, fd, offset] = *args;
 
-    // **アドレスを指定する形は、無名のマッピングだけ受ける**（2026-10-06。fd を指定のアドレスへ写す形は `docs/deferred-decisions.md`）。
+    // **アドレスを指定する形は、無名のマッピングだけ受ける**（2026-10-06。fd を指定のアドレスへマップする形は `docs/deferred-decisions.md`）。
     // 指定の無い `addr`（ただのヒント）は見ない——置き場はカーネルが決める。
     let fixed = if flags & MAP_FIXED != 0 {
         Some(FixedPlacement::Replace)
@@ -3111,11 +3111,11 @@ unsafe fn mmap_from_ring3(
     if offset != 0 {
         return (-EINVAL) as u64;
     }
-    // **実行できる保護を求められたら断る**（2026-10-03）。**共有メモリも画面も、書けるか読むだけかで写し、実行は
+    // **実行できる保護を求められたら断る**（2026-10-03）。**共有メモリも画面も、書けるか読むだけかでマッピング、実行は
     // させない。** 画面へ分かれる前に見るので、どちらの `mmap` にも効く。**今は、実行できる `mmap` を全部断っている**
-    // ——Linux のプログラムをそのまま動かす段階では、ファイルを写す `mmap` の「読んで実行する」を許し、断るのを
+    // ——Linux のプログラムをそのまま動かす段階では、ファイルをマップする `mmap` の「読んで実行する」を許し、断るのを
     // 「書けて実行もできる」だけにする必要がある（`docs/deferred-decisions.md`）。
-    // 破壊テスト (mmap-allows-exec): 断らない（求めを無視して、実行できないリーフを写す。以前の形）。
+    // 破壊テスト (mmap-allows-exec): 断らない（求めを無視して、実行できないリーフをマップする。以前の形）。
     if prot & PROT_EXEC != 0 && !cfg!(feature = "mmap-allows-exec-test") {
         return (-EPERM) as u64;
     }
@@ -3194,7 +3194,7 @@ unsafe fn mmap_from_ring3(
         }
     }
     if outcome != base {
-        // SAFETY: いま写した共有メモリのページを、同じ稼働中の表から外す。
+        // SAFETY: いまマップした共有メモリのページを、同じ稼働中の表から外す。
         unsafe {
             undo_shared_mapping(
                 &mut table,
@@ -3209,15 +3209,15 @@ unsafe fn mmap_from_ring3(
     outcome
 }
 
-/// 共有のページ（共有メモリと画面の裏バッファ）を写す途中で失敗したとき、写した分を外し、表の予約を返す（2026-10-08）。
+/// 共有のページ（共有メモリと画面の裏バッファ）をマップする途中で失敗したとき、マップした分を外し、表の予約を返す（2026-10-08）。
 ///
-/// 以前は、予約と写した分を残したまま失敗を返していた——表とページテーブルには、返したアドレスを使う者の居ないマッピングが残った。
+/// 以前は、予約とマップした分を残したまま失敗を返していた——表とページテーブルには、返したアドレスを使う者の居ないマッピングが残った。
 /// **フレームは返さない**（共有メモリは参照数で、裏バッファはコンソールが持つ）。中間テーブルは残す（破棄が集め、空間の
 /// 会計にも足してある）。
 ///
 /// # Safety
 ///
-/// `table` が稼働中のこのプロセスの表で、`[base, base + mapped * 4096)` が、いま写した共有のページであること。
+/// `table` が稼働中のこのプロセスの表で、`[base, base + mapped * 4096)` が、いまマップした共有のページであること。
 unsafe fn undo_shared_mapping(
     table: &mut crate::arch::x86_64::ActivePageTable,
     base: u64,
@@ -3227,7 +3227,7 @@ unsafe fn undo_shared_mapping(
     const PAGE: u64 = crate::frame_allocator::FRAME_SIZE;
     for page in 0..mapped {
         if let Some(virt) = common::addr::VirtAddr::new(base + page * PAGE) {
-            // SAFETY: 呼び出し元契約（いま写した共有のページ）。外したリーフのフレームは、持ち主が別に居るので返さない。
+            // SAFETY: 呼び出し元契約（いまマップした共有のページ）。外したリーフのフレームは、持ち主が別に居るので返さない。
             let _ = unsafe { table.unmap_4kib(virt) };
         }
     }
@@ -3964,8 +3964,8 @@ pub(crate) unsafe extern "sysv64" fn syscall_entry(
     // （フレームの目印を、共通の側に出さない）。**ここから先は、どちらの入口でも同じ道を通る。**
     ctx.note_system_call_entrance(sp_at_call);
 
-    // 番号と 6 つの引数を、Linux のレジスタの形で読む（`abi`）。**書き戻しの前に読む。** **読んだ結果は写し直さずに
-    // 使う**——最適化しないビルドでは、写し直した分だけこの関数のスタックが増える（`hello` の遠征のスタックで見た）。
+    // 番号と 6 つの引数を、Linux のレジスタの形で読む（`abi`）。**書き戻しの前に読む。** **読んだ結果はコピーし直さずに
+    // 使う**——最適化しないビルドでは、コピーし直した分だけこの関数のスタックが増える（`hello` の遠征のスタックで見た）。
     let request = crate::abi::linux::x86_64::read_request(ctx);
 
     state.invocation_count.fetch_add(1, Ordering::SeqCst);
@@ -4028,7 +4028,7 @@ pub(crate) unsafe extern "sysv64" fn syscall_entry(
     let ret = if exited_at_entry {
         0
     } else if request.number == SYS_CLONE {
-        // **[`SYS_CLONE`] もこの関数が持つ**——親の文脈を写す（[`clone_from_ring3`]）。
+        // **[`SYS_CLONE`] もこの関数が持つ**——親の文脈をコピーする（[`clone_from_ring3`]）。
         // SAFETY: 同上。`ctx` は Ring 3 からこのシステムコールで入った文脈で、BKL の内側である。
         unsafe { clone_from_ring3(ctx, &request.args, page_table_root, direct_map) }
     } else if request.number == SYS_SPAWN {
@@ -4758,7 +4758,7 @@ unsafe fn sys_brk(
         return requested;
     }
 
-    // **マッピングテーブルのヒープの欄を、ページを写す前に動かす**（2026-10-06。`crate::mappings`）。伸ばす先に無名のマッピングが在れば、ここで
+    // **マッピングテーブルのヒープの欄を、ページをマップする前に動かす**（2026-10-06。`crate::mappings`）。伸ばす先に無名のマッピングが在れば、ここで
     // 断って今の上端を返す（Linux も、`brk` の先が塞がっていれば伸ばせない）。
     if crate::mappings::with_current(|map| map.set_heap_end(start, want)).is_err() {
         return current;
@@ -4776,14 +4776,14 @@ unsafe fn sys_brk(
         // `note_post_load_frames` の doc）。
         let free_before = allocator.free_frame_count();
         let mut page = have;
-        // この呼び出しで最初に写したページ。巻き戻しは、ここから上だけを外す（2026-10-09）。
+        // この呼び出しで最初にマップしたページ。巻き戻しは、ここから上だけを外す（2026-10-09）。
         let mut first_mapped: Option<u64> = None;
         while page < want {
             // 破壊テスト (brk-skip-shrink-test): 縮めたときに外さなかったリーフの上を、伸ばすときは飛ばす。**壊すのは
             // 「上端だけ下がり、フレームは返らない」の形であって、伸ばし直せないことではない**——縮めて伸ばし直す
             // 検算（`syscall-test` の 67 と 105）を通し、`zi` の「返した数が釣り合う」判定まで届かせる（2026-10-06）。
-            // **飛ばすのは、この呼び出しで写し始める前の、`have` から続く前の部分だけ**（2026-10-09）。外さなかったリーフは、
-            // 縮める前の上端までの続いた範囲で、前の部分に在る。写し始めた後の写っているページは飛ばさず、`map_4kib` が
+            // **飛ばすのは、この呼び出しでマップし始める前の、`have` から続く前の部分だけ**（2026-10-09）。外さなかったリーフは、
+            // 縮める前の上端までの続いた範囲で、前の部分に在る。マップし始めた後のマップされているページは飛ばさず、`map_4kib` が
             // 断って巻き戻す——巻き戻しが、この呼び出しより前から在ったページを外さないためである。
             if cfg!(feature = "brk-skip-shrink-test")
                 && first_mapped.is_none()
@@ -4831,7 +4831,7 @@ unsafe fn sys_brk(
             while back > from {
                 back -= PAGE_SIZE;
                 if let Some(virt) = common::addr::VirtAddr::new(back) {
-                    // SAFETY: いまこの呼び出しで写したページを、稼働中の表から外し、フレームを返す。
+                    // SAFETY: いまこの呼び出しでマップしたページを、稼働中の表から外し、フレームを返す。
                     if let Ok(unmapped) = unsafe { table.unmap_4kib(virt) } {
                         let _ = allocator.deallocate_frame(unmapped.frame);
                         crate::userland::with_current_heap(|heap| heap.note_given());
@@ -5199,7 +5199,7 @@ unsafe fn sys_open(path: u64, flags: u64, page_table_root: PhysAddr, direct_map:
     })
 }
 
-/// ext2 の `file_type` を `getdents64` の `d_type` へ写す（S10-b）。
+/// ext2 の `file_type` を `getdents64` の `d_type` へコピーする（S10-b）。
 ///
 /// # 値が違う
 ///
@@ -5361,7 +5361,7 @@ const DIRENT64_MAX_RECORD: usize = (DIRENT64_HEADER_LEN + 255 + 1).next_multiple
 /// # 秒とナノ秒は 1 本のティックから導く
 ///
 /// **1 ティックは 10ms である**（実測で 100.000 Hz）。**周波数はカーネルの値を読む**
-/// ——**定数を写すと、周波数を変えた日に片方だけが古くなる。**
+/// ——**定数をコピーすると、周波数を変えた日に片方だけが古くなる。**
 ///
 /// **粒度は 10ms のままである。** **Wayland のミリ秒の分解能は形式として満たすが、
 /// 入力の時刻印を付ける段階で足りるかを判断すること**（`ADR-0062`）。
@@ -5433,7 +5433,7 @@ unsafe fn sys_arch_prctl(
     sys_arch_prctl_body(code, address, page_table_root, direct_map)
 }
 
-/// ユーザーのアドレスから、決まった長さの値を読む（2026-10-06。小物の呼び出しの共通の形）。**範囲を検証してから写す。**
+/// ユーザーのアドレスから、決まった長さの値を読む（2026-10-06。小物の呼び出しの共通の形）。**範囲を検証してからコピーする。**
 /// 読めなければ `None`（呼ぶ側が `-EFAULT` にする）。
 ///
 /// # Safety
@@ -5451,7 +5451,7 @@ unsafe fn read_user_fixed<const N: usize>(
     (unsafe { copy_from_user(&mut bytes, &slice) } == N).then_some(bytes)
 }
 
-/// ユーザーのアドレスへ、決まった長さの値を書く（2026-10-06）。**範囲を検証してから写す。** 書けなければ `false`。
+/// ユーザーのアドレスへ、決まった長さの値を書く（2026-10-06）。**範囲を検証してからコピーする。** 書けなければ `false`。
 ///
 /// # Safety
 ///
@@ -5472,7 +5472,7 @@ unsafe fn write_user_fixed(
     unsafe { copy_to_user(&slice, 0, bytes) == bytes.len() }
 }
 
-/// [`crate::process_state::StateError`] を errno へ写す。
+/// [`crate::process_state::StateError`] を errno へコピーする。
 fn errno_for_state(error: crate::process_state::StateError) -> u64 {
     use crate::process_state::StateError;
     match error {
@@ -5672,7 +5672,7 @@ const UIO_MAXIOV: u64 = 1024;
 /// 分は、Linux と同じに切り詰める（`-EINVAL` にはしない）。
 const MAX_RW_COUNT: u64 = 0x7fff_f000;
 
-/// `readv`・`writev` が、I/O の前に取り込んだ `struct iovec` の写し（`iov_base`・`iov_len`。2026-10-09）。**スロットごとに
+/// `readv`・`writev` が、I/O の前に取り込んだ `struct iovec` のコピーし（`iov_base`・`iov_len`。2026-10-09）。**スロットごとに
 /// 1 つ**——1 つのスロットで同時に走る `readv`・`writev` は 1 本だけである（入れ子の `spawn` の親は `spawn` の中で待つ）。
 /// 遠征スタックに置かないのは、1,024 本で 16 KiB になり、ガードページ 1 枚の前提（スタック上の 1 つの物は 4,096 バイト
 /// 以下）を越えるためである。
@@ -5690,12 +5690,12 @@ static IOV_COPIES: [common::critical::Locked<[(u64, u64); UIO_MAXIOV as usize]>;
 ///    Linux の `copy_iovec_from_user`。
 /// 2. 1 本ずつ、範囲がユーザーのアドレスに収まるかを見て（`access_ok`）、収まらなければ `-EFAULT`。合計が [`MAX_RW_COUNT`] を
 ///    越える分は切り詰める（足し算はあふれない）。Linux の `__import_iovec`。
-/// 3. 取り込んだ写しで、`read`・`write` を 1 本ずつ呼ぶ（`iov_len` が 0 の本は飛ばす——musl は `writev` の 2 本目に
+/// 3. 取り込んだコピーで、`read`・`write` を 1 本ずつ呼ぶ（`iov_len` が 0 の本は飛ばす——musl は `writev` の 2 本目に
 ///    `NULL`/0 を渡すことが在る）。
 ///
 /// **1 と 2 で断るときは、何も動かしていない**——先頭が正しく 2 本目が不正な形でも、先頭を書かずに断る。**以前は 1 本ずつ
 /// 読んでは動かしていて、`SSIZE_MAX` を越える `iov_len` も断らず、不正な本の前の本を書いてから止まっていた。**
-/// 返すのは、動いたバイトの合計。**3 の途中の本で失敗したら（写っていないページへの `-EFAULT` など）、それまでに動いた分が
+/// 返すのは、動いたバイトの合計。**3 の途中の本で失敗したら（マップされていないページへの `-EFAULT` など）、それまでに動いた分が
 /// 在ればその数を、無ければその失敗を返す**（Linux と同じ部分的な転送）。**`readv` は、1 本が短く終わったら（要らない分を
 /// 待たないため）、または 0（終わり）なら、そこで止める。**
 ///
@@ -5885,8 +5885,8 @@ fn classify_clone_flags(flags: u64) -> CloneRequest {
 /// アドレスは池のタスクの欄に控え、スレッドの `exit` が 0 を書く**（[`exit_thread_from_ring3`]）。`CLONE_CHILD_SETTID` は組に
 /// 無い。
 ///
-/// **[`syscall_entry`] が持つ**（[`SYS_SPAWN`] と同じ理由——親の文脈 `ctx` を写す。`dispatch` の引数では足りない）。
-/// **`#[inline(never)]` は、文脈の写し（168 バイト）を `syscall_entry` の枠に載せないため。**
+/// **[`syscall_entry`] が持つ**（[`SYS_SPAWN`] と同じ理由——親の文脈 `ctx` をコピーする。`dispatch` の引数では足りない）。
+/// **`#[inline(never)]` は、文脈のコピーし（168 バイト）を `syscall_entry` の枠に載せないため。**
 ///
 /// # Safety
 ///
@@ -6540,7 +6540,7 @@ const F_GET_SEALS: u64 = 1034;
 /// - `F_GETFD`・`F_SETFD`: `FD_CLOEXEC` は持たない（`exec` が無い）。問い合わせは 0、設定は受けて 0。
 /// - `F_GETFL`・`F_SETFL`: 開いたときのフラグは持たない。問い合わせは 0、設定（`O_NONBLOCK` など）は受けて 0
 ///   ——**ソケットの読みは、もとから待たない**（`-EAGAIN`）。
-/// - `F_DUPFD`・`F_DUPFD_CLOEXEC`: 同じ `File` を、`arg` 以上の最小の空き番号へ写す。**Regular は位置を共有しない**
+/// - `F_DUPFD`・`F_DUPFD_CLOEXEC`: 同じ `File` を、`arg` 以上の最小の空き番号へコピーする。**Regular は位置を共有しない**
 ///   （Linux は共有する。`File` が位置を持つため。`docs/deferred-decisions.md`）。
 /// - `F_ADD_SEALS`・`F_GET_SEALS`: 共有メモリにだけ。印は持たないので、足す求めは受けて 0、問い合わせは 0。
 /// - 知らない `cmd` は `-EINVAL`。無い fd は `-EBADF`。
@@ -6558,7 +6558,7 @@ fn sys_fcntl(fd: u64, cmd: u64, arg: u64) -> u64 {
                 Ok(file) => *file,
                 Err(error) => return (-errno_for_file_table(error)) as u64,
             };
-            // **`flock` のロックは写しに渡さない**（`ADR-0087`。写しは別の持ち主。Linux は open file description を共有
+            // **`flock` のロックはコピーに渡さない**（`ADR-0087`。コピーは別の持ち主。Linux は open file description を共有
             // するので違う——Seinas は dup しない）。
             if let crate::vfs::File::Regular { lock, .. } = &mut copy {
                 *lock = 0;
@@ -8279,7 +8279,7 @@ mod tests {
         assert_eq!(page_tables_for(0x40_0000, 4096, 1), 3);
         // 64 MiB の中に散らばった 64 枚（別々の 2 MiB に 1 枚ずつ）: PT 32 枚（64 MiB が触れる 2 MiB の区切りの数）、PD・PDPT 1 枚ずつ。
         assert_eq!(page_tables_for(0x4000_0000, 64 * MIB, 64), 32 + 1 + 1);
-        // 64 × 16 MiB（1 GiB）を 1 GiB の境をまたいで置き、全部の 262,144 枚を写す形: PT 512 枚、PD 2 枚、PDPT 1 枚。
+        // 64 × 16 MiB（1 GiB）を 1 GiB の境をまたいで置き、全部の 262,144 枚をマップする形: PT 512 枚、PD 2 枚、PDPT 1 枚。
         assert_eq!(
             page_tables_for(0x4000_0000 + 0x20_0000, 1024 * MIB, 262_144),
             512 + 2 + 1

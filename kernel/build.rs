@@ -354,7 +354,7 @@ fn build_user_programs(manifest_dir: &str, out_dir: &str) {
     ];
 
     // **取り込むファイル（`userlib.rs`、`common` の純粋な論理など）は、原本から辿る**（[`ProgramInputs`]）。
-    // 作り直しの合図・写しの鍵・cfg を渡すかの判定は、プログラムごとのその 1 つの一覧だけを使う。
+    // 作り直しの合図・キャッシュのキー・cfg を渡すかの判定は、プログラムごとのその 1 つの一覧だけを使う。
     let script = format!("{manifest_dir}/userland/user.ld");
 
     // **受け皿の位置は `user.ld` が唯一の出所である**（S10-b の完了）。
@@ -545,7 +545,7 @@ fn build_user_programs(manifest_dir: &str, out_dir: &str) {
         }
     }
 
-    // **写しの置き場**（[`ProgramCache`]）。
+    // **キャッシュ**（[`ProgramCache`]）。
     let cache = ProgramCache::open(out_dir);
     // イメージの中身から決まる期待（[`image_expectations`]）。名前を出すプログラム（`syscall-test`）にだけ、環境変数で渡す。
     let expectations = image_expectations(manifest_dir);
@@ -645,7 +645,7 @@ const LINUX_PROGRAMS: &[&str] = &[
 /// `std` を使うこと**（Linux の libc の起動の列をそのまま通すのが目的で、カーネルの側からは「よその ELF」である）。
 /// `-C target-feature=+crt-static` で静的にリンクし、既定で位置独立（static-pie）になる。版は `rust-toolchain.toml` の
 /// toolchain と `targets` で固定され、置き場を `--remap-path-prefix` で切り離すので、イメージのバイトは機械で変わらない。
-/// **`tools/build-linux-programs.sh` が同じ引数で、Linux 上で走らせて参照を控えるための写しを作る。**
+/// **`tools/build-linux-programs.sh` が同じ引数で、Linux 上で走らせて参照を控えるためのコピーを作る。**
 fn build_linux_programs(manifest_dir: &str, out_dir: &str, cache: &ProgramCache) {
     let dir = format!("{manifest_dir}/../linux-programs");
     for name in LINUX_PROGRAMS {
@@ -847,7 +847,7 @@ fn build_c_programs(manifest_dir: &str, out_dir: &str, script: &str, cache: &Pro
     }
 }
 
-/// ユーザープログラムの写しの置き場（2026-10-07。全検査の項目がカーネルのビルドを待つ時間を減らす）。
+/// ユーザープログラムのキャッシュ（2026-10-07。全検査の項目がカーネルのビルドを待つ時間を減らす）。
 ///
 /// # なぜ在るのか
 ///
@@ -862,17 +862,17 @@ fn build_c_programs(manifest_dir: &str, out_dir: &str, script: &str, cache: &Pro
 ///
 /// # 形
 ///
-/// **入力の中身で引く写しの置き場**（cargo の `target/` の下の `user-program-cache/`。feature の組をまたいで共有する）。
+/// **入力の中身で引くキャッシュ**（cargo の `target/` の下の `user-program-cache/`。feature の組をまたいで共有する）。
 /// 鍵は、道具の版（`rustc -vV`・`cc --version`）・渡す引数（出力の道は除く）・原本と取り込むファイルの中身
 /// （[`ProgramInputs`] が原本から辿った一覧。`rerun-if-changed` と cfg の判定も同じ一覧を使う）のハッシュである。**在ればハードリンクで置き（書かない）、無ければ作って
-/// から写しへ入れる。** rustc も cc も同じ入力から同じバイトを出す（イメージのバイトを機械で変えないために、既にそれに依っている）。
+/// からキャッシュへ入れる。** rustc も cc も同じ入力から同じバイトを出す（イメージのバイトを機械で変えないために、既にそれに依っている）。
 ///
 /// **`--cfg` は、そのプログラムの原本か取り込むファイルに名前が出るものだけ渡す**——出ない cfg は読まれないので、渡しても
-/// 同じ中身になる。渡さなければ鍵が同じになり、写しが当たる。
+/// 同じ中身になる。渡さなければ鍵が同じになり、キャッシュが当たる。
 ///
 /// # 書く量
 ///
-/// 当たれば 1 バイトも書かない。外れた分だけ、作ったものを 1 度写しへ入れる（プログラムは 10〜500 KiB）。置き場は育つが、
+/// 当たれば 1 バイトも書かない。外れた分だけ、作ったものを 1 度キャッシュへ入れる（プログラムは 10〜500 KiB）。置き場は育つが、
 /// 組み合わせは少ない（プログラム × cfg の違い）。**7 日触られていないものは全検査の始めに消す**（`xtask` の
 /// `prune_before_the_run`。当たるたびに触った時刻を進める）。`cargo clean` でも消える。
 /// **`ZEIKOS_USER_PROGRAM_CACHE=off` で止められる**（当たりと外れの中身が同じことを確かめるため）。置き場の場所は
@@ -884,9 +884,9 @@ fn build_c_programs(manifest_dir: &str, out_dir: &str, script: &str, cache: &Pro
 /// コンパイラがその道へ書いて置き場の実体（別の鍵のもの）を書き換える——**作る前に出力の道を外す**（`remove_file`）。
 /// さらに**置き場のファイルは読み取り専用にする**（その場で書き換えようとする処理が在れば、黙って通らずに失敗する）。
 /// このビルドスクリプトは、作った後にプログラムの道へ書き戻す処理（strip・objcopy の類）を持たない（2026-10-07 に読んで
-/// 確かめた。`strip=symbols` はリンクのときの指定で、イメージへは `fs::copy` で写す）。
+/// 確かめた。`strip=symbols` はリンクのときの指定で、イメージへは `fs::copy` でコピーする）。
 struct ProgramCache {
-    /// 置き場。**無ければ写しを使わない**（その場で作る）。
+    /// 置き場。**無ければキャッシュを使わない**（その場で作る）。
     dir: Option<std::path::PathBuf>,
     rustc_version: String,
     cc_version: String,
@@ -934,7 +934,7 @@ impl ProgramCache {
         }
     }
 
-    /// 写しが在ればそれを置き、無ければ `command` で作ってから写しへ入れる。`inputs` は鍵に入れる中身（原本と取り込む
+    /// キャッシュが在ればそれを置き、無ければ `command` で作ってからキャッシュへ入れる。`inputs` は鍵に入れる中身（原本と取り込む
     /// ファイル）。`command` の引数も鍵に入れる（`output` だけは除く——`OUT_DIR` は組ごとに違う）。`command` に置いた
     /// 環境変数も鍵に入れる（2026-10-09。`env!` で読む値が変われば、出力も変わる）。
     fn build(
@@ -998,7 +998,7 @@ impl ProgramCache {
         );
         self.misses.set(self.misses.get() + 1);
         if let Some(cached) = cached {
-            // **作ったものを写しへ入れる（途中の名前で書いてから改名する。失敗しても作ったものは在る）。**
+            // **作ったものをキャッシュへ入れる（途中の名前で書いてから改名する。失敗しても作ったものは在る）。**
             let part = cached.with_extension(format!("part{}", std::process::id()));
             if std::fs::copy(output, &part).is_ok() {
                 // **読み取り専用にしてから置く**（ハードリンク越しの書き換えを、黙って通さない）。
@@ -1026,13 +1026,13 @@ impl ProgramCache {
     }
 }
 
-/// プログラムを作るときに読むファイル（2026-10-08）。**作り直しの合図（`rerun-if-changed`）・写しの鍵・`--cfg` を渡すかの
+/// プログラムを作るときに読むファイル（2026-10-08）。**作り直しの合図（`rerun-if-changed`）・キャッシュのキー・`--cfg` を渡すかの
 /// 判定は、この 1 つの一覧だけを使う。**
 ///
 /// # なぜ原本から辿るのか
 ///
 /// 以前は、取り込むファイルを 3 か所に手で書いていた。`zi` が `common/src/text.rs` を、`zash` が `common/src/complete.rs`
-/// を取り込むようになったとき、どこにも足されず、`text.rs` を直しても作り直されず、写しの鍵も変わらず、`text.rs` にだけ
+/// を取り込むようになったとき、どこにも足されず、`text.rs` を直しても作り直されず、キャッシュのキーも変わらず、`text.rs` にだけ
 /// 名前の出る cfg（`width_always_one`）が `zi` へ渡らなかった（`docs/troubleshooting.md` の 2026-10-08 の項）。
 /// **原本から辿れば、取り込みを足した時点で 3 つとも付いてくる。**
 ///
@@ -1102,7 +1102,7 @@ impl ProgramInputs {
         }
     }
 
-    /// 写しの鍵に入れる中身（原本・取り込み・渡すファイル）。
+    /// キャッシュのキーに入れる中身（原本・取り込み・渡すファイル）。
     fn key(&self) -> Vec<&[u8]> {
         self.sources
             .iter()
@@ -1308,7 +1308,7 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
     /// inode の数（`mke2fs -N`。2026-10-05）。
     ///
     /// **`mke2fs` の既定に任せない。** 既定はイメージの大きさから決まり、32 MiB では 8,192 個になる。inode の表だけで
-    /// 512 ブロック（2 MiB）を取り、起動時の検査値が覆う範囲と、壊したイメージの検査が写す量が、それだけ増える。
+    /// 512 ブロック（2 MiB）を取り、起動時の検査値が覆う範囲と、壊したイメージの検査がコピーする量が、それだけ増える。
     ///
     /// **1,024 個にした。** いま使っているのは 65 個である。これから置くものは、実行ファイルが数十本、フォントが
     /// 数本、設定のファイルと、プログラムが作るファイルで、数百個までと見ている。1,024 個なら、表は 64 ブロック
@@ -1630,8 +1630,8 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
     check_staging_root(manifest_dir, &staging);
     check_staging_data(&staging);
 
-    // **seed の権限を、写した元によらず決める**（2026-10-08）。`fs::copy` は権限を写し、`mke2fs -d` はそれを inode へ入れる。
-    // 写しの置き場の当たりは読み取り専用の写しのハードリンクなので、決めないと、当たりと外れでイメージのバイトが変わる。
+    // **seed の権限を、コピーした元によらず決める**（2026-10-08）。`fs::copy` は権限をコピー、`mke2fs -d` はそれを inode へ入れる。
+    // キャッシュの当たりは読み取り専用のキャッシュのハードリンクなので、決めないと、当たりと外れでイメージのバイトが変わる。
     set_staging_modes(std::path::Path::new(&staging));
 
     // イメージの器を作る（ゼロ埋め）。
@@ -1678,7 +1678,7 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
     //
     // **2 本の大きさと最後の 1 バイトも一緒に出す**（S10-a の単一間接の刻み）。
     // **模様を決めているのはここなので、期待値をここから出す。** カーネル側へ
-    // 書き写すと、模様を変えたときに片方だけが古くなる。
+    // コピーすると、模様を変えたときに片方だけが古くなる。
     let direct_max_last = pattern[DIRECT_MAX_BYTES - 1];
     let indirect_first_last = pattern[DIRECT_MAX_BYTES];
     // **イメージの中の番号を、ビルドした直後に外の道具から測る（e-4 の対策）。**
@@ -2011,9 +2011,9 @@ fn cc_version() -> String {
 /// イメージの seed の権限を決める（2026-10-08）。ディレクトリは 0755、`/bin` の下のファイルは 0755、ほかのファイルは 0644。
 ///
 /// **イメージのバイトは、ホストのファイルの権限に依ってはならない。** `mke2fs -d` は seed のファイルの権限をそのまま inode に入れる。
-/// seed へ置くファイルは、コンパイラの出力（0755）、写しの置き場の当たり（読み取り専用の写しへのハードリンク。0444）、
+/// seed へ置くファイルは、コンパイラの出力（0755）、キャッシュの当たり（読み取り専用のコピーへのハードリンク。0444）、
 /// seed のツリー（git が置いた権限）、`fs::write` で書いたもの（umask に依る）から来る。時刻と所有者は
-/// [`zero_image_build_traces`] が 0 にするので、残るのは権限だけである。値は、権限を決める前のイメージ（写しの外れで作ったもの）
+/// [`zero_image_build_traces`] が 0 にするので、残るのは権限だけである。値は、権限を決める前のイメージ（キャッシュの外れで作ったもの）
 /// と同じにした——起動ログの参照が覚えているイメージのバイトが変わらない。`lost+found` は `mke2fs` が作るので、ここでは触らない。
 fn set_staging_modes(root: &std::path::Path) {
     set_modes_below(root, true, false);

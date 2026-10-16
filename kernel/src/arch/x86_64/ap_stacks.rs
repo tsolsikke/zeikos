@@ -172,7 +172,7 @@ pub unsafe fn map_ap_stacks<const CAP: usize>(
         false,
     );
     for (index, size) in layout.iter().enumerate() {
-        // ガードぶんを空けたまま進める（マップしないので穴になる）。**穴は、何も写っていてはならない領域として
+        // ガードぶんを空けたまま進める（マップしないので穴になる）。**穴は、何もマップされていてはならない領域として
         // 登録する。**
         crate::page_survey::register_absent(
             crate::arch::x86_64::stack::GUARD_PAGES_REGION,
@@ -209,7 +209,7 @@ pub unsafe fn map_ap_stacks<const CAP: usize>(
             let virt = VirtAddr::new(bottom + offset)?;
             // user=false, writable=true, cacheable=true（通常のカーネルメモリ）。
             //
-            // 破壊テスト (2026-10-01, ap-stacks-uncached-test): キャッシュ無効で写す。**起動は通る**（遅くなるだけ）。
+            // 破壊テスト (2026-10-01, ap-stacks-uncached-test): キャッシュ無効でマップする。**起動は通る**（遅くなるだけ）。
             // ページの権限の一覧の道具が、この領域のキャッシュの属性の違いを名前つきで示す。
             let attributes = if cfg!(feature = "ap-stacks-uncached-test") {
                 PagePermissions::kernel_device()

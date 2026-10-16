@@ -70,7 +70,7 @@ pub const PTE_GLOBAL: u64 = 1 << 8;
 /// 使う思想である**（`docs/architecture.md` の「ABIの形は合わせる」）。
 pub const PTE_SHARED: u64 = 1 << 9;
 
-/// フレームを持ったまま、写していないリーフの目印（ソフトウェア用の空きビット 10。2026-10-06。`mprotect(PROT_NONE)`）。
+/// フレームを持ったまま、マップしていないリーフの目印（ソフトウェア用の空きビット 10。2026-10-06。`mprotect(PROT_NONE)`）。
 /// **CPU は無視する**——`P` が 0 なので、触ればページフォルトになる。**アドレスの部分にはフレームが残っている**ので、
 /// 読める形へ戻すとき（`mprotect(PROT_READ)`）に同じ中身が戻り、外すとき（`munmap`・空間の破棄）にフレームが返る。
 /// **`P` と同時には立たない。**
@@ -140,7 +140,7 @@ pub const fn is_present(entry: u64) -> bool {
 ///
 /// **PT レベル（4KiB）のエントリに対して呼んではならない。** そちらでは同じ
 /// ビットが PAT を意味する。
-/// フレームを持ったまま写していないリーフか（[`PTE_RETAINED`]。`P` が 0 のときだけ意味を持つ）。
+/// フレームを持ったままマップしていないリーフか（[`PTE_RETAINED`]。`P` が 0 のときだけ意味を持つ）。
 pub const fn is_retained(entry: u64) -> bool {
     entry & PTE_RETAINED != 0 && !is_present(entry)
 }

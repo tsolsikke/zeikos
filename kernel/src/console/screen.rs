@@ -291,7 +291,7 @@ impl Console {
         Ok(console)
     }
 
-    /// 描画側の [`Color`] を端末の状態の [`Rgb`] へ写す（ES-a）。
+    /// 描画側の [`Color`] を端末の状態の [`Rgb`] へ変換する（ES-a）。
     ///
     /// **型を分けてあるのは、片方が描画側でもう片方が状態だからである**
     /// （`common::screen::Rgb` の doc）。
@@ -457,7 +457,7 @@ impl Console {
         self.back.surface_mut().read_pixel_raw(x, y)
     }
 
-    /// カーソルの色（ES-c の判定用）。**判定が値を写さずに済ませる。**
+    /// カーソルの色（ES-c の判定用）。**判定が値をコピーせずに済ませる。**
     pub fn cursor_color(&self) -> Color {
         Self::CURSOR_COLOR
     }
@@ -630,8 +630,8 @@ impl Console {
 
     /// 起動時に決めた既定の前景・背景（ES-b）。
     ///
-    /// **判定が値を写さずに済ませるために出す。** **写すと、片方だけが
-    /// 古くなる**——実際にES-bで写し間違えた（`FOREGROUND` という名の
+    /// **判定が値をコピーせずに済ませるために出す。** **コピーすると、片方だけが
+    /// 古くなる**——実際にES-bでコピーし間違えた（`FOREGROUND` という名の
     /// 局所定数が3つの関数にあり、コンソールが使うのはそのうち1つである）。
     /// **「期待値は定数で持たず外の道具から導く」の形をここでも採る。**
     pub fn default_colors(&self) -> (Color, Color) {
@@ -973,8 +973,8 @@ impl Console {
 
         if let Some(placement) = step.draw_at {
             // **セルへ記録してから描く（ES-a。ADR-0040）。**
-            // **状態が先で、描画はその写しである**——ES-b 以降で
-            // 「`Screen` を矩形へ写す」形へ寄せるための順序である。
+            // **状態が先で、描画はそのコピーである**——ES-b 以降で
+            // 「`Screen` を矩形へコピーする」形へ寄せるための順序である。
             let (foreground, background) = (self.foreground, self.background);
             self.grid.put(
                 placement.column,

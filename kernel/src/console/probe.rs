@@ -54,11 +54,11 @@ pub(crate) enum Observation {
     /// **動かす前の下端より後ろの行が、動かした後に上端へ来たこと**を
     /// ホスト側が突き合わせる。**期待値をこちらが持たない。**
     ///
-    /// # `less` の配置を写している
+    /// # `less` の配置をコピーしている
     ///
     /// **最下行は状態行で、本文はその 1 つ上までである**
-    /// （`kernel/userland/less.rs`）。**境界をまたぐ値は写すしかない**
-    /// （`PROMPT_COLOR` と同じ立場）。**写しが古くなれば、読む行が
+    /// （`kernel/userland/less.rs`）。**境界をまたぐ値はコピーするしかない**
+    /// （`PROMPT_COLOR` と同じ立場）。**コピーが古くなれば、読む行が
     /// 状態行になって突き合わせが落ちる**——黙って成功にはならない。
     ViewWindow,
     /// カーソルの居るセル（PERF-b の後。**回帰で気づいた**）。
@@ -247,19 +247,19 @@ static BEFORE_ALTERNATE: common::critical::Locked<BeforeAlternateMarks> =
 /// **同じ画面に並ばない**ことを実測で確かめてあるが、**それに頼らず、
 /// プロンプトの判定はカーソルの居る行だけを見る**（[`observe_prompt`]）。
 ///
-/// # 写しである
+/// # コピーである
 ///
 /// **`kernel/userland/zash.rs` の `PROMPT_COLOR` と同じ値である。**
 /// **ユーザープログラムはカーネルの定数を参照できず、逆も同じ**なので、
-/// **境界をまたぐ値は写すしかない**（`SYS_*` の番号や `SPAWN_INTERRUPTED` と
+/// **境界をまたぐ値はコピーするしかない**（`SYS_*` の番号や `SPAWN_INTERRUPTED` と
 /// 同じ形である）。
 ///
-/// **写しが古くなったら判定が落ちる。** 色を変えて片方だけ直せば、
+/// **コピーが古くなったら判定が落ちる。** 色を変えて片方だけ直せば、
 /// **その色のセルが見つからず `= false` が出る**——**黙って成功にはならない。**
-/// **判定が実装の値を写さない規律（`docs/verification-coverage.md`）は
+/// **判定が実装の値をコピーしない規律（`docs/verification-coverage.md`）は
 /// 同じプログラムの中の話で、ここは越えられない境界である。**
 const PROMPT_COLOR: Color = Color::rgb(0, 200, 0);
-/// `zi` の状態行の色。**`kernel/userland/zi.rs` の `STATUS_COLOR` の写しである。**
+/// `zi` の状態行の色。**`kernel/userland/zi.rs` の `STATUS_COLOR` のコピーである。**
 const STATUS_COLOR: Color = Color::rgb(200, 200, 0);
 
 /// ピクセルの値を 16 進で出すための包み（ES-d）。
@@ -434,7 +434,7 @@ fn ink_of_run(
 /// **色が名前に乗っていること**（連なりのインクが緑であること）と、
 /// **色が記号へ漏れていないこと**（連なりの直後のセルが既定前景で、
 /// かつ字が在ること）。**後者は ES-d の目視で「白のはず」と決めた側である。**
-/// **既定前景は写さない。コンソールに訊く。**
+/// **既定前景はコピーしない。コンソールに訊く。**
 fn observe_prompt(serial: &mut Serial, console: &mut crate::console::Console) {
     let format = console.framebuffer_layout().format();
     let want = PROMPT_COLOR.to_pixel(format);
@@ -453,7 +453,7 @@ fn observe_prompt(serial: &mut Serial, console: &mut crate::console::Console) {
     // **画面の形を出す（e-1）。** **`ioctl(TIOCGWINSZ)` が答える値の出所と
     // 同じもの**（`crate::console::foreground_geometry`）を、**カーネルの側から
     // 1 行にする。** **`zi` が受け取った値と突き合わせる**ので、
-    // **どちらも期待値を写していない**——経路のどこかで入れ替われば食い違う。
+    // **どちらも期待値をコピーしていない**——経路のどこかで入れ替われば食い違う。
     let (columns, rows) = console.size();
     let layout = console.framebuffer_layout();
     let _ = writeln!(
@@ -648,7 +648,7 @@ fn observe_status(serial: &mut Serial, console: &mut crate::console::Console) {
     //
     // **`ioctl(TIOCGWINSZ)` が答えた行数を `zi` が実際に使っている**ことの
     // 主張である。**行番号はこちらが画面から取る**（`console.size()`）ので、
-    // **期待値を写していない。**
+    // **期待値をコピーしていない。**
     let (_, rows) = console.size();
     let at_bottom = found.is_some_and(|(row, _, _)| row + 2 == rows);
     let _ = writeln!(
@@ -686,7 +686,7 @@ fn observe_status(serial: &mut Serial, console: &mut crate::console::Console) {
     }
     // **札をそのつど出す（e-2）。** **並びを見る判定が要る**——
     // 「Esc 1 回で前のモードへ戻った」は、**3 つ目の札が 1 つ目と同じで
-    // 2 つ目と違うこと**で示せる（**札の文字列を写さずに済む**）。
+    // 2 つ目と違うこと**で示せる（**札の文字列をコピーせずに済む**）。
     let _ = writeln!(
         serial,
         "screen-color: the zi status line says {:?}",

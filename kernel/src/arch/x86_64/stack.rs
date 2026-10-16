@@ -547,7 +547,7 @@ fn report_misaligned_entry(entry: &str, stack: u64) -> ! {
     common::arch::x86_64::cpu::halt_forever()
 }
 
-/// 見張りのページ（写していない 1 ページ）の下に、どのスタックが在るか（2026-10-06）。
+/// 見張りのページ（マップしていない 1 ページ）の下に、どのスタックが在るか（2026-10-06）。
 ///
 /// **ページフォルトのハンドラが、落ちたアドレスから名前を引いて出すために持つ**（[`guarded_stack_at`]）。以前は、起動の
 /// カーネルスタックの見張りだけを名指ししていて、ほかのスタックのあふれは「カーネルスタックの見張りの中ではない」と
@@ -648,7 +648,7 @@ static GUARD_PAGES: [(AtomicU64, AtomicU64); GUARD_PAGE_SLOTS] =
 /// # 契約（境界の関数。2026-10-06）
 ///
 /// - 起動時の単一の文脈から呼ぶ（張る所は、どれも起動の経路に在る）。ページテーブルには触らない。
-/// - `guard_bottom` は、写していない 1 ページの先頭のアドレスである。
+/// - `guard_bottom` は、マップしていない 1 ページの先頭のアドレスである。
 pub fn record_guard_page(guard_bottom: u64, stack: GuardedStack) -> bool {
     // 破壊テスト (2026-10-06, excursion-guard-unrecorded-test): 遠征スタックの見張りのページを、控えたことにして
     // 控えない。**張った直後の確かめ（`ring3` の、4 本とも自分の名前で控えられていること）が、名指しして止まる。**
@@ -843,8 +843,8 @@ pub unsafe fn install_guard_page(
                 ));
                 common::arch::x86_64::cpu::halt_forever();
             }
-            // **外したページを、何も写っていてはならない領域として登録する**（ページの権限の一覧。
-            // `crate::page_survey`）。以後の一覧で、ここに何か写っていれば行に印が付く。
+            // **外したページを、何もマップされていてはならない領域として登録する**（ページの権限の一覧。
+            // `crate::page_survey`）。以後の一覧で、ここに何かマップされていれば行に印が付く。
             crate::page_survey::register_absent(
                 GUARD_PAGES_REGION,
                 guard_virt.as_u64(),

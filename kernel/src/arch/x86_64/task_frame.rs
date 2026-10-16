@@ -52,7 +52,7 @@ pub unsafe fn build_initial_context(top: VirtAddr, entry: u64) -> u64 {
     saved_stack_pointer
 }
 
-/// 池のスレッドのタスクの最初の文脈を、`image`（親の文脈の写し。`IrqContext::thread_start_image`）のまま
+/// 池のスレッドのタスクの最初の文脈を、`image`（親の文脈のコピー。`IrqContext::thread_start_image`）のまま
 /// スタック頂点に積み、保存 RSP を返す（M3a。2026-10-14）。
 ///
 /// **[`build_initial_context`] との違いは、積む中身が 0 の汎用レジスタとカーネルの入口ではなく、親の汎用レジスタと

@@ -107,7 +107,7 @@ pub fn root_image() -> &'static [u8] {
 ///    `sys_open` / `sys_read` / `sys_getdents64` / `sys_stat`
 ///    （`kernel/src/syscall.rs`）、`load_user_program`
 ///    （`kernel/src/userland.rs`。ELF を `SPAWN_IMAGES` へコピーしてから落とす——
-///    **借りたまま Ring 3 へ入らないことは、あちらの「イメージをブロックごとに写す。
+///    **借りたまま Ring 3 へ入らないことは、あちらの「イメージをブロックごとにコピーする。
 ///    借りたままにできない」の doc が根拠である**）
 /// 2. [`root_image`] の直接の呼び出し元は `kernel/src/main.rs` の判定行 1 箇所で、
 ///    **アドレスの値だけを読む**（参照を保持しない）
@@ -286,13 +286,13 @@ pub enum File {
     ///
     /// `writable` は開いた向き（zi-c。ADR-0037）。**読みで開いたら偽、
     /// `O_WRONLY|O_TRUNC` で開いたら真である。** 向きの取り違えは
-    /// 両方向とも `-EBADF`（syscall の側が写す）。
+    /// 両方向とも `-EBADF`（syscall の側がコピーする）。
     Regular {
         inode: Inode,
         offset: u64,
         writable: bool,
         /// `flock` で持っているロックの番号（`crate::flock` の表の添字 + 1。0 なら持っていない。`ADR-0087`）。
-        /// `close` で放す。**`F_DUPFD` の写しには渡さない**（写しは別の持ち主）。
+        /// `close` で放す。**`F_DUPFD` のコピーには渡さない**（コピーは別の持ち主）。
         lock: u8,
     },
     /// 端末（S11-10）。**0 / 1 / 2 に据えてある。**

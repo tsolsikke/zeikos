@@ -12,7 +12,7 @@
 //! **CPU ごとに短いスタブを 1 つずつ持ち、それぞれが自分の CPU の置き場を RIP 相対で読む。** `LSTAR` は CPU ごとの
 //! レジスタなので、CPU ごとに自分のスタブを指させる。スタブは、ユーザーの RSP を自分の CPU の退避の欄へ置き、
 //! **その CPU の TSS の RSP0 を直に読んで** RSP へ入れる。`int 0x80` で入ったときに CPU が切り替える先と、同じ欄である
-//! ——写しを持たないので、遠征の深さやタスクの切り替えで RSP0 が動いても、合わせる所が増えない。
+//! ——コピーを持たないので、遠征の深さやタスクの切り替えで RSP0 が動いても、合わせる所が増えない。
 //!
 //! **`swapgs` を使わないので、カーネルは今までどおり `fs:` も `gs:` も使わない**（基本の検査が数えている）。割り込みと
 //! 例外の入口にも触らない。**欠点は、CPU の数だけスタブが要ることである。** CPU の数を増やす段で、この形を見直す。
@@ -97,7 +97,7 @@ const STUB_SWITCHES_STACK: usize = if cfg!(feature = "syscall-stub-keeps-user-st
 /// **正準なアドレスの下半分の、最後の 1 ページを使わせない。** 最後のページの末尾に `syscall` 命令を置くと、戻り先
 /// （命令の次のアドレス）が `0x0000_8000_0000_0000` になり、正準でなくなる。Linux も同じ値を上限にしている。
 ///
-/// **写す側（`mmap(MAP_FIXED)`・`munmap`・`mprotect`）も、この上限を見る**（2026-10-07。`crate::syscall` の
+/// **マップする側（`mmap(MAP_FIXED)`・`munmap`・`mprotect`）も、この上限を見る**（2026-10-07。`crate::syscall` の
 /// `exceeds_user_limit`。それまでは見ていなかった——`ADR-0082` の Addendum）。**戻る直前の確かめ
 /// （`IrqContext::returns_to_user_address`）も在る。**
 pub const USER_ADDRESS_LIMIT: u64 = 0x0000_7fff_ffff_f000;

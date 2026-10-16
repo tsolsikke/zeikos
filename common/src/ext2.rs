@@ -356,7 +356,7 @@ impl core::fmt::Debug for Ext2<'_> {
 
 /// ext2 の上のファイルを、範囲を読む口として見せる（2026-10-05。`crate::image_source`）。
 ///
-/// **ブロックごとに引いて、要る分だけを写す**（[`Ext2::file_block`]）。ファイルの全体を、どこかへ写して持つことは
+/// **ブロックごとに引いて、要る分だけをコピーする**（[`Ext2::file_block`]）。ファイルの全体を、どこかへコピーして持つことは
 /// しない。**ブロックがイメージの中で続いていなくてもよい。**
 ///
 /// # 読めない大きさのファイル
@@ -367,7 +367,7 @@ impl core::fmt::Debug for Ext2<'_> {
 #[derive(Debug, Clone, Copy)]
 pub struct FileImage<'f, 'a> {
     fs: &'f Ext2<'a>,
-    /// **借りる**（写しを持たない）。載せる側は、遠征スタックの上でこの値を持ち続けるので、小さくしておく。
+    /// **借りる**（コピーを持たない）。載せる側は、遠征スタックの上でこの値を持ち続けるので、小さくしておく。
     inode: &'f Inode,
 }
 
@@ -3451,7 +3451,7 @@ mod tests {
                 "offset {offset} len {len}"
             );
         }
-        // ファイルの外は、写さずに断る。
+        // ファイルの外は、コピーせずに断る。
         let mut buf = [0xAAu8; 8];
         assert!(matches!(
             file.read_at(inode.size - 4, &mut buf),

@@ -73,7 +73,7 @@ const USER_PROGRAM_STACK_BYTES: u64 = 4 * 4096;
 /// | `ET_EXEC`（今までの形） | リンクしたアドレス | イメージの末尾 〜 `0x7fb000` | `0x1000_0000` 〜 | `0x7fc000..0x800000`（4 ページ） |
 /// | `ET_DYN`（静的 PIE） | `0x400000` だけずらす | イメージの末尾 〜 `0x0fff_f000` | `0x1000_0000` 〜 スタックの見張りの下 | `0x7f_ffff_f000` の下の 256 KiB |
 ///
-/// **どちらの配置も、スタックの下に写さないページを 1 枚置く**（見張りのページ。`ET_EXEC` は 2026-10-06 から。
+/// **どちらの配置も、スタックの下にマップしないページを 1 枚置く**（見張りのページ。`ET_EXEC` は 2026-10-06 から。
 /// それまでは 1 ページのスタックのすぐ下がヒープの上限で、あふれるとヒープを黙って壊すおそれが在った）。スタックが
 /// 尽きると、そこを踏んでページフォルトになり、プロセスが終わる。`ET_DYN` の `mmap` は、そのページより下までしか配らない。
 ///
@@ -83,9 +83,9 @@ const USER_PROGRAM_STACK_BYTES: u64 = 4 * 4096;
 pub struct ProcessLayout {
     /// スタックの上端（最初の RSP は、ここから下へ積んだ初期データの先頭）。
     pub stack_top: u64,
-    /// 起動のときに写すスタックのバイト数（ページの倍数）。**後から伸ばさない。**
+    /// 起動のときにマップするスタックのバイト数（ページの倍数）。**後から伸ばさない。**
     pub stack_bytes: u64,
-    /// スタックの下に、写さないページを 1 枚置くか。
+    /// スタックの下に、マップしないページを 1 枚置くか。
     pub stack_guard: bool,
     /// ヒープ（`brk`）が越えられない上端。
     pub heap_limit: u64,
@@ -139,7 +139,7 @@ impl ProcessLayout {
         }
     }
 
-    /// スタックの下端（写す範囲の、いちばん低いアドレス）。
+    /// スタックの下端（マップする範囲の、いちばん低いアドレス）。
     pub const fn stack_bottom(&self) -> u64 {
         self.stack_top - self.stack_bytes
     }
@@ -156,7 +156,7 @@ impl ProcessLayout {
     /// イメージを置いてよい範囲と上限（`common::elf::ElfHeaders::plan` に渡す）。
     ///
     /// - `ET_EXEC`——**今までと同じに、範囲では断らない**（ユーザーのアドレスの全体を範囲にし、大きさの上限も付けない）。
-    ///   スタックやほかのセグメントと重なるイメージは、今までどおり、写す所が断る。ウィンドウの終わりは
+    ///   スタックやほかのセグメントと重なるイメージは、今までどおり、マップする所が断る。ウィンドウの終わりは
     ///   [`crate::arch::x86_64::USER_ADDRESS_LIMIT`] で、**範囲の終端で、この値そのものは含まない**（セグメントの末尾が
     ///   この値に等しいのはよく、越えるのは断る。`common::elf::ElfHeaders::plan` の `end > window.1`）。
     /// - `ET_DYN`——ずらした後のイメージが、ずらす量からヒープの上端までに収まり、端から端までが上限以下であること。
@@ -747,11 +747,11 @@ pub enum UserLoadError {
     Parse(common::elf::ElfError),
     /// セグメントの並びを受け付けられない（2026-10-01。`common::elf::check_load_layout`）。**アドレスの順でない、
     /// 重なる、計算があふれる、同じページに権限の違うセグメントが載る、のどれかである。**
-    /// **写す前に断るので、ページは 1 枚も写していない。**
+    /// **マップする前に断るので、ページは 1 枚もマップしていない。**
     Layout(common::elf::LayoutError),
     /// 載せる位置を決められない（2026-10-05。`common::elf::ElfHeaders::plan`）。**動的リンクを求める、実行できる
-    /// スタックを求める、`PT_LOAD` が無い、置いてよい範囲に収まらない、のどれかである。** 写す前に断るので、ページは
-    /// 1 枚も写していない。
+    /// スタックを求める、`PT_LOAD` が無い、置いてよい範囲に収まらない、のどれかである。** マップする前に断るので、ページは
+    /// 1 枚もマップしていない。
     Placement(common::elf::PlacementError),
     /// イメージの範囲を読めなかった（2026-10-05。`common::image_source`）。**ファイルシステムが、そのブロックを読めない。**
     ///
@@ -1261,7 +1261,7 @@ static LONG_HOLD_DONE: core::sync::atomic::AtomicBool = core::sync::atomic::Atom
 /// [`load_user_program`] の本体（2026-10-05）。**イメージは「範囲を読む口」で受ける**（`common::image_source`）。
 ///
 /// **実行ファイルの全体を、1 本のバイト列として持たない。** 読むのは、先頭の部分（ELF のヘッダとプログラムヘッダ）と、
-/// セグメントごとの、ページに写す分だけである。ファイルシステムの上のファイルは、ブロックごとに引いて、写す先のフレームへ
+/// セグメントごとの、ページにコピーする分だけである。ファイルシステムの上のファイルは、ブロックごとに引いて、コピーする先のフレームへ
 /// 直に読む（[`spawn`]）。
 pub fn load_user_program_from(
     logger: &mut Logger<Serial>,
@@ -1284,7 +1284,7 @@ pub fn load_user_program_from(
 /// Ring 3 へ落ちる前か、失敗の出口で返す**（[`crate::frame_allocator::give_back`]）。
 ///
 /// **読み込みの経路で、アロケータを借り直してはいけない**（`ADR-0084`）。受け取った 1 本だけを使う。借り直すと、自分が持つ
-/// 貸し出しを自分で待つことになる。今のイメージはメモリの上に在り（`crate::vfs` の `root_image`）、読むのはスライスを写すだけで
+/// 貸し出しを自分で待つことになる。今のイメージはメモリの上に在り（`crate::vfs` の `root_image`）、読むのはスライスをコピーするだけで
 /// ある。**将来、ディスクから直に読む形（ページキャッシュ）にするなら、ここで借りたものを渡すか、別の置き場から取る。**
 pub fn load_user_program_with(
     logger: &mut Logger<Serial>,
@@ -1561,7 +1561,7 @@ pub fn load_user_program_with(
 /// 破棄する前の空間のページの権限の一覧を出す（`crate::page_survey`）。
 ///
 /// **領域は、イメージのセグメント（`PT_LOAD`）・スタック・ヒープ・`mmap` の範囲である。** セグメントの範囲はイメージを読み直して得る
-/// （読み込みが通ったイメージだけを見る。セグメントの並びを受け付けられないイメージは、何も写していないので出さない）。
+/// （読み込みが通ったイメージだけを見る。セグメントの並びを受け付けられないイメージは、何もマップしていないので出さない）。
 /// **歩くのはユーザーの側の添字だけである**（カーネルと共有している側は、カーネルの表の一覧が見る）。
 /// **`mmap` の範囲のページ数を比べないイメージは、中の `MMAP_PAGES_NOT_COMPARED` に名前で挙げる**（終わりに残るページ数が
 /// スレッドの順序で変わるイメージ。2026-10-15）。
@@ -1638,7 +1638,7 @@ fn report_user_mappings(
     let stack = layout.stack_bottom();
     regions[count] = Region::mapped("stack", stack, layout.stack_top, true);
     count += 1;
-    // ヒープはイメージの末尾の次のページから、スタックの手前までを範囲にする（`brk` が伸ばした分だけが写っている）。
+    // ヒープはイメージの末尾の次のページから、スタックの手前までを範囲にする（`brk` が伸ばした分だけがマップされている）。
     let heap = process.heap.start();
     if heap != 0 && heap < layout.heap_limit {
         regions[count] = Region::mapped("heap", heap, layout.heap_limit, true);
@@ -1832,16 +1832,16 @@ fn forget_task_root_before_destroy(logger: &mut Logger<Serial>, process: &UserPr
 /// 止めない。**`docs/roadmap.md` の S9 が「いかなる入力に対しても fail-fast
 /// させない」と言っているのは、後者についてである。**
 ///
-/// # セグメントの並びは、写す前に確かめる（2026-10-01）
+/// # セグメントの並びは、マップする前に確かめる（2026-10-01）
 ///
-/// **`Elf::parse` の後、1 枚も写す前に `Elf::check_load_layout` を通す。** 通らない並びは
+/// **`Elf::parse` の後、1 枚もマップする前に `Elf::check_load_layout` を通す。** 通らない並びは
 /// [`UserLoadError::Layout`] で断る——アドレスの順でない、重なる、計算があふれる（`p_memsz` が 0 のセグメントは
 /// 最終ページの引き算が成り立たない）、同じページに権限の違うセグメントが載る、共有するページに後ろのセグメントが
 /// ファイルの中身を持つ、のどれかである。**下のループの計算（最終ページ、ページを進める加算、セグメントの終わり）は、
 /// この確かめが通ったことを前提にしている。**
 ///
 /// **以前は確かめていなかった。** 同じページに権限の違うセグメントが載るイメージは、前のセグメントの権限のまま読み込まれ、
-/// 後ろのセグメントの中身は写されなかった。アドレスの順が逆のイメージも読み込まれた。アドレス 0 で大きさ 0 のセグメントは、
+/// 後ろのセグメントの中身はコピーされなかった。アドレスの順が逆のイメージも読み込まれた。アドレス 0 で大きさ 0 のセグメントは、
 /// 最終ページの引き算があふれてカーネルが止まった（どれも起動の途中の検査で実測した）。
 ///
 /// # セグメントが同じページを共有しているとマップできない
@@ -1929,7 +1929,7 @@ fn note_stack_guard_page(logger: &mut Logger<Serial>, guard: u64) {
     ));
 }
 
-/// [`load_user_program_into`] の中身——セグメントを写し、スタックを張り、リーフを読み戻す。**`head` はイメージの先頭の部分である。**
+/// [`load_user_program_into`] の中身——セグメントをマッピング、スタックを張り、リーフを読み戻す。**`head` はイメージの先頭の部分である。**
 fn load_segments_and_stack(
     logger: &mut Logger<Serial>,
     allocator: &mut crate::frame_allocator::FrameAllocator,
@@ -1944,7 +1944,7 @@ fn load_segments_and_stack(
     use common::elf::ElfHeaders;
 
     const PAGE_SIZE: u64 = 4096;
-    // 並びの確かめが前提にするページの大きさと、ここで写すページの大きさは同じでなければならない。
+    // 並びの確かめが前提にするページの大きさと、ここでマップするページの大きさは同じでなければならない。
     const _: () = assert!(PAGE_SIZE == common::elf::LOAD_PAGE_SIZE);
 
     let direct_map = common::addr::direct_map();
@@ -1955,9 +1955,9 @@ fn load_segments_and_stack(
         Ok(elf) => elf,
         Err(e) => return Err(UserLoadError::Parse(e)),
     };
-    // **写す前にセグメントの並びを確かめる**（この関数の doc の「セグメントの並びは、写す前に確かめる」）。
+    // **マップする前にセグメントの並びを確かめる**（この関数の doc の「セグメントの並びは、マップする前に確かめる」）。
     //
-    // 破壊テスト (2026-10-01, user-load-skip-layout-check): 確かめの答えを捨てて写す。**起動の途中の
+    // 破壊テスト (2026-10-01, user-load-skip-layout-check): 確かめの答えを捨ててマップする。**起動の途中の
     // 壊したイメージの検査が、並びの確かめで断られるはずのイメージを別の場所で断られるのを見て止まる。**
     match elf.check_load_layout() {
         Err(e) if !cfg!(feature = "user-load-skip-layout-check") => {
@@ -1989,7 +1989,7 @@ fn load_segments_and_stack(
     // **載せる位置を決める**（2026-10-05。`common::elf::ElfHeaders::plan`）。**配置はイメージの 種類で選ぶ**
     // （[`ProcessLayout`]）。位置を決めてリンクしたイメージは、今までどおり、ずらさない。位置独立のイメージは、決まった量だけ
     // ずらす。**動的リンクを求めるイメージ、実行できるスタックを求めるイメージ、置いてよい範囲に収まらないイメージは、ここで断る**
-    // ——ページは、まだ 1 枚も写していない。
+    // ——ページは、まだ 1 枚もマップしていない。
     let layout = ProcessLayout::for_kind(elf.kind());
     let plan = match elf.plan(&layout.load_policy(elf.kind())) {
         Ok(plan) => plan,
@@ -2016,7 +2016,7 @@ fn load_segments_and_stack(
         let writable = ph.p_flags & common::elf::PF_W != 0;
         // **実行できるかも、セグメントのフラグから取る**（2026-10-02）。実行しないセグメントのリーフには、実行禁止のビットが付く
         // （2026-10-03）。**書けて実行もできるセグメントは、ここへ来る前に、並びの確かめが断っている。**
-        // 破壊テスト (2026-10-03, user-load-ignores-execute): 書けないセグメントを、フラグに依らず実行できる形で写す。
+        // 破壊テスト (2026-10-03, user-load-ignores-execute): 書けないセグメントを、フラグに依らず実行できる形でマップする。
         let executable = ph.p_flags & common::elf::PF_X != 0
             || (cfg!(feature = "user-load-ignores-execute-test") && !writable);
         let first_page = ph.p_vaddr & !(PAGE_SIZE - 1);
@@ -2053,7 +2053,7 @@ fn load_segments_and_stack(
             // その中身の直後から始まる**ので、**残りは既にゼロである。**
             // **やり直すと直前のセグメントの中身を消す。**
             //
-            // **このページの権限は直前のセグメントのもので、新しいセグメントの中身もここへは写さない。**
+            // **このページの権限は直前のセグメントのもので、新しいセグメントの中身もここへはコピーしない。**
             // **それでよいことは、並びの確かめが保証している**——共有するページでは 2 つのセグメントの
             // 権限が同じで、後ろのセグメントはファイルの中身を持たない（`common::elf::check_load_layout`）。
             if previous_last_page == Some(page) && page == first_page && ph.p_vaddr >= previous_end
@@ -2100,7 +2100,7 @@ fn load_segments_and_stack(
                 // 位置を足したものである。`p_offset + p_filesz` がファイルに収まることは、ヘッダの検査が確かめて
                 // あるので、足し算はあふれない。
                 if let Err(e) = image.read_at(ph.p_offset + page_start_in_segment, target) {
-                    // **繋いでいないフレームは、ここで返す**（下の、写せなかったときと同じ理由）。
+                    // **繋いでいないフレームは、ここで返す**（下の、マップできなかったときと同じ理由）。
                     let _ = allocator.deallocate_frame(frame);
                     return Err(UserLoadError::Read(e));
                 }
@@ -2172,8 +2172,8 @@ fn load_segments_and_stack(
         process.name
     ));
 
-    // ユーザースタックを写す。**こちらは書ける。** **枚数は配置が決める**（2026-10-05。位置を決めてリンクしたイメージは
-    // 1 枚、位置独立のイメージは 256 KiB）。**起動のときに全部を写す**——後から伸ばさない。
+    // ユーザースタックをマップする。**こちらは書ける。** **枚数は配置が決める**（2026-10-05。位置を決めてリンクしたイメージは
+    // 1 枚、位置独立のイメージは 256 KiB）。**起動のときに全部をマップする**——後から伸ばさない。
     //
     // **初期データ（argc・argv・envp）を積むのは、いちばん上のページである。** `dst` と `stack_page` は、そのページを指す。
     let stack_bottom = layout.stack_bottom();
@@ -2206,7 +2206,7 @@ fn load_segments_and_stack(
                 .space
                 .map_user_4kib(allocator, direct_map, virt, frame, stack_attributes)
         } {
-            // **繋いでいないフレームは、ここで返す**（セグメントを写せなかったときと同じ理由）。
+            // **繋いでいないフレームは、ここで返す**（セグメントをマップできなかったときと同じ理由）。
             let _ = allocator.deallocate_frame(frame);
             return Err(UserLoadError::Mapping {
                 virt: page,
@@ -2226,7 +2226,7 @@ fn load_segments_and_stack(
     logger.info(format_args!(
         "user-load: mapped the user stack {stack_bottom:#x}..{stack_top:#x} (w=true)"
     ));
-    // **見張りのページは、写さないことで置く。** スタックが尽きると、ここを踏んでページフォルトになる。
+    // **見張りのページは、マップしないことで置く。** スタックが尽きると、ここを踏んでページフォルトになる。
     if let Some(guard) = layout.stack_guard_page() {
         note_stack_guard_page(logger, guard);
     }
@@ -2299,7 +2299,7 @@ fn load_segments_and_stack(
 
     // **いちばん上のページの未使用部分を既知のバイトで埋める（EV）。** **初期データの下は、
     // これからプログラムが使う領域である。** 遠征スタックと同じ形で、
-    // **戻ってから高水位を読む**（[`USER_STACK_FILL`]。下のページは、写すときに埋めてある）。
+    // **戻ってから高水位を読む**（[`USER_STACK_FILL`]。下のページは、マップするときに埋めてある）。
     //
     // **順序に理由がある。** **積んだ後に埋める**——先に埋めると、
     // 積んだ文字列と表を毒値が上書きする。
@@ -2388,7 +2388,7 @@ fn load_segments_and_stack(
 /// # 限界
 ///
 /// **プログラムが既知のバイトそのものを書いたら、使ったとは数えられない。** 下から数えるので、間に既知のバイトが
-/// 挟まっても影響しない。**壊れる側（見張りのページを踏む）は、そもそもその下が写っていないので `#PF` になる。**
+/// 挟まっても影響しない。**壊れる側（見張りのページを踏む）は、そもそもその下がマップされていないので `#PF` になる。**
 fn report_user_stack_high_water(logger: &mut Logger<Serial>, process: &UserProcess) {
     const PAGE_SIZE: u64 = 4096;
     let direct_map = common::addr::direct_map();
@@ -2421,7 +2421,7 @@ fn report_user_stack_high_water(logger: &mut Logger<Serial>, process: &UserProce
         };
         let bytes = direct_map.phys_to_virt(resolved.phys).as_u64() as *const u8;
         for offset in 0..PAGE_SIZE {
-            // SAFETY: `bytes` は、この空間に写してあるスタックのページを direct map 越しに指しており、
+            // SAFETY: `bytes` は、この空間にマップしてあるスタックのページを direct map 越しに指しており、
             // `PAGE_SIZE` バイト読める。書き手はもう走っていない。
             if unsafe { bytes.add(offset as usize).read() } != USER_STACK_FILL {
                 lowest_used = Some(page + offset);
@@ -2620,7 +2620,7 @@ unsafe fn run_loaded_program(
     // **ヒープも据える（H-a）。** **据える側が戻す**（`files` と同じ形）。
     let previous_heap = swap_current_heap(process.heap);
     // **プロセスごとの小さな状態（シグナルの登録など）を初めの形に戻し、名前を控える**（2026-10-06）。スロットと
-    // 深さで引くので、据え替えの写しは要らない（`crate::process_state`）。
+    // 深さで引くので、据え替えのコピーは要らない（`crate::process_state`）。
     crate::process_state::reset_for_next_process(process.name.as_bytes());
     // **マッピングテーブルも、配置の値で据え、載せたものを登録する**（2026-10-06。`crate::mappings`）。イメージ・スタック・見張りの
     // ページ・ヒープが表に在ることで、`MAP_FIXED` がそこへ置かず、`brk` が無名のマッピングへ伸びない。
@@ -3036,10 +3036,10 @@ pub fn spawn_with_loan(
     // **読めないことを理由に起動を拒まない。**
     let name = core::str::from_utf8(name_bytes).unwrap_or("<not utf-8>");
 
-    // **イメージは写さない。範囲を読む口を作って、載せる側へ渡す**（2026-10-05。`common::ext2::FileImage`）。
+    // **イメージはコピーしない。範囲を読む口を作って、載せる側へ渡す**（2026-10-05。`common::ext2::FileImage`）。
     //
-    // **以前は、ブロックごとに静的な配列へ写してから載せていた**（上限は 32 KiB）。載せる側が要るのは、先頭の部分と、
-    // セグメントごとのページの分だけなので、ファイルシステムのブロックから、写す先のフレームへ直に読む。
+    // **以前は、ブロックごとに静的な配列へコピーしてから載せていた**（上限は 32 KiB）。載せる側が要るのは、先頭の部分と、
+    // セグメントごとのページの分だけなので、ファイルシステムのブロックから、コピーする先のフレームへ直に読む。
     let image = common::ext2::FileImage::new(&fs, &inode);
     // **読めない大きさのファイルは、空間を作る前に、名前のある失敗で断る。** ext2 の 2 段目の間接ブロックを使う
     // ファイル（4 KiB のブロックで約 4.05 MiB を越える）は、どの範囲も読めない（`Ext2::file_block`）。**黙って
@@ -3717,7 +3717,7 @@ mod tests {
         assert_eq!(layout.stack_guard_page(), Some(0x007f_b000));
         assert_eq!(layout.heap_limit, 0x007f_b000);
         assert_eq!(layout.mmap_base, crate::syscall::MMAP_BASE);
-        // 範囲では断らない（今までどおり、写す所が断る）。
+        // 範囲では断らない（今までどおり、マップする所が断る）。
         let policy = layout.load_policy(common::elf::ElfKind::Executable);
         assert_eq!(policy.position_independent_base, 0);
         assert_eq!(policy.window, (0, crate::arch::x86_64::USER_ADDRESS_LIMIT));

@@ -21,7 +21,7 @@ use crate::frame_allocator::{FrameAllocator, FRAME_SIZE};
 
 use crate::paging::permissions::PagePermissions;
 
-// **ビットの定数は `entry` の 1 組を使う**（2026-10-02。以前は、このファイルが同じ値の写しを持っていた）。
+// **ビットの定数は `entry` の 1 組を使う**（2026-10-02。以前は、このファイルが同じ値のコピーを持っていた）。
 // **項目を書くときのビットは、`entry` の変換（`leaf_entry` と `table_entry`）が決める。** ここで読む定数は、
 // 既に在る項目を調べるためのものである。2MiB のリーフは PD レベルにだけ書く（PDPT レベルに書くと 1GiB ページの
 // 意味になるため、このモジュールは PDPT レベルにはリーフを書かない）。

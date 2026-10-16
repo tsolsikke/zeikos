@@ -32,7 +32,7 @@ pub unsafe extern "sysv64" fn zeikos_main(_stack: *const u64) -> ! {
         let base = addr as u64 as *mut u8;
         let mut offset = 0u64;
         while offset < CHUNK {
-            // SAFETY: 今 `mmap` で写した範囲の中である。
+            // SAFETY: 今 `mmap` でマップした範囲の中である。
             unsafe { base.add(offset as usize).write_volatile(1) };
             offset += PAGE;
         }

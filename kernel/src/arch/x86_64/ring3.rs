@@ -763,7 +763,7 @@ const EXCURSION_GUARD_NAMES: [[&str; MAX_EXCURSION_DEPTH]; USER_TASK_SLOTS] = [
 ///
 /// - 今の根のページテーブルで、遠征スタックの下の 1 ページずつを外す。外したページは、ページの権限の一覧と、
 ///   見張りのページの表に入る。
-/// - 外した後、4 本とも、写っておらず、自分の名前で控えられていることを読んで確かめる。欠けていれば止まる。
+/// - 外した後、4 本とも、マップされておらず、自分の名前で控えられていることを読んで確かめる。欠けていれば止まる。
 /// - 呼ぶのは、起動の経路で、最初の遠征より前である（`kernel_main`）。
 ///
 /// # Safety
@@ -775,7 +775,7 @@ pub unsafe fn install_excursion_guard_pages(
     log: &mut dyn FnMut(core::fmt::Arguments),
 ) {
     // 破壊テスト (2026-10-06, excursion-guard-skip-test): 見張りのページを張らない（以前の形）。**下の確かめが、
-    // 写ったままのページを名指しして止まる。**
+    // マップされたままのページを名指しして止まる。**
     let names_to_install: &[[&str; MAX_EXCURSION_DEPTH]] =
         if cfg!(feature = "excursion-guard-skip-test") {
             &[]
@@ -822,7 +822,7 @@ unsafe fn fill_excursion_stack(depth: usize) {
     if depth >= MAX_EXCURSION_DEPTH {
         report_excursion_index_out_of_range(current_excursion_slot(), depth);
     }
-    // **埋めるのは、スタックの本体だけである**（下の見張りのページは写っていない。触ると落ちる）。
+    // **埋めるのは、スタックの本体だけである**（下の見張りのページはマップされていない。触ると落ちる）。
     let (bottom, _) = excursion_stack_range_at(depth);
     // SAFETY: 呼び出し元契約により、このスタックは今誰も使っていない。`bottom` から `EXCURSION_STACK_SIZE`
     // バイトは、静的な配列の要素の、本体の欄である。
@@ -852,7 +852,7 @@ pub fn excursion_stack_high_water(depth: usize) -> usize {
     if depth >= MAX_EXCURSION_DEPTH {
         report_excursion_index_out_of_range(current_excursion_slot(), depth);
     }
-    // **読むのは、スタックの本体だけである**（下の見張りのページは写っていない）。
+    // **読むのは、スタックの本体だけである**（下の見張りのページはマップされていない）。
     let stack = excursion_stack_range_at(depth).0 as *const u8;
     for offset in 0..EXCURSION_STACK_SIZE {
         // SAFETY: 読み取りのみ。添字は上で範囲内にしてあり、`offset` は本体の欄の中である。
@@ -909,7 +909,7 @@ pub fn excursion_stack_within_budget(depth: usize) -> bool {
     excursion_stack_high_water(depth) <= EXCURSION_STACK_BUDGET
 }
 
-/// 遠征スタックの下の見張りのページが、4 本とも、写っておらず、自分の名前で控えられていることを確かめる。
+/// 遠征スタックの下の見張りのページが、4 本とも、マップされておらず、自分の名前で控えられていることを確かめる。
 ///
 /// **張った側の主張ではなく、今のページテーブルと控えの表を読んで確かめる。** 1 本でも欠けていれば、名指しして
 /// 止まる——欠けたまま進むと、あふれが黙って下を書くか、止まっても、どのスタックかが出ない。
@@ -1534,7 +1534,7 @@ pub struct FoldRecord {
 ///
 /// # 契約（境界の関数。2026-09-30）
 ///
-/// - 今の遠征の終了処理の記録を写して返すだけで、何も変えない。
+/// - 今の遠征の終了処理の記録をコピーして返すだけで、何も変えない。
 /// - 呼ぶのは `spawn`（`crate::userland`）で、子の遠征の前に親の記録を控える（戻すのは [`restore_fold_record`]）。
 pub fn save_fold_record() -> FoldRecord {
     // **1 回だけ引く（W1-c-3。[`run_excursion`] の同じ箇所の注記）。**

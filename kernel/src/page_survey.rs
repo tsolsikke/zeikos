@@ -1,4 +1,4 @@
-//! 写っているページの権限を、名前つきの領域ごとの一覧にする（2026-10-01）。
+//! マップされているページの権限を、名前つきの領域ごとの一覧にする（2026-10-01）。
 //!
 //! 権限の設定を 1 か所へ寄せる前と後で、どのページの権限も変わっていないことを比べるための道具である
 //! （`ADR-0071` の手順 3）。**表を歩くのは置き場の側**（`crate::arch` の `for_each_mapped_range`。作る側と
@@ -7,11 +7,11 @@
 //! # 領域
 //!
 //! **領域は、名前を持つアドレスの範囲である**（[`Region`]）。カーネルのイメージのセグメント、直接マッピング、フレームバッファ、
-//! 見張りのページ、ユーザーのプログラムのセグメントなどを、写した所が登録する（[`register`]）。
+//! 見張りのページ、ユーザーのプログラムのセグメントなどを、マップした所が登録する（[`register`]）。
 //! 範囲が領域の境をまたげば、境で分ける。領域が入れ子なら、いちばん狭いものの名前を採る。
 //!
 //! **見張りのページは「在ってはならない領域」として登録する**（[`register_absent`]）。そこにページが
-//! 写っていれば、その行に印が付く。外したはずのマッピングが残っている形は、ページ数の増減だけでは見えないので、
+//! マップされていれば、その行に印が付く。外したはずのマッピングが残っている形は、ページ数の増減だけでは見えないので、
 //! 名前を持たせて見えるようにする。
 //!
 //! # 行
@@ -23,7 +23,7 @@
 //!
 //! - **既定のビルドは、時点ごとに要約を 1 行だけ出す**——行の数と、行の中身から作った要約の値（[`Survey::digest`]）。
 //!   起動ログの参照に載るので、どこかの権限が変わると起動ログの突き合わせが落ちる。**どの領域にも入らない
-//!   範囲と、在ってはならない領域に写っている範囲は、既定のビルドでも行を出す。**
+//!   範囲と、在ってはならない領域にマップされている範囲は、既定のビルドでも行を出す。**
 //! - **ユーザーのプログラムの一覧は、既定のビルドでは起動時のプログラムの分だけを出す**（[`boot_programs_are_done`]）。
 //!   シェルから走らせたプログラムのたびに 1 行増えると、手で使うときのログとシェルの試験の出力の見通しが悪くなる。
 //!   `page-permissions-dump` を付ければ、どのプログラムの分も出す。
@@ -69,9 +69,9 @@ const UNNAMED: &str = "(unnamed)";
 /// 領域にページが在るべきか。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Expectation {
-    /// 写っているはずの領域。
+    /// マップされているはずの領域。
     Mapped,
-    /// 何も写っていてはならない領域（見張りのページ、外した後のマッピング）。
+    /// 何もマップされていてはならない領域（見張りのページ、外した後のマッピング）。
     Absent,
 }
 
@@ -91,7 +91,7 @@ pub struct Region {
 }
 
 impl Region {
-    /// 写っているはずの領域。
+    /// マップされているはずの領域。
     pub const fn mapped(name: &'static str, start: u64, end: u64, counted: bool) -> Region {
         Region {
             name,
@@ -102,7 +102,7 @@ impl Region {
         }
     }
 
-    /// 何も写っていてはならない領域。
+    /// 何もマップされていてはならない領域。
     pub const fn absent(name: &'static str, start: u64, end: u64) -> Region {
         Region {
             name,
@@ -138,7 +138,7 @@ impl Region {
 pub struct Row {
     /// 領域の名前。どの領域にも入らなければ `(unnamed)`。
     pub name: &'static str,
-    /// その領域にページが在るべきか。**`Absent` の行は、在ってはならない所に写っているということである。**
+    /// その領域にページが在るべきか。**`Absent` の行は、在ってはならない所にマップされているということである。**
     pub expectation: Expectation,
     /// ページ数を要約の値に入れるか。
     pub counted: bool,
@@ -158,7 +158,7 @@ impl Row {
         self.name == UNNAMED
     }
 
-    /// 在ってはならない領域に写っている行か。
+    /// 在ってはならない領域にマップされている行か。
     pub fn is_unexpected(&self) -> bool {
         self.expectation == Expectation::Absent
     }
@@ -198,7 +198,7 @@ impl<const N: usize> Survey<N> {
         self.dropped
     }
 
-    /// 写っている範囲を 1 つ足す（純粋な論理）。**領域の境で分け、いちばん狭い領域の名前で行へ入れる。**
+    /// マップされている範囲を 1 つ足す（純粋な論理）。**領域の境で分け、いちばん狭い領域の名前で行へ入れる。**
     pub fn add(&mut self, regions: &[Region], range: MappedRange) {
         // 範囲の終わりは u64 を越えうる（アドレスの上端で終わるとき）ので、広い型で数える。
         let end = u128::from(range.start) + u128::from(range.bytes());
@@ -288,7 +288,7 @@ impl<const N: usize> Survey<N> {
         self.rows().filter(|row| row.is_unnamed()).count()
     }
 
-    /// 在ってはならない領域に写っている行の数。
+    /// 在ってはならない領域にマップされている行の数。
     pub fn unexpected(&self) -> usize {
         self.rows().filter(|row| row.is_unexpected()).count()
     }
@@ -434,7 +434,7 @@ impl Regions {
         self.refused
     }
 
-    /// 登録された領域を、配列へ写して返す（`Survey::add` に渡す形）。
+    /// 登録された領域を、配列へコピーして返す（`Survey::add` に渡す形）。
     fn list(&self) -> ([Region; MAX_REGIONS], usize) {
         let mut list = [Region::mapped("", 0, 0, false); MAX_REGIONS];
         let mut count = 0;
@@ -456,17 +456,17 @@ pub fn boot_programs_are_done() {
     BOOT_PROGRAMS_DONE.store(true, core::sync::atomic::Ordering::SeqCst);
 }
 
-/// カーネルの表の領域（起動の途中で、写した所が足していく）。
+/// カーネルの表の領域（起動の途中で、マップした所が足していく）。
 static KERNEL_REGIONS: Locked<Regions> = Locked::new(Regions::new());
 
-/// カーネルの表の領域を 1 つ登録する（写っているはずの領域）。
+/// カーネルの表の領域を 1 つ登録する（マップされているはずの領域）。
 pub fn register(name: &'static str, start: u64, end: u64, counted: bool) {
     KERNEL_REGIONS
         .lock()
         .add(Region::mapped(name, start, end, counted));
 }
 
-/// カーネルの表の領域を 1 つ登録する（何も写っていてはならない領域）。
+/// カーネルの表の領域を 1 つ登録する（何もマップされていてはならない領域）。
 pub fn register_absent(name: &'static str, start: u64, end: u64) {
     KERNEL_REGIONS.lock().add(Region::absent(name, start, end));
 }
@@ -490,7 +490,7 @@ pub unsafe fn report_kernel(
     root: PhysAddr,
     direct_map: DirectMap,
 ) {
-    // **錠の中では写すだけにする**（歩く間と出す間は持たない）。
+    // **錠の中ではコピーするだけにする**（歩く間と出す間は持たない）。
     let (regions, refused) = {
         let regions = KERNEL_REGIONS.lock();
         (regions.list(), regions.refused())
@@ -583,7 +583,7 @@ fn print<const N: usize>(
         ));
     }
     if all {
-        // 在ってはならない領域のうち、何も写っていないもの（見込みどおり）も、名前ごとに 1 行出す。
+        // 在ってはならない領域のうち、何もマップされていないもの（見込みどおり）も、名前ごとに 1 行出す。
         for (index, region) in regions.iter().enumerate() {
             let first_of_its_name = !regions[..index].iter().any(|earlier| {
                 earlier.expectation == Expectation::Absent && earlier.name == region.name
@@ -705,14 +705,14 @@ mod tests {
     }
 
     /// **領域が入れ子なら、いちばん狭い領域の名前を採る。** 見張りのページは「在ってはならない領域」で、
-    /// そこに写っていれば行に印が付く。
+    /// そこにマップされていれば行に印が付く。
     #[test]
     fn the_narrowest_region_wins_and_a_mapping_in_an_absent_region_is_marked() {
         let regions = [
             Region::mapped("bss", 0x30_0000, 0x34_0000, false),
             Region::absent("guard", 0x31_0000, 0x31_1000),
         ];
-        // 見張りのページを外した形——その 1 ページだけ写っていない。
+        // 見張りのページを外した形——その 1 ページだけマップされていない。
         let mut survey = Survey::<8>::new();
         survey.add(
             &regions,
@@ -725,7 +725,7 @@ mod tests {
         assert_eq!(rows(&survey), vec![("bss", "4K", true, 0x3f)]);
         assert_eq!(survey.unexpected(), 0);
 
-        // 外し忘れた形——見張りのページも写っている。
+        // 外し忘れた形——見張りのページもマップされている。
         let mut forgotten = Survey::<8>::new();
         forgotten.add(
             &regions,

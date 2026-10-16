@@ -4,8 +4,8 @@
 //!
 //! **鍵は ext2 の inode 番号、持ち主は開いたファイル（`crate::vfs::File::Regular` の 1 つ）である。** 取れたロックは
 //! この表の 1 項目で、`File::Regular` の `lock` の欄がその番号（1 から。0 は持っていない）を持つ。Linux の `flock` が
-//! open file description に付くのと同じ形で、**`F_DUPFD` の写しは別の持ち主になる**（ZeikOS の `File` は写しごとに別で、
-//! 写しは `lock` を 0 にして渡す。Linux は共有する。Seinas はロックファイルの fd を dup しない）。
+//! open file description に付くのと同じ形で、**`F_DUPFD` のコピーは別の持ち主になる**（ZeikOS の `File` はコピーしごとに別で、
+//! コピーは `lock` を 0 にして渡す。Linux は共有する。Seinas はロックファイルの fd を dup しない）。
 //!
 //! - `LOCK_EX`: ほかの持ち主が同じ inode を取っていれば衝突。`LOCK_SH`: ほかの持ち主の `LOCK_EX` と衝突。
 //! - 衝突したとき、`LOCK_NB` なら `-EWOULDBLOCK`（`-EAGAIN`）、無ければ `Wait::FileLock { inode }` で眠り、放されたら

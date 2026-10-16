@@ -85,7 +85,7 @@ pub enum AddressSpaceError {
     NotForUser,
     /// 書けて、実行もできる権限で、ユーザーの側へマップしようとした（2026-10-03）。
     ///
-    /// **書けるページは実行できない、という決まりで写す**（マッピングごとの W^X）。ELF のセグメントでこの形のものは、
+    /// **書けるページは実行できない、という決まりでマップする**（マッピングごとの W^X）。ELF のセグメントでこの形のものは、
     /// セグメントの並びの確かめ（`common::elf::check_load_layout`）が先に断る。ここは 2 枚目の守りである。
     WritableAndExecutable,
 }
@@ -571,7 +571,7 @@ impl AddressSpace {
                     for pt_index in 0..entry::ENTRIES_PER_TABLE {
                         // SAFETY: 上で present を確かめたテーブル。
                         let pt_entry = unsafe { read_entry(direct_map, pt, pt_index) };
-                        // **写していないがフレームを持つリーフ（`mprotect(PROT_NONE)` の後。`entry::PTE_RETAINED`）も集める**
+                        // **マップしていないがフレームを持つリーフ（`mprotect(PROT_NONE)` の後。`entry::PTE_RETAINED`）も集める**
                         // （2026-10-06。集めないと、そのフレームが漏れる）。
                         if entry::is_present(pt_entry) || entry::is_retained(pt_entry) {
                             // **共有メモリのリーフは集めない（`ADR-0065` の「共有フレームの寿命」）。**

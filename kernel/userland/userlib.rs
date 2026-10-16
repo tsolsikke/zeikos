@@ -39,7 +39,7 @@ pub const SYS_IOCTL: u64 = 16;
 
 /// 端末の大きさを訊く要求（`TIOCGWINSZ`。e-1）。
 ///
-/// **カーネルの `TIOCGWINSZ` と同じ値である**（`SYS_*` の番号を写しているのと
+/// **カーネルの `TIOCGWINSZ` と同じ値である**（`SYS_*` の番号をコピーしているのと
 /// 同じ形。ユーザープログラムはカーネルの定数を参照できない）。
 pub const TIOCGWINSZ: u64 = 0x5413;
 
@@ -86,7 +86,7 @@ pub const STDOUT: u64 = 1;
 /// 標準エラー出力の fd。
 pub const STDERR: u64 = 2;
 
-/// `linux_dirent64` の欄の位置（実測。`kernel/src/syscall.rs` の写しである）。
+/// `linux_dirent64` の欄の位置（実測。`kernel/src/syscall.rs` のコピーである）。
 pub const DIRENT_RECLEN_OFFSET: usize = 16;
 /// `linux_dirent64` の名前の開始位置。
 pub const DIRENT_NAME_OFFSET: usize = 19;
@@ -695,7 +695,7 @@ pub const SYS_SPAWN_WITH_PIPED_STDIN: u64 = 0x1006;
 pub const SYS_WAIT_CHILD: u64 = 0x1007;
 
 /// [`SYS_SPAWN_DETACHED`] の `flags`——子の fd 1 をパイプの書き端にする。
-/// **カーネル側の `DETACHED_STDOUT_TO_PIPE` と同じ値である**（番号を写しているのと同じ形）。
+/// **カーネル側の `DETACHED_STDOUT_TO_PIPE` と同じ値である**（番号をコピーしているのと同じ形）。
 pub const DETACHED_STDOUT_TO_PIPE: u64 = 1;
 
 /// 引数 4 つのシステムコール。**4 つ目は `r10` である**（Linux x86-64 の規約。`ADR-0020`）。

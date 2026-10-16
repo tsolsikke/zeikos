@@ -50,11 +50,11 @@ pub struct PagePermissions {
 impl PagePermissions {
     /// 静的な起動の表の権限。**書けて実行もできる。** **使うのは、起動の表だけである。**
     ///
-    /// 起動の表は、カーネルのイメージと恒等の 1GiB を、セグメントを分けずに 2MiB のリーフで写す。BSP が自前の表へ切り替える
+    /// 起動の表は、カーネルのイメージと恒等の 1GiB を、セグメントを分けずに 2MiB のリーフでマップする。BSP が自前の表へ切り替える
     /// までと、AP がトランポリンを出てから本番の表へ切り替えるまでの、短い間だけ載る（AP のトランポリンは、
     /// 恒等の側で実行する）。**自前の表には、書けて実行もできる権限は 1 つも無い**——カーネルのイメージはセグメントごとの
-    /// 名前（[`Self::kernel_code`]・[`Self::kernel_read_only`]・[`Self::kernel_data`]）で写し、恒等と
-    /// 直接マッピングは [`Self::kernel_data`] で写す（2026-10-02。以前は `kernel_unrestricted` という名前で、
+    /// 名前（[`Self::kernel_code`]・[`Self::kernel_read_only`]・[`Self::kernel_data`]）でマッピング、恒等と
+    /// 直接マッピングは [`Self::kernel_data`] でマップする（2026-10-02。以前は `kernel_unrestricted` という名前で、
     /// 自前の表のイメージと恒等と直接マッピングもこれだった）。
     pub const fn boot_table_unrestricted() -> Self {
         Self {

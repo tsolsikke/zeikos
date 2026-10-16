@@ -1108,7 +1108,7 @@ extern "sysv64" fn kernel_main() -> ! {
     // おけば、後から入れる操作の結果をそれを行ったコードとは独立に確かめられる。
     verify_page_tables(&mut logger, &mapped_ranges);
 
-    // **自前の最初の表の、ページの権限の一覧。** フレームバッファは恒等の中でキャッシュ無効で写っている。
+    // **自前の最初の表の、ページの権限の一覧。** フレームバッファは恒等の中でキャッシュ無効でマップされている。
     if fb_start != 0 {
         kernel::page_survey::register("framebuffer (identity)", fb_start, fb_end, true);
     }
@@ -1725,7 +1725,7 @@ extern "sysv64" fn kernel_main() -> ! {
         unsafe {
             remove_identity(&mut logger, direct_map, high_mapped);
         }
-        // **恒等は外した。** 以後のページの権限の一覧では、低いアドレスに何か写っていれば行に印が付く
+        // **恒等は外した。** 以後のページの権限の一覧では、低いアドレスに何かマップされていれば行に印が付く
         // （起動時の Ring 3 の試しのページは別の領域として登録してある）。
         kernel::page_survey::retire("identity");
         kernel::page_survey::retire("framebuffer (identity)");
@@ -3663,13 +3663,13 @@ fn exercise_ansi_console(logger: &mut Logger<Serial>, console: &mut Console) {
     kernel::console::write_foreground_bytes(b"\x1b[2;1H\x1b[0mD");
     drop(foreground);
     let reset_colors = console.cell_colors(0, 1);
-    // **既定の色は写さない。コンソールに訊く。**
+    // **既定の色はコピーしない。コンソールに訊く。**
     //
-    // **一度は写して間違えた**——`FOREGROUND` という名の局所定数が
+    // **一度はコピーして間違えた**——`FOREGROUND` という名の局所定数が
     // 3 つの関数にあり（`draw_startup_test_pattern` /
     // `draw_startup_text` / `init_console`）、**コンソールが使うのは
-    // `init_console` のものである。** 別のものを写して判定が落ちた。
-    // **判定行が値を出していたので実測で気づけたが、写しそのものを
+    // `init_console` のものである。** 別のものをコピーして判定が落ちた。
+    // **判定行が値を出していたので実測で気づけたが、コピーそのものを
     // 無くすほうが確かである**（「期待値は定数で持たず外の道具から導く」）。
     let sgr_reset_restored_defaults = reset_colors == Some(console.default_colors());
     logger.info(format_args!(
@@ -3681,7 +3681,7 @@ fn exercise_ansi_console(logger: &mut Logger<Serial>, console: &mut Console) {
     //
     // **色は判定から選んだ**——シアン `(0,255,255)` で、背景・既定前景・
     // ES-b の判定色（緑と赤）のどれとも RGB のどれかの軸で 150 以上離れて
-    // いる（`Console::CURSOR_COLOR` の doc）。**判定は色を写さず訊く。**
+    // いる（`Console::CURSOR_COLOR` の doc）。**判定は色をコピーせず訊く。**
     console.clear();
     // **ここからはカーソルを見る**ので、出し直す（上の対策の対）。
     let foreground = kernel::console::install_foreground(console);
@@ -5453,7 +5453,7 @@ fn start_timer(
     }
 
     // **割り込みを許す直前の、ページの権限の一覧**（`kernel::page_survey`）。恒等を外し、見張りのページを外し、
-    // 割り込みコントローラのレジスタを写し、起動時のユーザープログラムを走らせ終えた後の表である。
+    // 割り込みコントローラのレジスタをコピー、起動時のユーザープログラムを走らせ終えた後の表である。
     survey_mappings(logger, "before interrupts are enabled");
 
     // --- 6. sti してループへ入る ---
@@ -7925,7 +7925,7 @@ const fn fs_inode_at(inode_table_at: usize, ino: usize) -> usize {
 /// seed のファイルと同じツリーにある `/etc/motd` の中身（S10-a）。
 ///
 /// **イメージの中の `/etc/motd` は、このファイルを `mke2fs -d` がコピーしたものである。**
-/// **写しを 2 つ持たない**——期待値をカーネルへ書き写すと、seed を変えたときに
+/// **コピーを 2 つ持たない**——期待値をカーネルへコピーすると、seed を変えたときに
 /// 片方だけが古くなる（**単一間接の期待値を `build.rs` から出したのと同じ理由**）。
 /// `kernel/build.rs` が seed のツリーに `rerun-if-changed` を張っているので、
 /// **この定数とイメージは同じ 1 本のファイルから来る。**
@@ -7939,7 +7939,7 @@ static MOTD_SEED: &[u8] = include_bytes!(concat!(
 /// **[`verify_path_lookup`] の中の定数だったが、T3-1 で外へ出した。**
 /// **止まる文言が `{MOTD_PATH}` という行内の捕捉で書かれているため、
 /// 文言を作る側（[`verify_embedded_fs_image`]）から見えている必要がある。**
-/// **写しを 2 つ持たないためであって、意味は変わっていない。**
+/// **コピーを 2 つ持たないためであって、意味は変わっていない。**
 const MOTD_PATH: &str = "/etc/motd";
 
 /// 名前でファイルへ届き、中身が seed と一致することを主張する（S10-a）。
@@ -8056,7 +8056,7 @@ fn verify_root_inode(
 /// # 残りの名前をここで固定しない
 ///
 /// **`lost+found` は `mke2fs` が作り、`bin`・`data`・`etc` は seed のツリーが決めている。**
-/// カーネルへ書き写すと、seed を変えたときに片方だけが古くなる（**単一間接の
+/// カーネルへコピーすると、seed を変えたときに片方だけが古くなる（**単一間接の
 /// 期待値を `build.rs` から出したのと同じ理由**）。**一覧を固定しているのは
 /// 起動ログの参照である**——`xtask/reference/boot-log-smp2.txt` が行単位で
 /// 突き合わせるので、並びが変われば `--boot-log-diff` が落ちる。
@@ -8139,7 +8139,7 @@ fn verify_root_directory_walk(
 ///
 /// **「読めた」と「正しいものが読めた」は違う**（ルート inode の `.` と同じ形）。
 /// 最後の 1 バイトは**間接の表を経由しないと届かない位置**にあり、期待値は
-/// `kernel/build.rs` が模様を決めている側から出している。**カーネルへ書き写すと、
+/// `kernel/build.rs` が模様を決めている側から出している。**カーネルへコピーすると、
 /// 模様を変えたときに片方だけが古くなる。**
 ///
 /// # 名前で引く
@@ -8246,10 +8246,10 @@ const MAX_FS_PATCHES: usize = 4;
 
 /// 作業領域へ当てた書き換えの、元の値の控え（2026-10-05）。
 ///
-/// # 写し直さずに、戻す
+/// # コピーし直さずに、戻す
 ///
-/// **以前は、壊し方ごとに、イメージの使っている量の全体を写し直していた**（22 回）。写す量はイメージの中身に比例し、
-/// 32 MiB のイメージでは約 0.28 秒かかった（実測）。**いまは、最初に 1 回だけ写し、壊し方ごとに、書き換えた数バイトを
+/// **以前は、壊し方ごとに、イメージの使っている量の全体をコピーし直していた**（22 回）。コピーする量はイメージの中身に比例し、
+/// 32 MiB のイメージでは約 0.28 秒かかった（実測）。**いまは、最初に 1 回だけコピー、壊し方ごとに、書き換えた数バイトを
 /// 元へ戻す。**
 ///
 /// **「前の壊し方が残らない」は、2 つで保つ。** 当てる前の値をここに控えて、検査の後で戻す。**戻した後、健全な対照が
@@ -9026,7 +9026,7 @@ fn run_corrupt_fs_cases(
     // **健全な対照を先に走らせる。** 切り出した先頭が、それ自体で読み切れるイメージで
     // あることを確かめる。**ここが落ちたら、壊す側ではなく切り出す長さが足りない。**
     //
-    // **写すのは、ここの 1 回だけである**（2026-10-05。[`AppliedFsPatches`] の doc）。
+    // **コピーするのは、ここの 1 回だけである**（2026-10-05。[`AppliedFsPatches`] の doc）。
     build_truncated_fs_image(buf, map.blocks);
     verify_corrupt_fs_control(buf, None)?;
 
@@ -10172,7 +10172,7 @@ fn load_embedded_user_program(logger: &mut Logger<Serial>) -> Result<(), UserLoa
 /// - 入口で落ちる（`Parse`）。ページは 1 枚もマップされていない
 /// - **途中で落ちる（`Mapping { NotPrivate }`）。** 1 本目のセグメントはマップし終わって
 ///   おり、**2 本目で拒まれる。そこまでにマップしたものの後始末が要る**
-/// - **セグメントの並びの確かめで落ちる（`Layout`。2026-10-01）。** 写す前に断るので、ページは 1 枚も
+/// - **セグメントの並びの確かめで落ちる（`Layout`。2026-10-01）。** マップする前に断るので、ページは 1 枚も
 ///   マップされていない。4 つある——2 本目が 1 本目の中身の内側から始まる（重なり）、2 本目が 1 本目の
 ///   終わりより後ろの同じページから始まる（同じページに権限の違うセグメント）、2 本目が 1 本目より低いアドレスから
 ///   始まる（アドレスの順でない）、2 本目がアドレス 0 で大きさ 0（最終ページの引き算が成り立たない）
@@ -10203,11 +10203,11 @@ fn verify_corrupt_user_program_is_not_loaded(logger: &mut Logger<Serial>) {
     /// どこで断られるはずか。
     #[derive(Clone, Copy, PartialEq, Eq)]
     enum Refused {
-        /// `Elf::parse` が断る。ページは 1 枚も写していない。
+        /// `Elf::parse` が断る。ページは 1 枚もマップしていない。
         Parse,
-        /// セグメントの並びの確かめが断る。ページは 1 枚も写していない。
+        /// セグメントの並びの確かめが断る。ページは 1 枚もマップしていない。
         Layout,
-        /// 写す途中で断られる。そこまでに写したものの後始末が要る。
+        /// マップする途中で断られる。そこまでにマップしたものの後始末が要る。
         Mapping,
     }
 
@@ -11622,7 +11622,7 @@ fn verify_ring3_fault_vectors(logger: &mut Logger<Serial>) {
     }
 
     // 実行できないページの 2 つ（2026-10-03）。読むだけのページと、スタックのページである。どちらも、
-    // `verify_ring3_excursion` が、稼働中の表へ 1 枚ずつ足す入口（`ActivePageTable::map_4kib`）で写した。
+    // `verify_ring3_excursion` が、稼働中の表へ 1 枚ずつ足す入口（`ActivePageTable::map_4kib`）でマップした。
     // **`brk` と `mmap` のページを足すのと同じ入口である。**
     const STACK_USER_VIRT: u64 = ring3::USER_STACK_VIRT;
 
@@ -12146,7 +12146,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "addrspace-no-kernel-share",
         cfg!(feature = "addrspace-no-kernel-share"),
-        "新しいアドレス空間へカーネルの上位を写さない",
+        "新しいアドレス空間へカーネルの上位をマップしない",
     ),
     (
         "kernel-top-digest-mismatch-test",
@@ -12521,12 +12521,12 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "screen-test",
         cfg!(feature = "screen-test"),
-        "gfxd が画面を開いて描き present で写す（ADR-0066 の Y-c）",
+        "gfxd が画面を開いて描き present でコピーする（ADR-0066 の Y-c）",
     ),
     (
         "screen-present-does-not-copy",
         cfg!(feature = "screen-present-does-not-copy"),
-        "present が写さない（ADR-0066 の Y-c）",
+        "present がコピーしない（ADR-0066 の Y-c）",
     ),
     (
         "fb-test",
@@ -12556,7 +12556,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "fb0-deferred-ignores-interval-test",
         cfg!(feature = "fb0-deferred-ignores-interval-test"),
-        "/dev/fb0 の転送が間隔を見ず、呼ばれるたびに写す",
+        "/dev/fb0 の転送が間隔を見ず、呼ばれるたびにコピーする",
     ),
     (
         "screen-leave-does-not-repaint",
@@ -12751,7 +12751,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "ap-keeps-its-own-control-registers-test",
         cfg!(feature = "ap-keeps-its-own-control-registers-test"),
-        "AP が BSP の CR0・CR4・EFER を写さない（直す前の形）",
+        "AP が BSP の CR0・CR4・EFER をコピーしない（直す前の形）",
     ),
     (
         "bsp-keeps-cd-test",
@@ -13661,12 +13661,12 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "user-load-skip-layout-check",
         cfg!(feature = "user-load-skip-layout-check"),
-        "セグメントの並びの確かめを通さずに写す",
+        "セグメントの並びの確かめを通さずにマップする",
     ),
     (
         "ap-stacks-uncached-test",
         cfg!(feature = "ap-stacks-uncached-test"),
-        "CPU ごとのスタックをキャッシュ無効で写す",
+        "CPU ごとのスタックをキャッシュ無効でマップする",
     ),
     (
         "wx-violation-test",
@@ -13701,7 +13701,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "kernel-rodata-page-writable-test",
         cfg!(feature = "kernel-rodata-page-writable-test"),
-        "カーネルのイメージの読むだけのセグメントの最初の 1 ページを、書き込み可で写す",
+        "カーネルのイメージの読むだけのセグメントの最初の 1 ページを、書き込み可でマップする",
     ),
     (
         "user-leaf-ignores-execute-test",
@@ -13711,7 +13711,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "user-load-ignores-execute-test",
         cfg!(feature = "user-load-ignores-execute-test"),
-        "ローダーが、書けないセグメントを、フラグに依らず実行できる形で写す",
+        "ローダーが、書けないセグメントを、フラグに依らず実行できる形でマップする",
     ),
     (
         "user-map-allows-writable-executable-test",
@@ -13806,7 +13806,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "spawn-argv-drop-last",
         cfg!(feature = "spawn-argv-drop-last"),
-        "写した argv の最後の 1 本を落とす",
+        "コピーした argv の最後の 1 本を落とす",
     ),
     (
         "write-ignores-fd",
@@ -15160,9 +15160,9 @@ fn survey_mappings(logger: &mut Logger<Serial>, moment: &str) {
 
 /// カーネルのイメージのセグメントと、最初から決まっている範囲を、ページの権限の一覧の領域として登録する。
 ///
-/// **セグメントの境は `kernel/link.ld` の記号から取る。** イメージの外の範囲（起動の表が写す 1GiB の窓、恒等、起動時の
+/// **セグメントの境は `kernel/link.ld` の記号から取る。** イメージの外の範囲（起動の表がマップする 1GiB の窓、恒等、起動時の
 /// Ring 3 の試しのページ）も、名前を持たせておく——名前の無い範囲が一覧に出たら、登録が足りないか、
-/// 写すべきでない所に写っている。
+/// マップするべきでない所にマップされている。
 fn register_image_regions() {
     use core::ptr::addr_of;
     use kernel::page_survey::register;
@@ -15177,7 +15177,7 @@ fn register_image_regions() {
     register("kernel rodata", rodata, data, false);
     register("kernel data", data, bss, false);
     register("kernel bss", bss, end, false);
-    // 起動の表は、イメージの外も含めて 1GiB を高いアドレスに写す。自前の表はイメージだけを写す。
+    // 起動の表は、イメージの外も含めて 1GiB を高いアドレスにマップする。自前の表はイメージだけをマップする。
     let window = kernel::link_symbols::KERNEL_VIRT_BASE;
     register(
         "kernel window outside the image",
@@ -15233,7 +15233,7 @@ fn kernel_image_bounds() -> kernel::paging::image::ImageBounds {
     }
 }
 
-/// カーネルのイメージのセグメント（写す範囲と権限）。**境が写せる形でなければ、名前つきで止まる。**
+/// カーネルのイメージのセグメント（マップする範囲と権限）。**境がマップできる形でなければ、名前つきで止まる。**
 fn kernel_image_sections(logger: &mut Logger<Serial>) -> [kernel::paging::image::ImageSection; 3] {
     let bounds = kernel_image_bounds();
     match kernel::paging::image::image_sections(bounds) {
@@ -15248,11 +15248,11 @@ fn kernel_image_sections(logger: &mut Logger<Serial>) -> [kernel::paging::image:
     }
 }
 
-/// カーネルのイメージを、セグメントごとの権限で高位（`KERNEL_VIRT_BASE + phys`）へマップする。**イメージを高位へ写すのは、
-/// この関数だけである**（2026-10-02。以前は 3 か所が、イメージの全部を 1 つの権限で写していた）。
+/// カーネルのイメージを、セグメントごとの権限で高位（`KERNEL_VIRT_BASE + phys`）へマップする。**イメージを高位へマップするのは、
+/// この関数だけである**（2026-10-02。以前は 3 か所が、イメージの全部を 1 つの権限でマップしていた）。
 ///
 /// **コードは読んで実行する（書けない）、読むだけのセグメントは読むだけ、`.data` と `.bss` は書けて実行しない**
-/// （`kernel::paging::image`。`ADR-0071` の手順 4）。セグメントごとに範囲を分けて写すので、どのセグメントも 2MiB に
+/// （`kernel::paging::image`。`ADR-0071` の手順 4）。セグメントごとに範囲を分けてマップするので、どのセグメントも 2MiB に
 /// 満たない今は、イメージの全部が 4KiB のリーフになる（1 枚の 2MiB のリーフに、権限の違うセグメントが同居しない）。
 fn map_kernel_image<const CAP: usize>(
     builder: &mut PageTableBuilder<'_, CAP>,
@@ -15264,7 +15264,7 @@ fn map_kernel_image<const CAP: usize>(
             .expect("a kernel image address fits in a physical address");
         let virt = kernel::kernel_virt_from_phys(start);
         // 破壊テスト (2026-10-02, kernel-rodata-page-writable): 読むだけのセグメントの最初の 1 ページを、書けるデータの
-        // 権限で写す。**起動は通る**（誰も書かないので）。ページの権限の一覧が、違いを名前つきで示す。
+        // 権限でマップする。**起動は通る**（誰も書かないので）。ページの権限の一覧が、違いを名前つきで示す。
         let sabotaged_pages = if cfg!(feature = "kernel-rodata-page-writable-test")
             && section.permissions
                 == kernel::paging::permissions::PagePermissions::kernel_read_only()
@@ -15349,7 +15349,7 @@ fn report_kernel_image_permissions(logger: &mut Logger<Serial>) {
         }
         // 見張りのページを除いた、マップされているはずのページ数。
         let pages = section.pages() - guard_pages;
-        // 破壊テスト `kernel-rodata-page-writable-test` は、読むだけのセグメントの 1 ページを書ける権限で写す。その形でも
+        // 破壊テスト `kernel-rodata-page-writable-test` は、読むだけのセグメントの 1 ページを書ける権限でマップする。その形でも
         // 起動を続け、ページの権限の一覧に違いを出させる（ここで止めると、一覧まで届かない）。
         let tolerated_writable = if cfg!(feature = "kernel-rodata-page-writable-test")
             && section.permissions
@@ -15451,7 +15451,7 @@ fn run_permission_violation_test(logger: &mut Logger<Serial>) {
         ))
     } else if cfg!(feature = "kernel-executes-stack-test") {
         // AP の CPU ごとのスタックの、いちばん下のページ。**イメージの `.data` や `.bss` とは別の経路（稼働中の表へ
-        // 1 枚ずつ足す経路）で写したページである。** AP を起こす前なので、まだ誰も使っていない。
+        // 1 枚ずつ足す経路）でマップしたページである。** AP を起こす前なので、まだ誰も使っていない。
         match kernel::smp::ap_kernel_stack_range(1) {
             Some((bottom, _)) => {
                 // SAFETY: マップ済みの、まだ誰も使っていない AP のスタックの 1 バイトを書く。
@@ -15519,7 +15519,7 @@ fn run_permission_violation_test(logger: &mut Logger<Serial>) {
 
 /// kernel イメージを高位（`KERNEL_VIRT_BASE + phys`）へマップする（B-2a）。
 ///
-/// M2-d・A-1 の両テーブルで共通に使う。**セグメントごとの権限で写すのは [`map_kernel_image`] である。**
+/// M2-d・A-1 の両テーブルで共通に使う。**セグメントごとの権限でマップするのは [`map_kernel_image`] である。**
 /// ここは、使った表のフレームの数を数えて、起動ログへ出す。
 fn map_kernel_high_half<const CAP: usize>(
     builder: &mut PageTableBuilder<'_, CAP>,

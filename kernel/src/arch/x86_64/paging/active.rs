@@ -264,7 +264,7 @@ pub enum MapUpdateError {
     /// マップしようとしたリーフが既に present。二重マップを黙って上書きしない（M5-e-2）。
     AlreadyMapped,
     /// ユーザーから届いて、書けて、実行もできる権限でマップしようとした（2026-10-03）。
-    /// **書けるページは実行できない、という決まりで写すので、断る。** 項目は 1 つも書かない。
+    /// **書けるページは実行できない、という決まりでマップするので、断る。** 項目は 1 つも書かない。
     WritableAndExecutable,
     /// 起動の後に、カーネル側のマッピングを足す・変えようとした（2026-10-03。`ADR-0071` の手順 4 の 3 つ目の決まり）。
     /// **起動の後は、カーネル側のマッピングを一切足さない・変えない。** 項目は 1 つも書かない（表も取らない）。
@@ -542,7 +542,7 @@ impl ActivePageTable {
         Ok(())
     }
 
-    /// `virt` を含む 4KiB のリーフの、書けるか・写してあるかを書き換え、実行できない形にする（2026-10-06。`mprotect`）。
+    /// `virt` を含む 4KiB のリーフの、書けるか・マップしてあるかを書き換え、実行できない形にする（2026-10-06。`mprotect`）。
     ///
     /// - `present` が真: `P` を立て、[`entry::PTE_RETAINED`] を落とし、`W` を `writable` に合わせる。
     /// - `present` が偽: `P` と `W` を落とし、[`entry::PTE_RETAINED`] を立てる。**フレームのアドレスと、ほかのビット（`U`・
@@ -551,12 +551,12 @@ impl ActivePageTable {
     ///   **実行できる形へ変える道は無い**——`mprotect` は `PROT_EXEC` を断るので、実行を外す向きだけが在る（W^X。
     ///   `crate::syscall` の `mprotect` の doc）。
     ///
-    /// 写していないリーフ（`P` も `RETAINED` も 0）では `NotMapped`。変えた 1 本を、この CPU の TLB から落とす（`invlpg`）。
+    /// マップしていないリーフ（`P` も `RETAINED` も 0）では `NotMapped`。変えた 1 本を、この CPU の TLB から落とす（`invlpg`）。
     /// **ほかの CPU の TLB は見ない**——プロセスは 1 つの CPU に留まる（`crate::syscall` の `mprotect` の doc）。
     ///
     /// # Safety
     ///
-    /// [`Self::unmap_4kib`] と同じ。加えて、書けるリーフを書けなくした後、または写していないリーフにした後に、そこへ書かない
+    /// [`Self::unmap_4kib`] と同じ。加えて、書けるリーフを書けなくした後、またはマップしていないリーフにした後に、そこへ書かない
     /// （書けば #PF になる）ことは呼び出し側の責任である。
     pub unsafe fn set_leaf_access(
         &mut self,
@@ -647,7 +647,7 @@ impl ActivePageTable {
         let pt_index = entry::pt_index(virt);
         // SAFETY: `pt` は PD が指す有効な PT で、添字は 512 未満。
         let pte = unsafe { self.read(pt, pt_index) };
-        // **フレームを持ったまま写していないリーフ（`mprotect(PROT_NONE)` の後）も、外してフレームを返す**（2026-10-06）。
+        // **フレームを持ったままマップしていないリーフ（`mprotect(PROT_NONE)` の後）も、外してフレームを返す**（2026-10-06）。
         if !entry::is_present(pte) && !entry::is_retained(pte) {
             return Err(MapUpdateError::NotMapped);
         }
@@ -756,7 +756,7 @@ impl ActivePageTable {
         // SAFETY: 直前に得た有効な PD。
         let pt = unsafe { self.ensure_child(pd, entry::pd_index(virt), permissions, frames)? };
 
-        // リーフ。既に present なら二重マップとして弾く（黙って上書きしない）。**フレームを持ったまま写していないリーフ
+        // リーフ。既に present なら二重マップとして弾く（黙って上書きしない）。**フレームを持ったままマップしていないリーフ
         // （`PTE_RETAINED`。`mprotect(PROT_NONE)` の後）も同じに弾く**（2026-10-08）——上書きすると、そのフレームを指す者が
         // 居なくなり、空間の破棄も集められずに失われる。外すのは `unmap_4kib` の仕事である。
         let pt_index = entry::pt_index(virt);

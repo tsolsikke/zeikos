@@ -67,7 +67,7 @@ bsp-entry-misalign-test = []
 # IRQ スタブ表の索引を 1 本ずらす。check_irq_stub_table の entries_ok を落とす。
 idt-irq-stub-offset-test = []
 
-# S7-c: 新しいアドレス空間へカーネルの上位を写さない。切り替えた瞬間に死ぬ。
+# S7-c: 新しいアドレス空間へカーネルの上位をマップしない。切り替えた瞬間に死ぬ。
 addrspace-no-kernel-share = []
 # 2026-09-27（`ADR-0071` の決定 5）: 起動の終わりに違う指紋を控える。起動の後の最初のアドレス空間の作成が
 # `KernelTopChanged` で断られる。`--paging-test kernel-top-digest-mismatch-test`。
@@ -301,7 +301,7 @@ env-rewrite-test = []
 # シェルの `|` をスクリプトで回す（ADR-0063 の (b3)）。判定は xtask の pipe-test が読む。
 pipe-test = []
 # --shell-test のスクリプトをそのままスクリプトの族で回す（ADR-0063 の (b3) の (b)）。打鍵を見ない破壊を
-# ここへ移す。スクリプトは common::shell_script が写す。
+# ここへ移す。スクリプトは common::shell_script が変換する。
 shell-script-test = []
 # unix ドメインのストリームソケットをスクリプトで回す（ADR-0064）。init が /bin/sockd を起こしっぱなしで
 # 起こし、スクリプトが /bin/sockc の 6 つの形を打つ。判定は xtask の socket-test が読む。
@@ -530,7 +530,7 @@ stack-overflow-df-test = ["stack-guard-test"]
 # `cargo xtask run --stack-test excursion-depth0`（深さ 1 は `excursion-depth1`）。
 excursion-overflow-depth0-test = []
 excursion-overflow-depth1-test = []
-# 遠征スタックの下の見張りのページを張らない（2026-10-06。以前の形）。張った直後の確かめが、写ったままのページを
+# 遠征スタックの下の見張りのページを張らない（2026-10-06。以前の形）。張った直後の確かめが、マップされたままのページを
 # 名指しして止まる。`--stack-test excursion-unguarded`。
 excursion-guard-skip-test = []
 # 遠征スタックの見張りのページを、名指しの表に控えない（2026-10-06）。張った直後の確かめが、控えられていない
@@ -695,7 +695,7 @@ poll-mistakes-the-member = ["poll-test"]
 poll-waits-on-one-member = []
 # Y-c: 画面出力（ADR-0066）。init が /bin/gfxd を前景で起こす。gfxd は /bin/gfxc を起こしっぱなしで
 # 起こして（前景でない者が画面と入力を開けないことを見る）、画面を開き、裏バッファを mmap して
-# 四角を描き、present で写す。判定は xtask の screen-test が screendump を読んで行う。
+# 四角を描き、present でコピーする。判定は xtask の screen-test が screendump を読んで行う。
 screen-test = []
 # Seinas の fbdev の裏側（release の seinas-fbdev。musl の静的 PIE）をイメージの /bin/linux に入れる手元と CI の確かめ
 # （2026-10-07。M2。破壊テストではない）。成果物は tools/fetch-seinas.sh が target/linux-programs/ に取る（SHA-256 を固定）。
@@ -713,9 +713,9 @@ fb-test-fold = []
 fb0-deferred-present-skip-test = []
 # /dev/fb0 を閉じても図形モードから抜けない（ADR-0083）。文字の画面が戻る判定が落ちる。
 fb0-close-keeps-graphics-test = []
-# /dev/fb0 の転送が間隔を見ず、呼ばれるたびに写す（ADR-0083）。転送の回数が間隔から導ける上限の内に収まる判定が落ちる。
+# /dev/fb0 の転送が間隔を見ず、呼ばれるたびにコピーする（ADR-0083）。転送の回数が間隔から導ける上限の内に収まる判定が落ちる。
 fb0-deferred-ignores-interval-test = []
-# present が写さない（ADR-0066 の Y-c）。書いた画素が MMIO に届く判定が落ちる。
+# present がコピーしない（ADR-0066 の Y-c）。書いた画素が MMIO に届く判定が落ちる。
 # **Y-d の組でも回すので、screen-test に寄りかからない（xtask が構成を足す）。**
 screen-present-does-not-copy = []
 # 図形モードから抜けても描き直さない（ADR-0066 の Y-c）。文字コンソールが戻る判定が落ちる。
@@ -788,7 +788,7 @@ kernel-uses-gs-test = []
 cpu-state-sees-sce-clear-test = []
 # 測定用 IPI のスタブが共通の入口を飛ばして irq_entry へ直に飛ぶ。sti-check 3b で止まる。
 idt-stub-skips-common-entry-test = []
-# AP が BSP の CR0・CR4・EFER を写さない（直す前の形。2026-09-24）。起床のまとめの後の突き合わせで止まる。
+# AP が BSP の CR0・CR4・EFER をコピーしない（直す前の形。2026-09-24）。起床のまとめの後の突き合わせで止まる。
 ap-keeps-its-own-control-registers-test = []
 # ファームウェアが CR0.CD を立てて渡し、カーネルが落とさない形を BSP で作る（2026-09-24）。
 # cpu-state の「カーネルが要るビット」の見張りが CR0.CD を名指しして止まる。
@@ -829,13 +829,13 @@ kernel-executes-data-test = ["wx-violation-test"]
 kernel-executes-direct-map-test = ["wx-violation-test"]
 # AP の CPU ごとのスタックのページに置いた 1 バイト（ret）を、カーネルが実行する。#PF（命令の取り出し）で止まる。
 kernel-executes-stack-test = ["wx-violation-test"]
-# カーネルのイメージの読むだけのセグメントの最初の 1 ページを、書き込み可で写す（2026-10-02）。起動は通る。
+# カーネルのイメージの読むだけのセグメントの最初の 1 ページを、書き込み可でマップする（2026-10-02）。起動は通る。
 # ページの権限の一覧が、違いを名前つきで示す。`cargo xtask run --page-permissions --sabotage kernel-rodata-page-writable-test`。
 kernel-rodata-page-writable-test = []
 # 権限の変換が、ユーザーの側のリーフには、実行の欄を無視して、実行禁止のビットを立てない（2026-10-03。入れる前の形）。
 # 起動時の Ring 3 の試しで、実行できないはずのページへ跳ぶと、跳んだ先が実行されて、判定が落ちる。
 user-leaf-ignores-execute-test = []
-# ローダーが、書けないセグメントを、セグメントのフラグに依らず実行できる形で写す（2026-10-03）。
+# ローダーが、書けないセグメントを、セグメントのフラグに依らず実行できる形でマップする（2026-10-03）。
 # 読むだけのセグメントへ跳ぶ試しのプログラム（nx-rodata）が、跳んだ先を実行してしまい、判定が落ちる。
 user-load-ignores-execute-test = []
 # ユーザーのページを足す入口が、書けて実行もできる権限を断らない（2026-10-03）。
@@ -953,8 +953,8 @@ mprotect-none-discards-test = []
 # `munmap` が外したフレームをアロケータへ返さない（2026-10-06）。`munmap` を打つ最初のプロセスが終わった後の会計が
 # 釣り合わず、名指しして止まる。`--syscall-test munmap-keeps-frames`。
 munmap-keeps-frames-test = []
-# `munmap` と `MAP_FIXED` の置き換えが、写していない断片（`PROT_NONE`）を飛ばす（2026-10-08。直す前の形）。`mprotect(PROT_NONE)`
-# でフレームを持ったまま残したリーフが外れず、同じアドレスへ写し直すと `map_4kib` が断って、`syscall-test` が 124 番で止まる。
+# `munmap` と `MAP_FIXED` の置き換えが、マップしていない断片（`PROT_NONE`）を飛ばす（2026-10-08。直す前の形）。`mprotect(PROT_NONE)`
+# でフレームを持ったまま残したリーフが外れず、同じアドレスへマップし直すと `map_4kib` が断って、`syscall-test` が 124 番で止まる。
 # `--syscall-test munmap-skips-retained`。
 munmap-skips-retained-test = []
 # `syscall-test` へ渡すルートの項目の数を、1 つ多くする（2026-10-09）。イメージの中身から求めた数と、`getdents64` で
@@ -993,11 +993,11 @@ user-run-wrong-entry = []
 # ページの権限の一覧の全部の行を出す（2026-10-01。`kernel/src/page_survey.rs`）。既定のビルドは時点ごとに
 # 要約の 1 行だけを出す。振る舞いは変えず、出す行が増えるだけである。`cargo xtask run --page-permissions`。
 page-permissions-dump = []
-# CPU ごとのスタックをキャッシュ無効で写す（2026-10-01）。起動は通る。ページの権限の一覧の道具が、
+# CPU ごとのスタックをキャッシュ無効でマップする（2026-10-01）。起動は通る。ページの権限の一覧の道具が、
 # 「application processor stacks」の行のキャッシュの属性の違いを名前つきで示す。
 # `cargo xtask run --page-permissions --sabotage ap-stacks-uncached-test`。
 ap-stacks-uncached-test = []
-# セグメントの並びの確かめを通さずに写す（2026-10-01）。起動の途中の壊したイメージの検査が、並びの確かめで
+# セグメントの並びの確かめを通さずにマップする（2026-10-01）。起動の途中の壊したイメージの検査が、並びの確かめで
 # 断られるはずのイメージを別の場所で断られる（または読み込まれる）のを見て止まる。
 # `--ring3-test user-skip-layout-check`。
 user-load-skip-layout-check = []
@@ -1095,7 +1095,7 @@ spawn-child-rsp0 = []
 # いる(execve は長すぎる引数に E2BIG を返す)。「値が変」と「量が多い」は呼び出し側の
 # 直し方が違う。syscall-test の検算が捕まえる。`--syscall-test spawn-e2big-as-einval`。
 spawn-e2big-as-einval = []
-# S11-7: 写した argv の最後の1本を落とす。終端の扱いを1つずらす形で、雑に見ると
+# S11-7: コピーした argv の最後の1本を落とす。終端の扱いを1つずらす形で、雑に見ると
 # ちゃんと切り分けているように見える。子が受け取る argc が1つ少なくなり、spawn-test の
 # 検算が捕まえる。`--syscall-test spawn-argv-drop-last`。
 spawn-argv-drop-last = []
