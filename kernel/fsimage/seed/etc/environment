@@ -1,7 +1,10 @@
 # The environment source (ADR-0052). One NAME=VALUE per line.
 # Blank lines and lines starting with # are ignored. A broken line is
 # dropped on its own. ASCII only: the console font holds nothing else.
+# The last three lines stay TERM, PATH and HOME, and the last line stays
+# short: the zi scripts of env-rewrite-test and keymap-rewrite-test count
+# from the end of the file (kernel/src/input.rs).
+XDG_RUNTIME_DIR=/tmp/seinas
 TERM=zeikos
 PATH=/bin
 HOME=/root
-XDG_RUNTIME_DIR=/tmp/seinas
