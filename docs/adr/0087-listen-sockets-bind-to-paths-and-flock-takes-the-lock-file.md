@@ -91,3 +91,9 @@ Seinas（wayland-server）は起動時に、ソケットのパスの隣にロッ
 - セルフホスティングの条件（`ADR-0086`の「これからの設計で守る条件」）に照らした——`SYS_SPAWN`の族を増やさず、Linuxの番号
   （41・43・49・50・73・288）の形で足す。ソケットの名前の置き場は条件に含まれない。ファイルシステムを替えるときに
   名前をinodeへ移す選択は残す。
+
+## Addendum（2026-10-16。決定5の狭め）
+
+`O_RDWR`を受けるのは、`O_TRUNC`を伴う形（`O_RDWR|O_TRUNC`と`O_RDWR|O_CREAT|O_TRUNC`。`O_CLOEXEC`の有無は見ない）だけに
+した。書きの部品が追記（`append_to_file`。`ADR-0037`）のままなので、`O_TRUNC`の無い`O_RDWR`を受けると、位置書きのつもりの
+`write`が末尾への追記になる。Seinasのロックファイルは`O_RDWR|O_CREAT|O_TRUNC|O_CLOEXEC`で開くので、この形で足りる。

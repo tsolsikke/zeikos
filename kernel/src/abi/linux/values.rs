@@ -34,6 +34,9 @@ pub const O_RDONLY: u64 = 0o0;
 /// 書き込みで開く（Linux の `O_WRONLY`）。zi-c で受理に加わった。
 pub const O_WRONLY: u64 = 0o1;
 
+/// 読み書きで開く（Linux の `O_RDWR`）。`ADR-0087` で、`O_TRUNC` を伴う形だけ受理に加わった（Seinas のロックファイル）。
+pub const O_RDWR: u64 = 0o2;
+
 /// 開くと同時に長さ 0 へ切る（Linux の `O_TRUNC`）。zi-c で受理に加わった。
 pub const O_TRUNC: u64 = 0o1000;
 

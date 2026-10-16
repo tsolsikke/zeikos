@@ -60,8 +60,8 @@ use crate::abi::linux::{
     DIRENT64_ALIGN, DIRENT64_HEADER_LEN, DRM_CLIP_RECT_LEN, DT_DIR, DT_REG, DT_UNKNOWN,
     FBIOGET_FSCREENINFO, FBIOGET_VSCREENINFO, FB_TYPE_PACKED_PIXELS, FB_VISUAL_TRUECOLOR,
     INPUT_EVENT_LEN, IOVEC_LEN, MAP_ANONYMOUS, MAP_FIXED, MAP_FIXED_NOREPLACE, MSGHDR_CONTROLLEN,
-    MSGHDR_LEN, O_ACCMODE, O_APPEND, O_CREAT, O_RDONLY, O_TRUNC, O_WRONLY, POLLFD_LEN, POLLIN,
-    POLLNVAL, PROT_EXEC, PROT_READ, PROT_WRITE, SCM_RIGHTS, SEEK_CUR, SEEK_END, SEEK_SET,
+    MSGHDR_LEN, O_ACCMODE, O_APPEND, O_CREAT, O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY, POLLFD_LEN,
+    POLLIN, POLLNVAL, PROT_EXEC, PROT_READ, PROT_WRITE, SCM_RIGHTS, SEEK_CUR, SEEK_END, SEEK_SET,
     SOCKADDR_UN_LEN, SOCK_STREAM, SOL_SOCKET, TIMESPEC_LEN, TIOCGWINSZ, WINSIZE_LEN,
 };
 use crate::abi::linux::{
@@ -5024,6 +5024,10 @@ unsafe fn sys_open(path: u64, flags: u64, page_table_root: PhysAddr, direct_map:
     // `O_WRONLY|O_TRUNC` と `O_WRONLY|O_CREAT|O_TRUNC` の 2 つの形である。**
     // **`O_CREAT` 単独は受けない**——**位置書きの部品が無いので、
     // 作った後にできるのは全置換だけである**（`O_TRUNC` と同じ形になる）。
+    // **`O_RDWR` も、`O_TRUNC` を伴う形だけ受ける**（`ADR-0087` の決定 5。2026-10-16。Seinas のロックファイルは
+    // `O_RDWR|O_CREAT|O_TRUNC|O_CLOEXEC` で開く）。書きの部品は追記のままなので、`O_TRUNC` の無い `O_RDWR` は
+    // `-EROFS` のまま（位置書きになってしまう形は受けない。ADR の決定 5 を、この 1 点で狭めた）。
+    // **`O_CLOEXEC` は見ない**（`exec` が無い。`F_SETFD` と同じ）——`O_WRITE_INTENT` にも `O_ACCMODE` にも入らない。
     let mut buf = [0u8; PATH_MAX];
     // SAFETY: 呼び出し元契約をそのまま渡す。
     let len = match unsafe { copy_user_path(&mut buf, path, page_table_root, direct_map) } {
@@ -5040,8 +5044,9 @@ unsafe fn sys_open(path: u64, flags: u64, page_table_root: PhysAddr, direct_map:
 
     let create = flags & O_CREAT != 0;
     let write_intent = flags & O_WRITE_INTENT & !O_CREAT;
-    let write_form = flags & O_ACCMODE == O_WRONLY && write_intent == O_TRUNC;
-    if !write_form && (flags & O_ACCMODE != O_RDONLY || flags & O_WRITE_INTENT != 0) {
+    let access = flags & O_ACCMODE;
+    let write_form = (access == O_WRONLY || access == O_RDWR) && write_intent == O_TRUNC;
+    if !write_form && (access != O_RDONLY || flags & O_WRITE_INTENT != 0) {
         return (-EROFS) as u64;
     }
 
