@@ -4,3 +4,4 @@
 TERM=zeikos
 PATH=/bin
 HOME=/root
+XDG_RUNTIME_DIR=/tmp/seinas

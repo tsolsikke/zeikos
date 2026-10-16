@@ -1468,6 +1468,11 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
     // **ADR-0042 が「作る」と決めた唯一のものである。**
     std::fs::create_dir_all(format!("{staging}/tmp"))
         .expect("failed to create /tmp in the staging");
+    // **`/tmp/seinas` を作る（`ADR-0087`。2026-10-16）。** **Seinas の listen のソケットとロックファイルの置き場で、
+    // `/etc/environment` の `XDG_RUNTIME_DIR` が指す。** 中身は置かない（`/tmp` と同じ）。種で作るのは、起動の順に
+    // 依らないため（`/etc/profile` の `mkdir` では、プロファイルより先に走るものが置けない）。
+    std::fs::create_dir_all(format!("{staging}/tmp/seinas"))
+        .expect("failed to create /tmp/seinas in the staging");
 
     // **`/lib` を作り、既定のフォントを置く（B-d。`ADR-0042` の Addendum）。**
     //

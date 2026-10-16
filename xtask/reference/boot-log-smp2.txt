@@ -236,7 +236,7 @@ Hello, ZeikOS!
 [INFO] virtio-blk: handshake: ACKNOWLEDGE -> DRIVER; capacity=65536 sector(s)
 [INFO] virtio-blk: request limit: 1048576 byte(s) in one data segment (the device declares size_max=None seg_max=Some(254); None means the device does not declare a limit; ours is 1048576)
 [INFO] virtio-blk: queue 0: size 256; ring at phys 0x3c000..0x40000 (4 page(s), 4096-aligned=true); zeroed 16384 byte(s) (0 were nonzero before)
-[INFO] virtio-blk: read sector 2: 512 byte(s) requested, status=0 (OK); checksum=0x0009e443 first bytes=[00, 04, 00, 00, 00, 20, 00, 00]
+[INFO] virtio-blk: read sector 2: 512 byte(s) requested, status=0 (OK); checksum=0x0009fb76 first bytes=[00, 04, 00, 00, 00, 20, 00, 00]
 [INFO] smp: mapped per-CPU stacks for slot 1 at 0xffff81000003a000 (PML4[258], not [257] which a sabotage VA depends on): kernel top 0xffff81000005b000, IST1 top 0xffff810000060000, IST2 top 0xffff810000065000, IST3 top 0xffff81000006a000, IST4 top 0xffff81000006f000, IST5 top 0xffff810000074000; 55 frame(s) consumed (pages plus page tables), guards left unmapped
 [INFO] nx-probe: mapped a probe page at 0xffff828000000000 -> 0x77000 with the execute-disable bit (entry 0x8000000000077001, bit 63 set = true) [read back from the live table]
 [INFO] nx-probe: cpu 0 read the probe page: value=0x4e585f50524f4245 (expected 0x4e585f50524f4245), EFER.NXE=1 (expected 1)
@@ -348,9 +348,9 @@ task: cooperative switch verified
 [INFO] ext2: image 33554432 byte(s) built by "mke2fs 1.47.0 (5-Feb-2023)" and "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0"
 [INFO] ext2: superblock rev=1 block_size=4096 inode_size=256 inodes=1024 blocks=8192 blocks_per_group=32768 inodes_per_group=1024 first_ino=11 groups=1
 [INFO] ext2: features compat=0x38 incompat=0x2 ro_compat=0x3 (only unknown incompat bits are refused; unknown ro_compat and compat are accepted for reading, as Linux does)
-[INFO] ext2: superblock free counts: blocks=6160 inodes=937
+[INFO] ext2: superblock free counts: blocks=6159 inodes=936
 [INFO] ext2: group 0: block bitmap at 3 inode bitmap at 4 inode table at 5
-[INFO] ext2: group 0 free counts: blocks=6160 inodes=937 dirs=9
+[INFO] ext2: group 0 free counts: blocks=6159 inodes=936 dirs=10
 [INFO] ext2: root inode 2: mode=040755 size=4096 links=9 i_block[0]=69 directory=true
 [INFO] ext2: root directory block 0 of 1: 4096 byte(s) via the direct blocks
 [INFO] ext2: root directory: 9 entr(y/ies): . .. lost+found bin data etc lib root tmp
@@ -358,32 +358,32 @@ task: cooperative switch verified
 [INFO] ext2: /data/direct-max inode=71 size=49152 blocks=12 single indirect=0 last byte=0xce (expected 0xce)
 [INFO] ext2: /data/indirect-first inode=72 size=49153 blocks=13 single indirect=1930 last byte=0xcf (expected 0xcf)
 [INFO] fs-image-source: root_filesystem reads from virt 0xffff800001c00000 (phys 0x1c00000)
-[INFO] fs-image-copy: copied 33554432 byte(s) to phys 0x1c00000..0x3c00000 (8192 frame(s), 2MiB-aligned=true), checksum=0xf7ce604d; the checksum covers the first 282624 byte(s) (the superblock through the inode table of group 0); the kernel image is 0x100000..0x4348a0
+[INFO] fs-image-copy: copied 33554432 byte(s) to phys 0x1c00000..0x3c00000 (8192 frame(s), 2MiB-aligned=true), checksum=0xf8f00144; the checksum covers the first 282624 byte(s) (the superblock through the inode table of group 0); the kernel image is 0x100000..0x4348a0
 [INFO] fs-sparse: /data/sparse-hole reads block 1 as a full block of zeros = true (the blocks around it have content: head=true tail=true); i_size=12288 i_blocks_512=16
-[INFO] fs-bitmap: allocated one block (number 2032); free counts are now blocks=6159 group0=6159
-[INFO] fs-write: append 1 wrote 200 byte(s) to inode 77; free blocks are now 6159
-[INFO] fs-write: append 2 wrote 4000 byte(s) to inode 77; free blocks are now 6158
-[INFO] fs-truncate: shrank inode 77 to 8192 byte(s); free blocks 6156 -> 6158 (returned 2)
-[INFO] fs-truncate: shrank inode 77 to 4097 byte(s); free blocks 6158 -> 6158 (returned 0)
-[INFO] fs-truncate: shrank inode 77 to 4096 byte(s); free blocks 6158 -> 6159 (returned 1)
-[INFO] fs-truncate: shrank inode 77 to 4000 byte(s); free blocks 6159 -> 6159 (returned 0)
+[INFO] fs-bitmap: allocated one block (number 2033); free counts are now blocks=6158 group0=6158
+[INFO] fs-write: append 1 wrote 200 byte(s) to inode 77; free blocks are now 6158
+[INFO] fs-write: append 2 wrote 4000 byte(s) to inode 77; free blocks are now 6157
+[INFO] fs-truncate: shrank inode 77 to 8192 byte(s); free blocks 6155 -> 6157 (returned 2)
+[INFO] fs-truncate: shrank inode 77 to 4097 byte(s); free blocks 6157 -> 6157 (returned 0)
+[INFO] fs-truncate: shrank inode 77 to 4096 byte(s); free blocks 6157 -> 6158 (returned 1)
+[INFO] fs-truncate: shrank inode 77 to 4000 byte(s); free blocks 6158 -> 6158 (returned 0)
 [INFO] fs-truncate: restored inode 77 to 100 byte(s)
-[INFO] fs-create: created inode 88 under inode 68 and wrote 300 byte(s); free blocks=6158 inodes=936, i_extra_isize=32
-[INFO] fs-create: unlinked inode 88; free blocks=6159 inodes=937
-[INFO] fs-mkdir: created directory inode 88 under inode 68; free blocks=6158 inodes=936 dirs=Ok(10)
+[INFO] fs-create: created inode 89 under inode 68 and wrote 300 byte(s); free blocks=6157 inodes=935, i_extra_isize=32
+[INFO] fs-create: unlinked inode 89; free blocks=6158 inodes=936
+[INFO] fs-mkdir: created directory inode 89 under inode 68; free blocks=6157 inodes=935 dirs=Ok(11)
 [INFO] fs-mkdir: rmdir on a directory that is not empty was refused = true
-[INFO] fs-mkdir: removed directory inode 88; free blocks=6159 inodes=937 dirs=Ok(9)
-[INFO] fs-bitmap: freed block 2032; the image should be back to what was built
+[INFO] fs-mkdir: removed directory inode 89; free blocks=6158 inodes=936 dirs=Ok(10)
+[INFO] fs-bitmap: freed block 2033; the image should be back to what was built
 [INFO] fs-image-flush: wrote 33554432 byte(s) back to the virtio disk
 [INFO] fs-image-ready: the image is in its final state for this run
 [INFO] keymap: the keyboard layout is jis (KEYMAP was not set)
-[INFO] env-source: /etc/environment took 3 line(s) and dropped 0; the table holds 3 (from_file=true)
+[INFO] env-source: /etc/environment took 4 line(s) and dropped 0; the table holds 4 (from_file=true)
 [INFO] ext2-corrupt: truncated to 512 bytes (the superblock does not fit) -> TooShort
 [INFO] ext2-corrupt: s_magic zeroed -> BadMagic
 [INFO] ext2-corrupt: s_rev_level set to 0 (no s_inode_size, no s_first_ino) -> UnsupportedRevision(0)
 [INFO] ext2-corrupt: an unknown INCOMPAT bit set alongside FILETYPE -> UnsupportedIncompatFeatures(64)
 [INFO] ext2-corrupt: s_log_block_size set to 31 (1024 << 31 overflows) -> BadBlockSizeShift(31)
-[INFO] ext2-corrupt: s_blocks_count claiming 65536 blocks (256 MiB) -> ImageTooSmall { needed: 268435456, actual: 8323072 }
+[INFO] ext2-corrupt: s_blocks_count claiming 65536 blocks (256 MiB) -> ImageTooSmall { needed: 268435456, actual: 8327168 }
 [INFO] ext2-corrupt: s_inodes_per_group zeroed (a divisor of zero) -> ZeroPerGroup
 [INFO] ext2-corrupt: group 0's bg_inode_table pointing past the filesystem -> BlockOutOfRange(65535)
 [INFO] ext2-corrupt: the inode table stretched past the end of the image -> InodeTableOutOfRange { inode: 600000, needed: 153620352 }
@@ -398,7 +398,7 @@ task: cooperative switch verified
 [INFO] ext2-corrupt: the single indirect table's first entry pointing past the filesystem -> BlockOutOfRange(65535)
 [INFO] ext2-corrupt: /etc/motd's i_size shrunk to 4 bytes -> read 4 byte(s) that differ from the seed
 [INFO] ext2-corrupt: the first byte of /etc/motd's contents zeroed -> read 18 byte(s) that differ from the seed
-[INFO] ext2-corrupt: all 20 corrupted image(s) were refused with the expected reason, and the kernel continued (the embedded image is untouched; one copy of the 2032 block(s) the image uses, in as many frames borrowed from the frame allocator, is patched for each case and restored, and the untouched control passed again after every case)
+[INFO] ext2-corrupt: all 20 corrupted image(s) were refused with the expected reason, and the kernel continued (the embedded image is untouched; one copy of the 2033 block(s) the image uses, in as many frames borrowed from the frame allocator, is patched for each case and restored, and the untouched control passed again after every case)
 [INFO] user-elf: embedded hello is 8576 byte(s), entry 0x400010, 3 program header(s)
 [INFO] user-elf: PT_LOAD vaddr=0x400000 filesz=0x42 memsz=0x42 flags=0x5 (r=true w=false x=true)
 [INFO] user-elf: PT_LOAD vaddr=0x401000 filesz=0x12 memsz=0x12 flags=0x4 (r=true w=false x=false)
@@ -436,10 +436,10 @@ task: cooperative switch verified
 [INFO] user-load: hello PT_LOAD segments: declared=2 mapped=2 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
 [INFO] user-load: the page below the stack (0x7fb000) is left unmapped as a guard; neither the heap nor mmap is placed on it
-[INFO] user-load: hello initial stack at 0x7ffec0 (argc=1, envc=3, 16-byte aligned=true,          initial data 320 of 4096 byte(s))
+[INFO] user-load: hello initial stack at 0x7ffea0 (argc=1, envc=4, 16-byte aligned=true,          initial data 352 of 4096 byte(s))
 [INFO] stack-water: before entering hello in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
 hello from ring 3
-[INFO] user-stack: hello used 320 of 16384 byte(s) (1%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
+[INFO] user-stack: hello used 352 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: hello slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] ring3: hello used 3026 of 65536 byte(s) of the depth-0 excursion stack (4%), which has a guard page below it
 [INFO] vfs: hello opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
@@ -451,7 +451,7 @@ hello from ring 3
 [INFO] user-load: nx-stack PT_LOAD segments: declared=1 mapped=1 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
 [INFO] user-load: the page below the stack (0x7fb000) is left unmapped as a guard; neither the heap nor mmap is placed on it
-[INFO] user-load: nx-stack initial stack at 0x7ffeb0 (argc=1, envc=3, 16-byte aligned=true,          initial data 336 of 4096 byte(s))
+[INFO] user-load: nx-stack initial stack at 0x7ffea0 (argc=1, envc=4, 16-byte aligned=true,          initial data 352 of 4096 byte(s))
 [INFO] stack-water: before entering nx-stack in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
 [INFO] user-stack: nx-stack used 4096 of 16384 byte(s) (25%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: nx-stack slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
@@ -466,9 +466,9 @@ hello from ring 3
 [INFO] user-load: nx-data PT_LOAD segments: declared=2 mapped=2 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
 [INFO] user-load: the page below the stack (0x7fb000) is left unmapped as a guard; neither the heap nor mmap is placed on it
-[INFO] user-load: nx-data initial stack at 0x7ffeb0 (argc=1, envc=3, 16-byte aligned=true,          initial data 336 of 4096 byte(s))
+[INFO] user-load: nx-data initial stack at 0x7ffea0 (argc=1, envc=4, 16-byte aligned=true,          initial data 352 of 4096 byte(s))
 [INFO] stack-water: before entering nx-data in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
-[INFO] user-stack: nx-data used 336 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
+[INFO] user-stack: nx-data used 352 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: nx-data slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] ring3: nx-data used 0 of 65536 byte(s) of the depth-0 excursion stack (0%), which has a guard page below it
 [INFO] vfs: nx-data opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
@@ -481,9 +481,9 @@ hello from ring 3
 [INFO] user-load: nx-rodata PT_LOAD segments: declared=2 mapped=2 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
 [INFO] user-load: the page below the stack (0x7fb000) is left unmapped as a guard; neither the heap nor mmap is placed on it
-[INFO] user-load: nx-rodata initial stack at 0x7ffeb0 (argc=1, envc=3, 16-byte aligned=true,          initial data 336 of 4096 byte(s))
+[INFO] user-load: nx-rodata initial stack at 0x7ffe90 (argc=1, envc=4, 16-byte aligned=true,          initial data 368 of 4096 byte(s))
 [INFO] stack-water: before entering nx-rodata in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
-[INFO] user-stack: nx-rodata used 336 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
+[INFO] user-stack: nx-rodata used 368 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: nx-rodata slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] ring3: nx-rodata used 0 of 65536 byte(s) of the depth-0 excursion stack (0%), which has a guard page below it
 [INFO] vfs: nx-rodata opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
@@ -495,9 +495,9 @@ hello from ring 3
 [INFO] user-load: nx-brk PT_LOAD segments: declared=1 mapped=1 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
 [INFO] user-load: the page below the stack (0x7fb000) is left unmapped as a guard; neither the heap nor mmap is placed on it
-[INFO] user-load: nx-brk initial stack at 0x7ffec0 (argc=1, envc=3, 16-byte aligned=true,          initial data 320 of 4096 byte(s))
+[INFO] user-load: nx-brk initial stack at 0x7ffea0 (argc=1, envc=4, 16-byte aligned=true,          initial data 352 of 4096 byte(s))
 [INFO] stack-water: before entering nx-brk in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
-[INFO] user-stack: nx-brk used 320 of 16384 byte(s) (1%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
+[INFO] user-stack: nx-brk used 352 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: nx-brk slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] ring3: nx-brk used 4416 of 65536 byte(s) of the depth-0 excursion stack (6%), which has a guard page below it
 [INFO] vfs: nx-brk opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
@@ -509,9 +509,9 @@ hello from ring 3
 [INFO] user-load: debug-trap PT_LOAD segments: declared=1 mapped=1 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
 [INFO] user-load: the page below the stack (0x7fb000) is left unmapped as a guard; neither the heap nor mmap is placed on it
-[INFO] user-load: debug-trap initial stack at 0x7ffeb0 (argc=1, envc=3, 16-byte aligned=true,          initial data 336 of 4096 byte(s))
+[INFO] user-load: debug-trap initial stack at 0x7ffe90 (argc=1, envc=4, 16-byte aligned=true,          initial data 368 of 4096 byte(s))
 [INFO] stack-water: before entering debug-trap in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
-[INFO] user-stack: debug-trap used 344 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
+[INFO] user-stack: debug-trap used 376 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: debug-trap slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] ring3: debug-trap used 0 of 65536 byte(s) of the depth-0 excursion stack (0%), which has a guard page below it
 [INFO] vfs: debug-trap opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
@@ -523,9 +523,9 @@ hello from ring 3
 [INFO] user-load: fault-test PT_LOAD segments: declared=1 mapped=1 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
 [INFO] user-load: the page below the stack (0x7fb000) is left unmapped as a guard; neither the heap nor mmap is placed on it
-[INFO] user-load: fault-test initial stack at 0x7ffeb0 (argc=1, envc=3, 16-byte aligned=true,          initial data 336 of 4096 byte(s))
+[INFO] user-load: fault-test initial stack at 0x7ffe90 (argc=1, envc=4, 16-byte aligned=true,          initial data 368 of 4096 byte(s))
 [INFO] stack-water: before entering fault-test in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
-[INFO] user-stack: fault-test used 336 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
+[INFO] user-stack: fault-test used 368 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: fault-test slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] ring3: fault-test used 0 of 65536 byte(s) of the depth-0 excursion stack (0%), which has a guard page below it
 [INFO] vfs: fault-test opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
@@ -539,7 +539,7 @@ hello from ring 3
 [INFO] user-load: syscall-test PT_LOAD segments: declared=2 mapped=2 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
 [INFO] user-load: the page below the stack (0x7fb000) is left unmapped as a guard; neither the heap nor mmap is placed on it
-[INFO] user-load: syscall-test initial stack at 0x7ffea0 (argc=2, envc=3, 16-byte aligned=true,          initial data 352 of 4096 byte(s))
+[INFO] user-load: syscall-test initial stack at 0x7ffe80 (argc=2, envc=4, 16-byte aligned=true,          initial data 384 of 4096 byte(s))
 [INFO] stack-water: before entering syscall-test in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
 syscall-test wrote this
 [INFO] spawn: /bin/hello is 8576 byte(s) at inode 27; entering at depth 2 (the parent's excursion stack 0xffffffff80385000..0xffffffff80395000 has 10249 byte(s) used and 55287 left)
@@ -706,7 +706,7 @@ futex: task 0 would sleep on 0x7ffee0 in slot 0 with no one to wake it; the user
 [INFO] user-heap: /bin/futex-wait had brk take 0 frame(s) and give back 0 (equal means the shrink actually returned them; a program that only grows will not be equal, and that is not a failure)
 [INFO] page-perms: user program /bin/futex-wait: 2 row(s), 0 unnamed, 0 mapped where nothing should be, 0 dropped, digest=1452316fa47eacf6
 [INFO] spawn: /bin/futex-wait ended (Exited(137)) after 1 syscall(s) (0 with a number the kernel does not know; the last such number was 0); its kernel entries ran on RSP 0xffffffff803a5f50 (inside its own excursion stack 0xffffffff80396000..0xffffffff803a6000 = true); the space was destroyed (0 frame(s) left the allocator; 10 returned at once, 0 still quarantined (0 its own + 0 from what it spawned), match=true leaked=0, idle returned 0 of earlier destroys meanwhile); the space took 10 frame(s) and the destroy collected 10 (match=true); the global difference was checked (checked 17 time(s) so far)
-[INFO] user-stack: syscall-test used 1376 of 16384 byte(s) (8%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
+[INFO] user-stack: syscall-test used 1408 of 16384 byte(s) (8%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: syscall-test slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] ring3: syscall-test used 33432 of 65536 byte(s) of the depth-0 excursion stack (51%), which has a guard page below it
 [INFO] vfs: syscall-test opened 20 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
@@ -722,11 +722,11 @@ futex: task 0 would sleep on 0x7ffee0 in slot 0 with no one to wake it; the user
 [INFO] user-load: syscall-insn PT_LOAD segments: declared=2 mapped=2 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
 [INFO] user-load: the page below the stack (0x7fb000) is left unmapped as a guard; neither the heap nor mmap is placed on it
-[INFO] user-load: syscall-insn initial stack at 0x7ffeb0 (argc=1, envc=3, 16-byte aligned=true,          initial data 336 of 4096 byte(s))
+[INFO] user-load: syscall-insn initial stack at 0x7ffe90 (argc=1, envc=4, 16-byte aligned=true,          initial data 368 of 4096 byte(s))
 [INFO] stack-water: before entering syscall-insn in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
 syscall-insn wrote this
 syscall-insn wrote this
-[INFO] user-stack: syscall-insn used 352 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
+[INFO] user-stack: syscall-insn used 384 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: syscall-insn slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] ring3: syscall-insn used 3026 of 65536 byte(s) of the depth-0 excursion stack (4%), which has a guard page below it
 [INFO] vfs: syscall-insn opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
@@ -740,9 +740,9 @@ syscall-insn wrote this
 [INFO] user-load: debug-trap-syscall PT_LOAD segments: declared=1 mapped=1 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
 [INFO] user-load: the page below the stack (0x7fb000) is left unmapped as a guard; neither the heap nor mmap is placed on it
-[INFO] user-load: debug-trap-syscall initial stack at 0x7ffea0 (argc=1, envc=3, 16-byte aligned=true,          initial data 352 of 4096 byte(s))
+[INFO] user-load: debug-trap-syscall initial stack at 0x7ffe80 (argc=1, envc=4, 16-byte aligned=true,          initial data 384 of 4096 byte(s))
 [INFO] stack-water: before entering debug-trap-syscall in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
-[INFO] user-stack: debug-trap-syscall used 360 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
+[INFO] user-stack: debug-trap-syscall used 392 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: debug-trap-syscall slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] ring3: debug-trap-syscall used 1794 of 65536 byte(s) of the depth-0 excursion stack (2%), which has a guard page below it
 [INFO] vfs: debug-trap-syscall opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
@@ -754,9 +754,9 @@ syscall-insn wrote this
 [INFO] user-load: compat-syscall PT_LOAD segments: declared=1 mapped=1 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
 [INFO] user-load: the page below the stack (0x7fb000) is left unmapped as a guard; neither the heap nor mmap is placed on it
-[INFO] user-load: compat-syscall initial stack at 0x7ffeb0 (argc=1, envc=3, 16-byte aligned=true,          initial data 336 of 4096 byte(s))
+[INFO] user-load: compat-syscall initial stack at 0x7ffe90 (argc=1, envc=4, 16-byte aligned=true,          initial data 368 of 4096 byte(s))
 [INFO] stack-water: before entering compat-syscall in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
-[INFO] user-stack: compat-syscall used 352 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
+[INFO] user-stack: compat-syscall used 384 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: compat-syscall slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] ring3: compat-syscall used 994 of 65536 byte(s) of the depth-0 excursion stack (1%), which has a guard page below it
 [INFO] vfs: compat-syscall opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
@@ -771,10 +771,10 @@ syscall-insn wrote this
 [INFO] user-load: pie-hello PT_LOAD segments: declared=3 mapped=3 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7ffffbf000..0x7ffffff000 (w=true)
 [INFO] user-load: the page below the stack (0x7ffffbe000) is left unmapped as a guard; neither the heap nor mmap is placed on it
-[INFO] user-load: pie-hello initial stack at 0x7fffffeea0 (argc=1, envc=3, 16-byte aligned=true,          initial data 352 of 4096 byte(s))
+[INFO] user-load: pie-hello initial stack at 0x7fffffee80 (argc=1, envc=4, 16-byte aligned=true,          initial data 384 of 4096 byte(s))
 [INFO] stack-water: before entering pie-hello in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
 hello from a position-independent program
-[INFO] user-stack: pie-hello used 352 of 262144 byte(s) (0%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
+[INFO] user-stack: pie-hello used 384 of 262144 byte(s) (0%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: pie-hello slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] ring3: pie-hello used 3026 of 65536 byte(s) of the depth-0 excursion stack (4%), which has a guard page below it
 [INFO] vfs: pie-hello opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
@@ -856,10 +856,10 @@ task: starting preemptive demo with 2 busy-loop workers for 200 ticks
 [INFO] user-load: /bin/bss-test PT_LOAD segments: declared=4 mapped=4 (they must match; a gap means a segment was skipped), pages shared with the previous segment=1
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
 [INFO] user-load: the page below the stack (0x7fb000) is left unmapped as a guard; neither the heap nor mmap is placed on it
-[INFO] user-load: /bin/bss-test initial stack at 0x7ffeb0 (argc=1, envc=3, 16-byte aligned=true,          initial data 336 of 4096 byte(s))
+[INFO] user-load: /bin/bss-test initial stack at 0x7ffe90 (argc=1, envc=4, 16-byte aligned=true,          initial data 368 of 4096 byte(s))
 [INFO] stack-water: before entering /bin/bss-test in Ring 3, the kernel stack used 70840 of 131072 byte(s); 60232 left
 bss-test: the .bss reads as zero, keeps writes, and shares a page with .data
-[INFO] user-stack: /bin/bss-test used 368 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
+[INFO] user-stack: /bin/bss-test used 400 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: /bin/bss-test slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] ring3: /bin/bss-test used 3026 of 65536 byte(s) of the depth-0 excursion stack (4%), which has a guard page below it
 [INFO] vfs: /bin/bss-test opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
@@ -1225,7 +1225,7 @@ thread: task 6 (tid 46) reaped; it used <n> of 65536 byte(s) of its kernel stack
 [INFO] user-load: /bin/zash PT_LOAD segments: declared=4 mapped=4 (they must match; a gap means a segment was skipped), pages shared with the previous segment=1
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
 [INFO] user-load: the page below the stack (0x7fb000) is left unmapped as a guard; neither the heap nor mmap is placed on it
-[INFO] user-load: /bin/zash initial stack at 0x7ffec0 (argc=1, envc=3, 16-byte aligned=true,          initial data 320 of 4096 byte(s))
+[INFO] user-load: /bin/zash initial stack at 0x7ffea0 (argc=1, envc=4, 16-byte aligned=true,          initial data 352 of 4096 byte(s))
 [INFO] stack-water: before entering /bin/zash in Ring 3, the kernel stack used 73656 of 131072 byte(s); 57416 left
 zash: ready
 [38;2;0;200;0mzeikos[0m$ 
