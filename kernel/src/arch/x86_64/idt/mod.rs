@@ -1556,7 +1556,7 @@ macro_rules! symbol_address {
     ($symbol:path) => {{
         let address: u64;
         // SAFETY: `lea` は記号の番地を計算するだけで、メモリを読み書きしない。スタックもフラグも変えない。
-        // 記号はこのファイルの `global_asm!` が定義していて、カーネルの像の中に在る（RIP からの相対で届く）。
+        // 記号はこのファイルの `global_asm!` が定義していて、カーネルのイメージの中に在る（RIP からの相対で届く）。
         unsafe {
             core::arch::asm!(
                 "lea {address}, [rip + {symbol}]",

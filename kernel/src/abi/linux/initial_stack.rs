@@ -12,11 +12,11 @@
 
 /// 補助ベクタ（`auxv`）に積む値の出所（2026-10-06）。**載せる側が、載せた結果から作って渡す。**
 ///
-/// **Linux の静的なプログラム（musl の `_start` と `__libc_start_main`）が読むものを積む。** 位置独立の像は、
+/// **Linux の静的なプログラム（musl の `_start` と `__libc_start_main`）が読むものを積む。** 位置独立のイメージは、
 /// `AT_PHDR` から自分の載った位置を求めて、自分で再配置する。`AT_RANDOM` は、スタックの見張りの値の seed になる。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Auxv<'a> {
-    /// プログラムヘッダの表の番地（ずらした後）。**表がどの区画にも載らない像では `None`**——その像には
+    /// プログラムヘッダの表の番地（ずらした後）。**表がどの区画にも載らないイメージでは `None`**——そのイメージには
     /// `AT_PHDR` を積まない（番地の無いものを 0 として渡さない）。
     pub program_headers_at: Option<u64>,
     /// プログラムヘッダの数（`AT_PHNUM`）。
@@ -70,7 +70,7 @@ const RANDOM_BYTES: usize = 16;
 ///
 /// **`argc`・`argv`・`envp` と、`auxv` を積む**（`auxv` の中身は 2026-10-06 に足した。それまでは終端だけだった）。
 ///
-/// `auxv` は、この順である——`AT_PHDR`（表が載っている像だけ）・`AT_PHENT`・`AT_PHNUM`・`AT_PAGESZ`・`AT_ENTRY`・
+/// `auxv` は、この順である——`AT_PHDR`（表が載っているイメージだけ）・`AT_PHENT`・`AT_PHNUM`・`AT_PAGESZ`・`AT_ENTRY`・
 /// `AT_UID`・`AT_EUID`・`AT_GID`・`AT_EGID`（どれも 0。利用者の区別は、まだ無い）・`AT_SECURE`（0）・`AT_RANDOM`・
 /// `AT_EXECFN`・`AT_NULL`。**積んでいないもの**——`AT_HWCAP`・`AT_CLKTCK`・`AT_BASE`・`AT_SYSINFO_EHDR`
 /// （vDSO は無い）。要る利用者が出たら足す。
@@ -121,7 +121,7 @@ pub fn build_initial_stack(
     page[cursor..cursor + RANDOM_BYTES].copy_from_slice(&aux.random);
     let random_at = page_base + cursor as u64;
 
-    // **`auxv` の対を、積む順に並べる。** `AT_PHDR` は、表が載っている像だけである。
+    // **`auxv` の対を、積む順に並べる。** `AT_PHDR` は、表が載っているイメージだけである。
     let pairs = [
         aux.program_headers_at.map(|at| (at::PHDR, at)),
         Some((at::PHENT, PROGRAM_HEADER_SIZE)),
@@ -273,7 +273,7 @@ mod tests {
         );
     }
 
-    /// プログラムヘッダの表が載っていない像には、`AT_PHDR` を積まない（0 を番地として渡さない）。ほかは同じである。
+    /// プログラムヘッダの表が載っていないイメージには、`AT_PHDR` を積まない（0 を番地として渡さない）。ほかは同じである。
     #[test]
     fn at_phdr_is_left_out_when_the_table_is_not_loaded() {
         let mut page = [0; 4096];

@@ -1,6 +1,6 @@
-//! カーネルの像の区画と、区画ごとの権限（2026-10-02。`ADR-0071` の手順 4）。**純粋な論理。**
+//! カーネルのイメージの区画と、区画ごとの権限（2026-10-02。`ADR-0071` の手順 4）。**純粋な論理。**
 //!
-//! 像を高い番地へ写すとき、区画ごとに権限を変える——コードは読んで実行する（書けない）、読むだけの区画は
+//! イメージを高い番地へ写すとき、区画ごとに権限を変える——コードは読んで実行する（書けない）、読むだけの区画は
 //! 読むだけ、データは書けて実行しない。**区画の境（`kernel/link.ld` の記号）から、写す範囲と権限の組を作るのが
 //! ここである。** ポインタにもレジスタにも触らない。ホストの `cargo test` で確かめる。
 //!
@@ -10,20 +10,20 @@
 use crate::frame_allocator::FRAME_SIZE;
 use crate::paging::permissions::PagePermissions;
 
-/// 像の区画の境（物理の番地）。`kernel/link.ld` の記号から作る。
+/// イメージの区画の境（物理の番地）。`kernel/link.ld` の記号から作る。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImageBounds {
-    /// 像の先頭（`__kernel_start`）。コードの区画（起動のトランポリンと `.text`）の先頭である。
+    /// イメージの先頭（`__kernel_start`）。コードの区画（起動のトランポリンと `.text`）の先頭である。
     pub start: u64,
     /// 読むだけの区画の先頭（`__rodata_start`）。
     pub read_only_start: u64,
     /// 書ける区画の先頭（`__data_start`）。
     pub data_start: u64,
-    /// 像の終わり（`__kernel_end`。4KiB の境でなくてよい。写すときに切り上げる）。
+    /// イメージの終わり（`__kernel_end`。4KiB の境でなくてよい。写すときに切り上げる）。
     pub end: u64,
 }
 
-/// 像の 1 つの区画を写す範囲と権限。
+/// イメージの 1 つの区画を写す範囲と権限。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ImageSection {
     /// 起動ログとページの権限の確かめに出す名前。
@@ -56,7 +56,7 @@ impl ImageSection {
 /// 区画の境が、写せる形になっていない理由。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ImageLayoutError {
-    /// 境が 4KiB に揃っていない（像の終わりを除く）。**揃っていないと、1 ページに権限の違う区画が載る。**
+    /// 境が 4KiB に揃っていない（イメージの終わりを除く）。**揃っていないと、1 ページに権限の違う区画が載る。**
     NotPageAligned,
     /// 境の順序が違うか、空の区画が在る（コード、読むだけ、書ける、の順で、どれも 1 ページ以上）。
     OutOfOrder,
@@ -68,7 +68,7 @@ pub enum ImageLayoutError {
 /// - 読むだけ: [`PagePermissions::kernel_read_only`]
 /// - 書ける（`.data` と `.bss`）: [`PagePermissions::kernel_data`]（実行しない）
 ///
-/// **3 つの範囲は、隙間なく、重なりなく、像の全部を覆う**（像の終わりは 4KiB へ切り上げる）。
+/// **3 つの範囲は、隙間なく、重なりなく、イメージの全部を覆う**（イメージの終わりは 4KiB へ切り上げる）。
 pub fn image_sections(bounds: ImageBounds) -> Result<[ImageSection; 3], ImageLayoutError> {
     let aligned = |address: u64| address.is_multiple_of(FRAME_SIZE);
     if !aligned(bounds.start) || !aligned(bounds.read_only_start) || !aligned(bounds.data_start) {
@@ -140,7 +140,7 @@ mod tests {
         }
     }
 
-    /// **3 つの範囲は、隙間も重なりも無く、像の全部を覆う。** 像の終わりは 4KiB へ切り上げる。
+    /// **3 つの範囲は、隙間も重なりも無く、イメージの全部を覆う。** イメージの終わりは 4KiB へ切り上げる。
     #[test]
     fn the_sections_cover_the_image_without_a_gap_or_an_overlap() {
         let sections = image_sections(MEASURED).unwrap();
@@ -149,7 +149,7 @@ mod tests {
         assert_eq!(sections[1].end, sections[2].start);
         assert_eq!(sections[2].end, 0x4d_3000);
         assert!(sections.iter().all(|section| !section.is_empty()));
-        // 像の終わりが、ちょうど 4KiB の境のときは、切り上げても変わらない。
+        // イメージの終わりが、ちょうど 4KiB の境のときは、切り上げても変わらない。
         let exact = image_sections(ImageBounds {
             end: 0x4d_3000,
             ..MEASURED

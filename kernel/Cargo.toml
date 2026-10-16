@@ -78,7 +78,7 @@ kernel-top-write-after-boot-test = []
 # 2026-09-27（`ADR-0071` の決定 5）: 書く側の守りを外し、同じ書き込みをする。突き合わせが、実際に書かれた項目を
 # 見つける。`--paging-test kernel-top-write-unguarded-test`。
 kernel-top-write-unguarded-test = []
-# 2026-10-03（`ADR-0071` の手順 4 の 3 つ目の決まり）: 起動の後に、カーネルの像の PML4 の項目の下へ葉を 1 枚足しに行く。
+# 2026-10-03（`ADR-0071` の手順 4 の 3 つ目の決まり）: 起動の後に、カーネルのイメージの PML4 の項目の下へ葉を 1 枚足しに行く。
 # 決まりが、項目を 1 つも書かずに断る。`--paging-test kernel-mapping-map-after-boot-test`。
 kernel-mapping-map-after-boot-test = []
 # 2026-10-03（同上）: 起動の後に、直接写像の 2MiB のページを割りに行く（権限を変える入口と同じ守り）。
@@ -385,23 +385,23 @@ kill-keep-stale-interrupt-test = []
 # 破壊（S12 前の手当て、C）: BKL を解かずに畳む。次に BKL を取る者が、
 # 同じコアの再取得として捕まえる（`user-exit-keep-bkl` と同じ機序）。
 kill-fold-keep-bkl-test = []
-# 破壊（S12-a）: 像の複製の末尾 1 バイトを 0xFF で潰す。読み戻しが落ちる。
-# 落とさなければ、取り出した像とのバイト一致がホスト側で落ちる。
-# **0 で潰す形は破壊にならない**——像の末尾は既に 0 である（実測）。
+# 破壊（S12-a）: イメージの複製の末尾 1 バイトを 0xFF で潰す。読み戻しが落ちる。
+# 落とさなければ、取り出したイメージとのバイト一致がホスト側で落ちる。
+# **0 で潰す形は破壊にならない**——イメージの末尾は既に 0 である（実測）。
 fs-copy-corrupt-tail-test = []
-# 像の複製の、ボリュームの名前の欄の最後の 1 バイトを 0xFF にする。管理用の部分の検査値が、ホストが
+# イメージの複製の、ボリュームの名前の欄の最後の 1 バイトを 0xFF にする。管理用の部分の検査値が、ホストが
 # ファイルから計算した値と食い違う。解析は通る。
 fs-copy-corrupt-label-test = []
 # 破壊（S12-b）: 空きブロック数の欄を 2 バイトずらして読む。common へ転送する。
 ext2-group-count-offset-test = ["common/ext2-group-count-offset-break"]
 # 変種（S12-b）: 割り当てたブロックを解放しない。**壊さない**——別の状態を作る
-# （`paging-test` と同じ形）。割り当て中の像を取り出して e2fsck の不満を見るために要る。
+# （`paging-test` と同じ形）。割り当て中のイメージを取り出して e2fsck の不満を見るために要る。
 fs-alloc-keep-test = []
-# 変種（S12-c）: 追記した中身を戻さない。**壊さない**——書いたままの像を作る。
+# 変種（S12-c）: 追記した中身を戻さない。**壊さない**——書いたままのイメージを作る。
 fs-write-keep-test = []
-# 変種（S12-d）: 縮めた後に元へ戻さない。**壊さない**——0 のままの像を作る。
+# 変種（S12-d）: 縮めた後に元へ戻さない。**壊さない**——0 のままのイメージを作る。
 fs-truncate-keep-test = []
-# 変種（S12-e）: 作ったファイルを消さない。**壊さない**——作ったままの像を作る。
+# 変種（S12-e）: 作ったファイルを消さない。**壊さない**——作ったままのイメージを作る。
 # 1 回の起動だと最終状態が「消した後」になり、作成の誤りが削除で消える。
 fs-create-keep-test = []
 # 変種（DIR-1c）: 壊さない。作ったディレクトリを消さずに残す。生きた
@@ -456,21 +456,21 @@ pci-stop-at-first-test = []
 # 破壊（S13-b）: QueueNotify を書かない。要求は公開されたままで装置は読まず、
 # ポーリングが上限に達して止まる。上限のある待機だけがこの形を観測へ変える。
 virtio-skip-notify-test = []
-# 破壊（S13-b）: sector 1 を要求する。像の模様は絶対オフセットから決まるので、
+# 破壊（S13-b）: sector 1 を要求する。イメージの模様は絶対オフセットから決まるので、
 # ホスト側の中身の突き合わせが落ちる。
 virtio-wrong-sector-test = []
 # 破壊（S13-b）: データ記述子の長さを 511 にする。実測では QEMU が要求ごと
 # 拒み（status=1）、status の検査が捕まえる。見込み（黙って 511 バイト書く）は
 # 外れたが、捕まる。
 virtio-short-desc-test = []
-# 破壊（S13-c）: 像の先頭 4KiB を装置から読まない。superblock が 0 のままになり
-# バイト一致が落ちる。末尾を欠く形は像の末尾が 0 なので破壊にならない（実測）。
+# 破壊（S13-c）: イメージの先頭 4KiB を装置から読まない。superblock が 0 のままになり
+# バイト一致が落ちる。末尾を欠く形はイメージの末尾が 0 なので破壊にならない（実測）。
 virtio-load-skip-first-test = []
-# 破壊（S13-e）: 最終形の像を装置へ書き戻さない。RAM の複製は正しいが
+# 破壊（S13-e）: 最終形のイメージを装置へ書き戻さない。RAM の複製は正しいが
 # disk0.img は古いまま——ホストの e2fsck が keep 変種で差を見る。
 fs-flush-skip-test = []
 # 破壊（S13-e）: 先頭の 4KiB を書き戻さない。superblock が古いまま残り、keep
-# 変種で disk0.img が食い違う。末尾を欠く形は像の末尾が 0 なので罠（実測）。
+# 変種で disk0.img が食い違う。末尾を欠く形はイメージの末尾が 0 なので罠（実測）。
 virtio-flush-short-test = []
 # 破壊（S13-d）: 宣言も申告も無視して、redirection entry を生のエッジ・
 # ハイで書く。実測では QEMU は極性とトリガを厳密に模っておらず、届いて
@@ -697,9 +697,9 @@ poll-waits-on-one-member = []
 # 起こして（前景でない者が画面と入力を開けないことを見る）、画面を開き、裏バッファを mmap して
 # 四角を描き、present で写す。判定は xtask の screen-test が screendump を読んで行う。
 screen-test = []
-# Seinas の fbdev の裏側（release の seinas-fbdev。musl の静的 PIE）を像の /bin/linux に入れる手元と CI の確かめ
+# Seinas の fbdev の裏側（release の seinas-fbdev。musl の静的 PIE）をイメージの /bin/linux に入れる手元と CI の確かめ
 # （2026-10-07。M2。破壊テストではない）。成果物は tools/fetch-seinas.sh が target/linux-programs/ に取る（SHA-256 を固定）。
-# 既定の像には入れない——バイトが release に依るため。`cargo xtask run --seinas-fbdev-test`。
+# 既定のイメージには入れない——バイトが release に依るため。`cargo xtask run --seinas-fbdev-test`。
 seinas-test = []
 # /dev/fb0 を Linux の fbdev の形で開き、四隅に色を置いて、FBIOZPRESENT を打たずに画面へ出るのを待つ（2026-10-07。
 # ADR-0083。M2 の最初の刻み）。init が /bin/fb-test を前景で起こす。判定は xtask の fb-test が screendump を読んで行う。
@@ -744,8 +744,8 @@ pm-timer-double-frequency = []
 # ティックを入れた回の形）。PM タイマとの突き合わせが食い違いを名指しし、PM タイマの値が使われるので、タイマの
 # 速さの判定は通る。
 pit-calibration-ticks-queued = []
-# 破壊（ADR-0068 の HW-d）: ブートローダが渡した RAM ディスクの像を見ない。virtio-blk を外した
-# 構成で、装置も像も無い形になり、読む源が 1 つも無いと言って止まる。
+# 破壊（ADR-0068 の HW-d）: ブートローダが渡した RAM ディスクのイメージを見ない。virtio-blk を外した
+# 構成で、装置もイメージも無い形になり、読む源が 1 つも無いと言って止まる。
 fs-ram-image-ignored = []
 # スクリプト（ADR-0068 の HW-d）: RAM ディスクの上で zi で書いて保存し、cat で読み直す。書き戻しの入口を
 # 1 度通る。装置が無い構成で待たないことを見る。
@@ -781,7 +781,7 @@ exception-entry-keeps-df-test = []
 irq-entry-keeps-df-test = []
 syscall-entry-keeps-df-test = []
 # 棚卸しの根拠の見張りの破壊（2026-09-24。ADR-0018 の Addendum 9）。
-# gs: を読む関数を像に残す（呼ばない）。基底の項目（逆アセンブルで fs:・gs: を数える）が捕まえる。
+# gs: を読む関数をイメージに残す（呼ばない）。基底の項目（逆アセンブルで fs:・gs: を数える）が捕まえる。
 kernel-uses-gs-test = []
 # EFER.SCE が落ちているものとして判定する（MSR は書かない）。起動の途中の cpu-state の行で止まる。
 # 2026-10-04 に向きを逆にした（syscall 命令を入口に足して、SCE が「1 であるべき」になった）。
@@ -819,17 +819,17 @@ ap-switches-without-nxe-test = []
 # 権限の違反の破壊テストの傘（2026-10-02。カーネルの写像の W^X）。試しが告げた番地と CR2 を突き合わせる行を、
 # 例外の出力に足す。下の 5 つが入れる。単独では何も起こさない。
 wx-violation-test = []
-# カーネルの像の .text の 1 バイトへ、カーネルが書く。#PF（書き込み・権限の違反）で止まる。
+# カーネルのイメージの .text の 1 バイトへ、カーネルが書く。#PF（書き込み・権限の違反）で止まる。
 kernel-writes-text-test = ["wx-violation-test"]
-# カーネルの像の読むだけの区画の 1 バイトへ、カーネルが書く。#PF（書き込み・権限の違反）で止まる。
+# カーネルのイメージの読むだけの区画の 1 バイトへ、カーネルが書く。#PF（書き込み・権限の違反）で止まる。
 kernel-writes-rodata-test = ["wx-violation-test"]
-# カーネルの像の .data に置いた 1 バイト（ret）を、カーネルが実行する。#PF（命令の取り出し）で止まる。
+# カーネルのイメージの .data に置いた 1 バイト（ret）を、カーネルが実行する。#PF（命令の取り出し）で止まる。
 kernel-executes-data-test = ["wx-violation-test"]
 # カーネルの関数を、直接マッピングの番地（別名）から実行する。#PF（命令の取り出し）で止まる。
 kernel-executes-direct-map-test = ["wx-violation-test"]
 # AP の CPU ごとのスタックのページに置いた 1 バイト（ret）を、カーネルが実行する。#PF（命令の取り出し）で止まる。
 kernel-executes-stack-test = ["wx-violation-test"]
-# カーネルの像の読むだけの区画の最初の 1 ページを、書き込み可で写す（2026-10-02）。起動は通る。
+# カーネルのイメージの読むだけの区画の最初の 1 ページを、書き込み可で写す（2026-10-02）。起動は通る。
 # ページの権限の一覧が、違いを名前つきで示す。`cargo xtask run --page-permissions --sabotage kernel-rodata-page-writable-test`。
 kernel-rodata-page-writable-test = []
 # 権限の変換が、ユーザーの側の葉には、実行の欄を無視して、実行禁止のビットを立てない（2026-10-03。入れる前の形）。
@@ -928,8 +928,8 @@ user-run-skip-load = []
 # ページを足す入口が先に断るため）。**この破壊だけが読み戻しまで到達する**
 # （map-force-writable は先に ring3-vectors が落ちる）。`--ring3-test user-writable-text`。
 user-run-writable-text = []
-# 位置独立の像（ET_DYN）の区画を、ずらさずに載せる（2026-10-06）。入口だけが、ずれた番地を指す。載せたものを写像の表へ
-# 登録する所が、逆さまになった像の範囲を `BadRange` で名指しして止まる。`--ring3-test pie-without-bias`。
+# 位置独立のイメージ（ET_DYN）の区画を、ずらさずに載せる（2026-10-06）。入口だけが、ずれた番地を指す。載せたものを写像の表へ
+# 登録する所が、逆さまになったイメージの範囲を `BadRange` で名指しして止まる。`--ring3-test pie-without-bias`。
 pie-load-without-bias-test = []
 # 補助ベクタの AT_ENTRY に、ずらす前の番地を渡す（2026-10-06）。`pie-hello` が、終了状態 1 で言う。
 # `--ring3-test auxv-entry-not-biased`。
@@ -937,9 +937,9 @@ auxv-entry-not-biased-test = []
 # 補助ベクタの AT_PHDR に、ずらす前の番地を渡す（2026-10-06）。`pie-hello` が、終了状態 2 で言う。
 # `--ring3-test auxv-phdr-not-biased`。
 auxv-phdr-not-biased-test = []
-# C の Linux 向けのプログラム（`musl-gcc` で手で作った `target/linux-programs/m1-c`）を像の `/bin/linux` に入れ、
+# C の Linux 向けのプログラム（`musl-gcc` で手で作った `target/linux-programs/m1-c`）をイメージの `/bin/linux` に入れ、
 # `syscall-test` が `spawn` で起こす（2026-10-06。M1 の手元の確かめ。破壊テストではない。版が配布物に依るので
-# 既定の像には入れない）。`cargo xtask run --linux-c-test`。
+# 既定のイメージには入れない）。`cargo xtask run --linux-c-test`。
 linux-c-test = []
 # 写像の表が、置くときに重なりを見ない（2026-10-06）。`MAP_FIXED_NOREPLACE` が写像の上でも断らず、`syscall-test` が
 # 103 番で止まる。`--syscall-test mappings-overlap-skip`。
@@ -997,8 +997,8 @@ page-permissions-dump = []
 # 「application processor stacks」の行のキャッシュの属性の違いを名前つきで示す。
 # `cargo xtask run --page-permissions --sabotage ap-stacks-uncached-test`。
 ap-stacks-uncached-test = []
-# 区画の並びの確かめを通さずに写す（2026-10-01）。起動の途中の壊した像の検査が、並びの確かめで
-# 断られるはずの像を別の場所で断られる（または読み込まれる）のを見て止まる。
+# 区画の並びの確かめを通さずに写す（2026-10-01）。起動の途中の壊したイメージの検査が、並びの確かめで
+# 断られるはずのイメージを別の場所で断られる（または読み込まれる）のを見て止まる。
 # `--ring3-test user-skip-layout-check`。
 user-load-skip-layout-check = []
 # S9-b-3-1: プロセスの終了（exit）の破壊確認。いずれも既定ビルドには入らない。

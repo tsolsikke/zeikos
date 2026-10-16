@@ -262,7 +262,7 @@ fn clip_rect_area(rect: &DrmClipRect) -> Option<(u32, u32, u32, u32)> {
 /// 実行ファイルの大きさの上限（2026-10-05 に 32 KiB から 16 MiB へ上げた）。
 ///
 /// **以前は、載せる前に、実行ファイルの全体を静的な配列へ写していた。** 上限の 32 KiB は、その配列の大きさだった。
-/// **いまは写さない**——載せる側は、像を「範囲を読む口」で受け、先頭の部分と、区画ごとのページの分だけを読む
+/// **いまは写さない**——載せる側は、イメージを「範囲を読む口」で受け、先頭の部分と、区画ごとのページの分だけを読む
 /// （`crate::userland` の `load_user_program_from`）。上限は、器の大きさではなく、受け付ける大きさの決まりである。
 ///
 /// **16 MiB は、Linux 向けの静的リンクの実行ファイル（数 MiB）が入る大きさである。** ただし、いまの ext2 の読み手が
@@ -2576,7 +2576,7 @@ const ANONYMOUS_MMAP_MAX: u64 = 16 * 1024 * 1024;
 ///
 /// - 範囲に掛かる無名の写像を外す。一部にだけ掛かる写像は、残る部分を分けて表に戻す。ページを外してフレームを返す。
 /// - 範囲にどの写像も掛かっていなければ 0（Linux と同じ）。
-/// - 像・スタック・見張りのページ・ヒープ・共有メモリ・画面に掛かる範囲は `-EINVAL`（何も変えない）。ヒープは `brk` が
+/// - イメージ・スタック・見張りのページ・ヒープ・共有メモリ・画面に掛かる範囲は `-EINVAL`（何も変えない）。ヒープは `brk` が
 ///   持つので外さない。共有メモリと画面は、参照数と裏バッファの扱いが要る（`docs/deferred-decisions.md`）。
 ///
 /// # Safety
@@ -2639,7 +2639,7 @@ unsafe fn munmap_from_ring3(
 ///   断る。`PROT_EXEC` を付けない `mprotect` は、ページを実行できない形にする（Linux と同じ。実行を外す向きだけを許す）。
 /// - `PROT_NONE`: 葉の `P` を落とし、フレームは持ったままにする（`entry::PTE_RETAINED`）。**読める形へ戻すと、同じ中身が戻る。**
 ///   初めから写していなかった無名の写像（`mmap(PROT_NONE)`）を読める形にするときは、その時点で 0 のフレームを写す。
-/// - 変えてよい種類は、無名・ヒープ・像・スタック。見張りのページ・共有メモリ・画面は `-EINVAL`（`docs/deferred-decisions.md`）。
+/// - 変えてよい種類は、無名・ヒープ・イメージ・スタック。見張りのページ・共有メモリ・画面は `-EINVAL`（`docs/deferred-decisions.md`）。
 /// - 変えた葉は、この CPU の TLB から 1 本ずつ落とす（`invlpg`）。**プロセスは 1 つの CPU に留まるので、ほかの CPU は
 ///   見ない**——スレッドが入ると、この前提は崩れる（`docs/deferred-decisions.md`）。
 ///
@@ -2784,7 +2784,7 @@ unsafe fn mprotect_from_ring3(
                         break 'pieces;
                     }
                 } else if present {
-                    // 像・スタック・ヒープは、写していないページを持たないはずである。
+                    // イメージ・スタック・ヒープは、写していないページを持たないはずである。
                     outcome = (-ENOMEM) as u64;
                     break 'pieces;
                 }
@@ -2905,7 +2905,7 @@ enum FixedPlacement {
 
 /// `MAP_FIXED` のために、`addr` から `bytes` の範囲に掛かる写像を外す（2026-10-06）。
 ///
-/// 外してよいのは、無名の写像と `brk` のヒープである（`MappingKind::can_be_replaced`。像・スタック・見張りのページ・
+/// 外してよいのは、無名の写像と `brk` のヒープである（`MappingKind::can_be_replaced`。イメージ・スタック・見張りのページ・
 /// 共有メモリ・画面は `-EINVAL`）。**ヒープの上へ置けるのは、musl の `malloc` が `brk` の先頭に見張りを置くためである**
 /// （2026-10-04 の `strace`。`mmap(brk の先頭, 4096, PROT_NONE, MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS)`）。
 ///
@@ -5312,7 +5312,7 @@ unsafe fn sys_getdents64(
             &mut record,
         );
         let Some(reclen) = put_in_record else {
-            // 名前が長すぎてレコードに収まらない。**像が壊れている。**
+            // 名前が長すぎてレコードに収まらない。**イメージが壊れている。**
             return (-EIO) as u64;
         };
 
@@ -7812,11 +7812,11 @@ fn errno_for_ext2(error: common::ext2::Ext2Error) -> i64 {
 /// # 大半は「カーネル側の不具合」である
 ///
 /// **`Parse`・`Layout` が、渡されたイメージに対する答えである。**
-/// **どちらも `-ENOEXEC` を返す**（2026-10-01。Linux の `execve` と同じ）——像がバイト列として壊れている
+/// **どちらも `-ENOEXEC` を返す**（2026-10-01。Linux の `execve` と同じ）——イメージがバイト列として壊れている
 /// （`Parse`）ときも、区画の並びを受け付けられない（`Layout`）ときも、「実行できる形でない」である。
 /// **`Parse` は、`ENOEXEC` を持つ前は `-EINVAL` を返していた。**
 ///
-/// **`Read` は `-EIO` を返す**（2026-10-05）——像の中身ではなく、読むことそのものが失敗した。大きすぎて読めない
+/// **`Read` は `-EIO` を返す**（2026-10-05）——イメージの中身ではなく、読むことそのものが失敗した。大きすぎて読めない
 /// ファイル（ext2 の 2 段目の間接ブロック）も、ここへ来る。
 fn errno_for_user_load(error: crate::userland::UserLoadError) -> i64 {
     use crate::userland::UserLoadError as E;
@@ -7850,7 +7850,7 @@ fn errno_for_spawn(error: crate::userland::SpawnError) -> i64 {
     match error {
         E::TooDeep => EAGAIN,
         E::Lookup(e) => errno_for_ext2(e),
-        // **像を読めなかった**（2026-10-05）。ファイルシステムが理由を持っていれば、その値にする。範囲の食い違いは
+        // **イメージを読めなかった**（2026-10-05）。ファイルシステムが理由を持っていれば、その値にする。範囲の食い違いは
         // 入出力の誤りとして返す。
         E::Read(common::image_source::ImageReadError::Ext2(e)) => errno_for_ext2(e),
         E::Read(_) => EIO,
@@ -8367,8 +8367,8 @@ mod tests {
         );
     }
 
-    /// **実行できる形でない像は `-ENOEXEC`（8）で断る**（2026-10-01）——区画の並びを受け付けられない像も、
-    /// バイト列として壊れている像も同じである。
+    /// **実行できる形でないイメージは `-ENOEXEC`（8）で断る**（2026-10-01）——区画の並びを受け付けられないイメージも、
+    /// バイト列として壊れているイメージも同じである。
     #[test]
     fn an_image_that_cannot_be_executed_is_reported_as_enoexec() {
         use crate::userland::UserLoadError;
@@ -8402,7 +8402,7 @@ mod tests {
         ] {
             assert_eq!(errno_for_user_load(broken), ENOEXEC, "{broken:?}");
         }
-        // 読むことそのものの失敗は、像の形の答えではない。
+        // 読むことそのものの失敗は、イメージの形の答えではない。
         assert_eq!(
             errno_for_user_load(UserLoadError::Read(
                 common::image_source::ImageReadError::Ext2(

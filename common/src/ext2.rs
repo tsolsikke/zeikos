@@ -40,8 +40,8 @@
 //! 埋める道も無い（ADR-0038 の「決めないこと」）。
 //!
 //! **この節はかつて「穴も扱わない」と書いていた。** 理由として
-//! 「借りて返す形の帰結で、返すべきゼロが像の中に無い」を挙げ、
-//! **「`mke2fs -d` は穴を作らないので、この段の像には現れない」と書いていた。**
+//! 「借りて返す形の帰結で、返すべきゼロがイメージの中に無い」を挙げ、
+//! **「`mke2fs -d` は穴を作らないので、この段のイメージには現れない」と書いていた。**
 //! **その前提は誤りだった**——zi-d-1 で `/bin/zi` をイメージへ足したとき、
 //! **ELF の中の全 0 の 1 ブロックが穴になった**（`debugfs` で実測）。
 //! **既存の 6 本がそれまで踏まなかったのは運である。**
@@ -252,7 +252,7 @@ pub enum Ext2Error {
     /// 前者を無視してよく、後者は常に無視してよい。**この非対称は Linux と
     /// 同じ規則である。**
     UnsupportedIncompatFeatures(u32),
-    /// ファイルシステムが名乗る大きさが、像より大きい（線3）。
+    /// ファイルシステムが名乗る大きさが、イメージより大きい（線3）。
     ImageTooSmall { needed: u64, actual: u64 },
     /// ブロック番号が `s_blocks_count` の外を指している（線3）。
     BlockOutOfRange(u32),
@@ -357,7 +357,7 @@ impl core::fmt::Debug for Ext2<'_> {
 /// ext2 の上のファイルを、範囲を読む口として見せる（2026-10-05。`crate::image_source`）。
 ///
 /// **ブロックごとに引いて、要る分だけを写す**（[`Ext2::file_block`]）。ファイルの全体を、どこかへ写して持つことは
-/// しない。**ブロックが像の中で続いていなくてもよい。**
+/// しない。**ブロックがイメージの中で続いていなくてもよい。**
 ///
 /// # 読めない大きさのファイル
 ///
@@ -926,21 +926,21 @@ impl<'a> Ext2<'a> {
         Ok(descriptor)
     }
 
-    /// 像の先頭の「管理用の部分」のバイト数（2026-10-05）。
+    /// イメージの先頭の「管理用の部分」のバイト数（2026-10-05）。
     ///
     /// **ブロック 0 から、グループ 0 の inode の表の終わりまでである**——スーパーブロック、グループの記述子
     /// （と、その後ろの予約のブロック）、ブロックと inode のビットマップ、inode の表が入る。`mke2fs` は、グループ 0 で
     /// これらを先頭から続けて置く。
     ///
-    /// **起動時の検査値が覆う範囲である**（カーネルと、ホストの検査の両方が、この関数で範囲を決める）。像の大きさや
+    /// **起動時の検査値が覆う範囲である**（カーネルと、ホストの検査の両方が、この関数で範囲を決める）。イメージの大きさや
     /// ファイルの中身の量には依らない——inode の数で決まる。
     ///
-    /// **グループが 2 つ以上の像でも、返すのはグループ 0 の分だけである**（いまの像は 1 グループ）。
+    /// **グループが 2 つ以上のイメージでも、返すのはグループ 0 の分だけである**（いまのイメージは 1 グループ）。
     ///
     /// # 線がどう当たるか
     ///
     /// - **線2: 算術。** `inodes_per_group * inode_size` は u32 では溢れうるので、u64 で組み立てる
-    /// - **線3: 範囲。** 表の終わりが像の外へ出るなら [`Ext2Error::InodeTableOutOfRange`] で断る
+    /// - **線3: 範囲。** 表の終わりがイメージの外へ出るなら [`Ext2Error::InodeTableOutOfRange`] で断る
     pub fn management_prefix_len(&self) -> Result<usize, Ext2Error> {
         let table = self.group_descriptor(0)?.inode_table;
         let block_size = u64::from(self.block_size);
@@ -958,10 +958,10 @@ impl<'a> Ext2<'a> {
 
     /// ボリュームの名前の欄（`s_volume_name`。16 バイト。2026-10-05）。**`e2label` や `dumpe2fs` で見える欄である。**
     ///
-    /// **像をビルドするときに、像の全体の検査値を、ここへ文字で書いている**（`kernel/build.rs`）。この欄は
+    /// **イメージをビルドするときに、イメージの全体の検査値を、ここへ文字で書いている**（`kernel/build.rs`）。この欄は
     /// 管理用の部分に入るので、ファイルの中身が 1 バイトでも違えば、管理用の部分の検査値も違う値になる。
     ///
-    /// **像が欄まで届かなければ `None`**（[`Ext2::parse`] が保証するのは、superblock の手前の欄までである）。
+    /// **イメージが欄まで届かなければ `None`**（[`Ext2::parse`] が保証するのは、superblock の手前の欄までである）。
     pub fn volume_name(&self) -> Option<&'a [u8]> {
         let start = SUPERBLOCK_OFFSET + SUPERBLOCK_VOLUME_NAME;
         self.image.get(start..start + VOLUME_NAME_LEN)
@@ -991,7 +991,7 @@ impl<'a> Ext2<'a> {
         let start = u64::from(table) * u64::from(self.block_size)
             + u64::from(index) * u64::from(self.inode_size);
         // **飽和させる。** 桁あふれは u32 由来の項の積では起きないが、起きた場合も
-        // 「像より大きい」へ倒れるので、静かに巻き戻らない。
+        // 「イメージより大きい」へ倒れるので、静かに巻き戻らない。
         let end = start.saturating_add(INODE_CORE_LEN as u64);
         if end > self.image.len() as u64 {
             return Err(Ext2Error::InodeTableOutOfRange {
@@ -1445,7 +1445,7 @@ fn i_block_slot(inode_at: usize, index: usize) -> usize {
 /// # 番号を選ぶ規則を主張しない
 ///
 /// **「空いているものを 1 つ」だけである。** どれを選ぶかは判定に書かない
-/// （`docs/verification-coverage.md` の「像の中の番号に依存しない」）。
+/// （`docs/verification-coverage.md` の「イメージの中の番号に依存しない」）。
 pub fn allocate_block(image: &mut [u8], layout: &Layout) -> Result<u32, AllocError> {
     for group in 0..layout.group_count {
         let descriptor = layout
@@ -1872,7 +1872,7 @@ pub fn free_inode(image: &mut [u8], layout: &Layout, ino: u32) -> Result<(), All
 
 /// ディレクトリの中の 1 か所（S12-e）。
 ///
-/// **`(そのエントリの像内オフセット, 直前のエントリの像内オフセット)`。**
+/// **`(そのエントリのイメージ内オフセット, 直前のエントリのイメージ内オフセット)`。**
 /// **直前が `None` なのは、ブロックの先頭に在るときである。**
 type DirectorySlot = (usize, Option<usize>);
 
@@ -2677,7 +2677,7 @@ mod tests {
         image[at + 28..at + 32].copy_from_slice(&sectors.to_le_bytes());
         // `i_extra_isize`（S12-f-3）。**実測したイメージでは全 inode が 32 である**
         // （`debugfs`の`Size of extra inode fields`）。**置かないと、
-        // 「こちらの inode が像の他と揃っている」を見る検査が、
+        // 「こちらの inode がイメージの他と揃っている」を見る検査が、
         // 両方 0 で通ってしまう**（実測で踏んだ——種類の1つ目である）。
         image[at + INODE_EXTRA_ISIZE..at + INODE_EXTRA_ISIZE + 2]
             .copy_from_slice(&32u16.to_le_bytes());
@@ -2717,7 +2717,7 @@ mod tests {
         put16(image, 350, 32);
     }
 
-    /// 管理用の部分は、ブロック 0 から inode の表の終わりまでである。**試験の像は、表がブロック 4 から、256 個の
+    /// 管理用の部分は、ブロック 0 から inode の表の終わりまでである。**試験のイメージは、表がブロック 4 から、256 個の
     /// 256 バイトの inode で 16 ブロックなので、20 ブロックになる。**
     #[test]
     fn the_management_prefix_ends_where_the_inode_table_ends() {
@@ -2733,11 +2733,11 @@ mod tests {
         assert_eq!(fs.management_prefix_len(), Ok(20 * 4096));
     }
 
-    /// inode の表が像の外へ出るなら、範囲を返さずに断る（黙って短い範囲にしない）。
+    /// inode の表がイメージの外へ出るなら、範囲を返さずに断る（黙って短い範囲にしない）。
     #[test]
     fn a_management_prefix_past_the_image_is_refused() {
         let mut image = build_test_image();
-        // `s_inodes_per_group` と `s_inodes_count` を、表が像の外へ出る数にする。
+        // `s_inodes_per_group` と `s_inodes_count` を、表がイメージの外へ出る数にする。
         let huge = 600_000u32;
         image[SUPERBLOCK_OFFSET..SUPERBLOCK_OFFSET + 4].copy_from_slice(&huge.to_le_bytes());
         image[SUPERBLOCK_OFFSET + 40..SUPERBLOCK_OFFSET + 44].copy_from_slice(&huge.to_le_bytes());
@@ -2845,7 +2845,7 @@ mod tests {
         };
 
         append_to_file(&mut image, &layout, TEST_WRITABLE_INO, &[0xEF; 5000]).unwrap();
-        assert_ne!(image, original, "追記で像が変わること");
+        assert_ne!(image, original, "追記でイメージが変わること");
 
         truncate_to(&mut image, &layout, TEST_WRITABLE_INO, size_before).unwrap();
         assert_eq!(image, original, "戻したら1バイトも違わないこと");
@@ -2859,12 +2859,12 @@ mod tests {
 
         let block = allocate_block(&mut image, &layout).unwrap();
         // **割り当てた時点ではイメージが違う。** 違わなければ、割り当てが効いていない。
-        assert_ne!(image, original, "割り当てで像が変わること");
+        assert_ne!(image, original, "割り当てでイメージが変わること");
 
         free_block(&mut image, &layout, block).unwrap();
         // **戻したら 1 バイトも違わない。** ビットも 2 つの会計も、
         // ちょうど逆へ戻っている。
-        assert_eq!(image, original, "往復で像が元へ戻ること");
+        assert_eq!(image, original, "往復でイメージが元へ戻ること");
     }
 
     #[test]
@@ -2912,12 +2912,12 @@ mod tests {
         let layout = Ext2::parse(&image).unwrap().layout();
 
         let ino = create_file(&mut image, &layout, TEST_DIRECTORY_INO, b"created").unwrap();
-        assert_ne!(image, original, "作成で像が変わること");
+        assert_ne!(image, original, "作成でイメージが変わること");
         // **中身も書く。** **空のまま消すと、ブロックを返す道を通らない。**
         append_to_file(&mut image, &layout, ino, &[0x5A; 300]).unwrap();
 
         unlink_file(&mut image, &layout, TEST_DIRECTORY_INO, b"created").unwrap();
-        assert_eq!(image, original, "往復で像が元へ戻ること");
+        assert_eq!(image, original, "往復でイメージが元へ戻ること");
     }
 
     #[test]
@@ -2927,7 +2927,7 @@ mod tests {
         let want = Ext2::parse(&image).unwrap().want_extra_isize();
         // **テストイメージは `mke2fs` と同じ 32 を宣言している。**
         // **0 だと、この検査は何も主張しなくなる**（種類の1つ目）。
-        assert_ne!(want, 0, "像が s_want_extra_isize を宣言していること");
+        assert_ne!(want, 0, "イメージが s_want_extra_isize を宣言していること");
 
         let ino = create_file(&mut image, &layout, TEST_DIRECTORY_INO, b"created").unwrap();
         let at = layout.inode_at(&image, ino).unwrap();
@@ -3135,9 +3135,9 @@ mod tests {
         let layout = Ext2::parse(&image).unwrap().layout();
 
         let ino = allocate_inode(&mut image, &layout).unwrap();
-        assert_ne!(image, original, "割り当てで像が変わること");
+        assert_ne!(image, original, "割り当てでイメージが変わること");
         free_inode(&mut image, &layout, ino).unwrap();
-        assert_eq!(image, original, "往復で像が元へ戻ること");
+        assert_eq!(image, original, "往復でイメージが元へ戻ること");
     }
 
     #[test]
@@ -3211,7 +3211,7 @@ mod tests {
             Err(AllocError::DirectoryCorrupt)
         );
         assert_eq!(image, poisoned, "断るときは何も書かないこと");
-        assert_ne!(image, original, "壊した像であること");
+        assert_ne!(image, original, "壊したイメージであること");
     }
 
     #[test]
@@ -3309,7 +3309,7 @@ mod tests {
         assert_eq!(Ext2::parse(&image).unwrap_err(), Ext2Error::ZeroPerGroup);
     }
 
-    /// 線3: 名乗った大きさが像より大きい。
+    /// 線3: 名乗った大きさがイメージより大きい。
     #[test]
     fn rejects_an_image_smaller_than_the_filesystem_claims() {
         let mut image = build_test_image();
@@ -3672,7 +3672,7 @@ mod tests {
     /// 穴は全 0 として読める（ADR-0038）。
     ///
     /// **かつては拒んでいた**——「借りて返す形なので、返すゼロのバイト列が
-    /// 像の中に無い」という理由だった。[`ZERO_BLOCK`] を置いて解いた。
+    /// イメージの中に無い」という理由だった。[`ZERO_BLOCK`] を置いて解いた。
     #[test]
     fn a_hole_in_the_direct_blocks_reads_as_zeros() {
         let mut image = build_test_image();

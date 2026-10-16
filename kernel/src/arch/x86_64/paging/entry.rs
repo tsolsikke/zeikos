@@ -405,7 +405,7 @@ mod tests {
                 PagePermissions::kernel_code(),
                 Small,
                 P,
-                "カーネルの像のコード",
+                "カーネルのイメージのコード",
             ),
             (
                 PagePermissions::kernel_data(),
@@ -423,7 +423,7 @@ mod tests {
                 PagePermissions::kernel_data(),
                 Small,
                 P | W | XD,
-                "像の .data と .bss、恒等と直接マッピングの 4KiB、CPU ごとのスタック",
+                "イメージの .data と .bss、恒等と直接マッピングの 4KiB、CPU ごとのスタック",
             ),
             (
                 PagePermissions::kernel_device(),
@@ -435,7 +435,7 @@ mod tests {
                 PagePermissions::kernel_read_only(),
                 Small,
                 P | XD,
-                "像の読むだけの区画、実行禁止を確かめる試しのページ",
+                "イメージの読むだけの区画、実行禁止を確かめる試しのページ",
             ),
             (
                 PagePermissions::kernel_read_only(),

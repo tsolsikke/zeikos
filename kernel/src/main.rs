@@ -65,7 +65,7 @@ extern "C" {
 // 検査対象の asm を複製せずに済む。
 
 /// 静的な起動の表の権限。**起動の表は、覆う範囲の全部を、書けて実行もできるメモリとしてマップする**
-/// （カーネルの像と、恒等の 1GiB。区画ごとの権限は、本流の表へ切り替えた後のものである）。
+/// （カーネルのイメージと、恒等の 1GiB。区画ごとの権限は、本流の表へ切り替えた後のものである）。
 const BOOT_TABLE_PERMISSIONS: kernel::paging::permissions::PagePermissions =
     kernel::paging::permissions::PagePermissions::boot_table_unrestricted();
 
@@ -506,10 +506,10 @@ extern "sysv64" fn kernel_main() -> ! {
 
     logger.info(format_args!("ZeikOS kernel: entered _start"));
 
-    // **どの像が走ったかを、起動ログの先頭で示す（S12 前の手当て）。**
+    // **どのイメージが走ったかを、起動ログの先頭で示す（S12 前の手当て）。**
     //
     // **破壊テストの feature の項目が落ちたとき、判定行だけでは 2 つを分けられない**
-    // ——「破壊が効かなかった」のか「破壊の無い像が走った」のか
+    // ——「破壊が効かなかった」のか「破壊の無いイメージが走った」のか
     // （`docs/verification-coverage.md` の該当節）。この行があれば分かれる。
     //
     // **一覧は `build.rs` が `CARGO_FEATURE_*` から生成する。**
@@ -1594,7 +1594,7 @@ extern "sysv64" fn kernel_main() -> ! {
         );
     }
 
-    // **カーネルの像の区画ごとの権限を、稼働中の表から読み戻して出す**（2026-10-02。`ADR-0071` の手順 4）。
+    // **カーネルのイメージの区画ごとの権限を、稼働中の表から読み戻して出す**（2026-10-02。`ADR-0071` の手順 4）。
     // **この後は、カーネルの写像の権限を変えない。**
     report_kernel_image_permissions(&mut logger);
 
@@ -2289,7 +2289,7 @@ fn change_a_kernel_mapping_after_boot(logger: &mut Logger<Serial>) {
     let mut table = unsafe { ActivePageTable::current(direct_map) };
     #[cfg(feature = "kernel-mapping-map-after-boot-test")]
     let (what, result) = {
-        // **カーネルの像の PML4 の項目（添字 511）の下の、像より上の空いた番地。** 添字 260 の形（`ensure_child` の
+        // **カーネルのイメージの PML4 の項目（添字 511）の下の、イメージより上の空いた番地。** 添字 260 の形（`ensure_child` の
         // 守りが項目を作る所）とは違い、既に在る項目の下へ葉を足す形である。
         let (Some(frame), Some(virt)) = (
             allocator.allocate_frame(),
@@ -2312,7 +2312,7 @@ fn change_a_kernel_mapping_after_boot(logger: &mut Logger<Serial>) {
     };
     #[cfg(feature = "kernel-mapping-change-after-boot-test")]
     let (what, result) = {
-        // **直接写像の 2MiB のページ（カーネルの像の次の 2MiB）を割りに行く。** 権限を変える入口と同じ守りを通る。
+        // **直接写像の 2MiB のページ（カーネルのイメージの次の 2MiB）を割りに行く。** 権限を変える入口と同じ守りを通る。
         let virt = direct_map.phys_to_virt(common::addr::PhysAddr::new(0x0080_0000).unwrap());
         logger.info(format_args!(
             "sabotage: splitting a direct-map huge page after boot ({:#x})",
@@ -2586,7 +2586,7 @@ fn run_init(logger: &mut Logger<Serial>, console: Option<&mut Console>) -> ! {
         // **起動シーケンスの検算より後である**（`kernel::input::arm_input_script`）。
         // **セッションの開始のティックを控える（W2-d+）。** **終わった後との差を計測に出す。**
         let clock_at_start = kernel::arch::x86_64::idt::monotonic_ticks();
-        // **深さ 1 を弾いた回数も、セッションの始めで控える**（2026-10-15）。累計は起動からのもので、起動時の Linux の像
+        // **深さ 1 を弾いた回数も、セッションの始めで控える**（2026-10-15）。累計は起動からのもので、起動時の Linux のイメージ
         // （深さ 1 で走る。M3a で 9 本に増えた）の分が段階ごとに増え、`fold:` の行を読む `--shell-script-test` の判定
         // （`clock-goes-backwards` の狙い）の比を動かした（`docs/verification-coverage.md` の「判定が見た時点が違う」）。
         let depth_one_folds_at_start = kernel::interrupts::depth_one_not_folded();
@@ -3037,7 +3037,7 @@ fn run_concurrent_test(logger: &mut Logger<Serial>, console: Option<&mut Console
 
     let mut console = console;
     let ring3_task = kernel::task::ring3_task_index();
-    // **切り替えの数は、この試験の始めからの差で数える**（2026-10-15）。累計は起動からのもので、起動時の Linux の像
+    // **切り替えの数は、この試験の始めからの差で数える**（2026-10-15）。累計は起動からのもので、起動時の Linux のイメージ
     // （スレッドを使う `m3a-*`。M3a）が主スレッドを池のタスクへ何度も切り替えるので、この試験の前に task 0 の分が 22 に
     // なっていた。破壊テスト `task-switch-holds-back-ring3-task` は「遠征の最中の切り替えが 0」で捕まるので、累計のままだと
     // 捕まらない（全検査で踏んだ。`docs/verification-coverage.md` の「判定が見た時点が違う」）。
@@ -5787,7 +5787,7 @@ static SYSCALL_INSN_ELF: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/sysca
 static DEBUG_TRAP_SYSCALL_ELF: &[u8] =
     include_bytes!(concat!(env!("OUT_DIR"), "/debug-trap-syscall.elf"));
 static COMPAT_SYSCALL_ELF: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/compat-syscall.elf"));
-/// 埋め込んだユーザープログラム `pie-hello` の ELF（2026-10-06）。**位置独立の像（`ET_DYN`）で、ローダーが
+/// 埋め込んだユーザープログラム `pie-hello` の ELF（2026-10-06）。**位置独立のイメージ（`ET_DYN`）で、ローダーが
 /// ずらして載せる。** 補助ベクタを自分で確かめて、1 行を書く（`kernel/userland/pie-hello.rs`）。
 static PIE_HELLO_ELF: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/pie-hello.elf"));
 /// `pie-hello` が書く 1 行。
@@ -5876,7 +5876,7 @@ use kernel::userland::{load_user_program, UserLoadError};
 /// 別の構成がビルドしたイメージを読む回で当たらない**（[`map_corrupt_fs`] の doc）。
 /// **カーネルはイメージを歩いて求める。**
 ///
-/// **生成をやめない。** **`xtask` が判定行へ出しており、人が「像がどう動いたか」
+/// **生成をやめない。** **`xtask` が判定行へ出しており、人が「イメージがどう動いたか」
 /// を読む材料である**（`fs image e2fsck` の行）。**機械が寄りかからないだけである。**
 ///
 /// **以前は例外が 1 つ在った**——`USED_BLOCKS` を、壊したイメージの器の大きさに使っていた（`ADR-0066` の Y-c）。
@@ -5980,7 +5980,7 @@ fn verify_embedded_user_elf(logger: &mut Logger<Serial>) {
 /// # 版を出す
 ///
 /// **`mke2fs` の版が変わると既定値が動きうる**（ブロックサイズ、inode サイズ）。
-/// 判定行に載せておくと、**将来ここが落ちたときに「像の作り手が変わった」を
+/// 判定行に載せておくと、**将来ここが落ちたときに「イメージの作り手が変わった」を
 /// 最初に疑える。**
 /// 埋め込んだ ext2 のイメージを、書ける場所（フレーム）へ複製する（S12-a）。
 ///
@@ -5994,7 +5994,7 @@ fn verify_embedded_user_elf(logger: &mut Logger<Serial>) {
 /// **「不可能」ではなく「採らない」である**——**埋め込んだイメージは
 /// `build.rs` がビルドしたものと同一であることが検査の前提**で
 /// （`--full` の `fs image e2fsck`）、**その前提を実行時に壊すと、
-/// 「建てた像」と「動かした像」が同じものを指さなくなる。**
+/// 「建てたイメージ」と「動かしたイメージ」が同じものを指さなくなる。**
 ///
 /// # S12-a では書き換えない
 ///
@@ -6226,7 +6226,7 @@ fn flush_fs_image_to_device(
     Ok(())
 }
 
-/// 破壊テストが、像の先頭で読まない・書かないバイト数（S13-c、S13-e）。
+/// 破壊テストが、イメージの先頭で読まない・書かないバイト数（S13-c、S13-e）。
 ///
 /// **`virtio-load-skip-first-test` と `virtio-flush-short-test` が、先頭のこの分だけを欠く。** superblock
 /// （オフセット 1024）を含む。
@@ -6276,7 +6276,7 @@ fn try_copy_fs_image_to_frames(
     }
 
     let destination = direct_map.phys_to_virt(base).as_u64() as *mut u8;
-    // **区間ごとの所要を測る**（2026-10-05。下の `fs-timing` の行）。**像の大きさで延びる区間を、直しの前後で同じ行で比べる。**
+    // **区間ごとの所要を測る**（2026-10-05。下の `fs-timing` の行）。**イメージの大きさで延びる区間を、直しの前後で同じ行で比べる。**
     let timing_start = common::arch::x86_64::read_timestamp_counter();
 
     // === S13-c: 複製元は装置である（ADR-0034） ===
@@ -6334,7 +6334,7 @@ fn try_copy_fs_image_to_frames(
     } else {
         // **RAM のイメージからコピーする**（`ADR-0068` の HW-d）。**装置は無い。**
         //
-        // 破壊テスト (HW-d, fs-ram-image-ignored): イメージを見ない。**装置も像も無い形になり、
+        // 破壊テスト (HW-d, fs-ram-image-ignored): イメージを見ない。**装置もイメージも無い形になり、
         // `NoSource` で止まる**——**RAM ディスクの道が実際に使われていることの証明である。**
         let ignored = cfg!(feature = "fs-ram-image-ignored");
         let Some((image_phys, handed)) = ram_image.filter(|_| !ignored) else {
@@ -6388,7 +6388,7 @@ fn try_copy_fs_image_to_frames(
     // 破壊テスト (2026-10-05, fs-copy-corrupt-label): ボリュームの名前の欄の最後の 1 バイトを 0xFF にする。
     // **管理用の部分の検査値が、ホストがファイルから計算した値と食い違う。** 解析は通る（名前は読まれない）。
     #[cfg(feature = "fs-copy-corrupt-label-test")]
-    // SAFETY: 上と同じ範囲（像は superblock より長い）。破壊テストのために 1 バイトだけ変える。
+    // SAFETY: 上と同じ範囲（イメージは superblock より長い）。破壊テストのために 1 バイトだけ変える。
     unsafe {
         destination
             .add(
@@ -6420,11 +6420,11 @@ fn try_copy_fs_image_to_frames(
     // **費用は前と同じ位である**——**前も 2MiB のスライス比較で 2MiB を歩いていた。**
     let timing_loaded = common::arch::x86_64::read_timestamp_counter();
     // **検査値が覆うのは、管理用の部分だけである**（2026-10-05。先頭から、グループ 0 の inode の表の終わりまで。
-    // `common::ext2` の `management_prefix_len`）。**以前は像の全体を歩いていた**——像の大きさに比例して延び、
+    // `common::ext2` の `management_prefix_len`）。**以前はイメージの全体を歩いていた**——イメージの大きさに比例して延び、
     // 32 MiB で約 2.5 秒かかった（実測）。**ファイルの中身の違いは、ボリュームの名前の欄に書いた全体の検査値を
-    // 通して、この範囲の値に出る**（`kernel/build.rs`）。**像の全体のバイト一致は、像を取り出す検査が見る。**
+    // 通して、この範囲の値に出る**（`kernel/build.rs`）。**イメージの全体のバイト一致は、イメージを取り出す検査が見る。**
     //
-    // **解析できない像では、範囲が決まらない。** 0 バイトの検査値（0）を出して進む——すぐ下の確かめ
+    // **解析できないイメージでは、範囲が決まらない。** 0 バイトの検査値（0）を出して進む——すぐ下の確かめ
     // （`verify_root_fs_image`）が、解析の失敗を名指しして止める。
     let management_bytes = common::ext2::Ext2::parse(copied)
         .and_then(|fs| fs.management_prefix_len())
@@ -6442,8 +6442,8 @@ fn try_copy_fs_image_to_frames(
     // 前の起動で書いた中身を持っており、ビルドしたときの値と違うのが正しい。** **そちらはホストが
     // `disk0.img` から独立に計算して突き合わせる**（上の doc）。
     //
-    // **比べるのは、管理用の部分の検査値である**（2026-10-05）。**ビルドのときに、像の全体の検査値をボリュームの
-    // 名前の欄へ書いてあるので、中身だけが古い像も、この値が違う。** 範囲の決め方が `build.rs` と食い違っても、
+    // **比べるのは、管理用の部分の検査値である**（2026-10-05）。**ビルドのときに、イメージの全体の検査値をボリュームの
+    // 名前の欄へ書いてあるので、中身だけが古いイメージも、この値が違う。** 範囲の決め方が `build.rs` と食い違っても、
     // ここで止まる（範囲のバイト数も比べる）。
     if copied_from_ram
         && (checksum != fsimage_info::MANAGEMENT_CHECKSUM
@@ -6471,8 +6471,8 @@ fn try_copy_fs_image_to_frames(
 
     // **イメージの検査は、複製した直後・`exercise` より前である（P-e）。**
     //
-    // **見るのは「装置から読んだ像がそのまま使えること」である。**
-    // **`exercise` の後に置くと、書き換えた後の像を見ることになり、
+    // **見るのは「装置から読んだイメージがそのまま使えること」である。**
+    // **`exercise` の後に置くと、書き換えた後のイメージを見ることになり、
     // 判定行の空き数がビルドしたときの数と食い違う**——**実測で踏んだ**
     // （2026-08-28。`--full` で keep 系の 5 項目が落ちた）。
     let timing_before_verify = common::arch::x86_64::read_timestamp_counter();
@@ -6491,7 +6491,7 @@ fn try_copy_fs_image_to_frames(
         "fs-image-source: root_filesystem reads from virt {reading:#x} (phys {reading_phys:#x})"
     ));
 
-    // **カーネルイメージの物理範囲も一緒に出す。** ホスト側が「複製先がカーネル像の
+    // **カーネルイメージの物理範囲も一緒に出す。** ホスト側が「複製先がカーネルイメージの
     // 外にあること」を見る——**出さないと「複製した」が反証できない**
     // （複製せずに `.rodata` のアドレスを出す形が通ってしまう）。
     let (image_start, image_end) = kernel_image_phys_range();
@@ -6542,8 +6542,8 @@ fn try_copy_fs_image_to_frames(
     }
 
     // **区間ごとの所要**（サイクル数。2026-10-05）。**揺れる値なので、判定には載せない**——起動ログを比べる道具は、
-    // この行を外す。像を大きくしたときに、どの区間が延びるかを見るための行である（実測は
-    // `docs/verification-coverage.md` の「ディスクの像の読み書きの所要」）。
+    // この行を外す。イメージを大きくしたときに、どの区間が延びるかを見るための行である（実測は
+    // `docs/verification-coverage.md` の「ディスクのイメージの読み書きの所要」）。
     let timing_flushed = common::arch::x86_64::read_timestamp_counter();
     logger.info(format_args!(
         "fs-timing: (info) cycles: load={} checksum={} verify={} exercise={} flush={} \
@@ -6622,7 +6622,7 @@ fn verify_bss_is_mapped(logger: &mut Logger<Serial>) {
     ));
 }
 
-/// **Linux 向けの像（musl の静的 PIE。`ADR-0074` の M1）を `spawn` で起こし、終了の状態を判定の行に出す**（2026-10-06）。
+/// **Linux 向けのイメージ（musl の静的 PIE。`ADR-0074` の M1）を `spawn` で起こし、終了の状態を判定の行に出す**（2026-10-06）。
 ///
 /// **起動時のプログラムの表と `bss-check` の後に置く**——`m1-rust` は `syscall` 命令を使い、`.bss` を持ち、`munmap` を打つので、
 /// 前に置くと、それらを狙った破壊テスト（`user-load-filesz-only`・`syscall-return-*`・`syscall-stub-keeps-user-stack`・
@@ -6630,25 +6630,25 @@ fn verify_bss_is_mapped(logger: &mut Logger<Serial>) {
 ///
 /// **環境変数は空**——Linux 上で控えた参照（`env -i`）と出す行を揃えるため。**出力の中身はここでは見ない**——起動ログの参照に
 /// 入った行を、`linux-programs/reference/` と突き合わせる基本の検査が見る。終了の状態が引数の数（4）でなければ、名指しして止まる。
-/// C 版（`/bin/linux/m1-c`）は、`linux-c-test` のビルドだけが像に持つので、そのときだけ起こす。**`m3a-rust`（スレッドを
-/// 1 つ作る像）も同じ形で起こす**（2026-10-14）。
+/// C 版（`/bin/linux/m1-c`）は、`linux-c-test` のビルドだけがイメージに持つので、そのときだけ起こす。**`m3a-rust`（スレッドを
+/// 1 つ作るイメージ）も同じ形で起こす**（2026-10-14）。
 fn verify_linux_programs(logger: &mut Logger<Serial>) {
     verify_linux_program(logger, b"/bin/linux/m1-rust", b"m1-rust\0/etc/motd\0a\0b\0");
-    // **スレッドを 1 つ作って終わる像（M3a。2026-10-14。`linux-programs/m3a-rust.rs`）。** 池のタスクが起きて走り、
+    // **スレッドを 1 つ作って終わるイメージ（M3a。2026-10-14。`linux-programs/m3a-rust.rs`）。** 池のタスクが起きて走り、
     // `exit` で終わって刈り取られる所までを、起動のたびに通す（`thread:` の行が起動ログの参照に入る）。
     verify_linux_program(
         logger,
         b"/bin/linux/m3a-rust",
         b"m3a-rust\0/etc/motd\0a\0b\0",
     );
-    // **スレッドが必ず futex で待つ像（`linux-programs/m3a-mutex-rust.rs`）。** `FUTEX_WAIT` で眠る道と `FUTEX_WAKE` で
+    // **スレッドが必ず futex で待つイメージ（`linux-programs/m3a-mutex-rust.rs`）。** `FUTEX_WAIT` で眠る道と `FUTEX_WAKE` で
     // 起こす道を、起動のたびに通す（`futex:` の行に眠った回数が出る）。
     verify_linux_program(
         logger,
         b"/bin/linux/m3a-mutex-rust",
         b"m3a-mutex-rust\0/etc/motd\0a\0b\0",
     );
-    // **スレッドの中の例外と、スレッドからの `exit_group` の像（M3a の 3-1b。2026-10-14）。** 終わり方は、主スレッドが同じ
+    // **スレッドの中の例外と、スレッドからの `exit_group` のイメージ（M3a の 3-1b。2026-10-14）。** 終わり方は、主スレッドが同じ
     // 例外で終わるときと同じ `Folded(14)` と、`exit_group(7)` の `Exited(7)` である（`thread:` の行が起動ログの参照に入る）。
     verify_linux_program_ending(
         logger,
@@ -6662,7 +6662,7 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
         b"m3a-exit-group-rust\0/etc/motd\0a\0b\0",
         kernel::userland::SpawnOutcome::Exited(7),
     );
-    // **主スレッドが `join` の futex で眠っている間に、スレッドが `exit_group` で終える像**（3-1b の直し 1。2026-10-14）。
+    // **主スレッドが `join` の futex で眠っている間に、スレッドが `exit_group` で終えるイメージ**（3-1b の直し 1。2026-10-14）。
     // 印を立てたスレッドが同じスロットの futex の待ちを起こさなければ、主スレッドは永久に眠り、ここで起動が止まる。
     // `waiters` は、主スレッドと別のスレッドの 2 本が futex で眠っている形（起きたスレッドは出口で印を見て Finished になる）。
     verify_linux_program_ending(
@@ -6677,8 +6677,8 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
         b"m3a-exit-group-waiters-rust\0/etc/motd\0a\0b\0",
         kernel::userland::SpawnOutcome::Exited(7),
     );
-    // **3-2 の像（2026-10-15）。** 主スレッドの `exit` の間に `sched_yield` で回り続けるスレッド（刈り取りの行が出て、次の
-    // 像の `clone` が通る）、スレッドからの `clone`、スレッドを持つ間の `spawn`（`-EAGAIN` で断る）、主スレッドが Ring 3 で
+    // **3-2 のイメージ（2026-10-15）。** 主スレッドの `exit` の間に `sched_yield` で回り続けるスレッド（刈り取りの行が出て、次の
+    // イメージの `clone` が通る）、スレッドからの `clone`、スレッドを持つ間の `spawn`（`-EAGAIN` で断る）、主スレッドが Ring 3 で
     // 回っている間の `exit_group`（入口で印を見る道を毎回通す）。
     verify_linux_program(
         logger,
@@ -6761,7 +6761,7 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
 }
 
 /// [`verify_linux_programs`] の、終わり方を名指しする形（M3a の 3-1b。2026-10-14）。**`spawn` の結果が `wanted` と違えば
-/// 名指しして止まる。** 引数の数で終わる像は [`verify_linux_program`] が見る。
+/// 名指しして止まる。** 引数の数で終わるイメージは [`verify_linux_program`] が見る。
 fn verify_linux_program_ending(
     logger: &mut Logger<Serial>,
     path: &[u8],
@@ -6849,7 +6849,7 @@ fn verify_sparse_hole_reads_as_zeros(logger: &mut Logger<Serial>) {
             return;
         }
     };
-    // **前後のブロックに中身が在ることも見る。** 「全部 0 の像を読んで
+    // **前後のブロックに中身が在ることも見る。** 「全部 0 のイメージを読んで
     // 全部 0 が返った」では、穴を読めたことにならない。
     let head_has_content = fs
         .file_block(&inode, 0)
@@ -7102,7 +7102,7 @@ fn try_exercise_block_bitmap(
 /// **書いて、消して、元へ戻す。** 戻すので、**取り出したイメージはビルドしたイメージと
 /// バイト単位で一致するはずである。**
 /// **`fs-write-keep-test` は戻さない**（変種。壊さない）——
-/// **書いたままの像で `e2fsck` と中身を見るために要る。**
+/// **書いたままのイメージで `e2fsck` と中身を見るために要る。**
 fn exercise_file_append(
     logger: &mut Logger<Serial>,
     image: &mut [u8],
@@ -7131,8 +7131,8 @@ fn exercise_file_append(
     // **初めの大きさが build.rs の置いたものと一致すること。**
     //
     // **一致しなければ、止めずに演習を飛ばす**（P-c-3）。
-    // **以前は止めていた**——**「抱えた像と建てた像が別物である」と読んで
-    // いた**が、**像が持ち越されるようになった今、Ring 3 の利用者が
+    // **以前は止めていた**——**「抱えたイメージと建てたイメージが別物である」と読んで
+    // いた**が、**イメージが持ち越されるようになった今、Ring 3 の利用者が
     // このファイルを編集して保存すれば、次の起動が普通に止まる。**
     // **実際に踏んだ**——`zi-test` のスクリプトが `/data/writable` を書き換え、
     // それが装置へ残り、2 度目の起動が止まった（実測。2026-08-30）。
@@ -7174,7 +7174,7 @@ fn exercise_file_append(
         ));
     }
 
-    // 変種 (S12-c, fs-write-keep): 戻さない。**書いたままの像を取り出す。**
+    // 変種 (S12-c, fs-write-keep): 戻さない。**書いたままのイメージを取り出す。**
     #[cfg(feature = "fs-write-keep-test")]
     {
         let _ = original_size;
@@ -7369,7 +7369,7 @@ fn exercise_create_and_unlink(
         }
     };
     // **名乗った `i_extra_isize` も出す（S12-f-3）。**
-    // **0 は「像がその欄を持たない」に倒れたことを意味する**——
+    // **0 は「イメージがその欄を持たない」に倒れたことを意味する**——
     // **黙って倒れると、書いているつもりで書いていない状態になる。**
     let extra = Ext2::parse(image)
         .map(|fs| fs.want_extra_isize())
@@ -7748,7 +7748,7 @@ fn try_verify_root_fs_image(logger: &mut Logger<Serial>) -> Result<(), FsReadChe
     ));
 
     // **イメージの大きさは build.rs が知っている値と一致するはず。** 食い違えば、
-    // 抱えた像と建てた像が別物である。
+    // 抱えたイメージと建てたイメージが別物である。
     if image.len() as u64 != fsimage_info::IMAGE_BYTES {
         return Err(FsReadCheckError::ImageSizeMismatch);
     }
@@ -7787,16 +7787,16 @@ fn try_verify_root_fs_image(logger: &mut Logger<Serial>) -> Result<(), FsReadChe
 
 /// 壊した ext2 のイメージを組み立てる作業領域（S10-a。2026-10-05 に、静的な領域からフレームの借用へ移した）。
 ///
-/// # カーネルの像の中に置かない
+/// # カーネルのイメージの中に置かない
 ///
-/// **以前は `.bss` の静的な配列だった**（`CORRUPT_FS_IMAGE`）。大きさは、ビルドしたときの像の使用上端に
-/// 余裕を足したものだった。**像の中身を増やすと、カーネルの像が同じだけ大きくなり、bootloader が
-/// `0x100000` へ確保する量が増える。** 像へ数 MiB のファイルを置くと、その確保が失敗して起動しなかった
+/// **以前は `.bss` の静的な配列だった**（`CORRUPT_FS_IMAGE`）。大きさは、ビルドしたときのイメージの使用上端に
+/// 余裕を足したものだった。**イメージの中身を増やすと、カーネルのイメージが同じだけ大きくなり、bootloader が
+/// `0x100000` へ確保する量が増える。** イメージへ数 MiB のファイルを置くと、その確保が失敗して起動しなかった
 /// （実測。2026-10-05。`AllocatePages(Address(0x100000), count=5799)` が `NOT_FOUND`）。
 ///
-/// **いまは、起動時にフレームのアロケータから借りて、検査が終わったら返す。** 大きさは、起動時に読んだ像を
-/// 歩いて求めた使用上端（[`CorruptFsMap`] の `blocks`）ちょうどである。**像の中身の量で、カーネルの像の
-/// 大きさは変わらない。** 「器に入らない」という失敗も、ビルドしたときの像と起動時に読んだ像の差を吸う余裕も、
+/// **いまは、起動時にフレームのアロケータから借りて、検査が終わったら返す。** 大きさは、起動時に読んだイメージを
+/// 歩いて求めた使用上端（[`CorruptFsMap`] の `blocks`）ちょうどである。**イメージの中身の量で、カーネルのイメージの
+/// 大きさは変わらない。** 「器に入らない」という失敗も、ビルドしたときのイメージと起動時に読んだイメージの差を吸う余裕も、
 /// 無くなった。
 ///
 /// # 使用上端までで、読み切れるイメージになる
@@ -7806,7 +7806,7 @@ fn try_verify_root_fs_image(logger: &mut Logger<Serial>) -> Result<(), FsReadChe
 struct CorruptFsWorkspace {
     /// 借りた連続フレームの先頭。
     base: common::addr::PhysAddr,
-    /// 借りたフレームの数（= 像の使用ブロック数）。
+    /// 借りたフレームの数（= イメージの使用ブロック数）。
     frames: u64,
     /// 借りる直前の、アロケータの空きフレームの枚数。**返した後の枚数と突き合わせる**（[`Self::give_back`]）。
     free_before: u64,
@@ -7869,7 +7869,7 @@ impl CorruptFsWorkspace {
     ///
     /// **借りる直前と、返した直後で、アロケータの空きフレームの枚数が同じであることを確かめる。** 違えば
     /// [`CorruptFsCheckError::WorkspaceNotReturned`] を返し、呼んだ側が止まる。枚数は、起動ログの行にも出す。
-    /// 借りてから返すまでの間、ほかにフレームを取る者は居ない（起動の直線の上で、検査は像を解析するだけである）。
+    /// 借りてから返すまでの間、ほかにフレームを取る者は居ない（起動の直線の上で、検査はイメージを解析するだけである）。
     ///
     /// 返すのは、借りる前と返した後の枚数である。
     fn give_back(self) -> Result<(u64, u64), CorruptFsCheckError> {
@@ -7913,10 +7913,10 @@ const FS_GROUP_DESCRIPTORS: usize = FS_BLOCK_SIZE;
 const FS_INODE_SIZE: usize = 256;
 
 /// inode `ino` のイメージ内オフセット。**`inode_table_at` は、group 0 の inode テーブルの先頭である**
-/// （[`CorruptFsMap`] が、像の group descriptor から読む）。
+/// （[`CorruptFsMap`] が、イメージの group descriptor から読む）。
 ///
-/// **以前は、テーブルの先頭を「ブロック 4」の定数で持っていた。** 像を 32 MiB にすると、`mke2fs` が group descriptor の
-/// 後ろに予約のブロックを置き、テーブルがブロック 5 へ動いた（実測。2026-10-05）。**位置は像から求める**
+/// **以前は、テーブルの先頭を「ブロック 4」の定数で持っていた。** イメージを 32 MiB にすると、`mke2fs` が group descriptor の
+/// 後ろに予約のブロックを置き、テーブルがブロック 5 へ動いた（実測。2026-10-05）。**位置はイメージから求める**
 /// （[`map_corrupt_fs`] の doc と同じ考え方）。
 const fn fs_inode_at(inode_table_at: usize, ino: usize) -> usize {
     inode_table_at + (ino - 1) * FS_INODE_SIZE
@@ -8248,8 +8248,8 @@ const MAX_FS_PATCHES: usize = 4;
 ///
 /// # 写し直さずに、戻す
 ///
-/// **以前は、壊し方ごとに、像の使っている量の全体を写し直していた**（22 回）。写す量は像の中身に比例し、
-/// 32 MiB の像では約 0.28 秒かかった（実測）。**いまは、最初に 1 回だけ写し、壊し方ごとに、書き換えた数バイトを
+/// **以前は、壊し方ごとに、イメージの使っている量の全体を写し直していた**（22 回）。写す量はイメージの中身に比例し、
+/// 32 MiB のイメージでは約 0.28 秒かかった（実測）。**いまは、最初に 1 回だけ写し、壊し方ごとに、書き換えた数バイトを
 /// 元へ戻す。**
 ///
 /// **「前の壊し方が残らない」は、2 つで保つ。** 当てる前の値をここに控えて、検査の後で戻す。**戻した後、健全な対照が
@@ -8296,7 +8296,7 @@ impl AppliedFsPatches {
     }
 }
 
-/// 健全な対照——作業領域の像が、解析できて、5 つの読み出しが通ること（S10-a。2026-10-05 に関数へ分けた）。
+/// 健全な対照——作業領域のイメージが、解析できて、5 つの読み出しが通ること（S10-a。2026-10-05 に関数へ分けた）。
 ///
 /// **最初に 1 度と、壊し方を 1 つ戻すたびに呼ぶ。** `after` は、直前に戻した壊し方の名前である
 /// （最初の 1 度は `None`）。落ちたときの行に出る。
@@ -8736,7 +8736,7 @@ fn try_verify_corrupt_fs_image_is_rejected(
     // **見るのは装置から読んだ複製である**（`build_truncated_fs_image` と同じ出所）。
     let map = map_corrupt_fs(kernel::vfs::root_image())
         .map_err(|target| CorruptFsCheckError::TargetNotFound { target })?;
-    // **作業領域は、像が使っているブロックの数だけ借りる**（[`CorruptFsWorkspace`]）。**検査が落ちたときは
+    // **作業領域は、イメージが使っているブロックの数だけ借りる**（[`CorruptFsWorkspace`]）。**検査が落ちたときは
     // 返さない**——呼んだ側が、そのまま止まる。
     let mut workspace = CorruptFsWorkspace::borrow(map.blocks)?;
     run_corrupt_fs_cases(logger, &map, workspace.bytes())?;
@@ -8751,7 +8751,7 @@ fn try_verify_corrupt_fs_image_is_rejected(
 }
 
 /// 壊し方を 1 つずつ作業領域へ組み立てて、拒まれることを見る（[`try_verify_corrupt_fs_image_is_rejected`] の
-/// 中身）。**`buf` は、像が使っているブロックの数ちょうどの長さである。**
+/// 中身）。**`buf` は、イメージが使っているブロックの数ちょうどの長さである。**
 fn run_corrupt_fs_cases(
     logger: &mut Logger<Serial>,
     map: &CorruptFsMap,
@@ -9219,7 +9219,7 @@ struct CorruptCase {
 /// 種類ごとにイメージを持つと本数がそのまま費用になる**（`rustc` の呼び出しも
 /// イメージの大きさも）。実行時に 1 バイトから 8 バイト書き換えれば全種を作れる。
 ///
-/// **「壊した像がどこから来たか読めない」という欠点は、判定行に壊し方を
+/// **「壊したイメージがどこから来たか読めない」という欠点は、判定行に壊し方を
 /// 書いて消してある**（`what` の欄）。
 fn verify_corrupt_user_elf_is_rejected(logger: &mut Logger<Serial>) {
     use common::elf::{Elf, ElfError};
@@ -9957,10 +9957,10 @@ const USER_PROGRAMS: &[UserProgram] = &[
         argv: &[b"compat-syscall"],
         enters_with_direction_flag: None,
     },
-    // **位置独立の像（`ET_DYN`）を、ずらして載せる**（2026-10-06）。**入口のスタックから補助ベクタまで歩き、
+    // **位置独立のイメージ（`ET_DYN`）を、ずらして載せる**（2026-10-06）。**入口のスタックから補助ベクタまで歩き、
     // 積まれた値を自分で確かめる。** 食い違えば、その番号で終わる（[`PIE_HELLO_STATUS`]）。
     // **最後に置く**——前に置くと、`syscall-test` を狙った破壊テスト（`write-half-only`・`no-auxv-terminator`）が、
-    // 先に `pie-hello` で止まり、期待した番号が出ない（全検査で踏んだ。2026-10-06）。位置独立の像を狙った破壊テストは、
+    // 先に `pie-hello` で止まり、期待した番号が出ない（全検査で踏んだ。2026-10-06）。位置独立のイメージを狙った破壊テストは、
     // `syscall-test` が `spawn` で起こした `/bin/pie-hello` の結果の行で見る。
     UserProgram {
         name: "pie-hello",
@@ -10218,7 +10218,7 @@ fn verify_corrupt_user_program_is_not_loaded(logger: &mut Logger<Serial>) {
     /// 書き換え 1 つ（位置・値・幅）。
     type Patch = (usize, u64, usize);
 
-    // **書き換えは [`Patch`] の並びで表す。** 1 つの像で 2 つ以上の欄を書き換える形がある。
+    // **書き換えは [`Patch`] の並びで表す。** 1 つのイメージで 2 つ以上の欄を書き換える形がある。
     let cases: [(&str, &[Patch], Refused); 7] = [
         ("magic byte 0 set to 0", &[(0, 0, 1)], Refused::Parse),
         (
@@ -12166,7 +12166,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "kernel-mapping-map-after-boot-test",
         cfg!(feature = "kernel-mapping-map-after-boot-test"),
-        "起動の後に、カーネルの像の PML4 の項目の下へ葉を 1 枚足しに行く",
+        "起動の後に、カーネルのイメージの PML4 の項目の下へ葉を 1 枚足しに行く",
     ),
     (
         "kernel-mapping-change-after-boot-test",
@@ -12601,7 +12601,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "fs-ram-image-ignored",
         cfg!(feature = "fs-ram-image-ignored"),
-        "ブートローダが渡した RAM ディスクの像を見ない（ADR-0068 の HW-d）",
+        "ブートローダが渡した RAM ディスクのイメージを見ない（ADR-0068 の HW-d）",
     ),
     (
         "flush-waits-without-device",
@@ -12736,7 +12736,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "kernel-uses-gs-test",
         cfg!(feature = "kernel-uses-gs-test"),
-        "gs: を読む関数を像に残す（呼ばない）",
+        "gs: を読む関数をイメージに残す（呼ばない）",
     ),
     (
         "cpu-state-sees-sce-clear-test",
@@ -13171,12 +13171,12 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "fs-copy-corrupt-tail-test",
         cfg!(feature = "fs-copy-corrupt-tail-test"),
-        "像の複製の末尾 1 バイトを 0xFF で潰す",
+        "イメージの複製の末尾 1 バイトを 0xFF で潰す",
     ),
     (
         "fs-copy-corrupt-label-test",
         cfg!(feature = "fs-copy-corrupt-label-test"),
-        "像の複製の、ボリュームの名前の欄の最後の 1 バイトを 0xFF にする",
+        "イメージの複製の、ボリュームの名前の欄の最後の 1 バイトを 0xFF にする",
     ),
     (
         "ext2-group-count-offset-test",
@@ -13401,7 +13401,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "pie-load-without-bias-test",
         cfg!(feature = "pie-load-without-bias-test"),
-        "位置独立の像の区画を、ずらさずに載せる",
+        "位置独立のイメージの区画を、ずらさずに載せる",
     ),
     (
         "auxv-entry-not-biased-test",
@@ -13416,12 +13416,12 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "seinas-test",
         cfg!(feature = "seinas-test"),
-        "Seinas の fbdev の裏側を像の /bin/linux に入れる（M2 の確かめ）",
+        "Seinas の fbdev の裏側をイメージの /bin/linux に入れる（M2 の確かめ）",
     ),
     (
         "linux-c-test",
         cfg!(feature = "linux-c-test"),
-        "C の Linux 向けのプログラムを像に入れ、syscall-test が起こす（手元の確かめ）",
+        "C の Linux 向けのプログラムをイメージに入れ、syscall-test が起こす（手元の確かめ）",
     ),
     (
         "mappings-overlap-skip-test",
@@ -13676,17 +13676,17 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "kernel-writes-text-test",
         cfg!(feature = "kernel-writes-text-test"),
-        "カーネルの像の .text の 1 バイトへ、カーネルが書く",
+        "カーネルのイメージの .text の 1 バイトへ、カーネルが書く",
     ),
     (
         "kernel-writes-rodata-test",
         cfg!(feature = "kernel-writes-rodata-test"),
-        "カーネルの像の読むだけの区画の 1 バイトへ、カーネルが書く",
+        "カーネルのイメージの読むだけの区画の 1 バイトへ、カーネルが書く",
     ),
     (
         "kernel-executes-data-test",
         cfg!(feature = "kernel-executes-data-test"),
-        "カーネルの像の .data に置いた 1 バイトを、カーネルが実行する",
+        "カーネルのイメージの .data に置いた 1 バイトを、カーネルが実行する",
     ),
     (
         "kernel-executes-direct-map-test",
@@ -13701,7 +13701,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "kernel-rodata-page-writable-test",
         cfg!(feature = "kernel-rodata-page-writable-test"),
-        "カーネルの像の読むだけの区画の最初の 1 ページを、書き込み可で写す",
+        "カーネルのイメージの読むだけの区画の最初の 1 ページを、書き込み可で写す",
     ),
     (
         "user-leaf-ignores-execute-test",
@@ -14191,17 +14191,17 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "virtio-load-skip-first-test",
         cfg!(feature = "virtio-load-skip-first-test"),
-        "像の先頭 4KiB を装置から読まない",
+        "イメージの先頭 4KiB を装置から読まない",
     ),
     (
         "fs-flush-skip-test",
         cfg!(feature = "fs-flush-skip-test"),
-        "最終形の像を装置へ書き戻さない",
+        "最終形のイメージを装置へ書き戻さない",
     ),
     (
         "virtio-flush-short-test",
         cfg!(feature = "virtio-flush-short-test"),
-        "像の先頭 4KiB を書き戻さない",
+        "イメージの先頭 4KiB を書き戻さない",
     ),
     (
         "virtio-intx-edge-test",
@@ -15158,9 +15158,9 @@ fn survey_mappings(logger: &mut Logger<Serial>, moment: &str) {
     };
 }
 
-/// カーネルの像の区画と、最初から決まっている範囲を、ページの権限の一覧の領域として登録する。
+/// カーネルのイメージの区画と、最初から決まっている範囲を、ページの権限の一覧の領域として登録する。
 ///
-/// **区画の境は `kernel/link.ld` の記号から取る。** 像の外の範囲（起動の表が写す 1GiB の窓、恒等、起動時の
+/// **区画の境は `kernel/link.ld` の記号から取る。** イメージの外の範囲（起動の表が写す 1GiB の窓、恒等、起動時の
 /// Ring 3 の試しのページ）も、名前を持たせておく——名前の無い範囲が一覧に出たら、登録が足りないか、
 /// 写すべきでない所に写っている。
 fn register_image_regions() {
@@ -15172,12 +15172,12 @@ fn register_image_regions() {
     let data = addr_of!(__data_start) as u64;
     let bss = addr_of!(__bss_start) as u64;
     let end = addr_of!(__kernel_end) as u64;
-    // 像の区画のページ数はコードの量で動くので、要約の値には入れない（権限だけを比べる）。
+    // イメージの区画のページ数はコードの量で動くので、要約の値には入れない（権限だけを比べる）。
     register("kernel text", text, rodata, false);
     register("kernel rodata", rodata, data, false);
     register("kernel data", data, bss, false);
     register("kernel bss", bss, end, false);
-    // 起動の表は、像の外も含めて 1GiB を高い番地に写す。自前の表は像だけを写す。
+    // 起動の表は、イメージの外も含めて 1GiB を高い番地に写す。自前の表はイメージだけを写す。
     let window = kernel::link_symbols::KERNEL_VIRT_BASE;
     register(
         "kernel window outside the image",
@@ -15215,7 +15215,7 @@ fn install_kernel_stack_guard_page(
     }
 }
 
-/// カーネルの像の区画の境を、物理の番地で読む（`kernel/link.ld` の記号から）。
+/// カーネルのイメージの区画の境を、物理の番地で読む（`kernel/link.ld` の記号から）。
 fn kernel_image_bounds() -> kernel::paging::image::ImageBounds {
     use common::addr::VirtAddr;
     let phys = |symbol: *const u8| {
@@ -15233,7 +15233,7 @@ fn kernel_image_bounds() -> kernel::paging::image::ImageBounds {
     }
 }
 
-/// カーネルの像の区画（写す範囲と権限）。**境が写せる形でなければ、名前つきで止まる。**
+/// カーネルのイメージの区画（写す範囲と権限）。**境が写せる形でなければ、名前つきで止まる。**
 fn kernel_image_sections(logger: &mut Logger<Serial>) -> [kernel::paging::image::ImageSection; 3] {
     let bounds = kernel_image_bounds();
     match kernel::paging::image::image_sections(bounds) {
@@ -15248,12 +15248,12 @@ fn kernel_image_sections(logger: &mut Logger<Serial>) -> [kernel::paging::image:
     }
 }
 
-/// カーネルの像を、区画ごとの権限で高位（`KERNEL_VIRT_BASE + phys`）へマップする。**像を高位へ写すのは、
-/// この関数だけである**（2026-10-02。以前は 3 か所が、像の全部を 1 つの権限で写していた）。
+/// カーネルのイメージを、区画ごとの権限で高位（`KERNEL_VIRT_BASE + phys`）へマップする。**イメージを高位へ写すのは、
+/// この関数だけである**（2026-10-02。以前は 3 か所が、イメージの全部を 1 つの権限で写していた）。
 ///
 /// **コードは読んで実行する（書けない）、読むだけの区画は読むだけ、`.data` と `.bss` は書けて実行しない**
 /// （`kernel::paging::image`。`ADR-0071` の手順 4）。区画ごとに範囲を分けて写すので、どの区画も 2MiB に
-/// 満たない今は、像の全部が 4KiB の葉になる（1 枚の 2MiB の葉に、権限の違う区画が同居しない）。
+/// 満たない今は、イメージの全部が 4KiB の葉になる（1 枚の 2MiB の葉に、権限の違う区画が同居しない）。
 fn map_kernel_image<const CAP: usize>(
     builder: &mut PageTableBuilder<'_, CAP>,
     logger: &mut Logger<Serial>,
@@ -15305,7 +15305,7 @@ fn map_kernel_image<const CAP: usize>(
     }
 }
 
-/// 稼働中の表から、カーネルの像の区画ごとの権限を読み戻して出す（2026-10-02。`ADR-0071` の手順 4）。
+/// 稼働中の表から、カーネルのイメージの区画ごとの権限を読み戻して出す（2026-10-02。`ADR-0071` の手順 4）。
 /// **期待と違うページが 1 枚でも在れば、名前つきで止まる。**
 ///
 /// **作る側（`map_kernel_image` と権限の変換）とは別に書いた、辿る側の関数で読む**
@@ -15450,7 +15450,7 @@ fn run_permission_violation_test(logger: &mut Logger<Serial>) {
             true,
         ))
     } else if cfg!(feature = "kernel-executes-stack-test") {
-        // AP の CPU ごとのスタックの、いちばん下のページ。**像の `.data` や `.bss` とは別の経路（稼働中の表へ
+        // AP の CPU ごとのスタックの、いちばん下のページ。**イメージの `.data` や `.bss` とは別の経路（稼働中の表へ
         // 1 枚ずつ足す経路）で写したページである。** AP を起こす前なので、まだ誰も使っていない。
         match kernel::smp::ap_kernel_stack_range(1) {
             Some((bottom, _)) => {

@@ -318,7 +318,7 @@ pub const LINES: &[Line] = &[
     keystrokes_only(&["ctrl-c"]),
     // sleep 1（W2-d+）
     line(&["s", "l", "e", "e", "p", "spc", "1", "ret"]),
-    // /bin/linux/m1-rust /etc/motd a b（2026-10-06。Linux 向けの musl の静的な像。M1）
+    // /bin/linux/m1-rust /etc/motd a b（2026-10-06。Linux 向けの musl の静的なイメージ。M1）
     line(&[
         "slash", "b", "i", "n", "slash", "l", "i", "n", "u", "x", "slash", "m", "1", "minus", "r",
         "u", "s", "t", "spc", "slash", "e", "t", "c", "slash", "m", "o", "t", "d", "spc", "a",

@@ -46,14 +46,14 @@ const ELF_MAGIC: [u8; 4] = [0x7f, b'E', b'L', b'F'];
 const ELFCLASS64: u8 = 2;
 const ELFDATA2LSB: u8 = 1; // リトルエンディアン
 const ET_EXEC: u16 = 2;
-/// 位置独立の像（共有オブジェクトの形）。**静的リンクの位置独立の実行ファイル（静的 PIE）は、この形で出る。**
+/// 位置独立のイメージ（共有オブジェクトの形）。**静的リンクの位置独立の実行ファイル（静的 PIE）は、この形で出る。**
 const ET_DYN: u16 = 3;
 const EM_X86_64: u16 = 62;
 
 /// `Elf64_Phdr.p_type` の値。ロード可能なセグメントを示す。
 pub const PT_LOAD: u32 = 1;
 
-/// `p_type`: 動的リンカのパス。**これを持つ像は、動的リンクを求めている。**
+/// `p_type`: 動的リンカのパス。**これを持つイメージは、動的リンクを求めている。**
 pub const PT_INTERP: u32 = 3;
 /// `p_type`: プログラムヘッダの表そのものの位置。
 pub const PT_PHDR: u32 = 6;
@@ -245,7 +245,7 @@ impl<'a> Elf<'a> {
     ///
     /// **`PT_LOAD` に限らず全ヘッダを見る。** [`Self::segment_data`] は型の
     /// うえでは任意のヘッダを受け取れるので、`PT_LOAD` だけを確かめても
-    /// 「受理した像から取り出したヘッダは安全」とは言えない。
+    /// 「受理したイメージから取り出したヘッダは安全」とは言えない。
     fn validate_program_headers(&self) -> Result<(), ElfError> {
         for ph in self.program_headers() {
             file_range(self.data.len(), &ph)?;
@@ -292,7 +292,7 @@ impl<'a> Elf<'a> {
     /// # パーサーが作ったヘッダであることを前提にしない
     ///
     /// **[`ProgramHeader`] はフィールドが公開の `Copy` 型なので、誰でも直接
-    /// 構築できる。** したがって「[`Self::parse`] を通った像から取り出したもの」を
+    /// 構築できる。** したがって「[`Self::parse`] を通ったイメージから取り出したもの」を
     /// この関数は前提にできず、範囲は毎回確かめる。`parse` 側の検査と同じ性質を
     /// 2 箇所で守る形になるが、**どちらも単独で確かめられる**（`parse` 側は壊した
     /// イメージで、こちら側は直接構築したヘッダで）。
@@ -301,12 +301,12 @@ impl<'a> Elf<'a> {
     }
 }
 
-/// 像の 種類（[`ElfHeaders`]）。
+/// イメージの 種類（[`ElfHeaders`]）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ElfKind {
     /// 決まった番地へ載せる実行ファイル（`ET_EXEC`）。
     Executable,
-    /// どの番地へ載せてもよい像（`ET_DYN`）。**載せる側が、ずらす量を決める。**
+    /// どの番地へ載せてもよいイメージ（`ET_DYN`）。**載せる側が、ずらす量を決める。**
     PositionIndependent,
 }
 
@@ -345,7 +345,7 @@ impl<'a> ElfHeaders<'a> {
     /// **`head` は、ファイルの先頭から読んだバイト列である**（`head.len() <= file_len` であること。長ければ
     /// `file_len` で切って扱う）。**プログラムヘッダの表が `head` に収まっていなければ、
     /// [`ElfError::ProgramHeadersBeyondHead`] で断る**——表がファイルの外を指しているなら
-    /// [`ElfError::ProgramHeaderOutOfBounds`] である（2 つを分ける。前者は像の壊れではない）。
+    /// [`ElfError::ProgramHeaderOutOfBounds`] である（2 つを分ける。前者はイメージの壊れではない）。
     pub fn parse(head: &'a [u8], file_len: u64) -> Result<Self, ElfError> {
         let head = if (head.len() as u64) > file_len {
             // `file_len` は `head.len()` より小さいので、`usize` に収まる。
@@ -412,7 +412,7 @@ impl<'a> ElfHeaders<'a> {
         Ok(headers)
     }
 
-    /// 像の 種類。
+    /// イメージの 種類。
     pub fn kind(&self) -> ElfKind {
         self.kind
     }
@@ -461,7 +461,7 @@ impl<'a> ElfHeaders<'a> {
     /// - 動的リンクを求めていない（`PT_INTERP` が無い）
     /// - 実行できるスタックを求めていない（`PT_GNU_STACK` に X が無い）
     /// - どの `PT_LOAD` も、ずらした後の `[始まり, 終わり)` があふれず、`policy.window` の中に在る
-    /// - 像の端から端まで（最初の区画の始まりのページから、最後の区画の終わりまで）が `policy.max_span` 以下である
+    /// - イメージの端から端まで（最初の区画の始まりのページから、最後の区画の終わりまで）が `policy.max_span` 以下である
     pub fn plan(&self, policy: &LoadPolicy) -> Result<LoadPlan, PlacementError> {
         let bias = match self.kind {
             ElfKind::Executable => 0,
@@ -496,7 +496,7 @@ impl<'a> ElfHeaders<'a> {
                     }
                     lowest = Some(lowest.map_or(start, |low| low.min(start)));
                     highest = highest.max(end);
-                    // **`PT_PHDR` が無い像のために、表を覆う区画からも番地を導く。**
+                    // **`PT_PHDR` が無いイメージのために、表を覆う区画からも番地を導く。**
                     let table = self.ph_off as u64;
                     if program_headers_at.is_none()
                         && ph.p_offset <= table
@@ -538,28 +538,28 @@ impl<'a> ElfHeaders<'a> {
 /// 載せる側が決める、置いてよい範囲と上限（[`ElfHeaders::plan`]）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LoadPolicy {
-    /// `ET_DYN` の像に足す量（ページの境界であること）。**`ET_EXEC` には足さない。**
+    /// `ET_DYN` のイメージに足す量（ページの境界であること）。**`ET_EXEC` には足さない。**
     pub position_independent_base: u64,
     /// 区画を置いてよい範囲 `[始まり, 終わり)`。
     pub window: (u64, u64),
-    /// 像の端から端までの上限（バイト）。
+    /// イメージの端から端までの上限（バイト）。
     pub max_span: u64,
 }
 
 /// 載せる位置の計画（[`ElfHeaders::plan`] が返す）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LoadPlan {
-    /// 像の 種類。
+    /// イメージの 種類。
     pub kind: ElfKind,
     /// 区画の `p_vaddr` に足す量（`ET_EXEC` では 0）。
     pub bias: u64,
     /// 入口の番地（ずらした後）。
     pub entry: u64,
-    /// 像の始まり（最初の区画が載るページの先頭。ずらした後）。
+    /// イメージの始まり（最初の区画が載るページの先頭。ずらした後）。
     pub base: u64,
-    /// 像の終わり（最後の区画の終わり。ずらした後。ページの境界へは切り上げていない）。
+    /// イメージの終わり（最後の区画の終わり。ずらした後。ページの境界へは切り上げていない）。
     pub end: u64,
-    /// プログラムヘッダの表の番地（ずらした後）。**表がどの区画にも載らない像では `None`。**
+    /// プログラムヘッダの表の番地（ずらした後）。**表がどの区画にも載らないイメージでは `None`。**
     /// Linux の起動の取り決めの `AT_PHDR` に渡す値である。
     pub program_headers_at: Option<u64>,
     /// プログラムヘッダの数（`AT_PHNUM` に渡す値）。
@@ -574,7 +574,7 @@ pub enum PlacementError {
     /// `PT_INTERP` を持つ。**動的リンクは扱わない。**
     NeedsInterpreter,
     /// `PT_GNU_STACK` が、実行できるスタックを求めている。**書けるページは実行できない、という決まりで
-    /// 写すので、受け付けない。** Linux は、こういう像も読み込む——断るのは、このカーネルの決まりである。
+    /// 写すので、受け付けない。** Linux は、こういうイメージも読み込む——断るのは、このカーネルの決まりである。
     ExecutableStack,
     /// ずらした後の番地があふれる。
     AddressOverflow { index: usize },
@@ -582,7 +582,7 @@ pub enum PlacementError {
     EntryOverflow,
     /// 区画が、置いてよい範囲の外に在る。
     OutsideWindow { index: usize, start: u64, end: u64 },
-    /// 像の端から端までが、上限を越える。
+    /// イメージの端から端までが、上限を越える。
     ImageTooLarge { span: u64, limit: u64 },
 }
 
@@ -971,7 +971,7 @@ mod tests {
     }
 
     /// 今のユーザープログラムの形（`.text`・`.rodata`・`.data` がページの境界から始まり、`.bss` が
-    /// `.data` の直後から始まる）は通る。区画が無い像も、1 つだけの像も通る。
+    /// `.data` の直後から始まる）は通る。区画が無いイメージも、1 つだけのイメージも通る。
     #[test]
     fn the_layout_check_accepts_the_shapes_the_toolchain_produces() {
         // `/bin/zi` の実測の形（2026-10-01）。
@@ -1116,12 +1116,12 @@ mod tests {
         );
     }
 
-    /// 像から取り出した区画で確かめる入口（[`Elf::check_load_layout`]）は、`PT_LOAD` だけを見る。
+    /// イメージから取り出した区画で確かめる入口（[`Elf::check_load_layout`]）は、`PT_LOAD` だけを見る。
     #[test]
     fn the_layout_check_on_an_image_looks_at_its_load_segments() {
         let bytes = build_test_elf(0x100650, &[0xAA, 0xBB, 0xCC], 0x100000, 0x2000);
         assert_eq!(Elf::parse(&bytes).unwrap().check_load_layout(), Ok(()));
-        // 大きさ 0 の区画を持つ像は、パースは通り、並びの確かめで断られる。
+        // 大きさ 0 の区画を持つイメージは、パースは通り、並びの確かめで断られる。
         let empty = build_test_elf(0, &[], 0, 0);
         assert_eq!(
             Elf::parse(&empty).unwrap().check_load_layout(),
@@ -1255,7 +1255,7 @@ mod tests {
         assert_eq!((plan.base, plan.end), (0x40_0000, 0x40_2000));
     }
 
-    /// **[`Elf::parse`] と同じ像を、同じ理由で断る**（先頭の部分だけを見ても、確かめは緩まない）。
+    /// **[`Elf::parse`] と同じイメージを、同じ理由で断る**（先頭の部分だけを見ても、確かめは緩まない）。
     #[test]
     fn the_head_parser_rejects_what_the_whole_file_parser_rejects() {
         let good = static_pie_head();
@@ -1374,7 +1374,7 @@ mod tests {
         assert_eq!(headers.plan(&POLICY), Err(PlacementError::NeedsInterpreter));
     }
 
-    /// **実行できるスタックを求める像は断る**（Linux は受け付ける。書けて実行もできる写像を作らない決まりのため）。
+    /// **実行できるスタックを求めるイメージは断る**（Linux は受け付ける。書けて実行もできる写像を作らない決まりのため）。
     #[test]
     fn an_image_that_asks_for_an_executable_stack_is_refused() {
         let mut phdrs = vec![phdr(PT_LOAD, PF_R | PF_X, 0, 0, 0x2000, 0x2000)];
@@ -1382,7 +1382,7 @@ mod tests {
         let head = build_head(ET_DYN, 0x1000, &phdrs);
         let headers = ElfHeaders::parse(&head, 0x2000).unwrap();
         assert_eq!(headers.plan(&POLICY), Err(PlacementError::ExecutableStack));
-        // 実行の印が無ければ受ける（`PT_GNU_STACK` が無い像も受ける）。
+        // 実行の印が無ければ受ける（`PT_GNU_STACK` が無いイメージも受ける）。
         phdrs[1] = phdr(PT_GNU_STACK, PF_R | PF_W, 0, 0, 0, 0);
         let head = build_head(ET_DYN, 0x1000, &phdrs);
         assert!(ElfHeaders::parse(&head, 0x2000)
@@ -1451,7 +1451,7 @@ mod tests {
         assert_eq!(headers.plan(&POLICY), Err(PlacementError::EntryOverflow));
     }
 
-    /// **像の端から端までの上限**——ちょうどは通り、1 バイト越えると断る。
+    /// **イメージの端から端までの上限**——ちょうどは通り、1 バイト越えると断る。
     #[test]
     fn the_image_span_is_bounded() {
         let limit = POLICY.max_span;

@@ -78,7 +78,7 @@
 //! - `68` `spawn(path, argv, NULL)` が `-EFAULT` を返さなかった（f-2）
 //! - `35` `auxv` の終端（`AT_NULL`）が無かった
 //! - `36` `spawn("/bin/hello")` が 0 を返さなかった
-//! - `79` `spawn("/bin/pie-hello")` が 0 を返さなかった（位置独立の像を、ファイルシステムを通る道で載せる。2026-10-06）
+//! - `79` `spawn("/bin/pie-hello")` が 0 を返さなかった（位置独立のイメージを、ファイルシステムを通る道で載せる。2026-10-06）
 //! - `37` `spawn("/nope")` が `-ENOENT` を返さなかった
 //! - `38` `spawn("/etc")` が `-EISDIR` を返さなかった
 //! - `39` `spawn(NULL)` が `-EFAULT` を返さなかった
@@ -1079,7 +1079,7 @@ core::arch::global_asm!(
     "  mov edi, 36",
     "  jne 9f",
 
-    // --- 79. spawn("/bin/pie-hello")。**位置独立の像が、ファイルシステムを通る道で載り、auxv を自分で確かめて
+    // --- 79. spawn("/bin/pie-hello")。**位置独立のイメージが、ファイルシステムを通る道で載り、auxv を自分で確かめて
     //     0 で終わるはず**（2026-10-06）。 ---
     "  mov eax, {sys_spawn}",
     "  lea rdi, [rip + PIE_HELLO_PATH]",
@@ -2497,7 +2497,7 @@ core::arch::global_asm!(
     "  mov edi, 112",
     "  cmp rax, {mprotect_nx_expected}",
     "  jne 7f",
-    // **Linux 向けの像（`/bin/linux/m1-rust`）は、ここでは起こさない**——起動時の表の最後の `linux-run` が起こす
+    // **Linux 向けのイメージ（`/bin/linux/m1-rust`）は、ここでは起こさない**——起動時の表の最後の `linux-run` が起こす
     // （`linux-run.rs` の doc。ここから起こすと、表の後ろのプログラムを狙った破壊テストを先に捕まえてしまう）。
     // 114: writev(1, [("wv-", 3), (NULL, 0), ("ok\n", 3)], 3) は 6。本の数が 1025 なら -EINVAL。
     //      iovec の並びは rsp+136 から（16 バイト × 3）。

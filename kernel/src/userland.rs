@@ -46,32 +46,32 @@ pub const USER_PROGRAM_SUBTREE_INDEX: usize = 0;
 ///
 /// `hello` のイメージは `0x400000` から 2 ページなので、十分離れた位置に置く。
 ///
-/// **位置を決めてリンクした像（`ET_EXEC`）の配置である**（[`ProcessLayout::EXECUTABLE`]）。位置独立の像は、別の配置を
+/// **位置を決めてリンクしたイメージ（`ET_EXEC`）の配置である**（[`ProcessLayout::EXECUTABLE`]）。位置独立のイメージは、別の配置を
 /// 使う（[`ProcessLayout::POSITION_INDEPENDENT`]）。
 const USER_PROGRAM_STACK_TOP: u64 = 0x0080_0000;
 
-/// 位置を決めてリンクした像のスタックの大きさ（4 ページ。2026-10-06）。
+/// 位置を決めてリンクしたイメージのスタックの大きさ（4 ページ。2026-10-06）。
 ///
 /// **S9-b-1 から 1 ページだった。** 補助ベクタを積むようになって初期データが約 190 バイト増え、`/bin/ls` と `zash` の
 /// 使用量が 1 ページの半分を越えた（`ADR-0041` の決定 4 の決めどき。実測で 51% と 71%）。4 ページにして、下に見張りの
 /// ページを置いた（`ADR-0041` の Addendum）。
 const USER_PROGRAM_STACK_BYTES: u64 = 4 * 4096;
 
-/// プロセスの番地の配置（2026-10-05）。**像の 種類ごとに 1 つ在る。**
+/// プロセスの番地の配置（2026-10-05）。**イメージの 種類ごとに 1 つ在る。**
 ///
 /// # なぜ型にするか
 ///
 /// **以前は、スタックの上端・ヒープの上端・`mmap` の始まりが、ばらばらの定数だった**（どれも、位置を決めてリンクした
-/// 小さな像を前提にしている。像は `0x400000` から、スタックは `0x800000` の下の 1 ページ）。**Linux 向けの静的リンクの
-/// 実行ファイルは、数 MiB の位置独立の像で、スタックも 1 ページでは足りない。** 同じ番地に置くと、像がスタックに
-/// 重なる。配置を 1 つの値にまとめて、像の 種類で選ぶ。
+/// 小さなイメージを前提にしている。イメージは `0x400000` から、スタックは `0x800000` の下の 1 ページ）。**Linux 向けの静的リンクの
+/// 実行ファイルは、数 MiB の位置独立のイメージで、スタックも 1 ページでは足りない。** 同じ番地に置くと、イメージがスタックに
+/// 重なる。配置を 1 つの値にまとめて、イメージの 種類で選ぶ。
 ///
 /// # 2 つの配置
 ///
-/// | | 像 | ヒープ | `mmap` | スタック |
+/// | | イメージ | ヒープ | `mmap` | スタック |
 /// |---|---|---|---|---|
-/// | `ET_EXEC`（今までの形） | リンクした番地 | 像の末尾 〜 `0x7fb000` | `0x1000_0000` 〜 | `0x7fc000..0x800000`（4 ページ） |
-/// | `ET_DYN`（静的 PIE） | `0x400000` だけずらす | 像の末尾 〜 `0x0fff_f000` | `0x1000_0000` 〜 スタックの見張りの下 | `0x7f_ffff_f000` の下の 256 KiB |
+/// | `ET_EXEC`（今までの形） | リンクした番地 | イメージの末尾 〜 `0x7fb000` | `0x1000_0000` 〜 | `0x7fc000..0x800000`（4 ページ） |
+/// | `ET_DYN`（静的 PIE） | `0x400000` だけずらす | イメージの末尾 〜 `0x0fff_f000` | `0x1000_0000` 〜 スタックの見張りの下 | `0x7f_ffff_f000` の下の 256 KiB |
 ///
 /// **どちらの配置も、スタックの下に写さないページを 1 枚置く**（見張りのページ。`ET_EXEC` は 2026-10-06 から。
 /// それまでは 1 ページのスタックのすぐ下がヒープの上限で、あふれるとヒープを黙って壊すおそれが在った）。スタックが
@@ -101,7 +101,7 @@ impl ProcessLayout {
     /// 配置のページの大きさ。
     const PAGE: u64 = 4096;
 
-    /// 位置を決めてリンクした像（`ET_EXEC`）の配置。**今までの定数と同じ値である。**
+    /// 位置を決めてリンクしたイメージ（`ET_EXEC`）の配置。**今までの定数と同じ値である。**
     pub const EXECUTABLE: Self = Self {
         stack_top: USER_PROGRAM_STACK_TOP,
         stack_bytes: USER_PROGRAM_STACK_BYTES,
@@ -114,13 +114,13 @@ impl ProcessLayout {
         mmap_limit: crate::arch::x86_64::USER_ADDRESS_LIMIT,
     };
 
-    /// 位置独立の像（`ET_DYN`。静的 PIE）をずらす量。**決まった値である**（番地を毎回変えることは、していない）。
+    /// 位置独立のイメージ（`ET_DYN`。静的 PIE）をずらす量。**決まった値である**（番地を毎回変えることは、していない）。
     pub const POSITION_INDEPENDENT_BASE: u64 = 0x0040_0000;
 
-    /// 位置独立の像の、端から端までの上限（32 MiB）。
+    /// 位置独立のイメージの、端から端までの上限（32 MiB）。
     pub const POSITION_INDEPENDENT_MAX_SPAN: u64 = 32 * 1024 * 1024;
 
-    /// 位置独立の像（`ET_DYN`）の配置。
+    /// 位置独立のイメージ（`ET_DYN`）の配置。
     pub const POSITION_INDEPENDENT: Self = Self {
         stack_top: 0x0000_007f_ffff_f000,
         stack_bytes: 256 * 1024,
@@ -131,7 +131,7 @@ impl ProcessLayout {
         mmap_limit: 0x0000_007f_ffff_f000 - 256 * 1024 - Self::PAGE,
     };
 
-    /// 像の 種類から配置を選ぶ。
+    /// イメージの 種類から配置を選ぶ。
     pub const fn for_kind(kind: common::elf::ElfKind) -> Self {
         match kind {
             common::elf::ElfKind::Executable => Self::EXECUTABLE,
@@ -153,13 +153,13 @@ impl ProcessLayout {
         }
     }
 
-    /// 像を置いてよい範囲と上限（`common::elf::ElfHeaders::plan` に渡す）。
+    /// イメージを置いてよい範囲と上限（`common::elf::ElfHeaders::plan` に渡す）。
     ///
     /// - `ET_EXEC`——**今までと同じに、範囲では断らない**（ユーザーの番地の全体を範囲にし、大きさの上限も付けない）。
-    ///   スタックやほかの区画と重なる像は、今までどおり、写す所が断る。ウィンドウの終わりは
+    ///   スタックやほかの区画と重なるイメージは、今までどおり、写す所が断る。ウィンドウの終わりは
     ///   [`crate::arch::x86_64::USER_ADDRESS_LIMIT`] で、**範囲の終端で、この値そのものは含まない**（セグメントの末尾が
     ///   この値に等しいのはよく、越えるのは断る。`common::elf::ElfHeaders::plan` の `end > window.1`）。
-    /// - `ET_DYN`——ずらした後の像が、ずらす量からヒープの上端までに収まり、端から端までが上限以下であること。
+    /// - `ET_DYN`——ずらした後のイメージが、ずらす量からヒープの上端までに収まり、端から端までが上限以下であること。
     pub const fn load_policy(&self, kind: common::elf::ElfKind) -> common::elf::LoadPolicy {
         match kind {
             common::elf::ElfKind::Executable => common::elf::LoadPolicy {
@@ -719,8 +719,8 @@ const USER_STACK_FILL: u8 = 0xA5;
 /// # `ElfError` の 11 種をどう扱うか
 ///
 /// [`common::elf::ElfError`] が返るのは [`Self::Parse`]（`ElfHeaders::parse`）で、**そのまま持ち上げる。**
-/// **ローダーは種類で分岐しない。** 内訳は次のとおりで、**すべて「像が壊れている」
-/// に落ちる。**（2026-10-05 より前は、区画の中身を切り出す所にも同じ誤りの口が在った。像を範囲で読む形にして、
+/// **ローダーは種類で分岐しない。** 内訳は次のとおりで、**すべて「イメージが壊れている」
+/// に落ちる。**（2026-10-05 より前は、区画の中身を切り出す所にも同じ誤りの口が在った。イメージを範囲で読む形にして、
 /// 区画のファイルの中の範囲は、ヘッダの検査の 1 か所だけが確かめる。）
 ///
 /// - `TooShort` / `BadMagic` / `NotElf64` / `NotLittleEndian` / `NotExecutable` /
@@ -753,7 +753,7 @@ pub enum UserLoadError {
     /// スタックを求める、`PT_LOAD` が無い、置いてよい範囲に収まらない、のどれかである。** 写す前に断るので、ページは
     /// 1 枚も写していない。
     Placement(common::elf::PlacementError),
-    /// 像の範囲を読めなかった（2026-10-05。`common::image_source`）。**ファイルシステムが、そのブロックを読めない。**
+    /// イメージの範囲を読めなかった（2026-10-05。`common::image_source`）。**ファイルシステムが、そのブロックを読めない。**
     ///
     /// **大きすぎて読めないファイルは、ここへ来る**——ext2 の 2 段目の間接ブロックを使うファイル（約 4.05 MiB を
     /// 越える）は、最初の範囲から `Ext2(IndirectBlockUnsupported)` で断られる。**黙って途中で切らない。**
@@ -940,8 +940,8 @@ pub fn spawn_released_others() -> usize {
 }
 
 /// アイドルの定常経路（[`release_retired_quarantines`]）が、隔離に残っていた前の破棄のフレームを返した本数の累計
-/// （2026-10-15）。**`spawn` の窓の中でアイドルが走る形は、主スレッドが futex で眠る像（M3a）で初めて出た**——隔離を
-/// 通す確かめ（`destroy-through-quarantine-test`）で、前の像の 193 本が窓の中で返り、`consumed` が 0 に見えて
+/// （2026-10-15）。**`spawn` の窓の中でアイドルが走る形は、主スレッドが futex で眠るイメージ（M3a）で初めて出た**——隔離を
+/// 通す確かめ（`destroy-through-quarantine-test`）で、前のイメージの 193 本が窓の中で返り、`consumed` が 0 に見えて
 /// `DestroyAccounting` で落ちた（`docs/verification-coverage.md`）。窓の前後の差を取って `consumed` へ足し戻す。
 static IDLE_RELEASED: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
@@ -1084,7 +1084,7 @@ static mut SPAWN_ENVPS: [[[u8; MAX_ENVP_BYTES]; MAX_SPAWN_IN_FLIGHT];
 pub enum SpawnError {
     /// 遠征の深さが上限に達している。**これ以上は入れ子にできない。**
     TooDeep,
-    /// パスを引けなかった（無い、途中がディレクトリでない、像が壊れている）。
+    /// パスを引けなかった（無い、途中がディレクトリでない、イメージが壊れている）。
     Lookup(common::ext2::Ext2Error),
     /// 引けたがディレクトリだった。
     IsDirectory,
@@ -1097,7 +1097,7 @@ pub enum SpawnError {
     ArgvMalformed,
     /// イメージが [`MAX_EXECUTABLE_SIZE`] に収まらない。
     TooLarge(u64),
-    /// 像を読めなかった（`common::image_source`）。**大きすぎて読めないファイルも、ここへ来る**（ext2 の 2 段目の
+    /// イメージを読めなかった（`common::image_source`）。**大きすぎて読めないファイルも、ここへ来る**（ext2 の 2 段目の
     /// 間接ブロック）。
     Read(common::image_source::ImageReadError),
     /// 載せられなかった、または期待どおりに終わらなかった。
@@ -1153,7 +1153,7 @@ pub struct UserProcess {
     space: crate::arch::x86_64::AddressSpace,
     /// 最初に飛ぶ先（ELF の entry）。
     entry: u64,
-    /// 像の始まり（最初の区画が載るページの先頭。ずらした後。2026-10-06。写像の表に登録する）。
+    /// イメージの始まり（最初の区画が載るページの先頭。ずらした後。2026-10-06。写像の表に登録する）。
     image_base: u64,
     /// ユーザースタックの上端。
     stack_top: u64,
@@ -1173,7 +1173,7 @@ pub struct UserProcess {
     /// **0 は「まだ張っていない」である**（[`load_user_program`] が 0 で作り、
     /// マップした側が埋める）。
     stack_scratch: u64,
-    /// 像の 種類（2026-10-05）。**番地の配置は、ここから決まる**（[`ProcessLayout::for_kind`]）。像を読むまでは
+    /// イメージの 種類（2026-10-05）。**番地の配置は、ここから決まる**（[`ProcessLayout::for_kind`]）。イメージを読むまでは
     /// `Executable` が入っている。
     ///
     /// **配置の値そのものは持たない。** この値は、プログラムが走っている間ずっと、遠征スタックの上に在る。遠征スタックの
@@ -1214,7 +1214,7 @@ pub struct UserProcess {
 ///
 /// **失敗しても空間を破棄する。** 途中で落ちた場合、**そこまでに作ったマッピングと
 /// 中間テーブルが残っている。** 破棄せずに戻ると、そのフレームは誰にも
-/// 返らない。**「壊した像でカーネルが止まらない」は、後始末まで含めて
+/// 返らない。**「壊したイメージでカーネルが止まらない」は、後始末まで含めて
 /// 初めて言える。**
 ///
 /// 破棄した結果（隔離へ入れた本数と、隔離が溢れて漏らした本数）を返す。
@@ -1243,7 +1243,7 @@ pub fn load_user_program(
     argv: &[&[u8]],
     envp: Option<&[&[u8]]>,
 ) -> (Result<u64, UserLoadError>, usize, usize, usize) {
-    // **メモリに在る像も、範囲を読む口を通す**（2026-10-05）。載せる道は 1 本である。
+    // **メモリに在るイメージも、範囲を読む口を通す**（2026-10-05）。載せる道は 1 本である。
     load_user_program_from(
         logger,
         &common::image_source::SliceImage(image),
@@ -1258,7 +1258,7 @@ pub fn load_user_program(
 #[cfg(feature = "spawn-detached-returns-early")]
 static LONG_HOLD_DONE: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
-/// [`load_user_program`] の本体（2026-10-05）。**像は「範囲を読む口」で受ける**（`common::image_source`）。
+/// [`load_user_program`] の本体（2026-10-05）。**イメージは「範囲を読む口」で受ける**（`common::image_source`）。
 ///
 /// **実行ファイルの全体を、1 本のバイト列として持たない。** 読むのは、先頭の部分（ELF のヘッダとプログラムヘッダ）と、
 /// 区画ごとの、ページに写す分だけである。ファイルシステムの上のファイルは、ブロックごとに引いて、写す先のフレームへ
@@ -1284,7 +1284,7 @@ pub fn load_user_program_from(
 /// Ring 3 へ落ちる前か、失敗の出口で返す**（[`crate::frame_allocator::give_back`]）。
 ///
 /// **読み込みの経路で、アロケータを借り直してはいけない**（`ADR-0084`）。受け取った 1 本だけを使う。借り直すと、自分が持つ
-/// 貸し出しを自分で待つことになる。今の像はメモリの上に在り（`crate::vfs` の `root_image`）、読むのはスライスを写すだけで
+/// 貸し出しを自分で待つことになる。今のイメージはメモリの上に在り（`crate::vfs` の `root_image`）、読むのはスライスを写すだけで
 /// ある。**将来、ディスクから直に読む形（ページキャッシュ）にするなら、ここで借りたものを渡すか、別の置き場から取る。**
 pub fn load_user_program_with(
     logger: &mut Logger<Serial>,
@@ -1560,8 +1560,8 @@ pub fn load_user_program_with(
 
 /// 破棄する前の空間のページの権限の一覧を出す（`crate::page_survey`）。
 ///
-/// **領域は、像の区画（`PT_LOAD`）・スタック・ヒープ・`mmap` の範囲である。** 区画の範囲は像を読み直して得る
-/// （読み込みが通った像だけを見る。区画の並びを受け付けられない像は、何も写していないので出さない）。
+/// **領域は、イメージの区画（`PT_LOAD`）・スタック・ヒープ・`mmap` の範囲である。** 区画の範囲はイメージを読み直して得る
+/// （読み込みが通ったイメージだけを見る。区画の並びを受け付けられないイメージは、何も写していないので出さない）。
 /// **歩くのはユーザーの側の添字だけである**（カーネルと共有している側は、カーネルの表の一覧が見る）。
 /// **`mmap` の範囲のページ数を比べないイメージは、中の `MMAP_PAGES_NOT_COMPARED` に名前で挙げる**（終わりに残るページ数が
 /// スレッドの順序で変わるイメージ。2026-10-15）。
@@ -1573,7 +1573,7 @@ fn report_user_mappings(
 ) {
     use crate::page_survey::Region;
 
-    // **一覧を出さない回は、何もしない**（起動時のプログラムが済んだ後の、既定のビルド）。像を読み直さずに済む。
+    // **一覧を出さない回は、何もしない**（起動時のプログラムが済んだ後の、既定のビルド）。イメージを読み直さずに済む。
     if !crate::page_survey::user_report_wanted() {
         return;
     }
@@ -1590,7 +1590,7 @@ fn report_user_mappings(
         "segment 7",
     ];
 
-    // **区画の範囲は、像の先頭の部分を読み直して得る**（2026-10-05）。像の全体は手元に無いので、載せたときと同じに、
+    // **区画の範囲は、イメージの先頭の部分を読み直して得る**（2026-10-05）。イメージの全体は手元に無いので、載せたときと同じに、
     // フレームを 1 枚借りて先頭を読む。**載せたときに控えておく形は採らなかった**——控えは、プログラムが走っている間
     // ずっと遠征スタックの上に在り、使用量が容量の半分を越えた（実測。`docs/deferred-decisions.md` の
     // 「遠征スタックにガードページが無い」）。
@@ -1612,7 +1612,7 @@ fn report_user_mappings(
         let head = unsafe { core::slice::from_raw_parts_mut(head_at, PAGE_SIZE as usize) };
         let read = image.read_at(0, &mut head[..head_len]);
         if read.is_ok() {
-            // **読み込みが通った像だけを見る。** 検査も、置く位置の計画も、載せたときと同じものを通す。
+            // **読み込みが通ったイメージだけを見る。** 検査も、置く位置の計画も、載せたときと同じものを通す。
             if let Ok(elf) = common::elf::ElfHeaders::parse(&head[..head_len], image.len()) {
                 let layout = ProcessLayout::for_kind(elf.kind());
                 if elf.check_load_layout().is_ok() {
@@ -1632,13 +1632,13 @@ fn report_user_mappings(
     if count == 0 {
         return;
     }
-    // **スタックと、ヒープの上端と、`mmap` の範囲は、配置から取る**（2026-10-05）。位置を決めてリンクした像では、
+    // **スタックと、ヒープの上端と、`mmap` の範囲は、配置から取る**（2026-10-05）。位置を決めてリンクしたイメージでは、
     // 今までと同じ値である。
     let layout = ProcessLayout::for_kind(process.kind);
     let stack = layout.stack_bottom();
     regions[count] = Region::mapped("stack", stack, layout.stack_top, true);
     count += 1;
-    // ヒープは像の末尾の次のページから、スタックの手前までを範囲にする（`brk` が伸ばした分だけが写っている）。
+    // ヒープはイメージの末尾の次のページから、スタックの手前までを範囲にする（`brk` が伸ばした分だけが写っている）。
     let heap = process.heap.start();
     if heap != 0 && heap < layout.heap_limit {
         regions[count] = Region::mapped("heap", heap, layout.heap_limit, true);
@@ -1652,7 +1652,7 @@ fn report_user_mappings(
     //   持つかがティックで決まる。主が持つとワーカーが `munmap` し、ワーカーが持つと誰も返さないので、終わりに残る
     //   ページ数が 2 か 3 になる（50 回の起動で 3 回が 2。Linux の `strace` でも同じ 2 つの形が出る）。
     //
-    // **一覧の名前が `kernel/build.rs` の `LINUX_PROGRAMS` に在り、起動のたびに起こす像であることは、基本の検査が見る。**
+    // **一覧の名前が `kernel/build.rs` の `LINUX_PROGRAMS` に在り、起動のたびに起こすイメージであることは、基本の検査が見る。**
     const MMAP_PAGES_NOT_COMPARED: &[&str] = &["m3a-channel-tls-rust"];
     let mmap_pages_compared = !MMAP_PAGES_NOT_COMPARED
         .iter()
@@ -1840,14 +1840,14 @@ fn forget_task_root_before_destroy(logger: &mut Logger<Serial>, process: &UserPr
 /// ファイルの中身を持つ、のどれかである。**下のループの計算（最終ページ、ページを進める加算、区画の終わり）は、
 /// この確かめが通ったことを前提にしている。**
 ///
-/// **以前は確かめていなかった。** 同じページに権限の違う区画が載る像は、前の区画の権限のまま読み込まれ、
-/// 後ろの区画の中身は写されなかった。番地の順が逆の像も読み込まれた。番地 0 で大きさ 0 の区画は、
+/// **以前は確かめていなかった。** 同じページに権限の違う区画が載るイメージは、前の区画の権限のまま読み込まれ、
+/// 後ろの区画の中身は写されなかった。番地の順が逆のイメージも読み込まれた。番地 0 で大きさ 0 の区画は、
 /// 最終ページの引き算があふれてカーネルが止まった（どれも起動の途中の検査で実測した）。
 ///
 /// # 区画が同じページを共有しているとマップできない
 ///
 /// **後から来た区画が `Mapping { AlreadyMapped }` で拒まれる**（S9-b-3-2b）。**並びの確かめが先に断るので、
-/// 像からこの経路へ来ることは無くなった。`map_user_4kib` の判定は 2 枚目の守りとして残る。**
+/// イメージからこの経路へ来ることは無くなった。`map_user_4kib` の判定は 2 枚目の守りとして残る。**
 ///
 /// **一度は誤っていた。** ここには以前も「`AlreadyMapped` 相当で弾かれる」と
 /// 書いてあったが、**それを持っていたのは
@@ -1874,8 +1874,8 @@ fn load_user_program_into(
 ) -> Result<(), UserLoadError> {
     const PAGE_SIZE: u64 = 4096;
 
-    // **像の先頭の部分を、フレームを 1 枚借りて読む**（2026-10-05）。ELF のヘッダとプログラムヘッダの表は、ここに在る
-    // （`common::elf::ElfHeaders`。表が先頭の部分に収まらない像は、名前のある理由で断られる）。
+    // **イメージの先頭の部分を、フレームを 1 枚借りて読む**（2026-10-05）。ELF のヘッダとプログラムヘッダの表は、ここに在る
+    // （`common::elf::ElfHeaders`。表が先頭の部分に収まらないイメージは、名前のある理由で断られる）。
     //
     // **スタックにも、静的な領域にも置かない。** スタックに 4 KiB の配列を置くと、遠征スタックの使用量が跳ねる
     // （`docs/deferred-decisions.md` の「大きなスタック配列とガード幅」）。静的な領域は、同時に載せる数だけ要る。
@@ -1904,9 +1904,9 @@ fn load_user_program_into(
     outcome
 }
 
-/// 位置独立の像を、どこへ置いたかを 1 行出す。
+/// 位置独立のイメージを、どこへ置いたかを 1 行出す。
 ///
-/// **`#[inline(never)]` にしてある**——書式の一時値を、載せる関数のフレームへ持ち込まない（位置を決めてリンクした像では、
+/// **`#[inline(never)]` にしてある**——書式の一時値を、載せる関数のフレームへ持ち込まない（位置を決めてリンクしたイメージでは、
 /// この行は出ないのに、フレームだけが太る。遠征スタックの使用量は、容量の半分の手前に在る）。
 #[inline(never)]
 fn note_position_independent_placement(
@@ -1929,7 +1929,7 @@ fn note_stack_guard_page(logger: &mut Logger<Serial>, guard: u64) {
     ));
 }
 
-/// [`load_user_program_into`] の中身——区画を写し、スタックを張り、葉を読み戻す。**`head` は像の先頭の部分である。**
+/// [`load_user_program_into`] の中身——区画を写し、スタックを張り、葉を読み戻す。**`head` はイメージの先頭の部分である。**
 fn load_segments_and_stack(
     logger: &mut Logger<Serial>,
     allocator: &mut crate::frame_allocator::FrameAllocator,
@@ -1950,7 +1950,7 @@ fn load_segments_and_stack(
     let direct_map = common::addr::direct_map();
 
     // **先頭の部分と、ファイルの長さの数から検査する**（`common::elf::ElfHeaders`。全体を読む入口 `Elf::parse` と、
-    // 同じ像を同じ理由で断ることを、ホストの試験が確かめている）。
+    // 同じイメージを同じ理由で断ることを、ホストの試験が確かめている）。
     let elf = match ElfHeaders::parse(head, image.len()) {
         Ok(elf) => elf,
         Err(e) => return Err(UserLoadError::Parse(e)),
@@ -1958,7 +1958,7 @@ fn load_segments_and_stack(
     // **写す前に区画の並びを確かめる**（この関数の doc の「区画の並びは、写す前に確かめる」）。
     //
     // 破壊テスト (2026-10-01, user-load-skip-layout-check): 確かめの答えを捨てて写す。**起動の途中の
-    // 壊した像の検査が、並びの確かめで断られるはずの像を別の場所で断られるのを見て止まる。**
+    // 壊したイメージの検査が、並びの確かめで断られるはずのイメージを別の場所で断られるのを見て止まる。**
     match elf.check_load_layout() {
         Err(e) if !cfg!(feature = "user-load-skip-layout-check") => {
             return Err(UserLoadError::Layout(e));
@@ -1986,9 +1986,9 @@ fn load_segments_and_stack(
     // **本数の対（持っている / マップした）を同じ行に出す。**
     let declared_segments = elf.load_segments().count();
 
-    // **載せる位置を決める**（2026-10-05。`common::elf::ElfHeaders::plan`）。**配置は像の 種類で選ぶ**
-    // （[`ProcessLayout`]）。位置を決めてリンクした像は、今までどおり、ずらさない。位置独立の像は、決まった量だけ
-    // ずらす。**動的リンクを求める像、実行できるスタックを求める像、置いてよい範囲に収まらない像は、ここで断る**
+    // **載せる位置を決める**（2026-10-05。`common::elf::ElfHeaders::plan`）。**配置はイメージの 種類で選ぶ**
+    // （[`ProcessLayout`]）。位置を決めてリンクしたイメージは、今までどおり、ずらさない。位置独立のイメージは、決まった量だけ
+    // ずらす。**動的リンクを求めるイメージ、実行できるスタックを求めるイメージ、置いてよい範囲に収まらないイメージは、ここで断る**
     // ——ページは、まだ 1 枚も写していない。
     let layout = ProcessLayout::for_kind(elf.kind());
     let plan = match elf.plan(&layout.load_policy(elf.kind())) {
@@ -2006,7 +2006,7 @@ fn load_segments_and_stack(
         // 計画が確かめている。ファイルの中の位置（`p_offset`）は、ずらさない。
         //
         // 破壊テスト (2026-10-06, pie-load-without-bias-test): 区画を、ずらさずに載せる（入口だけが、ずれた番地を
-        // 指す）。位置独立の像は、リンクした番地（0 から）に載ることになり、載せる途中か、入口で落ちる。
+        // 指す）。位置独立のイメージは、リンクした番地（0 から）に載ることになり、載せる途中か、入口で落ちる。
         #[cfg(feature = "pie-load-without-bias-test")]
         let plan = common::elf::LoadPlan { bias: 0, ..plan };
         let ph = common::elf::ProgramHeader {
@@ -2096,7 +2096,7 @@ fn load_segments_and_stack(
                 let target = unsafe {
                     core::slice::from_raw_parts_mut(dst.add(offset_in_page as usize), count)
                 };
-                // **像から、このページの分だけを読む**（2026-10-05）。ファイルの中の位置は、区画の始まりに、区画の中の
+                // **イメージから、このページの分だけを読む**（2026-10-05）。ファイルの中の位置は、区画の始まりに、区画の中の
                 // 位置を足したものである。`p_offset + p_filesz` がファイルに収まることは、ヘッダの検査が確かめて
                 // あるので、足し算はあふれない。
                 if let Err(e) = image.read_at(ph.p_offset + page_start_in_segment, target) {
@@ -2172,8 +2172,8 @@ fn load_segments_and_stack(
         process.name
     ));
 
-    // ユーザースタックを写す。**こちらは書ける。** **枚数は配置が決める**（2026-10-05。位置を決めてリンクした像は
-    // 1 枚、位置独立の像は 256 KiB）。**起動のときに全部を写す**——後から伸ばさない。
+    // ユーザースタックを写す。**こちらは書ける。** **枚数は配置が決める**（2026-10-05。位置を決めてリンクしたイメージは
+    // 1 枚、位置独立のイメージは 256 KiB）。**起動のときに全部を写す**——後から伸ばさない。
     //
     // **初期データ（argc・argv・envp）を積むのは、いちばん上のページである。** `dst` と `stack_page` は、そのページを指す。
     let stack_bottom = layout.stack_bottom();
@@ -2267,7 +2267,7 @@ fn load_segments_and_stack(
     // ずらした後の値である。`AT_RANDOM` の 16 バイトは、暗号に使える値ではない（CPU の置き場の `random` の doc）。
     //
     // 破壊テスト (2026-10-06, auxv-entry-not-biased-test): `AT_ENTRY` に、ずらす前の番地を渡す。位置を決めて
-    // リンクした像では値が変わらないので、気づくのは位置独立の像だけである（`pie-hello` が、終了状態 1 で言う）。
+    // リンクしたイメージでは値が変わらないので、気づくのは位置独立のイメージだけである（`pie-hello` が、終了状態 1 で言う）。
     let aux_entry = if cfg!(feature = "auxv-entry-not-biased-test") {
         plan.entry - plan.bias
     } else {
@@ -2442,7 +2442,7 @@ fn report_user_stack_high_water(logger: &mut Logger<Serial>, process: &UserProce
     ));
 }
 
-/// 写像の表を据え、載せた像・スタック・見張りのページ・ヒープを登録する（2026-10-06）。**`#[inline(never)]`** で、
+/// 写像の表を据え、載せたイメージ・スタック・見張りのページ・ヒープを登録する（2026-10-06）。**`#[inline(never)]`** で、
 /// 一時値を [`run_loaded_program`] のフレームへ乗せない。登録に失敗したら、名指しして止まる（載せたものどうしが
 /// 重なることは無いはずで、重なれば載せる側の誤りである）。
 #[inline(never)]
@@ -2521,7 +2521,7 @@ fn report_threads_ended_with_the_process(
 fn report_futex_counts(logger: &mut Logger<Serial>, name: &str, before: (u64, u64, u64)) {
     let (sleeps, woken, roused) = crate::syscall::futex_counts();
     // **3 つ目は、プロセスの終わりの印が起こした futex の待ちの本数**（3-1b。`join` や `Mutex` で眠っていた主スレッドと
-    // スレッド）。ティックの位置で揺れる像は、`xtask` が伏せて範囲で見る。
+    // スレッド）。ティックの位置で揺れるイメージは、`xtask` が伏せて範囲で見る。
     logger.info(format_args!(
         "futex: {name} slept {} time(s) and woke {} waiter(s) (0 and 0 unless the program has threads); the process end \
          roused {} sleeper(s)",
@@ -2567,7 +2567,7 @@ fn report_stack_water_before_ring3(logger: &mut Logger<Serial>, name: &'static s
 /// **アロケータを遠征の前に返すためである**（`ADR-0030`）。マッピングには要るが、
 /// 遠征には要らない。**切り口は元からあった `if !run` の位置である。**
 ///
-/// **あの分岐は S9-b-2 で「壊した像を写像だけして走らせない」ために作った。**
+/// **あの分岐は S9-b-2 で「壊したイメージを写像だけして走らせない」ために作った。**
 /// **「写像と実行を分ける」という同じ軸なので、所有の境界とも一致した**
 /// ——別々の目的で引いた線が、同じ場所を通っている。
 ///
@@ -2622,7 +2622,7 @@ unsafe fn run_loaded_program(
     // **プロセスごとの小さな状態（シグナルの登録など）を初めの形に戻し、名前を控える**（2026-10-06）。スロットと
     // 深さで引くので、据え替えの写しは要らない（`crate::process_state`）。
     crate::process_state::reset_for_next_process(process.name.as_bytes());
-    // **写像の表も、配置の値で据え、載せたものを登録する**（2026-10-06。`crate::mappings`）。像・スタック・見張りの
+    // **写像の表も、配置の値で据え、載せたものを登録する**（2026-10-06。`crate::mappings`）。イメージ・スタック・見張りの
     // ページ・ヒープが表に在ることで、`MAP_FIXED` がそこへ置かず、`brk` が無名の写像へ伸びない。
     register_loaded_mappings(logger, process);
     // **前景を取る（S11-10）。** 取っているあいだ、カーネル側の消費者
@@ -3036,7 +3036,7 @@ pub fn spawn_with_loan(
     // **読めないことを理由に起動を拒まない。**
     let name = core::str::from_utf8(name_bytes).unwrap_or("<not utf-8>");
 
-    // **像は写さない。範囲を読む口を作って、載せる側へ渡す**（2026-10-05。`common::ext2::FileImage`）。
+    // **イメージは写さない。範囲を読む口を作って、載せる側へ渡す**（2026-10-05。`common::ext2::FileImage`）。
     //
     // **以前は、ブロックごとに静的な配列へ写してから載せていた**（上限は 32 KiB）。載せる側が要るのは、先頭の部分と、
     // 区画ごとのページの分だけなので、ファイルシステムのブロックから、写す先のフレームへ直に読む。
@@ -3705,8 +3705,8 @@ mod tests {
             .any(|line| line.starts_with(b"HOME=")));
     }
 
-    /// 位置を決めてリンクした像の配置（2026-10-06 に、スタックを 4 ページにして、下に見張りのページを置いた）。
-    /// **像の番地と `mmap` の始まりは、今までの定数と同じ値である。** ヒープの上端は、見張りのページの下端である。
+    /// 位置を決めてリンクしたイメージの配置（2026-10-06 に、スタックを 4 ページにして、下に見張りのページを置いた）。
+    /// **イメージの番地と `mmap` の始まりは、今までの定数と同じ値である。** ヒープの上端は、見張りのページの下端である。
     #[test]
     fn the_executable_layout_has_a_four_page_stack_above_a_guard() {
         let layout = super::ProcessLayout::for_kind(common::elf::ElfKind::Executable);
@@ -3724,14 +3724,14 @@ mod tests {
         assert_eq!(policy.max_span, u64::MAX);
     }
 
-    /// 位置独立の像の配置。**像・ヒープ・`mmap`・見張りのページ・スタックが、この順に並び、重ならない。**
+    /// 位置独立のイメージの配置。**イメージ・ヒープ・`mmap`・見張りのページ・スタックが、この順に並び、重ならない。**
     #[test]
     fn the_position_independent_layout_keeps_its_regions_apart() {
         let layout = super::ProcessLayout::for_kind(common::elf::ElfKind::PositionIndependent);
         let policy = layout.load_policy(common::elf::ElfKind::PositionIndependent);
         assert_eq!(policy.position_independent_base, 0x40_0000);
         assert_eq!(policy.max_span, 32 * 1024 * 1024);
-        // 像は、ずらす量からヒープの上端まで。上限の大きさの像が、そこに収まる。
+        // イメージは、ずらす量からヒープの上端まで。上限の大きさのイメージが、そこに収まる。
         assert_eq!(policy.window, (0x40_0000, layout.heap_limit));
         assert!(policy.window.0 + policy.max_span <= layout.heap_limit);
         // ヒープの上端は、mmap の始まりより下。

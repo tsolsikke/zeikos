@@ -346,7 +346,7 @@ fn build_user_programs(manifest_dir: &str, out_dir: &str) {
         "gfxc",
         // **`/dev/fb0` を Linux の fbdev の形で開いて四隅に色を置く 1 本**（2026-10-07。`ADR-0083`）。
         "fb-test",
-        // **隔離の容量より多いフレーム（32 MiB の無名の `mmap`）を持つ 1 本**（2026-10-07。`frame-hog-test` の像だけに入れる）。
+        // **隔離の容量より多いフレーム（32 MiB の無名の `mmap`）を持つ 1 本**（2026-10-07。`frame-hog-test` のイメージだけに入れる）。
         "frame-hog",
         // **画面・入力・ソケット・共有メモリを 1 つの組で通す（`ADR-0066` の Y-d）。**
         "compd",
@@ -616,7 +616,7 @@ fn build_user_programs(manifest_dir: &str, out_dir: &str) {
     cache.write_tally(out_dir);
 }
 
-/// Linux 向けのプログラムの名前（`linux-programs/<名前>.rs`。像の `/bin/linux/<名前>` に置く）。
+/// Linux 向けのプログラムの名前（`linux-programs/<名前>.rs`。イメージの `/bin/linux/<名前>` に置く）。
 const LINUX_PROGRAMS: &[&str] = &[
     "m1-rust",
     "m3a-rust",
@@ -644,7 +644,7 @@ const LINUX_PROGRAMS: &[&str] = &[
 /// **ほかのプログラムとの違いは、ターゲットが `x86_64-unknown-linux-musl` であること、リンカスクリプトを渡さないこと、
 /// `std` を使うこと**（Linux の libc の起動の列をそのまま通すのが目的で、カーネルの側からは「よその ELF」である）。
 /// `-C target-feature=+crt-static` で静的にリンクし、既定で位置独立（static-pie）になる。版は `rust-toolchain.toml` の
-/// toolchain と `targets` で固定され、置き場を `--remap-path-prefix` で切り離すので、像のバイトは機械で変わらない。
+/// toolchain と `targets` で固定され、置き場を `--remap-path-prefix` で切り離すので、イメージのバイトは機械で変わらない。
 /// **`tools/build-linux-programs.sh` が同じ引数で、Linux 上で走らせて参照を控えるための写しを作る。**
 fn build_linux_programs(manifest_dir: &str, out_dir: &str, cache: &ProgramCache) {
     let dir = format!("{manifest_dir}/../linux-programs");
@@ -687,7 +687,7 @@ fn build_linux_programs(manifest_dir: &str, out_dir: &str, cache: &ProgramCache)
 ///
 /// **ほかのプログラムとの違いは 3 つである**——再配置の形（`relocation-model=pie`）、リンカへの `-pie`、
 /// リンカスクリプト（`userland/pie.ld`。番地 0 からリンクし、ヘッダを最初の区画に入れる）。
-/// `--no-dynamic-linker` で、動的リンカの名前（`PT_INTERP`）を付けさせない。ローダーは、それを持つ像を断る。
+/// `--no-dynamic-linker` で、動的リンカの名前（`PT_INTERP`）を付けさせない。ローダーは、それを持つイメージを断る。
 ///
 /// **破壊テストの cfg は渡さない**（いまの 1 本は、どの cfg も読まない）。
 fn build_position_independent_programs(manifest_dir: &str, out_dir: &str, cache: &ProgramCache) {
@@ -865,7 +865,7 @@ fn build_c_programs(manifest_dir: &str, out_dir: &str, script: &str, cache: &Pro
 /// **入力の中身で引く写しの置き場**（cargo の `target/` の下の `user-program-cache/`。feature の組をまたいで共有する）。
 /// 鍵は、道具の版（`rustc -vV`・`cc --version`）・渡す引数（出力の道は除く）・原本と取り込むファイルの中身
 /// （[`ProgramInputs`] が原本から辿った一覧。`rerun-if-changed` と cfg の判定も同じ一覧を使う）のハッシュである。**在ればハードリンクで置き（書かない）、無ければ作って
-/// から写しへ入れる。** rustc も cc も同じ入力から同じバイトを出す（像のバイトを機械で変えないために、既にそれに依っている）。
+/// から写しへ入れる。** rustc も cc も同じ入力から同じバイトを出す（イメージのバイトを機械で変えないために、既にそれに依っている）。
 ///
 /// **`--cfg` は、そのプログラムの原本か取り込むファイルに名前が出るものだけ渡す**——出ない cfg は読まれないので、渡しても
 /// 同じ中身になる。渡さなければ鍵が同じになり、写しが当たる。
@@ -884,7 +884,7 @@ fn build_c_programs(manifest_dir: &str, out_dir: &str, script: &str, cache: &Pro
 /// コンパイラがその道へ書いて置き場の実体（別の鍵のもの）を書き換える——**作る前に出力の道を外す**（`remove_file`）。
 /// さらに**置き場のファイルは読み取り専用にする**（その場で書き換えようとする処理が在れば、黙って通らずに失敗する）。
 /// このビルドスクリプトは、作った後にプログラムの道へ書き戻す処理（strip・objcopy の類）を持たない（2026-10-07 に読んで
-/// 確かめた。`strip=symbols` はリンクのときの指定で、像へは `fs::copy` で写す）。
+/// 確かめた。`strip=symbols` はリンクのときの指定で、イメージへは `fs::copy` で写す）。
 struct ProgramCache {
     /// 置き場。**無ければ写しを使わない**（その場で作る）。
     dir: Option<std::path::PathBuf>,
@@ -900,7 +900,7 @@ impl ProgramCache {
         let enabled = std::env::var("ZEIKOS_USER_PROGRAM_CACHE")
             .ok()
             .is_none_or(|value| value != "off");
-        // **置き場は `ZEIKOS_USER_PROGRAM_CACHE_DIR` で差し替えられる**（2026-10-08。像のバイトが当たりと外れで同じことを
+        // **置き場は `ZEIKOS_USER_PROGRAM_CACHE_DIR` で差し替えられる**（2026-10-08。イメージのバイトが当たりと外れで同じことを
         // 確かめる検査が、空の置き場で全部を外すために使う。本物の置き場は触らない）。
         println!("cargo:rerun-if-env-changed=ZEIKOS_USER_PROGRAM_CACHE_DIR");
         let chosen =
@@ -1235,7 +1235,7 @@ fn parse_symbol(script: &str, name: &str) -> Option<u64> {
 ///
 /// # 何に依らないと言えるか（4 つの軸。2026-09-06 に洗った）
 ///
-/// **「像が場所に依らない」と言うときに、何を確かめたのかが読める形で置く。**
+/// **「イメージが場所に依らない」と言うときに、何を確かめたのかが読める形で置く。**
 ///
 /// | 軸 | 状態 | 確かめ方（実測） |
 /// |---|---|---|
@@ -1279,9 +1279,9 @@ fn parse_symbol(script: &str, name: &str) -> Option<u64> {
 fn build_fs_image(manifest_dir: &str, out_dir: &str) {
     /// イメージの大きさ。**2026-10-05 に、2 MiB から 32 MiB へ上げた**（数 MiB の実行ファイルを置くため）。
     ///
-    /// **下の「8 MiB は起動しない」は、像をカーネルに埋め込んでいた頃の実測である。** いまは、像をカーネルの外に
-    /// 置き（装置か、bootloader が渡す RAM の像）、壊した像の検査の作業領域も、起動時に借りるフレームへ移した。
-    /// **像の大きさも中身の量も、カーネルの像の大きさを変えない。**
+    /// **下の「8 MiB は起動しない」は、イメージをカーネルに埋め込んでいた頃の実測である。** いまは、イメージをカーネルの外に
+    /// 置き（装置か、bootloader が渡す RAM のイメージ）、壊したイメージの検査の作業領域も、起動時に借りるフレームへ移した。
+    /// **イメージの大きさも中身の量も、カーネルのイメージの大きさを変えない。**
     ///
     /// **32 MiB は、4 KiB のブロックで 8,192 ブロックである。** ブロックグループ 1 つ（32,768 ブロック = 128 MiB）に
     /// 収まる。128 MiB を越えるとグループが 2 つになる（前提は `docs/deferred-decisions.md`）。
@@ -1307,8 +1307,8 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
     const IMAGE_BYTES: u64 = 32 * 1024 * 1024;
     /// inode の数（`mke2fs -N`。2026-10-05）。
     ///
-    /// **`mke2fs` の既定に任せない。** 既定は像の大きさから決まり、32 MiB では 8,192 個になる。inode の表だけで
-    /// 512 ブロック（2 MiB）を取り、起動時の検査値が覆う範囲と、壊した像の検査が写す量が、それだけ増える。
+    /// **`mke2fs` の既定に任せない。** 既定はイメージの大きさから決まり、32 MiB では 8,192 個になる。inode の表だけで
+    /// 512 ブロック（2 MiB）を取り、起動時の検査値が覆う範囲と、壊したイメージの検査が写す量が、それだけ増える。
     ///
     /// **1,024 個にした。** いま使っているのは 65 個である。これから置くものは、実行ファイルが数十本、フォントが
     /// 数本、設定のファイルと、プログラムが作るファイルで、数百個までと見ている。1,024 個なら、表は 64 ブロック
@@ -1340,8 +1340,8 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
     // 深さ 2 で起動するためだけに、イメージの中に居る。**
     for name in [
         "hello",
-        // **位置独立の像（2026-10-06）。** `syscall-test` が `spawn` で起こし、ファイルシステムを通る道で
-        // 位置独立の像が載ることを確かめる。
+        // **位置独立のイメージ（2026-10-06）。** `syscall-test` が `spawn` で起こし、ファイルシステムを通る道で
+        // 位置独立のイメージが載ることを確かめる。
         "pie-hello",
         // **`FUTEX_WAIT` で待つ場面に入る 1 本**（2026-10-06）。`syscall-test` が `spawn` で起こし、終わらせられることを確かめる。
         "futex-wait",
@@ -1403,7 +1403,7 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
         .unwrap_or_else(|e| panic!("failed to place {name} into the staging: {e}"));
     }
 
-    // **隔離の容量より多いフレームを持つプログラムは、`frame-hog-test` の像だけに入れる**（2026-10-07。既定の像のバイトを
+    // **隔離の容量より多いフレームを持つプログラムは、`frame-hog-test` のイメージだけに入れる**（2026-10-07。既定のイメージのバイトを
     // 変えない。`seinas-test` と同じ形）。
     if std::env::var("CARGO_FEATURE_FRAME_HOG_TEST").is_ok() {
         std::fs::copy(
@@ -1427,8 +1427,8 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
         });
     }
     // **Seinas の fbdev の裏側は、`seinas-test` のビルドだけが入れる**（2026-10-07。M2。`ADR-0083` の Addendum）。
-    // release の成果物を `tools/fetch-seinas.sh` が SHA-256 を固定して取ったもので、既定の像には入れない（バイトが release
-    // に依る）。**第三者のライセンスの表示も、同じ像の、成果物の隣（`/bin/linux/`）に入れる**——成果物と表示を離さないためと、
+    // release の成果物を `tools/fetch-seinas.sh` が SHA-256 を固定して取ったもので、既定のイメージには入れない（バイトが release
+    // に依る）。**第三者のライセンスの表示も、同じイメージの、成果物の隣（`/bin/linux/`）に入れる**——成果物と表示を離さないためと、
     // 根の項目の数（`syscall-test` が `.` と `..` を含めて 9 と数える）を変えないため。無ければ名指しして止まる。
     if std::env::var("CARGO_FEATURE_SEINAS_TEST").is_ok() {
         let fetched = format!("{manifest_dir}/../target/linux-programs");
@@ -1449,7 +1449,7 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
         });
     }
     // **C の Linux 向けのプログラムは、`linux-c-test` のビルドだけが入れる**（2026-10-06）。`musl-gcc` で手で作った
-    // もの（`tools/build-linux-programs.sh`）で、版が配布物に依るので既定の像には入れない。無ければ名指しして止まる。
+    // もの（`tools/build-linux-programs.sh`）で、版が配布物に依るので既定のイメージには入れない。無ければ名指しして止まる。
     if std::env::var("CARGO_FEATURE_LINUX_C_TEST").is_ok() {
         // `m3a-c`（musl の pthread。スレッドの検証の3）も同じ扱いである（2026-10-15）。
         for name in ["m1-c", "m3a-c"] {
@@ -1525,7 +1525,7 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
     // **多バイトの字の判定に使う（`ADR-0054`）。**
     //
     // **seed のツリーへは置かない**——**`kernel/fsimage/seed/` は ASCII だけと決めてある**
-    // （`docs/coding-standards.md` の「像へ入れるテキストはASCIIに限る」）。
+    // （`docs/coding-standards.md` の「イメージへ入れるテキストはASCIIに限る」）。
     // **ここは `build.rs` が書くので、あの検査の範囲の外である。**
     //
     // **中身は `あいu` である**——**全角 2 つと半角 1 つで、画面では
@@ -1631,7 +1631,7 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
     check_staging_data(&staging);
 
     // **seed の権限を、写した元によらず決める**（2026-10-08）。`fs::copy` は権限を写し、`mke2fs -d` はそれを inode へ入れる。
-    // 写しの置き場の当たりは読み取り専用の写しのハードリンクなので、決めないと、当たりと外れで像のバイトが変わる。
+    // 写しの置き場の当たりは読み取り専用の写しのハードリンクなので、決めないと、当たりと外れでイメージのバイトが変わる。
     set_staging_modes(std::path::Path::new(&staging));
 
     // イメージの器を作る（ゼロ埋め）。
@@ -1713,17 +1713,17 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
         .fold(0u32, |sum, (index, byte)| {
             sum.wrapping_add(u32::from(*byte).wrapping_mul(index as u32 + 1))
         });
-    // **像の全体の検査値を、ボリュームの名前の欄へ文字で書く**（2026-10-05）。
+    // **イメージの全体の検査値を、ボリュームの名前の欄へ文字で書く**（2026-10-05）。
     //
-    // **カーネルは、起動のたびに像の全体を歩かなくなった**——検査値が覆うのは、管理用の部分（先頭から inode の表の
-    // 終わりまで）だけである。**それだけだと、ファイルの中身だけが違う古い像を見分けられない**（大きさが同じなら、
+    // **カーネルは、起動のたびにイメージの全体を歩かなくなった**——検査値が覆うのは、管理用の部分（先頭から inode の表の
+    // 終わりまで）だけである。**それだけだと、ファイルの中身だけが違う古いイメージを見分けられない**（大きさが同じなら、
     // 管理用の部分は 1 バイトも変わらない。時刻は潰してある）。**全体の検査値を管理用の部分の中に置けば、中身が
-    // 1 バイトでも違う像は、管理用の部分の検査値も違う値になる。**
+    // 1 バイトでも違うイメージは、管理用の部分の検査値も違う値になる。**
     //
     // **欄は `s_volume_name`（superblock の 120 バイト目から 16 バイト）である。** `e2label` や `dumpe2fs` で見える。
     // 選んだ理由と、比べた欄は `docs/adr/0077-costs-that-grow-with-the-disk-image.md` に在る。
     //
-    // **書くのは、全体の検査値を計算した後である**（欄が空の状態の値を書く。書いた後の像の全体の値ではない）。
+    // **書くのは、全体の検査値を計算した後である**（欄が空の状態の値を書く。書いた後のイメージの全体の値ではない）。
     const VOLUME_NAME_AT: usize = 1024 + 120;
     let label = format!("zeikos-{checksum:08x}");
     assert!(
@@ -1738,13 +1738,13 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
         "mke2fs left a volume name in the image; the build expects an empty one"
     );
     image_bytes[VOLUME_NAME_AT..VOLUME_NAME_AT + label.len()].copy_from_slice(label.as_bytes());
-    // **像は、0 だけのブロックを書かずに書き直す**（2026-10-05。`ADR-0077` の決定 6）。**長さは変えない。**
-    // ビルドの出力は構成ごとに 1 つずつ残るので、0 を書くと、像の大きさだけディスクを取る。
+    // **イメージは、0 だけのブロックを書かずに書き直す**（2026-10-05。`ADR-0077` の決定 6）。**長さは変えない。**
+    // ビルドの出力は構成ごとに 1 つずつ残るので、0 を書くと、イメージの大きさだけディスクを取る。
     write_image_sparse(&image, &image_bytes);
 
-    // **管理用の部分の検査値**（印を書いた後の像から）。**範囲は `common::ext2` の `management_prefix_len` と同じ
+    // **管理用の部分の検査値**（印を書いた後のイメージから）。**範囲は `common::ext2` の `management_prefix_len` と同じ
     // 決め方である**——ブロック 0 から、グループ 0 の inode の表の終わりまで。**ここでは superblock と記述子を
-    // 直に読む**（`build.rs` は `common` に依らない）。**カーネルは、RAM の像から起動した回に、自分で計算した値と
+    // 直に読む**（`build.rs` は `common` に依らない）。**カーネルは、RAM のイメージから起動した回に、自分で計算した値と
     // この値を比べる。** 2 つの決め方が食い違えば、そこで止まる。
     let le32 = |at: usize| {
         u32::from_le_bytes([
@@ -1987,7 +1987,7 @@ fn mke2fs_version() -> String {
 /// 失敗したとき、作業ツリーに変更が無ければ、人は「何が変わったのか」を探す**
 /// ——**残る入力は道具の版である。**
 ///
-/// **`docs/deferred-decisions.md` にこの行が在った。** **見直すきっかけは「像の
+/// **`docs/deferred-decisions.md` にこの行が在った。** **見直すきっかけは「イメージの
 /// checksum が赤になり、木に変更が無いとき」としてあったが、B-d で先に
 /// 来た**——**`/bin` の C が 6 本になり、イメージの中の C のバイトが 343 KiB の
 /// フォントの次に大きい塊になった。** **さらに B-d の判定そのものが、
@@ -2008,18 +2008,18 @@ fn cc_version() -> String {
 
 /// seed のディレクトリを丸ごとコピーする。**シンボリックリンクは扱わない**
 /// （`roadmap.md` の S10 が symlink を範囲外と書いている）。
-/// 像の seed の権限を決める（2026-10-08）。ディレクトリは 0755、`/bin` の下のファイルは 0755、ほかのファイルは 0644。
+/// イメージの seed の権限を決める（2026-10-08）。ディレクトリは 0755、`/bin` の下のファイルは 0755、ほかのファイルは 0644。
 ///
-/// **像のバイトは、ホストのファイルの権限に依ってはならない。** `mke2fs -d` は seed のファイルの権限をそのまま inode に入れる。
+/// **イメージのバイトは、ホストのファイルの権限に依ってはならない。** `mke2fs -d` は seed のファイルの権限をそのまま inode に入れる。
 /// seed へ置くファイルは、コンパイラの出力（0755）、写しの置き場の当たり（読み取り専用の写しへのハードリンク。0444）、
 /// seed のツリー（git が置いた権限）、`fs::write` で書いたもの（umask に依る）から来る。時刻と所有者は
-/// [`zero_image_build_traces`] が 0 にするので、残るのは権限だけである。値は、権限を決める前の像（写しの外れで作ったもの）
-/// と同じにした——起動ログの参照が覚えている像のバイトが変わらない。`lost+found` は `mke2fs` が作るので、ここでは触らない。
+/// [`zero_image_build_traces`] が 0 にするので、残るのは権限だけである。値は、権限を決める前のイメージ（写しの外れで作ったもの）
+/// と同じにした——起動ログの参照が覚えているイメージのバイトが変わらない。`lost+found` は `mke2fs` が作るので、ここでは触らない。
 fn set_staging_modes(root: &std::path::Path) {
     set_modes_below(root, true, false);
 }
 
-/// [`set_staging_modes`] の本体。`at_root` は像の根か（`/bin` を根の直下だけで見分ける）、`under_bin` は `/bin` の下か。
+/// [`set_staging_modes`] の本体。`at_root` はイメージの根か（`/bin` を根の直下だけで見分ける）、`under_bin` は `/bin` の下か。
 fn set_modes_below(dir: &std::path::Path, at_root: bool, under_bin: bool) {
     std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755))
         .unwrap_or_else(|e| panic!("failed to set the mode of {}: {e}", dir.display()));
@@ -2073,7 +2073,7 @@ fn copy_tree(from: &std::path::Path, to: &std::path::Path) {
 /// # 所有者は「誰が建てたか」である（2026-09-06 に足した）
 ///
 /// **`mke2fs -d` は seed のファイルの所有者をそのままイメージへコピーする。** **手元では
-/// uid 1000、CI では別の uid になるので、像のバイトが建てた人で変わる。**
+/// uid 1000、CI では別の uid になるので、イメージのバイトが建てた人で変わる。**
 /// **実測で見つけた**——CI が失敗し、コンテナで再現し、`cmp -l` の位置が
 /// 全 inode の 2 と 24 に揃っていた（`docs/troubleshooting.md` の 2026-09-06）。
 ///

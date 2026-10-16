@@ -107,7 +107,7 @@ pub fn root_image() -> &'static [u8] {
 ///    `sys_open` / `sys_read` / `sys_getdents64` / `sys_stat`
 ///    （`kernel/src/syscall.rs`）、`load_user_program`
 ///    （`kernel/src/userland.rs`。ELF を `SPAWN_IMAGES` へコピーしてから落とす——
-///    **借りたまま Ring 3 へ入らないことは、あちらの「像をブロックごとに写す。
+///    **借りたまま Ring 3 へ入らないことは、あちらの「イメージをブロックごとに写す。
 ///    借りたままにできない」の doc が根拠である**）
 /// 2. [`root_image`] の直接の呼び出し元は `kernel/src/main.rs` の判定行 1 箇所で、
 ///    **アドレスの値だけを読む**（参照を保持しない）

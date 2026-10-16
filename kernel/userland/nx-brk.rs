@@ -41,7 +41,7 @@ core::arch::global_asm!(
     ".section .text._start,\"ax\"",
     ".globl _start",
     "_start:",
-    // `brk(new_break)`。**ヒープの下端は像の末尾の次のページ（このプログラムでは `0x401000`）で、
+    // `brk(new_break)`。**ヒープの下端はイメージの末尾の次のページ（このプログラムでは `0x401000`）で、
     // そこから `new_break` まで伸びる。** `new_break` は `kernel/src/main.rs` の `NX_BRK_TARGET` の 1 ページ上と
     // 対になっている。
     // システムコールの入口は `int 0x80` である（`kernel/userland/userlib.rs` と同じ。`ADR-0020`）。
