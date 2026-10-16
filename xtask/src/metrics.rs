@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 pub enum Kind {
     /// `cargo build`（カーネル・ブートローダ）。
     Build,
-    /// イメージの準備（ESP の組み立て・起動媒体のイメージ・OVMF の変数のコピー）。
+    /// イメージの準備（ESP の組み立て・ブートメディアのイメージ・OVMF の変数のコピー）。
     Stage,
     /// 外の道具（`debugfs`・`e2fsck`・`objdump`・`sfdisk` 等）。
     Tool,

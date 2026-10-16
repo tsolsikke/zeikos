@@ -11,7 +11,7 @@
 pub enum Family {
     /// 基本の検査の静的な検査（どの選び方でも毎回実行される）。
     Base,
-    /// 起動ログの突き合わせ・機械の変種・起動媒体のイメージ・higher-half・panic・トランポリン。
+    /// 起動ログの突き合わせ・機械の変種・ブートメディアのイメージ・higher-half・panic・トランポリン。
     Boot,
     /// 手で使う道具の確かめ（`stack-deepest`・calibration・screenshot）と書く側の上限。
     Harness,

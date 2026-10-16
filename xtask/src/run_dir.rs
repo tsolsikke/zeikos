@@ -45,7 +45,7 @@ const SCRATCH_TMPFS: &str = "/dev/shm";
 
 /// tmpfs の空きが、これより少なければ、その回の使い捨ての置き場は SSD に置く（バイト）。
 ///
-/// **1 回の実行が tmpfs に置く量は、多くて約 150 MiB である**（装置のイメージ 32 MiB、取り出したイメージ 32 MiB、起動媒体のイメージ
+/// **1 回の実行が tmpfs に置く量は、多くて約 150 MiB である**（装置のイメージ 32 MiB、取り出したイメージ 32 MiB、ブートメディアのイメージ
 /// 66 MiB、ESP 約 10 MiB）。**同時に走る QEMU は 4 つまで**（`launch::VCPU_BUDGET`）で、項目が終わるまで残す分を
 /// 入れても、全検査の間に使うのは 2 GiB に届かない見込みである。**1 GiB を切ったら、ほかの者が tmpfs を使って
 /// いる**——メモリを食い合わないように、SSD へ戻す。
@@ -69,7 +69,7 @@ const ALLOCATION_ATTEMPTS: u64 = 1000;
 ///
 /// # 使い捨ての置き場（2026-10-05）
 ///
-/// **装置のイメージ・ESP・起動媒体のイメージ・QEMU から取り出した RAM のイメージは、tmpfs に置く**（`/dev/shm` の下。[`RunDir::scratch`]）。
+/// **装置のイメージ・ESP・ブートメディアのイメージ・QEMU から取り出した RAM のイメージは、tmpfs に置く**（`/dev/shm` の下。[`RunDir::scratch`]）。
 /// どれも、その回の間だけ要るファイルで、QEMU がいちばん多く書く先である（保存のたびに、装置のイメージの全体を書く）。
 /// SSD に置いていたときは、全検査 1 回で 100 GiB ほどを書いていた（実測。`docs/verification-coverage.md` の
 /// 「全検査が SSD に書く量」）。**ログ（シリアルと `-D` の記録）と `run.txt` は、今までどおり SSD の置き場に置く。**
@@ -400,7 +400,7 @@ impl RunDir {
         self.scratch.join(EXTRACTED_IMAGE)
     }
 
-    /// その回だけの大きなファイル（起動媒体のイメージなど）。**使い捨ての置き場に在り、SSD へはコピーしない。**
+    /// その回だけの大きなファイル（ブートメディアのイメージなど）。**使い捨ての置き場に在り、SSD へはコピーしない。**
     pub fn scratch_file(&self, name: &str) -> PathBuf {
         self.scratch.join(name)
     }

@@ -5,7 +5,7 @@
 //!
 //! `clone` の入口と、スレッドが走ること、スレッドの `exit` が `CLONE_CHILD_CLEARTID` のアドレスに 0 を書くことを、musl の本物の
 //! 道（`pthread_create` → `clone(0x7d0f00, …)`、TLS、`__thread_list_lock`）で確かめる。**Linux 上でも ZeikOS 上でも、同じ
-//! 出力と同じ終了の状態になる**ことを、控えた参照（`linux-programs/reference/`）と突き合わせる。
+//! 出力と同じ終了ステータスになる**ことを、控えた参照（`linux-programs/reference/`）と突き合わせる。
 //!
 //! # futex が無い段階でも通る形
 //!
@@ -23,7 +23,7 @@
 //!    `rt_sigprocmask`、`gettid`、`write`、`munmap`、`futex(FUTEX_WAKE)`、`exit` を打つ。2026-10-14 の Linux 上の `strace`）。
 //! 3. 主スレッドは 64 回譲り、`join` して戻り値とフラグを出す。**譲りの後に行を出さない**——Linux では 64 回の譲りの間に
 //!    スレッドがまだ走っていないことがあり、行の順が決まらない。スレッドの行は `main starts` と `joined` の間に必ず入る。
-//! 4. 終了の状態は引数の数（`exit_group`）。`m1-rust` と同じ形で、起動時の確かめが引数 4 つで起こす。
+//! 4. 終了ステータスは引数の数（`exit_group`）。`m1-rust` と同じ形で、起動時の確かめが引数 4 つで起こす。
 //!
 //! # crate ではない
 //!

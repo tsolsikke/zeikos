@@ -747,7 +747,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         min_heartbeats: None,
     },
     // システムコールの入口で終了の印を見ない。m3a-exit-group-spin-rust の主スレッドが、スレッドの exit_group の後に join の
-    // futex へ入り、行き詰まりの判定が終了の状態を 137 で上書きする（3-1b で踏んだ形）。起動時の確かめが名指しして止まる。
+    // futex へ入り、行き詰まりの判定が終了ステータスを 137 で上書きする（3-1b で踏んだ形）。起動時の確かめが名指しして止まる。
     CriticalTest {
         name: "syscall-entry-ignores-process-end",
         feature: "syscall-entry-ignores-process-end-test",
@@ -1366,7 +1366,7 @@ const STACK_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // **遠征スタックをあふれさせる**（2026-10-06）。見張りのページに当たった #PF が IST2 の上で報告され、
+    // **遠征スタックをあふれさせる**（2026-10-06）。ガードページに当たった #PF が IST2 の上で報告され、
     // ハンドラが、どのスタックかを名前で出すこと。深さ 0 と深さ 1 の 2 本。
     CriticalTest {
         name: "excursion-depth0",
@@ -1394,7 +1394,7 @@ const STACK_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // **遠征スタックの見張りのページを張らない**（以前の形）。張った直後の確かめが、マップされたままのページを名指しして
+    // **遠征スタックのガードページを張らない**（以前の形）。張った直後の確かめが、マップされたままのページを名指しして
     // 止まること。
     CriticalTest {
         name: "excursion-unguarded",
@@ -1407,7 +1407,7 @@ const STACK_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
-    // **見張りのページを、名指しの表に控えない。** 同じ確かめが、控えられていないページを名指しして止まること。
+    // **ガードページを、名指しの表に控えない。** 同じ確かめが、控えられていないページを名指しして止まること。
     CriticalTest {
         name: "excursion-unrecorded",
         feature: "excursion-guard-unrecorded-test",
@@ -2965,7 +2965,7 @@ fn main() -> Result<()> {
        cargo xtask run --machine-variant NAME [--sabotage FEATURE | --config FEATURE]   (ADR-0068。NAME は xtask/machine-variants.txt の名前)
        cargo xtask check [--update-reference]   (ホストテストの名前の集合を取り直す)
        cargo xtask run --boot-log-diff [--update-reference [--allow-shrink] [--only-masked]]\n       cargo xtask run --tool-checks
-       cargo xtask run --calibration-spread [N]\n       cargo xtask run --highhalf-test <kind>\n       cargo xtask screenshot [output.png] [--wait-secs N] [--gfx-test] [--kvm]\n       cargo xtask run-set [--jobs K] <一覧のファイル>   (案 B の ②。一覧の試験を K 本ずつ同時に走らせる。1 行に xtask の引数を 1 つ分)\n       cargo xtask image [--without-fs-image]   (ADR-0068 の HW-e。起動媒体のイメージを建てて確かめる)\n       cargo xtask gen-font\n       cargo xtask judge-vbox <記録>   (ADR-0068 の 2-2。tools/vbox-vm.py run が残した記録を判定する)";
+       cargo xtask run --calibration-spread [N]\n       cargo xtask run --highhalf-test <kind>\n       cargo xtask screenshot [output.png] [--wait-secs N] [--gfx-test] [--kvm]\n       cargo xtask run-set [--jobs K] <一覧のファイル>   (案 B の ②。一覧の試験を K 本ずつ同時に走らせる。1 行に xtask の引数を 1 つ分)\n       cargo xtask image [--without-fs-image]   (ADR-0068 の HW-e。ブートメディアのイメージを建てて確かめる)\n       cargo xtask gen-font\n       cargo xtask judge-vbox <記録>   (ADR-0068 の 2-2。tools/vbox-vm.py run が残した記録を判定する)";
 
     // **コンパイルした木と別の木で動いていれば、何もせずに落ちる**（2026-09-27。[`built_elsewhere`]）。
     if let Some(problem) = built_elsewhere(
@@ -3003,7 +3003,7 @@ fn main() -> Result<()> {
             let gfx_test = rest.iter().any(|a| a == "--gfx-test");
             let kvm = rest.iter().any(|a| a == "--kvm");
             let no_limit = rest.iter().any(|a| a == "--no-limit");
-            // **手で触るための起動（zi-e 前の手当て）。** 上限を外し、
+            // **手で触るための起動（zi-e 前の対策）。** 上限を外し、
             // 記録を `cpu_reset` だけに絞る（[`cmd_run`] の doc）。
             let manual = rest.iter().any(|a| a == "--manual");
             // **打鍵の切り分け（zi-e の後の対策）。** シェルを起動せず、
@@ -3641,7 +3641,7 @@ fn main() -> Result<()> {
                         expect,
                     );
                 }
-                // **起動媒体の破壊テスト（`ADR-0068` の HW-e）。** **カーネルの feature ではないので、
+                // **ブートメディアの破壊テスト（`ADR-0068` の HW-e）。** **カーネルの feature ではないので、
                 // `--sabotage` とは別のフラグである。**
                 if let Some(media) = rest
                     .iter()
@@ -3946,7 +3946,7 @@ fn main() -> Result<()> {
                 .context("judge-vbox requires a record directory (target/vbox/<VM>/<時刻>)")?;
             cmd_judge_vbox(Path::new(record))
         }
-        // **起動媒体のイメージ（`ADR-0068` の HW-e）。** **`--without-fs-image` は破壊テストである。**
+        // **ブートメディアのイメージ（`ADR-0068` の HW-e）。** **`--without-fs-image` は破壊テストである。**
         Some("image") => cmd_image(if args[1..].iter().any(|a| a == "--without-fs-image") {
             MediaContents::WithoutFsImage
         } else {
@@ -4018,12 +4018,12 @@ struct QemuLaunchOptions<'a> {
     /// server モードで待ち受けさせる（screenshot サブコマンド用）。
     monitor_socket: Option<&'a Path>,
     accelerator: Accelerator,
-    /// `-d` に何を渡すか（zi-e 前の手当て）。**既定は `int,cpu_reset` である**
+    /// `-d` に何を渡すか（zi-e 前の対策）。**既定は `int,cpu_reset` である**
     /// （`docs/coding-standards.md` の「QEMU の沈黙の失敗を必ず可視化する」）。
     debug_events: DebugEvents,
 }
 
-/// QEMU の `-d` に渡す種類（zi-e 前の手当て）。
+/// QEMU の `-d` に渡す種類（zi-e 前の対策）。
 ///
 /// # なぜ選べるようにしたか
 ///
@@ -4053,7 +4053,7 @@ impl DebugEvents {
 
 /// `cargo xtask run`。
 ///
-/// # `--manual`——運用者が手で触るための起動（zi-e 前の手当て）
+/// # `--manual`——運用者が手で触るための起動（zi-e 前の対策）
 ///
 /// **`--gui --manual` が、手で触るときの道である。** 2 つのことをする。
 ///
@@ -4177,7 +4177,7 @@ const RUN_TIME_LIMIT: Duration = Duration::from_secs(120);
 
 /// `-d int,cpu_reset` のログが増える速度（実測。TCG。KiB/秒）。
 ///
-/// # 測り直した（zi-e 前の手当て）
+/// # 測り直した（zi-e 前の対策）
 ///
 /// **以前は 137 だった。** あれは M4-d-2 の実測で、**まだシェルが居らず、
 /// 出ていたのはタイマ割り込みだけだった**（100Hz、1 ティックあたり 20 行強）。
@@ -4311,7 +4311,7 @@ fn run_interactive(
             }
             None => {
                 if Instant::now() >= deadline {
-                    // **概算ではなく実測を出す（zi-e 前の手当て）。**
+                    // **概算ではなく実測を出す（zi-e 前の対策）。**
                     // **以前は定数から掛け算していたので、実物と 370 倍
                     // 食い違っていても気づけなかった**（実際そうなっていた。
                     // 「16MB」と出しながら 5.6GiB 書いていた）。
@@ -4599,7 +4599,7 @@ fn build_bootloader_with_features_unwrapped(
     features: &[&str],
 ) -> Result<PathBuf> {
     // **全検査の間は、組ごとに 1 回だけ作ってコピーを使う**（2026-09-29。案 A。項目ごとに cargo を呼ぶと、
-    // 裏の流れが持つ `target/` のキーを待たされる）。**コピーは [`build_bootloader_now`] がロックの中で作る**（案 B の ①）
+    // バックグラウンドが持つ `target/` のキーを待たされる）。**コピーは [`build_bootloader_now`] がロックの中で作る**（案 B の ①）
     // ——**ここでもう一度コピーすると、コピー元とコピー先が同じファイルになる**（[`keep_a_copy`] が断る）。
     kernel_builds::bootloader(features, || build_bootloader_now(workspace_root, features))
 }
@@ -5291,7 +5291,7 @@ fn cmd_fs_image_extract(features: &[&str]) -> Result<()> {
          {disk_matches_dump} (independent of pmemsave; e2fsck on disk0.img would agree)"
     );
 
-    // **カーネルが出したイメージの検査値を、ホストが独立に計算した値と突き合わせる（P-e）。**
+    // **カーネルが出したイメージのチェックサムを、ホストが独立に計算した値と突き合わせる（P-e）。**
     //
     // **埋め込みイメージを外したので、カーネル側の「バイト一致」は無くなった**
     // （`ADR-0034` の Addendum）。**代わりがこれである。**
@@ -5793,7 +5793,7 @@ enum ShellTestMode {
     /// 3 打が字のまま行へ入る。[`ShellTestMode::ArrowsDropped`] と同じく
     /// 判定を 1 本裏返す形である。
     EscDropped,
-    /// 破壊テスト。**通らないことを期待する**（S12 前の手当て、C）。
+    /// 破壊テスト。**通らないことを期待する**（S12 前の対策、C）。
     ///
     /// # なぜこちらは裏返さないのか
     ///
@@ -5918,7 +5918,7 @@ const PIPE_TEST_SABOTAGES: &[&str] = &[
 /// `pipe-test` を「通ること」で実行する確かめ（2026-10-12。`ADR-0084`）。
 ///
 /// - **`spawn-detached-returns-early`**——左の読み込みが貸し出しを 2 ティック持つ間に右が `spawn` する。**右は待ってから
-///   起動する**（spawn の入口が待った刻みが 1 以上で、諦めた回数が 0。起こせなかった右は `/bin/nonexist` だけ）。
+///   起動する**（spawn の入口が待ったティックが 1 以上で、諦めた回数が 0。起こせなかった右は `/bin/nonexist` だけ）。
 ///
 /// **どちらも、中身のバイト一致は求めない**——入場を待たずに戻るので、左のカーネルの行が右の出力の途中に割り込む
 /// （`cmd_pipe_test` の判定のコメント）。
@@ -5953,7 +5953,7 @@ const COMPLETE_TEST_SABOTAGES: &[&str] = &[
 /// **3 つで、落ちる判定が 1 本ずつ違う。**
 ///
 /// **「切り替えで復元しない」は置いていない**——**落とす判定が作れなかった。**
-/// **Ring 3 が走っている間、走行可能なタスクはメインだけで、切り替えそのものが
+/// **Ring 3 が走っている間、実行可能なタスクはメインだけで、切り替えそのものが
 /// 起きない**（`ADR-0058` の「決定 1 の判定」）。**もう 1 人の使い手を用意しよう
 /// として、切り替えが遠征の RSP0 と噛み合わないことが分かった**（実測。
 /// `docs/troubleshooting.md` の 2026-09-07）。
@@ -6048,11 +6048,11 @@ const SERIAL_REOPEN_SABOTAGES: &[&str] = &["serial-reinit-every-open-test"];
 /// **見込みで書いた 4 は使わなかった**——**測ったら 5.08 で、4 では落ちていた。**
 const SYSCALLS_PER_BYTE_BOUND: u64 = 16;
 
-/// `--shell-test` が「通らないこと」で検出する破壊テスト（S12 前の手当て、C）。
+/// `--shell-test` が「通らないこと」で検出する破壊テスト（S12 前の対策、C）。
 ///
 /// **実測で落ちることを確かめてある。** 落ちる判定はそれぞれ違う。
 ///
-/// **この説明は `UTF8_TEST_SABOTAGES` の説明と 1 つに繋がっていた**（2026-09-26 に戻した。計器の外の
+/// **この説明は `UTF8_TEST_SABOTAGES` の説明と 1 つに繋がっていた**（2026-09-26 に戻した。メトリクスの外の
 /// 破壊を絞る段）——**間に `utf8-test` の一覧が挟まり、こちらの一覧には説明が無かった。**
 ///
 /// # 中断だけの一覧ではなくなった（DIR-1）
@@ -6074,7 +6074,7 @@ const SHELL_TEST_SABOTAGES: &[&str] = &[
     "read-never-waits",
     "keyboard-does-not-wake",
     "wake-ignores-the-reason",
-    // **Ctrl+C の終了処理（S12 前の手当て C）。** **フラグを立てるのは IRQ1 のハンドラである。**
+    // **Ctrl+C の終了処理（S12 前の対策 C）。** **フラグを立てるのは IRQ1 のハンドラである。**
     "kill-ignore-interrupt-test",
     "kill-fold-at-depth-one-test",
     "kill-keep-stale-interrupt-test",
@@ -6239,7 +6239,7 @@ impl ShellTestMode {
 ///
 /// # 何を見るか
 ///
-/// **この刻みのシェルは組み込みの `exit` しか持たない。** したがって
+/// **このステップのシェルは組み込みの `exit` しか持たない。** したがって
 /// **「`exit` と改行を送ったらシェルが終わり、`init` が起こし直す」**が
 /// **唯一の観測である。** **`init` の役目も同時に確かめられる。**
 ///
@@ -7075,7 +7075,7 @@ const SABOTAGE_STOP_REASONS: &[StopReason] = &[
 ///
 /// **`note` は、狙いが名前の検査に届いていないときにだけ書き、判定の行に出す**（[`StopReason`] と同じ）。
 ///
-/// **検査の関数が自分の判定を反転させて「捕まえた」と返す破壊テストの行も、同じ表に置く**（2026-09-26。計器の外の
+/// **検査の関数が自分の判定を反転させて「捕まえた」と返す破壊テストの行も、同じ表に置く**（2026-09-26。メトリクスの外の
 /// 破壊を絞る段）——**[`report_inverted_judgement`] が引く。** **置く前に同じく 3 回実行し、3 回とも狙いの判定が
 /// 偽になったものだけを載せた。** **3 回の結果は `docs/verification-coverage.md` の「計測の外の破壊テストを狙いの
 /// 判定へ絞る」にある。** **止まる形の破壊テストは、カーネルが出力した停止の行（`the kernel reported`）を目印にした**
@@ -7091,7 +7091,7 @@ struct NamedJudgement {
     /// 捕まっていても「しるしが出ていない」と判定される（2026-10-02 に、全検査で踏んだ）。
     signs: &'static [&'static str],
     note: &'static str,
-    /// 狙いの判定に届いているか（2026-09-26。計器の外の破壊を絞る段。運用者の決定 1 の ②）。**偽の行は、
+    /// 狙いの判定に届いているか（2026-09-26。メトリクスの外の破壊を絞る段。運用者の決定 1 の ②）。**偽の行は、
     /// 別の判定が先に止める形である**（起動時の検査・装置の拒み）——**検出したとは数えるが、狙いの判定で
     /// 検出したとは数えない。** **まとめの計測が別に数える**（[`not_reached_verdicts_line`]）。
     reached: bool,
@@ -8428,7 +8428,7 @@ const SABOTAGE_JUDGEMENTS: &[NamedJudgement] = &[
 /// **3 回のうちに偽になる判定が変わったもの（揺れる）を載せる。** **まとめの行が数を出す。** **組は
 /// （検査・破壊テスト・理由）である**（2026-09-26。同じ破壊テストを別の検査が実行するので、検査の名前も持つ）。
 const SABOTAGE_JUDGEMENTS_NOT_PLACED: &[(&str, &str, &str)] = &[
-    // **説明の狙い（判定 1。返事が届く前に読み終える）が、3 回のうち 2 回だけ偽だった**（2026-09-26。計器の外の
+    // **説明の狙い（判定 1。返事が届く前に読み終える）が、3 回のうち 2 回だけ偽だった**（2026-09-26。メトリクスの外の
     // 破壊を絞る段）。**返事が先に届く回は、判定 1 が通る。** **3 回とも偽だった別の判定（`big` の往復）へは
     // 付け替えない**——**説明の狙いではないので。**
     (
@@ -8515,7 +8515,7 @@ enum SabotageVerdict {
     StoppedForAnotherReason { sign: String },
     /// 止まらずに、別の形で落ちた。
     DidNotStop { error: String },
-    /// 検査装置の故障で落ちた（2026-09-26。計器の外の破壊を絞る段の B）。**検出したとしない。**
+    /// 検査装置の故障で落ちた（2026-09-26。メトリクスの外の破壊を絞る段の B）。**検出したとしない。**
     HarnessFault { error: String },
 }
 
@@ -8531,7 +8531,7 @@ impl SabotageVerdict {
     }
 }
 
-/// 期限に着くのが検出のしかたである破壊テストの実行（検査・破壊テスト・なぜ期限か）（2026-09-26。計器の外の破壊を絞る段の B）。
+/// 期限に着くのが検出のしかたである破壊テストの実行（検査・破壊テスト・なぜ期限か）（2026-09-26。メトリクスの外の破壊を絞る段の B）。
 ///
 /// **破壊テストの実行が失敗の期限に着いたら、ふつうは検出したとしない**（[`sabotage_run_problem`]）——**時間切れの
 /// 途中の出力で、狙いの判定が偽に読めてしまう。** **起こさない・待たせる形の破壊テストは、期限に着くことが検出のしかた
@@ -8545,7 +8545,7 @@ fn caught_at_the_deadline(check: &str, keys: &[&str]) -> bool {
         .any(|(listed, key, _)| *listed == check && keys.contains(key))
 }
 
-/// 破壊テストの実行が、実行の側の理由で終わっていたか（純粋な論理。2026-09-26。計器の外の破壊を絞る段の B）。
+/// 破壊テストの実行が、実行の側の理由で終わっていたか（純粋な論理。2026-09-26。メトリクスの外の破壊を絞る段の B）。
 ///
 /// **ログの上限で切った実行が在れば、切れた出力で読んだ判定を検出したとしない。** **失敗の期限に着いた
 /// 実行も同じ**——**期限に着くのが検出のしかたと載せた破壊テストだけは通す**（`deadline_is_the_catch`）。
@@ -8662,7 +8662,7 @@ static ANY_JUDGEMENT_VERDICTS: std::sync::Mutex<
     std::collections::BTreeMap<(Option<Family>, String), usize>,
 > = std::sync::Mutex::new(std::collections::BTreeMap::new());
 
-/// 検査の関数が自分の判定を反転させて「捕まえた」と返した破壊テストの実行を分ける（2026-09-26。計器の外の破壊を
+/// 検査の関数が自分の判定を反転させて「捕まえた」と返した破壊テストの実行を分ける（2026-09-26。メトリクスの外の破壊を
 /// 絞る段）。**表（[`SABOTAGE_JUDGEMENTS`]）に検査と破壊テストの組が在れば、その判定が偽になったときだけ検出した
 /// とする。** **無ければ「どれかの判定が偽」として数える**（[`caught_by_any_judgement`]）。
 fn report_inverted_judgement(check: &str, key: &str, label: &str, failed: &mut Failures) {
@@ -8700,7 +8700,7 @@ fn report_inverted_judgement_for(check: &str, keys: &[&str], label: &str, failed
     }
 }
 
-/// 名前の判定で検出したが、狙いの判定ではなかった回の数（2026-09-26。計器の外の破壊を絞る段）。**キーは全検査の
+/// 名前の判定で検出したが、狙いの判定ではなかった回の数（2026-09-26。メトリクスの外の破壊を絞る段）。**キーは全検査の
 /// グループと検査の名前である。** **検出したとは数えるが、「破壊で確かめた」の保証には混ぜない**（運用者の決定 1 の ②）。
 static NOT_REACHED_VERDICTS: std::sync::Mutex<
     std::collections::BTreeMap<(Option<Family>, String), usize>,
@@ -9745,7 +9745,7 @@ fn cmd_pipe_test(features: &[&str], expect_pass: bool) -> Result<()> {
     let detached_starts = g("detached starts ");
     let entry_wait_ticks = g("waited at most ");
     let terminal_writes = g("wrote to the terminal ");
-    // **spawn の入口がアロケータを待った刻みと、諦めた回数**（2026-10-12。`ADR-0084`）。
+    // **spawn の入口がアロケータを待ったティックと、諦めた回数**（2026-10-12。`ADR-0084`）。
     let spawn_wait_ticks = g("spawn entries waited ");
     let spawn_gave_up = gauge.and_then(|line| {
         let rest = &line[line.find("spawn entries waited ")?..];
@@ -9883,7 +9883,7 @@ fn cmd_pipe_test(features: &[&str], expect_pass: bool) -> Result<()> {
 
     // **確かめの構成の判定**（2026-10-12。`ADR-0084`）。
     //
-    // - 重なる形（`spawn-detached-returns-early`）: 右は待って起動する。**待った刻みが 1 以上で、諦めた回数が 0。**
+    // - 重なる形（`spawn-detached-returns-early`）: 右は待って起動する。**待ったティックが 1 以上で、諦めた回数が 0。**
     // - 上限を越える形（`allocator-held-past-the-wait-limit-test`）: **最初の右（`/bin/cat`）だけが起動できず、諦めた
     //   回数が 1。** **使われなかった予約は消え（消した数が `nonexist` の分と合わせて 2）、後の `|` は通る**（`one two` と
     //   `again`）。最初の `|` の中身（`hello`）は出ない。
@@ -11137,7 +11137,7 @@ fn seinas_picture_matching(image: &Option<(u32, u32, Vec<u8>)>) -> Option<u32> {
 ///
 /// 1. Seinas の確かめの絵（四隅の赤・緑・青・黄、白い枠、中央の白、暗い青の背景）が画面に出た
 /// 2. 終わった後に文字の画面が戻った（同じ点が絵の色でない）
-/// 3. 終了の状態が 0（`spawn` の結果の行が `Exited(0)`。`zash` が `exit status` を言わない）
+/// 3. 終了ステータスが 0（`spawn` の結果の行が `Exited(0)`。`zash` が `exit status` を言わない）
 /// 4. 知らない番号を 1 つも打っていない（`spawn: /bin/linux/seinas-fbdev ended (Exited(0)) … (0 with a number the kernel does not know`）
 /// 5. `[ERROR]` が無い
 fn cmd_seinas_fbdev_test() -> Result<()> {
@@ -11232,7 +11232,7 @@ fn cmd_seinas_fbdev_test() -> Result<()> {
             Ok(()) => shown = read_complete_ppm(&shown_ppm, SCREENDUMP_FILE_TIMEOUT),
             Err(e) => println!("{context}: the first screendump failed: {e}"),
         }
-        // **終わりは `spawn` の結果の行で待つ**（`zash` は終了の状態が 0 なら何も言わない）。
+        // **終わりは `spawn` の結果の行で待つ**（`zash` は終了ステータスが 0 なら何も言わない）。
         if wait_for("spawn: /bin/linux/seinas-fbdev ended", SCREEN_TEST_TIMEOUT) {
             metrics::sleep_fixed(Duration::from_millis(500));
             match capture_screendump(&monitor_socket, &left_ppm) {
@@ -11327,7 +11327,7 @@ fn cmd_seinas_fbdev_test() -> Result<()> {
     }
 }
 
-/// `/dev/fb0` を Linux の fbdev の形で開き、書けば映ることを検査する（2026-10-07。`ADR-0083`。M2 の最初の刻み）。
+/// `/dev/fb0` を Linux の fbdev の形で開き、書けば映ることを検査する（2026-10-07。`ADR-0083`。M2 の最初のステップ）。
 ///
 /// **`fb-test` を前景で起動する。** `fb-test` は `open("/dev/fb0", O_RDWR)` で画面を開き、fbdev の `ioctl` で形を訊き、面を
 /// `mmap` して四隅に色を置き、**`FBIOZPRESENT` を打たずに** 1.5 秒眠って、閉じる。カーネルが間隔（20 Hz）ごとにバックバッファの
@@ -11473,7 +11473,7 @@ fn cmd_fb_test(features: &[&str], ending: FbTestEnding, expect_pass: bool) -> Re
             .ok()
     });
     // 眠った 1.5 秒を間隔で割った数（30）に、起きるまでの余白と閉じるときの 1 回を足した上限。間隔を見ない形は、
-    // タイマの刻みごと（数百回以上）になる。
+    // タイマのティックごと（数百回以上）になる。
     let presents_bound = FB_TEST_HOLD_MS / FB_TEST_INTERVAL_MS + 10;
 
     let judgements: [(&str, bool); 4] = [
@@ -11958,7 +11958,7 @@ const MACHINE_VARIANT_CHECKS: &[(&str, VariantExpect)] = &[
     ),
 ];
 
-/// 起動媒体の破壊テスト（`ADR-0068` の HW-e）。**カーネルの feature ではなく、イメージの中身を変える。**
+/// ブートメディアの破壊テスト（`ADR-0068` の HW-e）。**カーネルの feature ではなく、イメージの中身を変える。**
 ///
 /// **`\zeikos\fs.img` を入れずにイメージをビルドする**——**装置もイメージも無い形になり、起動の列挙の所で
 /// 止まる。** **HW-d の破壊テスト（`fs-ram-image-ignored`）とは止まる所が違う**（実測。2026-09-23）
@@ -12533,7 +12533,7 @@ fn apply_machine_variant(
     Ok(())
 }
 
-/// 起動媒体に何を入れるか（`ADR-0068` の HW-e）。
+/// ブートメディアに何を入れるか（`ADR-0068` の HW-e）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MediaContents {
     /// 3 つの成果物と `startup.nsh` を全部入れる。
@@ -12568,7 +12568,7 @@ impl MediaContents {
     }
 }
 
-/// 起動媒体のイメージの置き場（`ADR-0068` の HW-e）。**`target/media/` の下に置く。**
+/// ブートメディアのイメージの置き場（`ADR-0068` の HW-e）。**`target/media/` の下に置く。**
 fn media_image_path(workspace_root: &Path, name: &str) -> PathBuf {
     workspace_root
         .join("target")
@@ -12576,7 +12576,7 @@ fn media_image_path(workspace_root: &Path, name: &str) -> PathBuf {
         .join(format!("{name}.img"))
 }
 
-/// ESP のディレクトリから起動媒体のイメージをビルドし、書き、読み返す（`ADR-0068` の HW-e）。
+/// ESP のディレクトリからブートメディアのイメージをビルドし、書き、読み返す（`ADR-0068` の HW-e）。
 ///
 /// # 3 つの道で確かめる
 ///
@@ -12719,7 +12719,7 @@ fn verify_partition_table(image: &Path) -> Result<()> {
     Ok(())
 }
 
-/// `cargo xtask image`（`ADR-0068` の HW-e）。**起動媒体のイメージをビルドして確かめる。**
+/// `cargo xtask image`（`ADR-0068` の HW-e）。**ブートメディアのイメージをビルドして確かめる。**
 ///
 /// **`--without-fs-image` は破壊テストである**（[`MEDIA_SABOTAGES`]）。**別の名前のイメージを書く**
 /// ——**運用者が VirtualBox へ渡すイメージ（`zeikos.img`）を上書きしない。**
@@ -12745,7 +12745,7 @@ fn cmd_image(contents: MediaContents) -> Result<()> {
 ///
 /// # なぜ在るのか
 ///
-/// **イメージのバイトは起動ログの参照（巻の名前と、superblock のセクタの検査値）に出る。** キャッシュのヒットは読み取り専用の
+/// **イメージのバイトは起動ログの参照（巻の名前と、superblock のセクタのチェックサム）に出る。** キャッシュのヒットは読み取り専用の
 /// キャッシュへのハードリンクで、`fs::copy` が権限をコピーし、`mke2fs -d` がそれを inode へ入れていたので、ヒットだけ `/bin` の
 /// プログラムが 0444 になり、参照と食い違った（`docs/troubleshooting.md` の 2026-10-08 の項）。いまは `build.rs` が seed の
 /// 権限を決める。**この項目は、決め忘れや、権限のほかにコピー元から混ざるものを、全検査を待たずに捕まえる。**
@@ -12829,7 +12829,7 @@ fn check_image_determinism(workspace_root: &Path) -> Result<String> {
     ))
 }
 
-/// イメージの確かめの `cargo check` の引数（既定の構成。全検査の裏の流れと同じく、増分の置き場を使わない）。
+/// イメージの確かめの `cargo check` の引数（既定の構成。全検査のバックグラウンドと同じく、増分の置き場を使わない）。
 fn image_check_cargo_args() -> Vec<String> {
     let mut args = kernel_cargo_args(&[]);
     args[0] = "check".to_string();
@@ -12882,7 +12882,7 @@ fn image_determinism_problem(images: &[(&str, Vec<u8>, String)]) -> Option<Strin
     None
 }
 
-/// 基本の検査の項目——**起動媒体のイメージをビルドし、読み返し、外の道具と突き合わせる**（`ADR-0068` の HW-e）。
+/// 基本の検査の項目——**ブートメディアのイメージをビルドし、読み返し、外の道具と突き合わせる**（`ADR-0068` の HW-e）。
 ///
 /// # なぜ基本の検査に置くのか
 ///
@@ -12968,8 +12968,8 @@ fn cmd_machine_variant(
     let kernel_elf = build_kernel_with_features(&workspace_root, kernel_features)?;
     let esp_dir = stage_esp(&run, &bootloader_efi, &kernel_elf)?;
     // **イメージを RAM から受け取る変種にだけ、ESP へイメージを置く**（2026-10-05。[`stage_ram_image`]）。**virtio-blk を付けて
-    // ディレクトリから起動する変種には置かない。** **起動媒体からイメージを外す破壊テストの回にも置かない**——
-    // 起動媒体へ入れるファイルの一覧（`MediaContents::paths`）に無いので、置いても載らない。
+    // ディレクトリから起動する変種には置かない。** **ブートメディアからイメージを外す破壊テストの回にも置かない**——
+    // ブートメディアへ入れるファイルの一覧（`MediaContents::paths`）に無いので、置いても載らない。
     if (!variant.virtio_disk || variant.esp == EspSource::Media) && media == MediaContents::Complete
     {
         stage_ram_image(&esp_dir, &kernel_elf)?;
@@ -17094,7 +17094,7 @@ fn parse_disk0_stat(text: &str, marker: &str) -> Option<u64> {
     None
 }
 
-/// イメージの検査値（P-e。`ADR-0034` の Addendum）。
+/// イメージのチェックサム（P-e。`ADR-0034` の Addendum）。
 ///
 /// **カーネル側の `image_checksum` と同じ式である**——`byte * (index + 1)` の
 /// 総和をラップさせて足す。**式を 2 つに増やさない。**
@@ -17109,14 +17109,14 @@ fn image_checksum(bytes: &[u8]) -> u32 {
     sum
 }
 
-/// イメージの「管理用の部分」の検査値（2026-10-05）。**カーネルが起動ログに出す値と突き合わせる相手である。**
+/// イメージの「管理用の部分」のチェックサム（2026-10-05）。**カーネルが起動ログに出す値と突き合わせる相手である。**
 ///
 /// **範囲は、先頭から、グループ 0 の inode の表の終わりまでである**（`common::ext2` の `management_prefix_len`）。
 /// **以前はイメージの全体だった。** カーネルがイメージの全体を歩く時間が、イメージの大きさに比例して延びたので絞った
 /// （`docs/adr/0077-costs-that-grow-with-the-disk-image.md`）。**ファイルの中身の違いは、ボリュームの名前の欄に
-/// 書いた全体の検査値を通して、この範囲の値に出る。** イメージの全体のバイト一致は、取り出したイメージとの比べが見る。
+/// 書いた全体のチェックサムを通して、この範囲の値に出る。** イメージの全体のバイト一致は、取り出したイメージとの比べが見る。
 ///
-/// **解析できないイメージは `None`**（カーネルの側は 0 バイトの検査値を出して、解析の失敗で止まる）。
+/// **解析できないイメージは `None`**（カーネルの側は 0 バイトのチェックサムを出して、解析の失敗で止まる）。
 fn management_checksum(bytes: &[u8]) -> Option<u32> {
     let fs = common::ext2::Ext2::parse(bytes).ok()?;
     let length = fs.management_prefix_len().ok()?;
@@ -17718,7 +17718,7 @@ fn judge_shell_session(
     // この下の判定はすべて範囲を取れない**（`after_shell` が空になる）。
     println!("{context}: (signal) the shell printed its prompt = {ready}");
 
-    // **シェルが出た後だけを見る（S12 前の手当ての 1 本目）。**
+    // **シェルが出た後だけを見る（S12 前の対策の 1 本目）。**
     //
     // **`ls`・`cat`・`hello` は起動シーケンスでも走っている**——`syscall-test` が
     // `spawn` で起動する。**シリアル全体を `contains` で見ると、シェルが 1 つも
@@ -17741,7 +17741,7 @@ fn judge_shell_session(
     let ended = serial.contains("init: the shell ended (Exited(0))");
     // **`init` が起こし直したこと。**
     let restarted = serial.contains("init: starting /bin/zash (restart 1 of 3)");
-    // **起こし直したのはちょうど 1 回であること（S12 前の手当て、C）。**
+    // **起こし直したのはちょうど 1 回であること（S12 前の対策、C）。**
     //
     // **シェル自身が死ぬと、ここが 2 回になる。** 最後の `exit` でどのみち
     // 1 回起きるので、**「起こし直した」だけでは足りない**——
@@ -17777,9 +17777,9 @@ fn judge_shell_session(
     // **落とす破壊テストは無い。** **`brk-skip-shrink-test` は縮める側を壊すもので、
     // 伸ばす側は通る**（実測でこの行は成功のままである）。**足すときに確かめた。**
     let c_heap_worked = after_shell.contains("heap ok");
-    // **Linux 向けの musl の静的なイメージが、シェルから起きて、Linux と同じ出力と終了の状態で終わること**（M1。2026-10-06）。
+    // **Linux 向けの musl の静的なイメージが、シェルから起きて、Linux と同じ出力と終了ステータスで終わること**（M1。2026-10-06）。
     // **出力は `linux-programs/reference/m1-rust.txt` と突き合わせる**——環境変数の数の行だけは、シェルが渡す数で
-    // 変わるので、数を見ずに形だけ見る。終了の状態は `zash: exit status 4`（引数の数）で見る。
+    // 変わるので、数を見ずに形だけ見る。終了ステータスは `zash: exit status 4`（引数の数）で見る。
     let m1_rust_matched_the_linux_reference = linux_program_output_matches(
         &workspace_root()?,
         "m1-rust",
@@ -17789,7 +17789,7 @@ fn judge_shell_session(
     .unwrap_or(false)
         && after_shell.contains("zash: exit status 4");
 
-    // **`/` を含まない語が `/bin/` の下で見つかること（S12 前の手当ての 3 本目）。**
+    // **`/` を含まない語が `/bin/` の下で見つかること（S12 前の対策の 3 本目）。**
     //
     // **`ls` と `cat /etc/motd` を `/bin/` を付けずに送っている。**
     // **エコーでその行が打たれたことを見て、`cannot run` が出ていないことで
@@ -17799,7 +17799,7 @@ fn judge_shell_session(
     // **`/bin/` を付けた側が同じものを出す。** 上の 3 判定と同じ理由である。
     let typed_bare_ls = after_shell_plain.contains("zeikos$ ls\n");
     let typed_bare_cat = after_shell_plain.contains("zeikos$ cat /etc/motd\n");
-    // **「1 つも `cannot run` が出ていない」では見られなくなった（S12 前の手当て）。**
+    // **「1 つも `cannot run` が出ていない」では見られなくなった（S12 前の対策）。**
     // **行編集の判定が、わざと走らない語（`abx`）を打つためである。**
     // **名前を挙げて見る形へ狭めた**——ここが主張したいのは
     // 「`/bin/` を付けずに打った 3 つが起こせたこと」だけである。
@@ -17808,7 +17808,7 @@ fn judge_shell_session(
         && !after_shell.contains("zash: spawn-test: cannot run");
     let bare_names_resolved = typed_bare_ls && typed_bare_cat && no_cannot_run;
 
-    // **Backspace が行を編集したこと（S12 前の手当て）。**
+    // **Backspace が行を編集したこと（S12 前の対策）。**
     //
     // **打ったのは `abc` → Backspace → `x` で、走るのは `abx` である。**
     // **消えていなければ `abcx` になる。** 出る側と出ない側の両方を見る——
@@ -17817,7 +17817,7 @@ fn judge_shell_session(
     let unedited_line_absent = !after_shell.contains("zash: abcx: cannot run");
     let backspace_edited_the_line = edited_line_ran && unedited_line_absent;
 
-    // **左矢印が挿入点を動かしたこと（S12 前の手当て）。**
+    // **左矢印が挿入点を動かしたこと（S12 前の対策）。**
     //
     // **打ったのは `pq` → 左 → `y` で、走るのは `pyq` である。**
     // **動いていなければ `pqy` になる。** Backspace と同じ形で、出る側と
@@ -17876,7 +17876,7 @@ fn judge_shell_session(
     let jis_only_keys_reached_ring3 = after_shell.contains("zash: \\\\: cannot run");
     let only_one_jis_key_arrived = after_shell.contains("zash: \\: cannot run");
 
-    // **Ctrl+C が打ちかけの行を捨てたこと（S12 前の手当て、C。深さ 1）。**
+    // **Ctrl+C が打ちかけの行を捨てたこと（S12 前の対策、C。深さ 1）。**
     //
     // **`zz` と打ってから Ctrl+C を送り、`ret` を打っている。**
     // **捨てられていれば `zz` は走らない。** エコーの `^C` が出ることも見る——
@@ -17885,7 +17885,7 @@ fn judge_shell_session(
     let discarded_line_did_not_run = !after_shell.contains("zash: zz: cannot run");
     let ctrl_c_discarded_the_line = ctrl_c_echoed && discarded_line_did_not_run;
 
-    // **Ctrl+C が空回りし続ける子を止めたこと（S12 前の手当て、C。深さ 2）。**
+    // **Ctrl+C が空回りし続ける子を止めたこと（S12 前の対策、C。深さ 2）。**
     //
     // **`spin` はシステムコールを出さずに空回りする。** **走り始めたこと**（あちらが
     // 出す 1 行）と、**止まったこと**（シェルの `interrupted` と、カーネルの
@@ -18875,7 +18875,7 @@ const EXCURSION_STACK_MIN_SPARE: usize = 16 * 1024;
 // カーネルのスクリプトとして差し込む形（`shell-script-test`）の両方が読むためである。**
 // **各行の意味は、あちらの行頭のコメントと、ここの判定の doc にある。**
 
-/// `--shell-test` が打つ行（S11-11。S12 前の手当ての 3 本目で伸ばした）。
+/// `--shell-test` が打つ行（S11-11。S12 前の対策の 3 本目で伸ばした）。
 ///
 /// **キー名は QEMU monitor のものである。** `/` は `slash`、空白は `spc`、
 /// `-` は `minus`、改行は `ret` である。
@@ -19295,7 +19295,7 @@ const LAPIC_TIMER_TESTS: &[LapicTimerTest] = &[
     },
     // **PIT のティックで取った標本だけを 13 分の 1 にする**（2026-10-11。`ADR-0068` の Addendum）。KVM が溜めた
     // ティックを入れた回の形である。**突き合わせが食い違いを名指しし（下の行）、PM タイマの値が使われるので、
-    // 速さは許容に入る。** PIT の値が使われたら、タイマは約 13 倍の速さで刻み、速さの判定が落ちる。
+    // 速さは許容に入る。** PIT の値が使われたら、タイマは約 13 倍の速さでティック、速さの判定が落ちる。
     LapicTimerTest {
         name: "pit-ticks-queued",
         features: &["keep-steady-loop", "pit-calibration-ticks-queued"],
@@ -20504,7 +20504,7 @@ const BOOT_LOG_VOLATILE_MARKERS: &[&str] = &[
     // **落とした結果、この行の形は参照の対象外である。** 形を見ているのは
     // マーカーで解析している既存の項目群のほうで、**ここは覆っていない。**
     "heartbeat",
-    // コンソールの所要（S12 前の手当て）。**TSC のサイクル数なので実行ごとに変わる。**
+    // コンソールの所要（S12 前の対策）。**TSC のサイクル数なので実行ごとに変わる。**
     //
     // **バイト数の行は落とさない。** あちらは同じ起動シーケンスなら同じ量を送るので、
     // **参照の対象として成立している。** 落とすのは所要の行だけである。
@@ -20573,7 +20573,7 @@ const BOOT_LOG_CORE_COUNT_MARKERS: &[&str] = &[
 /// 起動ログの参照で、**行は残して値だけを伏せる所**（M3a。2026-10-14）。**スケジュールで決まる値である**——
 /// `pthread_create` のウィンドウ（`clone` から戻って `__tl_unlock` するまで）にティックが当たると、futex の待ちと起こしが増え、
 /// システムコールの数・池のタスクのカーネルスタックの高水位・futex の数が変わる。行ごと落とすと、同じ行に在る
-/// 決まった値（終了の状態・知らない番号の数・`over half=false (expected false)`）まで落ちるので、数だけを `<n>` に置く。
+/// 決まった値（終了ステータス・知らない番号の数・`over half=false (expected false)`）まで落ちるので、数だけを `<n>` に置く。
 /// **伏せた値は [`BOOT_LOG_RANGES`] が範囲で見る**——伏せたのに代わりの検査が無い値は置かない。
 struct VolatileField {
     /// この文字列を含む行だけが対象。
@@ -21363,7 +21363,7 @@ fn normalize_boot_log(serial: &str, drop_core_count_lines: bool) -> Vec<String> 
 ///    一致する。** **出どころが独立である**（片方はホストの道具、片方は
 ///    カーネルとファイルシステムとシリアル）
 ///
-/// **加えて、2 度目のカーネルの検査値が、起動する前にホストが `disk0.img` から
+/// **加えて、2 度目のカーネルのチェックサムが、起動する前にホストが `disk0.img` から
 /// 計算した値と一致する**（P-a と同じ本。**間でイメージを作り直していないこと**）。
 ///
 /// # 破壊テスト
@@ -21836,7 +21836,7 @@ fn capture_one_boot(
 /// - **間でイメージを作り直していない**（`stage_esp` が出す行）
 /// - **2 度目が止まっていない**（`fs-image-ready` が出る）
 /// - **2 度目のカーネルが、1 度目の変化を読んでいる**（空きブロック数が減っている）
-/// - **2 度目のカーネルの検査値が、起動する前にホストが `disk0.img` から
+/// - **2 度目のカーネルのチェックサムが、起動する前にホストが `disk0.img` から
 ///   計算した値と一致する**（出どころが独立である）
 ///
 /// # 破壊テスト
@@ -21932,7 +21932,7 @@ fn cmd_persist_test(rebuild_between: bool) -> Result<()> {
          {free_on_device:?} free block(s); the built image has {built_free:?})"
     );
 
-    // **2 度目を起動する前の、装置の中身の検査値。** **カーネルが出す値と突き合わせる。**
+    // **2 度目を起動する前の、装置の中身のチェックサム。** **カーネルが出す値と突き合わせる。**
     let host_checksum = fs::read(&disk)
         .ok()
         .and_then(|bytes| management_checksum(&bytes));
@@ -22193,8 +22193,8 @@ const LINUX_PROGRAMS_IN_THE_BOOT_LOG: &[&str] = &[
     "m3a-exit-with-waiting-thread-rust",
 ];
 
-/// `linux-programs/reference/<name>.txt`（Linux 上で控えた stdout と終了の状態）の各行が、`output` に順に在るか
-/// （M1。2026-10-06）。**参照の最後の行 `exit status: N` は、出力の中では探さない**——終了の状態は呼ぶ側が別の行で見る
+/// `linux-programs/reference/<name>.txt`（Linux 上で控えた stdout と終了ステータス）の各行が、`output` に順に在るか
+/// （M1。2026-10-06）。**参照の最後の行 `exit status: N` は、出力の中では探さない**——終了ステータスは呼ぶ側が別の行で見る
 /// （`spawn` の結果か `zash: exit status`）。`environment variable(s)` の行は、`how` に従って数を見るか形だけ見る。
 fn linux_program_output_matches(
     workspace_root: &Path,
@@ -23405,7 +23405,7 @@ fn field_value(line: &str, field: &str) -> Option<String> {
 }
 
 /// C の Linux 向けのプログラム（`musl-gcc` で手で作った `target/linux-programs/m1-c`）をイメージに入れた構成（`linux-c-test`）で
-/// 起動し、`syscall-test` が `spawn` で起こした `/bin/linux/m1-c` の出力と終了の状態を、Linux 上で控えた参照
+/// 起動し、`syscall-test` が `spawn` で起こした `/bin/linux/m1-c` の出力と終了ステータスを、Linux 上で控えた参照
 /// （`linux-programs/reference/m1-c.txt`）と突き合わせる（M1。2026-10-06）。
 ///
 /// **道具が無くて作っていなければ、名指しして飛ばす**（通ったことにはしない——「skipped」の行が結果に残る。CI には
@@ -27261,7 +27261,7 @@ const SMP_AP_TESTS: &[CriticalTest] = &[
             // **この構成では正当に鳴りうる。** `setup_preemptive_tasks` は先頭で
             // `set_current_index(0)` を呼ぶので、**AP の `CURRENT` が一時的に
             // タスク 0 を指す。** そのウィンドウの間に bootstrap processor がティックを
-            // 受けると、走行可能な担当ワーカーがまだ無いので落ち先の 0 を選び、
+            // 受けると、実行可能な担当ワーカーがまだ無いので落ち先の 0 を選び、
             // **検出器は「タスク 0 が他コアの current でもある」を見て鳴る。**
             //
             // **検出器は誤っていない。** `currents` は本当に `[0, 0]` である。
@@ -28066,7 +28066,7 @@ const COMMON_ITEMS_FOR_HOMES: &[CommonItemsForHomes] = &[
     CommonItemsForHomes {
         module: "kernel::page_survey",
         items: &["register", "register_absent"],
-        reason: "マップした範囲を、名前つきの領域として登録する（ページの権限の一覧。見張りのページ・CPU ごとのスタック・割り込みコントローラのレジスタは、マップする所が置き場の中に在る）",
+        reason: "マップした範囲を、名前つきの領域として登録する（ページの権限の一覧。ガードページ・CPU ごとのスタック・割り込みコントローラのレジスタは、マップする所が置き場の中に在る）",
     },
     CommonItemsForHomes {
         module: "kernel",
@@ -29953,7 +29953,7 @@ fn run_e2fsck(image: &Path) -> Result<String> {
 /// **cargo の JSON 出力から引く。** `serde` は入れない——見るのは
 /// `build-script-executed` の行 1 種類で、必要な欄は 2 つだけである。
 fn kernel_build_out_dir(workspace_root: &Path) -> Result<PathBuf> {
-    // **全検査の間は裏の流れから受け取る**（2026-09-29。案 A）。**その場で cargo を呼ぶと、裏の流れがコピーする前の
+    // **全検査の間はバックグラウンドから受け取る**（2026-09-29。案 A）。**その場で cargo を呼ぶと、バックグラウンドがコピーする前の
     // ELF を既定の構成で書き換えうる**（cargo は組によらず同じ置き場へ書く）。
     if kernel_builds::is_running() {
         return run_kernel_build(workspace_root, &[]).map(|build| build.out_dir);
@@ -30924,7 +30924,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
                 .map(PathBuf::from)
                 .as_deref(),
         );
-        // **kernel のビルドを裏の流れにまとめる**（2026-09-29。案 A。`kernel_builds` の doc）。
+        // **kernel のビルドをバックグラウンドにまとめる**（2026-09-29。案 A。`kernel_builds` の doc）。
         start_kernel_builds(&root);
     } else if commit {
         refuse_if_something_else_is_running("--commit")?;
@@ -31494,7 +31494,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
         }
     }
 
-    // **裏の流れが kernel を先に作り始める**（2026-09-29。案 A）。**基本の検査の項目が終わってから**——
+    // **バックグラウンドが kernel を先に作り始める**（2026-09-29。案 A）。**基本の検査の項目が終わってから**——
     // `cargo test` や `clippy` が `target/` のキーを待たないように、QEMU の項目の手前で始める。
     if full {
         kernel_builds::build_ahead();
@@ -32349,7 +32349,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
             }
         }
 
-        // **矢印を落とすと挿入点が動かなくなること（S12 前の手当て）。**
+        // **矢印を落とすと挿入点が動かなくなること（S12 前の対策）。**
         // **上の項目が主張していることの反証である**——**上は「動いた」を
         // 見ているが、動いていないイメージでも同じ判定が真になる形だと意味が無い。**
         // **打鍵を流す仕組みは上と同じもので、期待だけが裏返る**
@@ -32742,7 +32742,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
             }
         }
 
-        // **中断（Ctrl+C）の破壊テスト（S12 前の手当て、C）。**
+        // **中断（Ctrl+C）の破壊テスト（S12 前の対策、C）。**
         //
         // **6 つとも「通らないこと」を期待する**（`ShellTestMode::MustFail`）。
         // **DIR-1 で `env-drop-path-test` が 1 つ加わった。**
@@ -32867,8 +32867,8 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
             &mut failed,
         );
 
-        // **管理用の部分の検査値の側**（2026-10-05）。**ボリュームの名前の欄の 1 バイトを変える。** 解析は通り、
-        // **カーネルが出す検査値が、ホストがファイルから計算した値と食い違う。**
+        // **管理用の部分のチェックサムの側**（2026-10-05）。**ボリュームの名前の欄の 1 バイトを変える。** 解析は通り、
+        // **カーネルが出すチェックサムが、ホストがファイルから計算した値と食い違う。**
         total += 1;
         begin_item(
             Family::Fs,
@@ -34150,7 +34150,7 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
     // **全検査の間に走った他の検査を数え、在れば遅さの行に「比べられない」を添える**（運用者の
     // 決定 (7)。2026-09-25。**遅さの計測は、他の重い実行が無いことを前提にしている**）。
     if full {
-        // **裏の流れを止めて次の回の順を書き、全検査の間のホストの様子をまとめる**（2026-09-29。案 A と 0）。
+        // **バックグラウンドを止めて次の回の順を書き、全検査の間のホストの様子をまとめる**（2026-09-29。案 A と 0）。
         for line in finish_kernel_builds(&workspace_root) {
             println!("{line}");
         }
@@ -35217,7 +35217,7 @@ const TEST_HOOKS_TABLE_MARKER: &str = "const TEST_HOOKS: &[(&str, bool, &str)] =
 /// 会計行がある文書。
 const ACCOUNTING_DOC_PATH: &str = "docs/verification-coverage.md";
 
-/// 持ち越しの一覧が状態の目印を持っているかを見る（S12 前の手当ての完了時）。
+/// 持ち越しの一覧が状態の目印を持っているかを見る（S12 前の対策の完了時）。
 ///
 /// **数は返すが、検査しない。** 持ち越しは増減するのが正常なので、
 /// **数そのものを固定すると、行を 1 つ足すたびに定数を直す作業が生まれる。**
@@ -36016,7 +36016,7 @@ fn stop_if_over_the_time_limit() {
          got slower.",
         FULL_TIME_LIMIT.as_secs() / 60
     );
-    // **止まる前に、裏の流れと記録を閉じる**（2026-09-29。案 A と 0）。
+    // **止まる前に、バックグラウンドと記録を閉じる**（2026-09-29。案 A と 0）。
     if let Ok(root) = workspace_root() {
         for line in finish_kernel_builds(&root) {
             println!("{line}");
@@ -36658,7 +36658,7 @@ fn run_kernel_build(workspace_root: &Path, features: &[&str]) -> Result<KernelBu
     })
 }
 
-/// kernel をビルドする cargo の引数（**その場のビルドと、裏の流れ（`kernel_builds`）が同じものを使う**）。
+/// kernel をビルドする cargo の引数（**その場のビルドと、バックグラウンド（`kernel_builds`）が同じものを使う**）。
 fn kernel_cargo_args(features: &[&str]) -> Vec<String> {
     let mut args: Vec<String> = [
         "build",
@@ -36729,7 +36729,7 @@ fn uplifted_kernel_elf(workspace_root: &Path) -> PathBuf {
         .join(KERNEL_PACKAGE)
 }
 
-/// 裏の流れが作ったものを、項目の [`KernelBuild`] にする（2026-09-29。試験の時間を縮める案の A）。
+/// バックグラウンドが作ったものを、項目の [`KernelBuild`] にする（2026-09-29。試験の時間を縮める案の A）。
 /// **cargo の出力と、先に作れたかの行は、その組を初めて受け取った項目の中でだけ出す。**
 fn received_kernel_build(
     features: &[&str],
@@ -36769,7 +36769,7 @@ fn received_kernel_build(
     }
 }
 
-/// 裏の流れが kernel を 1 つ作る（2026-09-29。案 A）。**作った直後、次のビルドの前に、cargo の置き場の ELF を
+/// バックグラウンドが kernel を 1 つ作る（2026-09-29。案 A）。**作った直後、次のビルドの前に、cargo の置き場の ELF を
 /// 組ごとの置き場へコピーする**——同じ cargo の出力の `OUT_DIR` と対にして返す。**`nice` で優先度を下げる**
 /// （QEMU の試験の邪魔をしない）。**コピーした後、その組の features で作った成果物と同じ中身かを確かめる**
 /// （[`kernel_builds::confirm_the_copy`]。違えば、この組は失敗として項目に渡る）。
@@ -36982,7 +36982,7 @@ impl KernelFeatures {
     }
 }
 
-/// 裏の流れを始める（全検査の入口。案 A）。**順は前の全検査の記録から。無ければ cargo の fingerprint から。**
+/// バックグラウンドを始める（全検査の入口。案 A）。**順は前の全検査の記録から。無ければ cargo の fingerprint から。**
 /// **どちらの名前も、項目が求める組と同じ関数で揃える**（[`KernelFeatures::normalizer`]）。**feature の表が読めなければ
 /// 流れを始めない**——項目は今までどおりその場でビルドする。
 fn start_kernel_builds(root: &Path) {
@@ -37049,7 +37049,7 @@ fn start_kernel_builds(root: &Path) {
     );
 }
 
-/// 裏の流れを止め、次の回の順を書き、まとめの行を返す（全検査のまとめ。案 A。**動いていなければ空**）。
+/// バックグラウンドを止め、次の回の順を書き、まとめの行を返す（全検査のまとめ。案 A。**動いていなければ空**）。
 fn finish_kernel_builds(root: &Path) -> Vec<String> {
     let Some(kernel_builds::Finished {
         requests,
@@ -37165,7 +37165,7 @@ fn kernel_build_order_from_fingerprints(
 
 /// 本体（[`run_kernel_build`] が包む）。
 fn run_kernel_build_unwrapped(workspace_root: &Path, features: &[&str]) -> Result<KernelBuild> {
-    // **全検査の間は、裏の流れが作ったものを受け取る**（2026-09-29。案 A。`kernel_builds` の doc）。
+    // **全検査の間は、バックグラウンドが作ったものを受け取る**（2026-09-29。案 A。`kernel_builds` の doc）。
     if let Some(received) = kernel_builds::kernel(features) {
         return received_kernel_build(features, received);
     }
@@ -37319,11 +37319,11 @@ fn stage_esp(run: &RunDir, bootloader_efi: &Path, kernel: &KernelBuild) -> Resul
 /// RAM ディスクのイメージを、積んだ ESP に足す（`ADR-0068` の HW-d。2026-10-05 に [`stage_esp`] から分けた）。
 ///
 /// **ブートローダが `\zeikos\fs.img` として読み、BootInfo で渡す。** **VirtualBox と実機には virtio-blk が無く、
-/// 起動媒体のイメージ（HW-e）にこのファイルが入る。** **中身は `disk0.img` と同じ、いま積んだカーネルがビルドした
+/// ブートメディアのイメージ（HW-e）にこのファイルが入る。** **中身は `disk0.img` と同じ、いま積んだカーネルがビルドした
 /// イメージである。**
 ///
-/// **呼ぶのは、イメージを RAM から受け取る回だけである**——起動媒体のイメージをビルドする回（`cargo xtask image`、
-/// 基本の検査の起動媒体の項目、ESP を 1 つのイメージで渡す変種）と、virtio-blk を付けない変種。
+/// **呼ぶのは、イメージを RAM から受け取る回だけである**——ブートメディアのイメージをビルドする回（`cargo xtask image`、
+/// 基本の検査のブートメディアの項目、ESP を 1 つのイメージで渡す変種）と、virtio-blk を付けない変種。
 /// **virtio-blk を付けてディレクトリから起動する回（検査の大半）は呼ばない**——ブートローダは「イメージが無い。
 /// カーネルは装置を使う」と 1 行出して進む。
 fn stage_ram_image(esp_dir: &Path, kernel: &KernelBuild) -> Result<()> {
@@ -37456,7 +37456,7 @@ fn stage_esp_with_disk_unwrapped(
     // どの feature 構成でも同じバイト列になる。大きさもイメージと同じにする
     // （16MiB に伸ばす根拠が無くなった）。
     // **RAM ディスクのイメージは、ここでは ESP に置かない**（2026-10-05）。**置くのは [`stage_ram_image`] で、
-    // 要る回だけが呼ぶ**——起動媒体のイメージをビルドする回と、virtio-blk を付けずに起動する回である。
+    // 要る回だけが呼ぶ**——ブートメディアのイメージをビルドする回と、virtio-blk を付けずに起動する回である。
     // **以前は常に置いていた。** virtio-blk が在る回は、ブートローダがイメージを読んで渡しても、カーネルは使わない。
     // 読むのにかかる時間はイメージの大きさに比例し、32 MiB で約 3.6 秒だった（実測。`docs/verification-coverage.md` の
     // 「ディスクのイメージの読み書きの所要」）。
@@ -38794,7 +38794,7 @@ warning: `kernel` (lib doc) generated 1 warning
         .is_caught());
     }
 
-    /// **反転させる形の破壊テストの実行も、表に組が在れば狙いの判定を見る**（2026-09-26。計器の外の破壊を絞る段）。
+    /// **反転させる形の破壊テストの実行も、表に組が在れば狙いの判定を見る**（2026-09-26。メトリクスの外の破壊を絞る段）。
     /// **コピーに目印が在れば検出した、無ければ落とす。** **表に無い組の側（数えるだけ）は、上の計測の
     /// テストが見る**——**ここで数えると、そちらの数が変わる。**
     #[test]
@@ -39224,7 +39224,7 @@ warning: `kernel` (lib doc) generated 1 warning
         assert_eq!(joined[d_pos + 1], "int,cpu_reset");
     }
 
-    /// **手で触る経路だけが `int` を落とす（zi-e 前の手当て）。**
+    /// **手で触る経路だけが `int` を落とす（zi-e 前の対策）。**
     ///
     /// **`-no-reboot` と `-no-shutdown` と `cpu_reset` は落ちない**——
     /// **沈黙の失敗を可視化する部分は残る**（`docs/coding-standards.md`）。

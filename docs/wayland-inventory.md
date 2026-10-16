@@ -119,9 +119,9 @@ Linux向けELFを動かす話でもない。**
 |---|---|---|
 | **正しさ**（制御に使う） | **11** | `EXCURSION_STACKS` `RECOVERIES` `CURRENT_RECOVERY` `EXCURSION_DEPTH` `IN_RING3` `INTERRUPTED` `FOLDED` `USER_WINDOW_START` `USER_WINDOW_END` `PROCESS_EXITED` `PROCESS_EXIT_STATUS` |
 | **結果**（呼び出し側が読み、戻り値になる） | **6** | `FAULT_VECTOR`（`SpawnOutcome::Folded(v)`そのものになる） `FAULT_RIP` `FAULT_RSP` `FAULT_CS` `FAULT_CR2` `FAULT_ERROR_CODE` |
-| **計器**（記録だけ） | **11** | `WRITE_FD` `WRITE_LEN` `WRITE_BUF` `PROBE_INVOKED` `PROBE_SEEN_ARGS` `INVOCATION_COUNT` `LAST_NUMBER` `LAST_ARGS` `HANDLER_RSP`（`ring3`と`syscall`の2つ） `IN_RING3_AT_ENTRY` |
+| **メトリクス**（記録だけ） | **11** | `WRITE_FD` `WRITE_LEN` `WRITE_BUF` `PROBE_INVOKED` `PROBE_SEEN_ARGS` `INVOCATION_COUNT` `LAST_NUMBER` `LAST_ARGS` `HANDLER_RSP`（`ring3`と`syscall`の2つ） `IN_RING3_AT_ENTRY` |
 
-**「計器」と一口に言えなかった。** **`FAULT_VECTOR`は計器ではない**——**`spawn`の戻り値になり、`/bin/fpfault ended (Folded(16))`として判定に出る。**
+**「メトリクス」と一口に言えなかった。** **`FAULT_VECTOR`はメトリクスではない**——**`spawn`の戻り値になり、`/bin/fpfault ended (Folded(16))`として判定に出る。**
 
 ### 控えて戻す仕組みは既に在る
 

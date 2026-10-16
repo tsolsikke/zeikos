@@ -33,11 +33,11 @@ Linuxでは、この形で`fork`は失敗しない。`kernel/fork.c`の`copy_pro
 ### 検査
 
 - **`pipe-test`の確かめを2つ足した**（`PIPE_TEST_CHECKS`）。`--pipe-test --with <名前>`で実行する。
-  - `spawn-detached-returns-early`——左の読み込みが貸し出しを2ティック持つ間に、右が`spawn`する。**右は待ってから起動する**（spawnの入口が待った刻みが1以上で、諦めた回数が0。起こせなかった右は`/bin/nonexist`だけ）。2026-10-12までは破壊テストだった（右が`cannot run`になることで、入場を待つことを確かめていた）。待つ形になって、落ちる判定が無くなったので、確かめへ移した。
+  - `spawn-detached-returns-early`——左の読み込みが貸し出しを2ティック持つ間に、右が`spawn`する。**右は待ってから起動する**（spawnの入口が待ったティックが1以上で、諦めた回数が0。起こせなかった右は`/bin/nonexist`だけ）。2026-10-12までは破壊テストだった（右が`cannot run`になることで、入場を待つことを確かめていた）。待つ形になって、落ちる判定が無くなったので、確かめへ移した。
   - `allocator-held-past-the-wait-limit-test`——最初の`|`の左だけが200ティック持つ。**最初の右（`/bin/cat`）だけが上限まで待って`-EAGAIN`になり、予約は残らない**（消した予約が`nonexist`の分と合わせて2で、後の`|`は通る）。
   - どちらの確かめも、中身のバイト一致は求めない。入場を待たずに戻るので左と右が同時に走り、左のカーネルの行が右の出力の行の途中に割り込む（実測）。中身の判定は、既定の`pipe-test`が持つ。
 - **破壊テスト`spawn-refuses-without-waiting-test`**（直す前の形。待たずに1度だけ試す）を、`pipe-test`の破壊テストに入れた。`spawn-detached-returns-early`の重なりの上で、右が`-EAGAIN`で起動できず、判定8（起こせなかった右は`/bin/nonexist`だけ）で落ちる。
-- 計測の行（`pipe:`）に、spawnの入口が待った刻みと諦めた回数を足した。
+- 計測の行（`pipe:`）に、spawnの入口が待ったティックと諦めた回数を足した。
 
 ## Alternatives Considered
 

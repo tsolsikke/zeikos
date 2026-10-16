@@ -187,7 +187,7 @@ def refusal_message(what, path, holders, content):
 
 
 def log_run(what, outcome, root=ROOT):
-    """走行を 1 行残す（全検査のまとめが数える）。**残せなくても止めない。**"""
+    """実行を 1 行残す（全検査のまとめが数える）。**残せなくても止めない。**"""
     try:
         directory = lock_dir(root)
         os.makedirs(directory, exist_ok=True)

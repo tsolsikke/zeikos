@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted（2026-10-06に運用者がM2の設計案を承認し、2026-10-07に最初の刻みを実装した）。
+Accepted（2026-10-06に運用者がM2の設計案を承認し、2026-10-07に最初のステップを実装した）。
 
 ## Date
 
@@ -47,14 +47,14 @@ Accepted（2026-10-06に運用者がM2の設計案を承認し、2026-10-07に�
 ## Consequences
 
 - `fb-test`（`open("/dev/fb0", O_RDWR)`・fbdevの`ioctl`・`mmap`・四隅に色・`nanosleep`・`close`）が、`FBIOZPRESENT`を打たずに画面へ出る。`xtask`の`--fb-test`が、絵の在る間と抜けた後に`screendump`で四隅を読む。破壊テストは3つ（転送しない・閉じても抜けない・間隔を見ない）。
-- `seinas-fbdev`（musl静的PIE）が打つ装置の列（`open(O_RDWR)`・`ioctl`×2・`mmap(MAP_SHARED)`・`nanosleep`・`munmap`・`close`）は、この決定で全部通る形になった。実際にイメージに入れて走らせるのは次の刻み（→ 下のAddendumで実施した）。
+- `seinas-fbdev`（musl静的PIE）が打つ装置の列（`open(O_RDWR)`・`ioctl`×2・`mmap(MAP_SHARED)`・`nanosleep`・`munmap`・`close`）は、この決定で全部通る形になった。実際にイメージに入れて走らせるのは次のステップ（→ 下のAddendumで実施した）。
 - アイドルの定常ループが、`/dev/fb0`を開いている間だけBKLを取る（開いていなければ原子的な印を1つ読むだけ）。
 - 前景のプロセスがCPUを使い切っていて、システムコールも打たない間は、転送が起きない（アイドルが走らないため）。描いてから眠る・待つ形のプログラム（Seinasのfbdevの裏側、イベントのループ）では差が出ない。`docs/deferred-decisions.md`。
 - 遠征スタックの使用量は変えない（転送はカーネルのタスクの文脈で、`Console::present`を呼ぶだけである）。
 
 ## Addendum（2026-10-07。Seinasの成果物の持ち込み方）
 
-M2の2つ目の刻みで、`seinas-fbdev`（musl静的PIE）をZeikOSのイメージに入れて走らせた。持ち込み方は、2026-10-06に運用者が決めたとおりである。
+M2の2つ目のステップで、`seinas-fbdev`（musl静的PIE）をZeikOSのイメージに入れて走らせた。持ち込み方は、2026-10-06に運用者が決めたとおりである。
 
 - **成果物はSeinasのGitHubのreleaseから取る。** `tools/fetch-seinas.sh`がタグ（`v0.1.0`）・ファイル名・SHA-256を固定し、合わなければ置かずに止まる。取れた後は取り直さない。CIは置き場（`target/linux-programs/`）をキャッシュする——配布元が止まっても落ちないように（フォントと同じ形）。
 - **イメージへは`seinas-test`のfeatureのビルドだけが入れる**（`/bin/linux/seinas-fbdev`）。既定のイメージのバイトを変えない（起動ログの参照が機械で変わらない）。

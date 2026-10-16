@@ -72,7 +72,7 @@ Accepted
 
 ### 3. `/data`は残す。**FHSに無い名前であることを明記する**
 
-**`/data`の中身は検査のseedである**——`lines`（`zi`が編集する4行）、`writable`（書き込みの的）、`direct-max` / `indirect-first`（単一間接の刻み）、`sparse-hole`（穴あき）。**利用者に見せるためのものではない。**
+**`/data`の中身は検査のseedである**——`lines`（`zi`が編集する4行）、`writable`（書き込みの的）、`direct-max` / `indirect-first`（単一間接のステップ）、`sparse-hole`（穴あき）。**利用者に見せるためのものではない。**
 
 **移さない理由は2つある。**
 

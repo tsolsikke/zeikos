@@ -1006,7 +1006,7 @@ impl QemuRun {
         if let Some(cut) = &record.cut {
             println!("{}: (warn) {RUN_WAS_CUT_MARK}: {cut}", self.what);
         }
-        // **失敗の期限に着いた実行を出す**（2026-09-26。計器の外の破壊を絞る段の B）——**破壊テストの実行の判定が
+        // **失敗の期限に着いた実行を出す**（2026-09-26。メトリクスの外の破壊を絞る段の B）——**破壊テストの実行の判定が
         // 読むのは記録の側だが、ログから期限の終わりを見分けられなかった。**
         if record.reached_deadline {
             println!(

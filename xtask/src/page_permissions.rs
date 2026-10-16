@@ -353,7 +353,7 @@ user program hello | stack | 4K | w=1 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=
         );
     }
 
-    /// **ページ数は、比べる行でだけ違いになる。** 片方にだけ在る行は `gone` と `new` で出る——見張りのページに
+    /// **ページ数は、比べる行でだけ違いになる。** 片方にだけ在る行は `gone` と `new` で出る——ガードページに
     /// 何かマップされた形は、「何もマップされていない」の行が消え、マップされている行が増える。
     #[test]
     fn page_counts_and_rows_on_one_side_only_are_reported() {

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ZeikOS の起動媒体で VirtualBox の VM を作り、起こし、消す（`ADR-0068` の HW-e。2026-09-23）。
+"""ZeikOS のブートメディアで VirtualBox の VM を作り、起こし、消す（`ADR-0068` の HW-e。2026-09-23）。
 
 **運用者の機械の設定を触る道具である。** **だから、できることを先に狭めてある。**
 
@@ -59,15 +59,15 @@
 （VM は Windows 側で走るので `/proc` では見えず、一覧を読む操作は使わない決まりである）。
 **VirtualBox の画面から止めたときは、印が残る**——**`stop` を打てば消える。**
 
-# 走行の記録（2-2。2026-09-24）
+# 実行の記録（2-2。2026-09-24）
 
-**`run` は 1 回の走行を `target/vbox/<名前>/<時刻>/` に残す**——**判定はしない。** **判定は
+**`run` は 1 回の実行を `target/vbox/<名前>/<時刻>/` に残す**——**判定はしない。** **判定は
 `cargo xtask judge-vbox <その場所>` だけが持つ**（道具は起こす・打つ・採るだけである）。
 
 - `record.txt`——git の HEAD、未コミットの変更が在るか、`git diff HEAD` の sha256、今のイメージの sha256、
   作ったときの記録（`create` が残す `latest-create.txt`）、VirtualBox の版
 - `showvminfo.txt`——`showvminfo --machinereadable`（VM の設定）
-- `serial.log`——シリアルのコピー。**起こす前に古いものを消す**（前の走行と混ざらない）
+- `serial.log`——シリアルのコピー。**起こす前に古いものを消す**（前の実行と混ざらない）
 - `counters-before.txt` / `counters-after.txt`——打鍵の前後の APIC のベクタごとの計数
   （`debugvm statistics`。**VM の外から数えた証拠**）
 - `keys.txt`——送った打鍵（PS/2 のスキャンコード）
@@ -202,7 +202,7 @@ def sha256_of_file(path):
 
 
 def git_state():
-    """HEAD・未コミットの変更が無いか・`git diff HEAD` の sha256。**走行を木へ結びつける。**"""
+    """HEAD・未コミットの変更が無いか・`git diff HEAD` の sha256。**実行を木へ結びつける。**"""
     head = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
     porcelain = subprocess.run(["git", "status", "--porcelain"], capture_output=True, text=True).stdout
     diff = subprocess.run(["git", "diff", "HEAD"], capture_output=True).stdout
@@ -223,18 +223,18 @@ def write_lines(path, lines):
 
 
 def check_image(image):
-    """イメージが ZeikOS の起動媒体の形であることを、繋ぐ前に見る。
+    """イメージが ZeikOS のブートメディアの形であることを、繋ぐ前に見る。
 
     **保護 MBR の型が 0xEE で、LBA 1 に `EFI PART` が在ること。** **中身まで検める道具では
     ない**（それは `cargo xtask image` が読み返しで行う）——**別のファイルを渡した事故を
     止めるだけである。**
     """
     if not os.path.isfile(image):
-        raise Refused(f"起動媒体のイメージ {image} が無い（先に `cargo xtask image` を回すこと）")
+        raise Refused(f"ブートメディアのイメージ {image} が無い（先に `cargo xtask image` を回すこと）")
     with open(image, "rb") as handle:
         head = handle.read(1024)
     if len(head) < 1024 or head[450] != 0xEE or head[512:520] != b"EFI PART":
-        raise Refused(f"{image} は GPT の起動媒体に見えない（保護 MBR か GPT のヘッダが無い）")
+        raise Refused(f"{image} は GPT のブートメディアに見えない（保護 MBR か GPT のヘッダが無い）")
 
 
 def create(vm, image, memory, cpus, replace):
@@ -416,7 +416,7 @@ def read_counters(vm):
 
 
 def run(vm, image, timeout):
-    """1 回の走行を記録する（2-2）。**判定はしない**——`cargo xtask judge-vbox` が行う。
+    """1 回の実行を記録する（2-2）。**判定はしない**——`cargo xtask judge-vbox` が行う。
 
     起こす → プロンプトを待つ → 計数を読む → 打鍵を送る → シェルの答えを待つ → 計数を読む → 止める
     → コピーする。**待ちには上限がある**（`timeout` 秒。出なければ、そこまでの記録を残して止める）。
@@ -428,7 +428,7 @@ def run(vm, image, timeout):
         raise Refused(f"{vm.name} が無い（先に `create` を回すこと）")
     info = vboxmanage(["showvminfo", vm.name, "--machinereadable"]).stdout.replace("\r", "")
     if 'VMState="running"' in info:
-        raise Refused(f"{vm.name} は走っている。先に `stop` を回すこと（シリアルが前の走行と混ざる）")
+        raise Refused(f"{vm.name} は走っている。先に `stop` を回すこと（シリアルが前の実行と混ざる）")
     stamp = time.strftime("%Y%m%d-%H%M%S")
     record = os.path.join(RECORD_ROOT, vm.name, stamp)
     os.makedirs(record)
@@ -639,7 +639,7 @@ def lock_refusals():
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="ZeikOS の起動媒体で VirtualBox の VM を扱う（zeikos- で始まる名前だけ）",
+        description="ZeikOS のブートメディアで VirtualBox の VM を扱う（zeikos- で始まる名前だけ）",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -648,7 +648,7 @@ def main(argv=None):
         choices=["create", "start", "stop", "delete", "log", "screenshot", "run", "selftest"],
     )
     parser.add_argument("--name", help="VM の名前（zeikos- で始まること）")
-    parser.add_argument("--image", default="target/media/zeikos.img", help="起動媒体のイメージ")
+    parser.add_argument("--image", default="target/media/zeikos.img", help="ブートメディアのイメージ")
     parser.add_argument("--basefolder", default=DEFAULT_BASEFOLDER, help="VDI と .vbox の置き場")
     parser.add_argument("--memory", type=int, default=2048, help="メモリ（MiB）")
     # **既定は 4 個**（運用者の判断 3。2026-09-24）。**VirtualBox の EFI は 2 個と 3 個で落ちる**

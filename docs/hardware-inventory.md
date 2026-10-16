@@ -26,7 +26,7 @@
 | ファームウェア | **OVMF 2024.02**（Ubuntuの`2024.02-2ubuntu0.9`。セキュアブートの無い版） | 機種ごとのUEFI（推測） | 置き場の配り方、GOPのモード、x2APICで渡すか |
 | 画面 | **1280×800、stride 1280、Bgr、物理0x80000000**（実測。std VGAの`1234:1111`） | パネルの解像度（1920×1080から4K）。strideが幅と違うことがある（推測） | バックバッファの大きさ、転送の量 |
 | ディスク | **virtio-blk**（旧来のI/O BAR0を持つ`1af4:1001`） | SATA（AHCI）かNVMe | (B)のとおり、起動が止まる（**`ADR-0068`のHW-dでRAMディスクを足した**） |
-| ESP | **QEMUの`fat:rw:`**（ディレクトリをFATに見せる） | GPTのESP（FAT32） | 起動媒体のイメージ |
+| ESP | **QEMUの`fat:rw:`**（ディレクトリをFATに見せる） | GPTのESP（FAT32） | ブートメディアのイメージ |
 | シリアル | **16550（COM1）。QEMUは送る速さを待たない** | 無いか、在っても115,200 baudまで | ログの量の費用（約18秒） |
 | i8042・PIT・HPET・8259 | **全部在る**（`pc`の既定） | i8042が無い機種、PITが止まっている機種が在る（推測） | (A)の2行目と3行目（実測） |
 | USB | **無い**（制御器を足していない） | xHCI（USBのキーボードとマウス） | 入力が届かない |
@@ -110,7 +110,7 @@
 - **xHCIの所有権の受け渡し**——**QEMUにもVirtualBoxにもUSB Legacy Supportの能力が無い**ので、VMでは通らない。**どちらもExitBootServicesの後はHCが止まっている。** **VirtualBoxはファームウェアが設定したDCBAAとコマンドリングの指し先を残している。**
 - **I/O APICのID**——**VirtualBoxのMADTはI/O APICのIDをCPUの数と同じ値にし**（CPU 1個で1、4個で4）、**IDレジスタは0のままである。** **それでもIRQ1はI/O APICを通ってベクタ0x42で届く**（VirtualBoxのデバッガのベクタごとの計数で、打鍵4バイトで0x42が+4、8259のベクタ0x21は0回）。
 
-## 起動媒体（`ADR-0068`のHW-eで作った）
+## ブートメディア（`ADR-0068`のHW-eで作った）
 
 **QEMUの既定の起動は、ESPのディレクトリをFATに見せる形である**（`fat:rw:`）。**VirtualBoxにも実機にも、この形は無い。**
 
@@ -123,7 +123,7 @@
 
 ## VirtualBoxでの実行を`xtask`に載せるか（費用の見積もり）
 
-**`VBoxManage.exe`はWSLから呼べる**（`/mnt/d/Program Files/Oracle/VirtualBox/`。実測で`--version`が返った）。**載せるなら、VMの作成（`createvm`と`modifyvm --firmware efi`）、シリアルをファイルへ（`--uart1 0x3F8 4 --uartmode1 file`）、イメージの接続（`storagectl`と`storageattach`）、`startvm --type headless`、画面の読み戻し（`controlvm screenshotpng`）、打鍵（`controlvm keyboardputscancode`）、止めて消す（`controlvm poweroff`と`unregistervm --delete`）の形になる。** **パスはWindowsの形へ直す必要がある**（`wslpath -w`）。**費用は1段階の見込み**（起動媒体のイメージを作る段階の後）。
+**`VBoxManage.exe`はWSLから呼べる**（`/mnt/d/Program Files/Oracle/VirtualBox/`。実測で`--version`が返った）。**載せるなら、VMの作成（`createvm`と`modifyvm --firmware efi`）、シリアルをファイルへ（`--uart1 0x3F8 4 --uartmode1 file`）、イメージの接続（`storagectl`と`storageattach`）、`startvm --type headless`、画面の読み戻し（`controlvm screenshotpng`）、打鍵（`controlvm keyboardputscancode`）、止めて消す（`controlvm poweroff`と`unregistervm --delete`）の形になる。** **パスはWindowsの形へ直す必要がある**（`wslpath -w`）。**費用は1段階の見込み**（ブートメディアのイメージを作る段階の後）。
 
 **ハイパーバイザが有効なので、VirtualBoxはHyper-Vの上で動く見込みである**（推測。**VMのログ（`VBox.log`）の`NEM`の行で確かめられる**）。**遅い・一部の機能が制限されることがある**（運用者の推測）。
 
@@ -131,4 +131,4 @@
 
 ## 並べ方の案（今直すもの）
 
-**VirtualBoxで起動するまでに要るのは、1GiBの壁・i8042・ディスク（RAMディスク）・起動媒体のイメージの4つである。** **i8042はVirtualBoxでは効かないが、実機では効く。**
+**VirtualBoxで起動するまでに要るのは、1GiBの壁・i8042・ディスク（RAMディスク）・ブートメディアのイメージの4つである。** **i8042はVirtualBoxでは効かないが、実機では効く。**

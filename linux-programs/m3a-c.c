@@ -1,5 +1,5 @@
 /* m3a-c: Linux 向けに musl-gcc で静的リンクした C のプログラム。musl の pthread で、pthread_create と pthread_join を
- * 行う（スレッドの検証の3）。出力に、環境で変わる値（アドレス、tid の値そのもの）は入れない。終了の状態は引数の数。 */
+ * 行う（スレッドの検証の3）。出力に、環境で変わる値（アドレス、tid の値そのもの）は入れない。終了ステータスは引数の数。 */
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>

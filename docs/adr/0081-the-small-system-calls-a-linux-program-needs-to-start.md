@@ -88,7 +88,7 @@ Linux向けのmuslの静的なイメージ（`linux-programs/m1-rust`・`m1-c`�
 
 知らない番号（`-ENOSYS`を返した）の回数と最後の番号を数え、プロセスの終わりの行（`spawn: … ended`・`user-run: … left Ring 3`）に出すようにした。Linuxのプログラムが、知らない番号を1つも打たずに終わったことを、起動ログで見るためである。数えはスロットの記録で、`spawn`の前後で親のものを退避して戻す（ほかの記録と同じ）。
 
-実測（2026-10-06）: `m1-rust`はLinuxでもZeikOSでも39回のシステムコールで、同じ出力と終了の状態4。`m1-c`はLinuxで16回、ZeikOSで21回——ZeikOSではfd 1が端末なので`ioctl(TIOCGWINSZ)`が通り、muslのstdoutが行ごとの緩衝になって`writev`が増える（Linuxでも端末に出せば同じ）。
+実測（2026-10-06）: `m1-rust`はLinuxでもZeikOSでも39回のシステムコールで、同じ出力と終了ステータス4。`m1-c`はLinuxで16回、ZeikOSで21回——ZeikOSではfd 1が端末なので`ioctl(TIOCGWINSZ)`が通り、muslのstdoutが行ごとの緩衝になって`writev`が増える（Linuxでも端末に出せば同じ）。
 
 ## Addendum（2026-10-08。`uname`の方針と`/etc/os-release`）
 
