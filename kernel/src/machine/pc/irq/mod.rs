@@ -1430,13 +1430,14 @@ impl fmt::Display for RedirectionEntryView {
 pub unsafe fn switch_timer_to_lapic(
     calibration: crate::machine::pc::apic::TimerCalibration,
     frequency_hz: u32,
-) -> Result<TimerSetup, TimerError> {
+) -> Result<TimerSwitch, TimerError> {
     let source = apic::LapicTimer::new(calibration);
 
     // 1. 設定する。まだマスクされているので届かない。
     // SAFETY: 呼び出し側の契約をそのまま引き継ぐ。
     let setup = unsafe { source.configure_timer(frequency_hz) }?;
 
+    let masks;
     {
         let _critical = common::critical::InterruptGuard::enter();
 
@@ -1459,9 +1460,24 @@ pub unsafe fn switch_timer_to_lapic(
         // 4. 新経路を開ける。
         // SAFETY: ゲートは用意済みで、状態も立っている。ここから届いてよい。
         unsafe { apic::unmask_timer() };
+
+        // 5. 8259 が全部閉じていることを、割り込みを許す前に読む（2026-10-17）。**区間を出た後に読むと、PIT のティックが
+        //    8259 経由で IRQ0 として届き、処理の無い源として禁止される**（`crate::interrupts` の `disable_and_complete`）。
+        //    すると 2 を飛ばした形でも全部閉じて見え、破壊テスト `lapic-timer-no-mask-all` が負荷の下で隠れた（同時 4 本で
+        //    20 回中 4 回。serial に「disabled source 0」）。**区間の中なら、ティックは保留のままで、読む値は 2 の結果だけで
+        //    決まる。** 読むだけで書かない（`pic::read_masks` は副作用が無い）。
+        masks = check_masks(&[]);
     }
 
-    Ok(setup)
+    Ok(TimerSwitch { setup, masks })
+}
+
+/// Local APIC のタイマへ移した結果（[`switch_timer_to_lapic`] の戻り値。2026-10-17）。
+pub struct TimerSwitch {
+    /// 設定の結果。
+    pub setup: TimerSetup,
+    /// 新経路を開けた直後、割り込みを許す前に読んだ 8259 のマスク（期待は全部閉じていること）。
+    pub masks: MaskCheck,
 }
 
 /// このコアの Local APIC を有効にした結果（S4-a）。

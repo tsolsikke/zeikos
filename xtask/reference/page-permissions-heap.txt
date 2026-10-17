@@ -255,7 +255,7 @@ user program /bin/linux/m3a-channel-tls-rust | segment 1 | 4K | w=0 u=1 x=1 cach
 user program /bin/linux/m3a-channel-tls-rust | segment 2 | 4K | w=0 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=24
 user program /bin/linux/m3a-channel-tls-rust | segment 3 | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=6
 user program /bin/linux/m3a-channel-tls-rust | heap | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1
-user program /bin/linux/m3a-channel-tls-rust | mapped by request | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=~3
+user program /bin/linux/m3a-channel-tls-rust | mapped by request | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=~2
 user program /bin/linux/m3a-channel-tls-rust | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=64
 
 user program /bin/linux/m3a-exit-with-waiting-thread-rust | segment 0 | 4K | w=0 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=5

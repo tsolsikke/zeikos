@@ -37,10 +37,10 @@ pub unsafe fn switch_to_local_timer(
 
     // SAFETY: 切り替えの本体が求める 2 つ（起動の途中に 1 回だけ呼ぶこと、LAPIC_TIMER_VECTOR に戻れるハンドラが
     // あること）は、この関数の `# Safety` として呼ぶ側に求めている。
-    let setup = match unsafe {
+    let switched = match unsafe {
         crate::machine::pc::irq::switch_timer_to_lapic(calibration, requested_hz)
     } {
-        Ok(setup) => setup,
+        Ok(switched) => switched,
         Err(error) => {
             logger.error(format_args!(
                 "lapic-timer: could not switch the timer to the local APIC ({error:?}); halting"
@@ -49,6 +49,7 @@ pub unsafe fn switch_to_local_timer(
         }
     };
 
+    let setup = &switched.setup;
     logger.info(format_args!(
         "lapic-timer: programmed from the calibration ({median_hz} Hz at divide \
          configuration {divide:#x}): {setup}"
@@ -84,7 +85,9 @@ pub unsafe fn switch_to_local_timer(
 
     // PIC が黙っていることを読み戻す。`irq::mask_all()` が実際に
     // 呼ばれたことの観測でもある（S2-b で足してから呼び出し元が無かった）。
-    let masks = crate::machine::pc::irq::check_masks(&[]);
+    // **読むのは切り替えの割り込み禁止の区間の中である**（2026-10-17。`switch_timer_to_lapic` の 5）。**ここで読み直すと、
+    // その間に届いた PIT のティックが IRQ0 を禁止して、全マスクを飛ばした形が隠れる。**
+    let masks = &switched.masks;
     logger.info(format_args!(
         "lapic-timer: the 8259 is fully masked after mask_all(): {masks}, all masked={}",
         masks.matches()
