@@ -1410,6 +1410,10 @@ unsafe extern "sysv64" fn irq_entry(context: *const IrqContext, rsp_at_call: u64
         // ガードを解いている（破壊テスト `kill-fold-keep-bkl-test` だけは解かない）。遠征があることと
         // ユーザーから来たことは、`fold_excursion` が確かめ直す。
         ExitAction::FoldExcursion => unsafe { fold_excursion(&interrupted) },
+        // SAFETY: 共通の側の入口関数は、ティックを完了させた後に、Ring 3 を割り込んでいて今のスロットにプロセスの終わりの
+        // 印が立っているときだけこれを返し、戻るときに BKL のガードを解いている。遠征があることとユーザーから来たことは、
+        // `end_excursion_after_process_exit` が確かめ直す。
+        ExitAction::EndExcursion => unsafe { end_excursion_after_process_exit(&interrupted) },
     }
 }
 
@@ -1465,6 +1469,9 @@ pub enum ExitAction {
     Resume(u64),
     /// 走っている子の遠征を畳む。
     FoldExcursion,
+    /// 走っている子の遠征を、プロセスの終わりとして出る（M3a。2026-10-17。ZEIKOS-242）。別のスレッドがプロセスを終わらせた後に、
+    /// 主スレッドが Ring 3 で回っていた。**中断の印は立てない**——終わり方は、印の終了ステータスの `Exited` になる。
+    EndExcursion,
 }
 
 /// タイマ（IRQ0）の8259 でのベクタ。
@@ -2319,6 +2326,29 @@ unsafe fn fold_excursion(interrupted: &Interrupted<'_>) -> ! {
     }
 
     crate::arch::x86_64::ring3::note_interrupted();
+
+    // SAFETY: 遠征の中（深さ 1 以上）でユーザーの文脈から入っているので、RECOVERY は保存済みである（上で
+    // 確かめた）。EOI は送り、BKL のガードは解いてある（この関数の契約）。
+    unsafe { crate::arch::x86_64::ring3::leave_user_mode() }
+}
+
+/// 走っている子の遠征を、プロセスの終わりとして出る（M3a。2026-10-17。ZEIKOS-242）。共通の側の入口関数が
+/// [`ExitAction::EndExcursion`] を返したときに、入口が呼ぶ。[`fold_excursion`] と同じ確かめをしてから、**中断の印を立てずに**
+/// 遠征の呼び出し元へ戻る——終わり方は、スロットの終わりの印と終了ステータスから `Exited` になる（システムコールの戻りで印を
+/// 見て出るときと同じ `leave_user_mode`）。
+///
+/// # Safety
+///
+/// [`fold_excursion`] と同じ（共通の側の入口関数が戻った後、つまりティックを完了させ、BKL のガードを解いた後に呼ぶこと）。
+unsafe fn end_excursion_after_process_exit(interrupted: &Interrupted<'_>) -> ! {
+    if interrupted.excursion_depth() == 0 || !interrupted.from_user() {
+        panic!(
+            "end: the common side asked to end an excursion for the process end, but the interrupted context is not \
+             in one (depth {}, from user {})",
+            interrupted.excursion_depth(),
+            interrupted.from_user()
+        );
+    }
 
     // SAFETY: 遠征の中（深さ 1 以上）でユーザーの文脈から入っているので、RECOVERY は保存済みである（上で
     // 確かめた）。EOI は送り、BKL のガードは解いてある（この関数の契約）。

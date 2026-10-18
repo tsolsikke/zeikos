@@ -1,0 +1,3 @@
+m3a-exit-group-main-spins-rust: main starts with 4 argument(s) and then spins forever
+m3a-exit-group-main-spins-rust: the thread calls exit_group(7) now
+exit status: 7

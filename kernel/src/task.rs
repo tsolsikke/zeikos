@@ -1507,7 +1507,7 @@ pub fn finish_thread_task_on_fault(
     let task = THREAD_TASK_FIRST + index;
     serial_line(format_args!(
         "thread: tid {} (task {task}) faulted in ring 3 (vector {fault_number}, rip {instruction_address:#x}, cr2 \
-         {fault_address:#x}); the process ends as folded({fault_number}) at the main thread's next system call",
+         {fault_address:#x}); the process ends as folded({fault_number}) at the main thread's next system call or tick",
         thread_tid(index)
     ));
     scheduler::set_state(task, TaskState::Finished);
@@ -1536,7 +1536,7 @@ pub fn mark_current_thread_finished_after_process_exit(
         wake_futex_waiters_of_slot(current_ring3_slot());
         serial_line(format_args!(
             "thread: tid {} (task {task}) ended the process through system call {number} with status {status}; the \
-             process ends at the main thread's next system call",
+             process ends at the main thread's next system call or tick",
             thread_tid(index)
         ));
     } else {
@@ -1546,6 +1546,37 @@ pub fn mark_current_thread_finished_after_process_exit(
         ));
     }
     index
+}
+
+/// 池のスレッドのタスクが、プロセスを終わらせる印の立った後に Ring 3 で回っていて、ティックに割り込まれた（M3a。2026-10-17。
+/// ZEIKOS-242。`crate::interrupts` の `process_end_at_tick`）。**`Finished` にする。** 切り替えは呼び手（ティックの経路の
+/// `on_timer_tick`）が行い、`Finished` なので二度と選ばれない。
+///
+/// # 割り込みの中から終える
+///
+/// **ティックの入口は BKL を取ってある**（呼び手の中）。**捨てる枠は無い**——入口の関数はふつうに戻り、入口のスタブが次の
+/// タスクの文脈へ切り替える。このタスクの文脈（`IrqContext`）は、保存したスタックポインタの先に残るだけである。
+/// **カーネルのスタックは空けない**——池の番号ごとに固定のスタックで、刈り取り（[`reap_thread_task`]）は走っていない側が、
+/// 次の `clone` かプロセスの終わりに行う。
+pub fn finish_thread_task_at_tick() {
+    let index = current_thread_index().expect("only a thread task is finished at a tick");
+    let task = THREAD_TASK_FIRST + index;
+    debug_assert!(crate::bkl::held_by_this_cpu());
+    scheduler::set_state(task, TaskState::Finished);
+    serial_line(format_args!(
+        "thread: tid {} (task {task}) was in ring 3 at a tick after the process ended; it is finished",
+        thread_tid(index)
+    ));
+}
+
+/// 主スレッドが、プロセスを終わらせる印の立った後に Ring 3 で回っていて、ティックに割り込まれた（M3a。2026-10-17。ZEIKOS-242）。
+/// 行を出すだけである——遠征を出るのは、呼び手が返す出口の動き（`EndExcursion`）で入口が行う。**行に数を入れない**
+/// （何回目のティックかは、ティックの位置で変わる）。
+pub fn note_main_thread_ended_at_tick(slot: usize) {
+    serial_line(format_args!(
+        "process: the main thread in ring3 slot {slot} was in ring 3 at a tick after another thread ended the process; \
+         it leaves ring 3 here instead of at its next system call"
+    ));
 }
 
 /// `Finished` にした池のタスクが、切り替えて二度と戻らない（スレッドの `exit` の出口。M3a）。

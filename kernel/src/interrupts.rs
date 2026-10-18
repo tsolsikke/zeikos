@@ -168,6 +168,15 @@ pub fn on_external_interrupt(
             // ハンドラより後ろにあり、そこから抜けるとキーボードが二度と来ない。
             //
             //
+            // **プロセスの終わりの印を、Ring 3 を割り込んだティックで見る**（M3a。2026-10-17。ZEIKOS-242）。EOI の後に置く理由は、
+            // 下の中断と同じである（主スレッドなら longjmp で出ていく）。
+            match process_end_at_tick(interrupted) {
+                ProcessEndAtTick::Nothing => {}
+                ProcessEndAtTick::ThreadFinished => {
+                    return ExitAction::Resume(crate::task::on_timer_tick(current_sp));
+                }
+                ProcessEndAtTick::MainEnds => return ExitAction::EndExcursion,
+            }
             // 畳むと決めたら、出口の動きとして返す。longjmp は入口が、この関数から戻った後に行う（9d-3）。
             if should_fold_excursion(interrupted) {
                 // 破壊テスト (S12 前の対策 C, kill-fold-keep-bkl): 解かずに終了させる。次に BKL を
@@ -200,6 +209,15 @@ pub fn on_external_interrupt(
             // SAFETY: 実際に発生した割り込みに対してのみ呼んでいる。割り込みゲート経由で入場したので
             // IF=0 で、BKL の中なので、ほかの実行文脈が同時に 8259 を触ることはない。
             unsafe { crate::machine::pc::complete(claimed) };
+            // **プロセスの終わりの印は、こちらのタイマでも見る**（2026-10-17。ZEIKOS-242。Local APIC のタイマへ移れなかった
+            // 機械でも、主スレッドが Ring 3 で回り続けない）。
+            match process_end_at_tick(interrupted) {
+                ProcessEndAtTick::Nothing => {}
+                ProcessEndAtTick::ThreadFinished => {
+                    return ExitAction::Resume(crate::task::on_timer_tick(current_sp));
+                }
+                ProcessEndAtTick::MainEnds => return ExitAction::EndExcursion,
+            }
             // タイマはプリエンプティブに切り替える（M5-d）。EOI はここより前で送っているので、次タスクは
             // IF=1 で次ティックを受けられる。遠征を畳むのは Local APIC のタイマの側だけである（今までどおり）。
             return ExitAction::Resume(crate::task::on_timer_tick(current_sp));
@@ -297,6 +315,46 @@ fn advance_clock() {
         // **締切を過ぎたタイマの待ちを起こす（W2-d+）。** **進めた直後に、同じ文脈で起こす**
         // ——**IF=0 かつ BKL の内側である**（外からの割り込みの入口関数が取っている）。
         crate::task::wake_expired_timers(now);
+    }
+}
+
+/// ティックで、プロセスの終わりの印を見た結果（M3a。2026-10-17。ZEIKOS-242）。
+enum ProcessEndAtTick {
+    /// 印が無い、または Ring 3 を割り込んでいない。
+    Nothing,
+    /// 池のスレッドのタスクを `Finished` にした（切り替えて二度と戻らない）。
+    ThreadFinished,
+    /// 主スレッドの遠征を、プロセスの終わりとして出る。
+    MainEnds,
+}
+
+/// Ring 3 を割り込んだティックで、今のスロットにプロセスの終わりの印が立っているかを見る（M3a。2026-10-17。ZEIKOS-242。
+/// `ADR-0085` の Addendum）。
+///
+/// **別のスレッドが `exit_group` を打った後も、主スレッドが Ring 3 で回り続けると、次のシステムコールまでプロセスが終わらな
+/// かった**（B1）。システムコールの入口と戻りの確かめはそのまま残し、ここではシステムコールを打たずに回っている側を止める。
+/// 遅れは多くてもティック 1 回である。
+///
+/// - 主スレッド（遠征の持ち主）なら、遠征を出る（[`ExitAction::EndExcursion`]。中断の印は立てない）。
+/// - 池のスレッドのタスクなら、`Finished` にする。回復点を持たないので畳まず、呼び手が切り替えて二度と戻らない。カーネルの
+///   スタックは池の番号ごとに固定で、空けるのは後の reap である（走っていない側が行う）。
+///
+/// 破壊テスト (M3a。2026-10-17, tick-ignores-process-end-test): ティックでは見ない。主スレッドがシステムコールを打たずに回り
+/// 続けるイメージ（`m3a-exit-group-main-spins-rust`）が終わらない。
+fn process_end_at_tick(interrupted: &crate::arch::x86_64::Interrupted<'_>) -> ProcessEndAtTick {
+    if cfg!(feature = "tick-ignores-process-end-test")
+        || !interrupted.from_user()
+        || interrupted.excursion_depth() == 0
+        || !crate::syscall::process_exited()
+    {
+        return ProcessEndAtTick::Nothing;
+    }
+    if crate::task::current_thread_index().is_some() {
+        crate::task::finish_thread_task_at_tick();
+        ProcessEndAtTick::ThreadFinished
+    } else {
+        crate::task::note_main_thread_ended_at_tick(interrupted.excursion_slot());
+        ProcessEndAtTick::MainEnds
     }
 }
 

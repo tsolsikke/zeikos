@@ -6720,6 +6720,14 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
         b"m3a-exit-group-spin-rust\0/etc/motd\0a\0b\0",
         kernel::userland::SpawnOutcome::Exited(7),
     );
+    // **主スレッドがシステムコールを打たずに回り続ける間に、スレッドが `exit_group(7)` を打つ**（M3a。2026-10-17。ZEIKOS-242）。
+    // 主スレッドは、Ring 3 を割り込んだティックで終わる（`crate::interrupts` の `process_end_at_tick`）。
+    verify_linux_program_ending(
+        logger,
+        b"/bin/linux/m3a-exit-group-main-spins-rust",
+        b"m3a-exit-group-main-spins-rust\0/etc/motd\0a\0b\0",
+        kernel::userland::SpawnOutcome::Exited(7),
+    );
     // **スレッドの検証のイメージ（2026-10-15）。** チャネルと TLS（`std::sync::mpsc`・`thread_local!`）、チャネルで待ち続ける
     // スレッドを残したまま主スレッドが `exit(5)` で終わる形（`Exited(5)`）。
     verify_linux_program(
@@ -14267,6 +14275,11 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "syscall-entry-ignores-process-end-test",
         cfg!(feature = "syscall-entry-ignores-process-end-test"),
         "システムコールの入口で終了の印を見ない",
+    ),
+    (
+        "tick-ignores-process-end-test",
+        cfg!(feature = "tick-ignores-process-end-test"),
+        "Ring 3 を割り込んだティックでは、プロセスの終わりの印を見ない",
     ),
     // マップ中の memfd を縮める ftruncate（2026-10-15）。
     (

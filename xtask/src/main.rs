@@ -763,6 +763,23 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         ],
         wait_for_full_timeout: false,
         min_heartbeats: None,
+    },
+    // **Ring 3 を割り込んだティックでは、プロセスの終わりの印を見ない**（M3a。2026-10-17。ZEIKOS-242）。主スレッドがシステム
+    // コールを打たずに回り続けるイメージ（m3a-exit-group-main-spins-rust）だけが終わらず、起動はそこで止まる。**止まる所は
+    // 1 つである**——前のイメージは、どれもシステムコールの入口と戻りか、futex の起こしで終わり、ティックの確かめに頼らない。
+    CriticalTest {
+        name: "tick-ignores-process-end",
+        feature: "tick-ignores-process-end-test",
+        expected_markers: &[
+            "m3a-exit-group-main-spins-rust: the thread calls exit_group(7) now",
+        ],
+        forbidden_markers: &[
+            "linux-check: /bin/linux/m3a-exit-group-main-spins-rust ended",
+            "process: the main thread in ring3 slot",
+            "zash: ready",
+        ],
+        wait_for_full_timeout: true,
+        min_heartbeats: None,
     },    // **マップ中の memfd を縮める ftruncate を断る確かめ**（2026-10-15。`ADR-0065` の Addendum）。ZeikOS は 2 回目の
     // ftruncate を向きにかかわらず -EINVAL で断るので、Linux の参照とは突き合わせず、この構成だけでイメージを起こす。
     CriticalTest {
@@ -21061,9 +21078,9 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         line: "spawn: /bin/linux/m3a-exit-group-spin-rust ended",
         before: " after ",
         after: " syscall(s)",
-        min: 39,
-        max: 39,
-        what: "m3a-exit-group-spin-rust\'s system calls (measured 39 in all 100 boots at -smp 1 on 2026-10-17 after the thread was made to wait for the main thread to return from spawn; before that, 38 in about 7% when a tick right after clone let the thread reach exit_group before the main thread\'s rt_sigprocmask (11 of 150 boots with the wait removed); no other path is known, so no room is left)",
+        min: 38,
+        max: 38,
+        what: "m3a-exit-group-spin-rust\'s system calls (measured 38 in all 99 boots at -smp 1 on 2026-10-17 after the tick started to end a main thread that runs in ring 3 after another thread ended the process (ZEIKOS-242): the main thread is ended at a tick during its spin after the flag and never reaches the join\'s futex, one call fewer than the 39 before; no other path is known, so no room is left)",
     },
     BootLogRange {
         line: "futex: /bin/linux/m3a-exit-while-spinning-rust slept",
@@ -21119,7 +21136,7 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         after: " time(s)",
         min: 0,
         max: 0,
-        what: "m3a-exit-group-spin-rust's futex sleeps (measured 0 in 300 boots at -smp 1 on 2026-10-17; after the flag the main thread spins as long as a 30 ms nanosleep took, which is more than two 10 ms ticks, so the thread, the only other task picked on cpu 0, reaches exit_group before the join and the join's futex sees the end mark at the entry; without that spin, 7 of 299 boots slept once, and 3 of 247 before the change)",
+        what: "m3a-exit-group-spin-rust's futex sleeps (measured 0 in 99 boots at -smp 1 on 2026-10-17; the main thread is ended at a tick during its spin after the flag and does not call futex at all (ZEIKOS-242); before that, it spun past two ticks so the thread reached exit_group first and the join's futex saw the end mark at the entry)",
     },
     BootLogRange {
         line: "futex: /bin/linux/m3a-exit-group-spin-rust slept",
@@ -34724,7 +34741,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 67,
-    full: 536,
+    full: 537,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` とスクリプトのグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。
@@ -38063,7 +38080,7 @@ thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack
 [INFO] spawn: /bin/linux/m3a-exit-while-spinning-rust ended (Exited(4)) after 55 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
 [INFO] spawn: /bin/linux/m3a-nested-clone-rust ended (Exited(4)) after 120 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
 [INFO] spawn: /bin/linux/m3a-spawn-from-thread-rust ended (Exited(4)) after 47 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
-[INFO] spawn: /bin/linux/m3a-exit-group-spin-rust ended (Exited(7)) after 39 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
+[INFO] spawn: /bin/linux/m3a-exit-group-spin-rust ended (Exited(7)) after 38 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
 [INFO] futex: /bin/linux/m3a-exit-while-spinning-rust slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] futex: /bin/linux/m3a-nested-clone-rust slept 1 time(s) and woke 1 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] futex: /bin/linux/m3a-spawn-from-thread-rust slept 1 time(s) and woke 1 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)

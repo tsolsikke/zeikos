@@ -1291,6 +1291,9 @@ process-end-keeps-futex-sleepers-test = []
 # 破壊（3-2）: システムコールの入口で終了の印を見ない。主スレッドの join の futex が行き詰まりと判定され、137 で上書きする。
 # `--critical-test syscall-entry-ignores-process-end`。
 syscall-entry-ignores-process-end-test = []
+# 破壊（M3a。2026-10-17。ZEIKOS-242）: Ring 3 を割り込んだティックでは、プロセスの終わりの印を見ない。主スレッドがシステム
+# コールを打たずに回り続けるイメージ（m3a-exit-group-main-spins-rust）が終わらない。`--critical-test tick-ignores-process-end`。
+tick-ignores-process-end-test = []
 # 確かめ（2026-10-15）: マップ中の memfd を縮める ftruncate を打つイメージ（m3a-memfd-shrink-rust）を起動時に起こす。
 # ZeikOS は 2 回目の ftruncate を向きにかかわらず -EINVAL で断る（Linux は縮める）ので、既定の起動には入れない。
 # `--critical-test memfd-shrink-refused`。

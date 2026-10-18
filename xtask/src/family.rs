@@ -246,6 +246,7 @@ pub const PATH_RULES: &[PathRule] = &[
             "linux-programs/m3a-nested-clone-rust.rs",
             "linux-programs/m3a-spawn-from-thread-rust.rs",
             "linux-programs/m3a-exit-group-spin-rust.rs",
+            "linux-programs/m3a-exit-group-main-spins-rust.rs",
             // **スレッドの検証のイメージ**（チャネルと TLS、チャネルで待つスレッドを残した exit）。
             "linux-programs/m3a-channel-tls-rust.rs",
             "linux-programs/m3a-exit-with-waiting-thread-rust.rs",
