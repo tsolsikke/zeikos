@@ -6728,6 +6728,35 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
         b"m3a-exit-group-main-spins-rust\0/etc/motd\0a\0b\0",
         kernel::userland::SpawnOutcome::Exited(7),
     );
+    // **スレッド B がシステムコールを打たずに回り続ける間に、スレッド A が `exit_group(7)` を打つ**（M3a。2026-10-18。ZEIKOS-242）。
+    // B は Ring 3 を割り込んだティックで終わる（`crate::task::finish_thread_task_at_tick`）。**main-spins の後ろに置く**——ティックで
+    // 見ない破壊テストが、必ず main-spins で先に止まるように（止まる所を 1 つに保つ）。
+    let finished_at_tick_before = kernel::task::threads_finished_at_tick();
+    verify_linux_program_ending(
+        logger,
+        b"/bin/linux/m3a-exit-group-thread-spins-rust",
+        b"m3a-exit-group-thread-spins-rust\0/etc/motd\0a\0b\0",
+        kernel::userland::SpawnOutcome::Exited(7),
+    );
+    // **B がティックで終わったことを、数で見る**（2026-10-18）。ティックで見ない形でも、プロセスは `Exited(7)` で終わる（B は
+    // プロセスの終わりの片付けが「still runnable」として刈り取る）ので、終わり方だけでは、この道を通ったかが分からない。
+    // **値が 1 になるのは、スケジューラの輪の順による**——A（池の番号 0）が終わった後、輪の順で主スレッドより先に B（番号 1）が
+    // 選ばれ、B が Ring 3 で回っている所をティックが終えるからである。輪の順を変えて主スレッドが先に選ばれると、主スレッドが
+    // 戻りで出て片付けが B を刈り取り、この判定は 0 で落ちる。
+    let finished_at_tick = kernel::task::threads_finished_at_tick() - finished_at_tick_before;
+    if finished_at_tick == 1 {
+        logger.info(format_args!(
+            "linux-check: m3a-exit-group-thread-spins-rust had threads finished at a tick = {finished_at_tick} \
+             (expected 1); thread B was in ring 3 after thread A ended the process"
+        ));
+    } else {
+        logger.error(format_args!(
+            "linux-check: m3a-exit-group-thread-spins-rust had {finished_at_tick} thread(s) finished at a tick, \
+             expected 1; thread B kept running in ring 3 after thread A ended the process, or something else ended it. \
+             halting"
+        ));
+        cpu::halt_forever();
+    }
     // **スレッドの検証のイメージ（2026-10-15）。** チャネルと TLS（`std::sync::mpsc`・`thread_local!`）、チャネルで待ち続ける
     // スレッドを残したまま主スレッドが `exit(5)` で終わる形（`Exited(5)`）。
     verify_linux_program(
@@ -14274,7 +14303,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "syscall-entry-ignores-process-end-test",
         cfg!(feature = "syscall-entry-ignores-process-end-test"),
-        "システムコールの入口で終了の印を見ない",
+        "システムコールの入口と、Ring 3 を割り込んだティックで、終了の印を見ない",
     ),
     (
         "tick-ignores-process-end-test",

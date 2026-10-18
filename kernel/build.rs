@@ -630,6 +630,7 @@ const LINUX_PROGRAMS: &[&str] = &[
     "m3a-spawn-from-thread-rust",
     "m3a-exit-group-spin-rust",
     "m3a-exit-group-main-spins-rust",
+    "m3a-exit-group-thread-spins-rust",
     "m3a-channel-tls-rust",
     "m3a-exit-with-waiting-thread-rust",
     // **Seinas の listen のソケットとロックファイルの一連**（`ADR-0087`。`linux-socket-test` のビルドだけが起動時に起こす——

@@ -746,10 +746,11 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: true,
         min_heartbeats: None,
     },
-    // システムコールの入口で終了の印を見ない。主スレッドが、スレッドの exit_group の後に join の futex へ入り、行き詰まりの
-    // 判定が終了ステータスを 137 で上書きする（3-1b で踏んだ形）。起動時の確かめが名指しして止まる。**止まるイメージは 2 つ
-    // ありうる**——m3a-exit-group-spin-rust と、その前の m3a-exit-group-join-rust（主スレッドが join で眠らずに済んだ回。
-    // 約 6%）。**期待の行は、2 か所に共通の行にしてイメージの名前を持たない**（2026-10-17。10/16 の教訓）。
+    // システムコールの入口と、Ring 3 を割り込んだティックで、終了の印を見ない（2026-10-18 からティックも。ティックで見ると
+    // 主スレッドが入口へ来る前に終わり、入口の確かめの効き目を切り出せない）。主スレッドが、スレッドの exit_group の後に join の
+    // futex へ入り、行き詰まりの判定が終了ステータスを 137 で上書きする（3-1b で踏んだ形）。起動時の確かめが名指しして止まる。
+    // **止まるイメージは 2 つありうる**——m3a-exit-group-spin-rust と、その前の m3a-exit-group-join-rust（主スレッドが join で
+    // 眠らずに済んだ回。約 6%）。**期待の行は、2 か所に共通の行にしてイメージの名前を持たない**（2026-10-17。10/16 の教訓）。
     CriticalTest {
         name: "syscall-entry-ignores-process-end",
         feature: "syscall-entry-ignores-process-end-test",
@@ -20863,6 +20864,12 @@ const BOOT_LOG_VOLATILE_FIELDS: &[VolatileField] = &[
         before: " in ",
         after: " cycle(s)",
     },
+    // スレッドを 2 本持つ m3a-exit-group-thread-spins-rust の破棄も 1,024 フレームを越える（2026-10-18。ZEIKOS-242）。
+    VolatileField {
+        line: "user-destroy: /bin/linux/m3a-exit-group-thread-spins-rust returned",
+        before: " in ",
+        after: " cycle(s)",
+    },
 ];
 
 /// 伏せた値を範囲で見る所（M3a。2026-10-14。[`BOOT_LOG_VOLATILE_FIELDS`] の代わりの検査）。**取った起動ログ（-smp 1・2・4）の
@@ -21257,6 +21264,14 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         min: 1,
         max: 1000000000,
         what: "the cycles the destroy of m3a-exit-group-waiters-rust's space took (wall-clock, 8 to 18 million measured; only the line's presence is checked)",
+    },
+    BootLogRange {
+        line: "user-destroy: /bin/linux/m3a-exit-group-thread-spins-rust returned",
+        before: " in ",
+        after: " cycle(s)",
+        min: 1,
+        max: 1000000000,
+        what: "the cycles the destroy of m3a-exit-group-thread-spins-rust's space took (wall-clock, 9 to 15 million in the first three boots on 2026-10-18; only the line's presence is checked, the same as the waiters image)",
     },
 ];
 
@@ -38077,6 +38092,7 @@ thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack
 [INFO] futex: /bin/linux/m3a-exit-group-join-rust slept 1 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 1 sleeper(s)
 [INFO] futex: /bin/linux/m3a-exit-group-waiters-rust slept 2 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 2 sleeper(s)
 [INFO] user-destroy: /bin/linux/m3a-exit-group-waiters-rust returned 1220 frame(s) at once and quarantined 0 (0 wait(s), 0 released meanwhile, 0 leaked) in 8409908 cycle(s)
+[INFO] user-destroy: /bin/linux/m3a-exit-group-thread-spins-rust returned 1219 frame(s) at once and quarantined 0 (0 wait(s), 0 released meanwhile, 0 leaked) in 9672896 cycle(s)
 [INFO] spawn: /bin/linux/m3a-exit-while-spinning-rust ended (Exited(4)) after 55 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
 [INFO] spawn: /bin/linux/m3a-nested-clone-rust ended (Exited(4)) after 120 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
 [INFO] spawn: /bin/linux/m3a-spawn-from-thread-rust ended (Exited(4)) after 47 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
@@ -38094,7 +38110,7 @@ thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack
 ";
         let (findings, seen) = super::check_boot_log_ranges("t", good);
         assert!(findings.is_empty(), "{findings:?}");
-        assert_eq!(seen, 48);
+        assert_eq!(seen, 49);
         let bad = good
             .replace("after 106 syscall", "after 300 syscall")
             .replace("used 3112 of", "used 40000 of");

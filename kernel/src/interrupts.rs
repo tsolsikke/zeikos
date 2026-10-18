@@ -341,8 +341,12 @@ enum ProcessEndAtTick {
 ///
 /// 破壊テスト (M3a。2026-10-17, tick-ignores-process-end-test): ティックでは見ない。主スレッドがシステムコールを打たずに回り
 /// 続けるイメージ（`m3a-exit-group-main-spins-rust`）が終わらない。
+///
+/// 破壊テスト (M3a の 3-2, syscall-entry-ignores-process-end-test) も、ここを外す（2026-10-18）。**入口の確かめだけを外すと、
+/// 主スレッドが入口へ来る前にティックで終わり、破壊が捕まらない**——入口の確かめの効き目だけを切り出すために、両方を外す。
 fn process_end_at_tick(interrupted: &crate::arch::x86_64::Interrupted<'_>) -> ProcessEndAtTick {
     if cfg!(feature = "tick-ignores-process-end-test")
+        || cfg!(feature = "syscall-entry-ignores-process-end-test")
         || !interrupted.from_user()
         || interrupted.excursion_depth() == 0
         || !crate::syscall::process_exited()

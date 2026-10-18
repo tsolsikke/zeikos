@@ -1563,10 +1563,20 @@ pub fn finish_thread_task_at_tick() {
     let task = THREAD_TASK_FIRST + index;
     debug_assert!(crate::bkl::held_by_this_cpu());
     scheduler::set_state(task, TaskState::Finished);
+    THREADS_FINISHED_AT_TICK.fetch_add(1, Ordering::Relaxed);
     serial_line(format_args!(
         "thread: tid {} (task {task}) was in ring 3 at a tick after the process ended; it is finished",
         thread_tid(index)
     ));
+}
+
+/// [`finish_thread_task_at_tick`] が終えた池のスレッドの本数の累計（2026-10-18。ZEIKOS-242）。起動時の確かめが、
+/// `m3a-exit-group-thread-spins-rust` の前後の差で、この道を通ったことを見る。
+static THREADS_FINISHED_AT_TICK: AtomicU64 = AtomicU64::new(0);
+
+/// `THREADS_FINISHED_AT_TICK` の値。
+pub fn threads_finished_at_tick() -> u64 {
+    THREADS_FINISHED_AT_TICK.load(Ordering::Relaxed)
 }
 
 /// 主スレッドが、プロセスを終わらせる印の立った後に Ring 3 で回っていて、ティックに割り込まれた（M3a。2026-10-17。ZEIKOS-242）。

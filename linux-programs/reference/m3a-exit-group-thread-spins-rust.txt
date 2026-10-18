@@ -1,0 +1,4 @@
+m3a-exit-group-thread-spins-rust: main starts with 4 argument(s) and joins the spinning thread
+m3a-exit-group-thread-spins-rust: thread B spins forever from now on
+m3a-exit-group-thread-spins-rust: thread A calls exit_group(7) now
+exit status: 7

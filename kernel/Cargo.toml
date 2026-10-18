@@ -1289,7 +1289,8 @@ spawn-ignores-threads-test = []
 # `--critical-test process-end-keeps-futex-sleepers`。
 process-end-keeps-futex-sleepers-test = []
 # 破壊（3-2）: システムコールの入口で終了の印を見ない。主スレッドの join の futex が行き詰まりと判定され、137 で上書きする。
-# `--critical-test syscall-entry-ignores-process-end`。
+# 2026-10-18 から、Ring 3 を割り込んだティックでも見ない（入口の確かめだけの効き目を切り出すため。ティックで見ると主スレッドが
+# 入口へ来る前に終わる）。`--critical-test syscall-entry-ignores-process-end`。
 syscall-entry-ignores-process-end-test = []
 # 破壊（M3a。2026-10-17。ZEIKOS-242）: Ring 3 を割り込んだティックでは、プロセスの終わりの印を見ない。主スレッドがシステム
 # コールを打たずに回り続けるイメージ（m3a-exit-group-main-spins-rust）が終わらない。`--critical-test tick-ignores-process-end`。
