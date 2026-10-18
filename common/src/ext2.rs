@@ -270,7 +270,11 @@ pub enum Ext2Error {
     InodeTableOutOfRange { inode: u32, needed: u64 },
     /// ファイル内のブロック番号が `i_size` の外を指している。
     FileBlockOutOfRange(u32),
-    /// 二重・三重間接が要る。**実装しない**（`docs/roadmap.md` の S10 の宣言）。
+    /// 三重間接が要る。**実装しない。**
+    ///
+    /// **二重間接は 2026-10-19 から読む**（Seinas のコンポジタの実行ファイルとフォントが約 4.05 MiB を越えるため）。
+    /// それまでは `docs/roadmap.md` の S10 の宣言どおり、二重間接もここで断っていた。三重間接が要るのは、4 KiB の
+    /// ブロックで約 4 GiB を越えるファイルからである。
     IndirectBlockUnsupported(u32),
     /// `i_block` の項が 0 なのに `i_size` の内側である（穴）。
     ///
@@ -361,9 +365,10 @@ impl core::fmt::Debug for Ext2<'_> {
 ///
 /// # 読めない大きさのファイル
 ///
-/// **2 段目・3 段目の間接ブロックを使うファイルは、どの範囲も読めない**（[`Ext2::file_block`] が
-/// [`Ext2Error::IndirectBlockUnsupported`] で断る。4 KiB のブロックでは、約 4.05 MiB を越えるファイルである）。
+/// **3 段目の間接ブロックを使うファイルは、どの範囲も読めない**（[`Ext2::file_block`] が
+/// [`Ext2Error::IndirectBlockUnsupported`] で断る。4 KiB のブロックでは、約 4 GiB を越えるファイルである）。
 /// **途中まで読めて、途中から読めない形にはならない。** 載せる側は、最初の範囲を読んだ時点で、名前のある失敗を受け取る。
+/// **2 段目は読む**（2026-10-19。それまでは、約 4.05 MiB を越えるファイルがここで断られていた）。
 #[derive(Debug, Clone, Copy)]
 pub struct FileImage<'f, 'a> {
     fs: &'f Ext2<'a>,
@@ -475,17 +480,20 @@ impl Inode {
         self.mode & MODE_FORMAT_MASK == MODE_REGULAR
     }
 
-    /// 二重・三重間接を使うファイルか。
+    /// 三重間接を使うファイルか。
     ///
     /// **使っていれば、そのファイルはどのブロックも読まない。** 前半だけなら
-    /// 単一間接の範囲で読めるが、**「途中まで読めて途中から読めない」形は、
+    /// 二重間接までの範囲で読めるが、**「途中まで読めて途中から読めない」形は、
     /// 呼び出し側から見て「短いファイル」と区別が付かない。** ファイル単位で
     /// 拒むほうが、扱えないことが呼び出し側へ確実に伝わる。
     ///
-    /// **今のイメージには現れない。** 二重間接が要るのは 12 + 1024 ブロック
-    /// （4 MiB 超）からで、2 MiB のイメージには収まらない。**壊したイメージに対する備えである。**
+    /// **今のイメージには現れない。** 三重間接が要るのは 12 + 1024 + 1024 × 1024
+    /// ブロック（約 4 GiB 超）からで、イメージに収まらない。**壊したイメージに対する備えである。**
+    ///
+    /// **二重間接は 2026-10-19 から読む**（[`Ext2::file_block`]）。それまでは、二重間接の欄を使うファイルも
+    /// ここで断っていた。
     pub fn uses_unsupported_indirection(&self) -> bool {
-        self.blocks[DOUBLE_INDIRECT_SLOT] != 0 || self.blocks[TRIPLE_INDIRECT_SLOT] != 0
+        self.blocks[TRIPLE_INDIRECT_SLOT] != 0
     }
 }
 
@@ -1036,9 +1044,9 @@ impl<'a> Ext2<'a> {
     /// ので、呼び出し側が長さを計算し直さなくてよい（**線2 の「呼び出し側に
     /// 強いる算術」を、こちら側で閉じている**）。
     ///
-    /// **辿るのは直接 12 個と単一間接だけである。** 二重・三重間接は
-    /// [`Ext2Error::IndirectBlockUnsupported`] で返る（`docs/roadmap.md` の S10 が
-    /// 実装しないと宣言している）。
+    /// **辿るのは直接 12 個と単一間接と二重間接である。** 三重間接は
+    /// [`Ext2Error::IndirectBlockUnsupported`] で返る。二重間接は 2026-10-19 に足した
+    /// （それまでは `docs/roadmap.md` の S10 の宣言どおり、二重間接も断っていた）。
     ///
     /// **穴（ブロック番号 0）は全 0 が返る**（ADR-0038）。イメージの中に対応する
     /// バイト列が無いので、`ZERO_BLOCK` を貸す。**最後のブロックの切り詰めは
@@ -1049,7 +1057,7 @@ impl<'a> Ext2<'a> {
         if offset >= inode.size {
             return Err(Ext2Error::FileBlockOutOfRange(index));
         }
-        // **二重・三重を使うファイルは、どのブロックも読まない**
+        // **三重を使うファイルは、どのブロックも読まない**
         // （[`Inode::uses_unsupported_indirection`] に理由がある）。
         if inode.uses_unsupported_indirection() {
             return Err(Ext2Error::IndirectBlockUnsupported(index));
@@ -1095,6 +1103,17 @@ impl<'a> Ext2<'a> {
     ///   `s_blocks_count` の内側を指す保証がどこにも無いので、
     ///   [`Self::block_bytes`] が突き合わせる。**`i_block` の 15 項と違い、
     ///   [`Self::inode`] では見られない**——表は inode の外にあるからである
+    ///
+    /// # 二重間接をどう辿るか（2026-10-19）
+    ///
+    /// `i_block[13]` が指すブロックは、**単一間接の表のブロック番号が並んだ表**である。単一間接で届く範囲の次から
+    /// 数えた添字を `n = block_size / 4` で割り、商で外側の表の項を、余りで内側の表の項を引く。**どちらの表の項も
+    /// 0 なら穴である**（単一間接と同じ扱い）。
+    ///
+    /// - **線2: 届く範囲の大きさ。** `n × n` は、ブロックが 65536 バイトでも 2^28 で `u32` に収まるが、**頭打ちの
+    ///   比べは `u64` で行う**（ブロックの大きさの上限に頼らない）
+    /// - **線3: 外側の表から読んだ番号。** 内側の表も、イメージの中の任意のバイト列が指す先なので、
+    ///   [`Self::block_bytes`] が突き合わせる
     fn block_number_of(&self, inode: &Inode, index: u32) -> Result<u32, Ext2Error> {
         if (index as usize) < DIRECT_BLOCK_COUNT {
             // **0 は穴である（ADR-0038）。** そのまま返し、[`Ext2::file_block`]
@@ -1106,21 +1125,36 @@ impl<'a> Ext2<'a> {
         // **ここから下は `index >= 12` が保証されている。**
         let within = index - DIRECT_BLOCK_COUNT as u32;
         let entries_per_block = self.block_size / INDIRECT_ENTRY_SIZE;
-        if within >= entries_per_block {
-            // 単一間接で届く範囲を越えた。**二重間接が要る。**
-            return Err(Ext2Error::IndirectBlockUnsupported(index));
+        if within < entries_per_block {
+            return self.indirect_entry(inode.blocks[SINGLE_INDIRECT_SLOT], within, index);
         }
 
-        let table_block = inode.blocks[SINGLE_INDIRECT_SLOT];
+        // **ここから下は単一間接で届く範囲を越えている。** 二重間接の範囲の中の添字にする。
+        let within = within - entries_per_block;
+        if u64::from(within) >= u64::from(entries_per_block) * u64::from(entries_per_block) {
+            // 二重間接で届く範囲を越えた。**三重間接が要る。**
+            return Err(Ext2Error::IndirectBlockUnsupported(index));
+        }
+        let inner = self.indirect_entry(
+            inode.blocks[DOUBLE_INDIRECT_SLOT],
+            within / entries_per_block,
+            index,
+        )?;
+        self.indirect_entry(inner, within % entries_per_block, index)
+    }
+
+    /// 間接ブロックの表 `table_block` の `at` 番目の項（ブロック番号）を読む。**表の番号が 0 なら、表そのものが穴で、
+    /// 0（穴）を返す。** `index` は失敗に載せるファイルの中のブロック番号である。
+    fn indirect_entry(&self, table_block: u32, at: u32, index: u32) -> Result<u32, Ext2Error> {
         if table_block == 0 {
             // **表そのものが穴である。** 表が無いなら、その先はすべて穴である。
             return Ok(0);
         }
         let table = self.block_bytes(table_block)?;
 
-        // 線2: `within * 4` は `entries_per_block` で頭打ちなのでブロックを
+        // 線2: `at * 4` は、呼び手が `entries_per_block` で頭打ちにしているのでブロックを
         // 越えない。**線1: それでも `get` で切る。**
-        let at = (within * INDIRECT_ENTRY_SIZE) as usize;
+        let at = (at * INDIRECT_ENTRY_SIZE) as usize;
         let entry = table
             .get(at..at + INDIRECT_ENTRY_SIZE as usize)
             .ok_or(Ext2Error::FileBlockOutOfRange(index))?;
@@ -3460,7 +3494,7 @@ mod tests {
         assert_eq!(buf, [0xAA; 8]);
     }
 
-    /// 2 段目の間接ブロックを使うファイルは、**最初の範囲から、名前のある失敗で断られる**（黙って切らない）。
+    /// 3 段目の間接ブロックを使うファイルは、**最初の範囲から、名前のある失敗で断られる**（黙って切らない）。
     #[test]
     fn a_file_image_names_the_failure_for_a_file_too_large_to_read() {
         use crate::image_source::{ImageReadError, ImageSource};
@@ -3470,8 +3504,8 @@ mod tests {
         let mut inode = fs
             .lookup(b"/data/indirect-first")
             .expect("the file resolves");
-        // 2 段目の間接ブロックの欄に、番号を入れる（中身は読まれない。使っているかどうかだけが見られる）。
-        inode.blocks[SINGLE_INDIRECT_SLOT + 1] = inode.blocks[0];
+        // 3 段目の間接ブロックの欄に、番号を入れる（中身は読まれない。使っているかどうかだけが見られる）。
+        inode.blocks[TRIPLE_INDIRECT_SLOT] = inode.blocks[0];
         let file = FileImage::new(&fs, &inode);
         let mut buf = [0u8; 16];
         assert_eq!(
@@ -3625,30 +3659,45 @@ mod tests {
         assert!(block.iter().all(|byte| *byte == 0));
     }
 
-    /// 二重・三重間接は実装しない。**使うファイルは 1 ブロックも読まない。**
+    /// 三重間接は実装しない。**使うファイルは 1 ブロックも読まない。** 二重間接の欄だけを使うファイルは読む
+    /// （2026-10-19 まではそちらも断っていた）。
     #[test]
-    fn refuses_a_file_that_uses_the_double_or_triple_indirect_slots() {
-        for slot in [DOUBLE_INDIRECT_SLOT, TRIPLE_INDIRECT_SLOT] {
+    fn refuses_a_file_that_uses_the_triple_indirect_slot_but_not_one_that_uses_the_double() {
+        let put_slot = |slot: usize| {
             let mut image = build_test_image();
             let at = 4 * 4096 + (INDIRECT_FILE_INODE as usize - 1) * 256 + 40 + slot * 4;
             image[at..at + 4].copy_from_slice(&57u32.to_le_bytes());
-            let fs = Ext2::parse(&image).unwrap();
-            let inode = fs.inode(INDIRECT_FILE_INODE).unwrap();
-            assert!(inode.uses_unsupported_indirection());
-            // **前半は単一間接の範囲だが、それでも読まない。**
-            assert_eq!(
-                fs.file_block(&inode, 0),
-                Err(Ext2Error::IndirectBlockUnsupported(0)),
-                "i_block[{slot}] in use must refuse every block, not just the late ones"
-            );
-        }
+            image
+        };
+
+        let image = put_slot(TRIPLE_INDIRECT_SLOT);
+        let fs = Ext2::parse(&image).unwrap();
+        let inode = fs.inode(INDIRECT_FILE_INODE).unwrap();
+        assert!(inode.uses_unsupported_indirection());
+        // **前半は単一間接の範囲だが、それでも読まない。**
+        assert_eq!(
+            fs.file_block(&inode, 0),
+            Err(Ext2Error::IndirectBlockUnsupported(0)),
+            "i_block[14] in use must refuse every block, not just the late ones"
+        );
+
+        let image = put_slot(DOUBLE_INDIRECT_SLOT);
+        let fs = Ext2::parse(&image).unwrap();
+        let inode = fs.inode(INDIRECT_FILE_INODE).unwrap();
+        assert!(!inode.uses_unsupported_indirection());
+        assert_eq!(
+            fs.file_block(&inode, 0).unwrap()[0],
+            0,
+            "block 0 holds its index"
+        );
     }
 
-    /// 単一間接で届く範囲を越えた添字は、二重間接が要るので拒む。
+    /// 単一間接で届く範囲を越えた添字は、二重間接の欄から引く。**欄が 0 なら、その先は穴である。**
     ///
-    /// ブロック 4096 では 1 表あたり 1024 項なので、**12 + 1024 番目からである。**
+    /// ブロック 4096 では 1 表あたり 1024 項なので、**12 + 1024 番目からである。** 2026-10-19 までは、ここで
+    /// [`Ext2Error::IndirectBlockUnsupported`] を返していた。
     #[test]
-    fn refuses_an_index_beyond_the_reach_of_the_single_indirect_table() {
+    fn an_index_past_the_single_indirect_reach_is_read_through_the_double_indirect_slot() {
         let mut image = build_test_image();
         // 単一間接で届く最後の添字より 1 つ先まで `i_size` を伸ばす。
         let reach = DIRECT_BLOCK_COUNT as u64 + 4096 / 4;
@@ -3656,17 +3705,227 @@ mod tests {
         image[size_at..size_at + 4].copy_from_slice(&(((reach + 1) * 4096) as u32).to_le_bytes());
         let fs = Ext2::parse(&image).unwrap();
         let inode = fs.inode(INDIRECT_FILE_INODE).unwrap();
+        assert_eq!(inode.blocks[DOUBLE_INDIRECT_SLOT], 0);
+        for index in [reach as u32 - 1, reach as u32] {
+            let block = fs
+                .file_block(&inode, index)
+                .expect("an empty entry or an empty slot is a hole");
+            assert!(block.iter().all(|byte| *byte == 0), "block {index}");
+        }
+    }
+
+    /// 二重間接で届く範囲を越えた添字は、三重間接が要るので拒む。**12 + 1024 + 1024 × 1024 番目からである。**
+    ///
+    /// `i_size` は `u32` を越えるので、上位の欄（`i_size_high`）も書く。
+    #[test]
+    fn refuses_an_index_beyond_the_reach_of_the_double_indirect_table() {
+        let mut image = build_test_image();
+        let reach = DIRECT_BLOCK_COUNT as u64 + 1024 + 1024 * 1024;
+        let size = (reach + 1) * 4096;
+        let inode_at = 4 * 4096 + (INDIRECT_FILE_INODE as usize - 1) * 256;
+        image[inode_at + 4..inode_at + 8].copy_from_slice(&(size as u32).to_le_bytes());
+        image[inode_at + 108..inode_at + 112].copy_from_slice(&((size >> 32) as u32).to_le_bytes());
+        let fs = Ext2::parse(&image).unwrap();
+        let inode = fs.inode(INDIRECT_FILE_INODE).unwrap();
+        assert_eq!(inode.size, size);
         assert_eq!(
             fs.file_block(&inode, reach as u32),
             Err(Ext2Error::IndirectBlockUnsupported(reach as u32))
         );
-        // **直前の添字は単一間接の範囲である**（拒みすぎていないこと）。
-        // 表の項は 0 なので穴として全 0 が返る——**越えたのではなく、
-        // 空だからである。** 区別が付くのは、越えた側だけがエラーになるからである。
+        // **直前の添字は二重間接の範囲である**（拒みすぎていないこと。欄が 0 なので穴である）。
         let block = fs
             .file_block(&inode, reach as u32 - 1)
-            .expect("still within the single indirect reach; an empty entry is a hole");
+            .expect("still within the double indirect reach; an empty slot is a hole");
         assert!(block.iter().all(|byte| *byte == 0));
+    }
+
+    /// 2 段目の間接ブロックを使う試験のファイルの inode（2026-10-19）。試験のイメージで使っていない番号である。
+    const LARGE_FILE_INODE: u32 = 19;
+    /// その中身の最初のブロック。試験のイメージが使うのは 60 番までである。
+    const LARGE_FILE_FIRST_BLOCK: u32 = 64;
+    /// 単一間接で届くブロックの数（4 KiB のブロック）。**これを越えると 2 段目を使う。**
+    const SINGLE_INDIRECT_REACH: u64 = DIRECT_BLOCK_COUNT as u64 + 1024;
+
+    /// 試験のファイルの、位置 `position` のバイト。**各ブロックの先頭 4 バイトに、ファイルの中のブロック番号を置く**
+    /// ——ブロックを取り違えて読むと、番号が合わない（同じ中身のブロックが無い）。
+    fn large_file_byte(position: u64) -> u8 {
+        let within = (position % 4096) as usize;
+        if within < 4 {
+            ((position / 4096) as u32).to_le_bytes()[within]
+        } else {
+            (position % 251) as u8
+        }
+    }
+
+    /// 試験のイメージを伸ばし、大きさ `size` のファイルを [`LARGE_FILE_INODE`] に置く。**中身のブロックを先に並べ、
+    /// 間接の表をその後ろに置く**（単一間接・二重間接の外側・内側の順）。
+    fn build_image_with_large_file(size: u64) -> std::vec::Vec<u8> {
+        let mut image = build_test_image();
+        let blocks = size.div_ceil(4096);
+        let double_entries = blocks.saturating_sub(SINGLE_INDIRECT_REACH);
+        let inner_tables = double_entries.div_ceil(1024);
+        let single_table = LARGE_FILE_FIRST_BLOCK as u64 + blocks;
+        let outer_table = single_table + 1;
+        let total = outer_table + 1 + inner_tables;
+        image.resize(total as usize * 4096, 0);
+        let blocks_count = SUPERBLOCK_OFFSET + 4;
+        image[blocks_count..blocks_count + 4].copy_from_slice(&(total as u32).to_le_bytes());
+
+        let put = |image: &mut [u8], table: u64, at: u64, value: u64| {
+            let at = (table * 4096 + at * 4) as usize;
+            image[at..at + 4].copy_from_slice(&(value as u32).to_le_bytes());
+        };
+        let mut slots = std::vec::Vec::new();
+        for index in 0..blocks {
+            let block = LARGE_FILE_FIRST_BLOCK as u64 + index;
+            let start = index * 4096;
+            let len = (size - start).min(4096);
+            for offset in 0..len {
+                image[(block * 4096 + offset) as usize] = large_file_byte(start + offset);
+            }
+            if index < DIRECT_BLOCK_COUNT as u64 {
+                slots.push(block as u32);
+            } else if index < SINGLE_INDIRECT_REACH {
+                put(
+                    &mut image,
+                    single_table,
+                    index - DIRECT_BLOCK_COUNT as u64,
+                    block,
+                );
+            } else {
+                let within = index - SINGLE_INDIRECT_REACH;
+                let inner = outer_table + 1 + within / 1024;
+                put(&mut image, outer_table, within / 1024, inner);
+                put(&mut image, inner, within % 1024, block);
+            }
+        }
+        if blocks > DIRECT_BLOCK_COUNT as u64 {
+            slots.push(single_table as u32);
+        }
+        if double_entries > 0 {
+            slots.push(outer_table as u32);
+        }
+        write_inode(
+            &mut image,
+            LARGE_FILE_INODE,
+            0o100_644,
+            size as u32,
+            1,
+            &slots,
+        );
+        image
+    }
+
+    /// 試験のファイルの全体を、ブロックの境目をまたぐ大きさに分けて読む（[`FileImage`]。載せる側と同じ口）。
+    fn read_large_file(image: &[u8]) -> std::vec::Vec<u8> {
+        use crate::image_source::ImageSource;
+
+        let fs = Ext2::parse(image).expect("the grown image is accepted");
+        let inode = fs.inode(LARGE_FILE_INODE).unwrap();
+        let file = FileImage::new(&fs, &inode);
+        let mut whole = std::vec![0u8; inode.size as usize];
+        for chunk in whole.chunks_mut(10_007).enumerate() {
+            let (at, buf) = chunk;
+            file.read_at(at as u64 * 10_007, buf)
+                .expect("every range of the file is readable");
+        }
+        whole
+    }
+
+    fn expected_large_file(size: u64) -> std::vec::Vec<u8> {
+        (0..size).map(large_file_byte).collect()
+    }
+
+    /// 単一間接で届く大きさちょうど（4,243,456 バイト）のファイルは、2 段目を使わずに全体が読める。
+    #[test]
+    fn reads_a_file_exactly_at_the_single_indirect_reach() {
+        let size = SINGLE_INDIRECT_REACH * 4096;
+        assert_eq!(size, 4_243_456);
+        let image = build_image_with_large_file(size);
+        let fs = Ext2::parse(&image).unwrap();
+        let inode = fs.inode(LARGE_FILE_INODE).unwrap();
+        assert_eq!(
+            inode.blocks[DOUBLE_INDIRECT_SLOT], 0,
+            "no double indirect table"
+        );
+        assert_eq!(read_large_file(&image), expected_large_file(size));
+        assert_eq!(
+            fs.file_block(&inode, SINGLE_INDIRECT_REACH as u32),
+            Err(Ext2Error::FileBlockOutOfRange(SINGLE_INDIRECT_REACH as u32))
+        );
+    }
+
+    /// 1 バイト越えたファイルは、最後の 1 バイトを 2 段目の間接ブロックから読む。
+    #[test]
+    fn reads_a_file_one_byte_past_the_single_indirect_reach() {
+        let size = SINGLE_INDIRECT_REACH * 4096 + 1;
+        let image = build_image_with_large_file(size);
+        let fs = Ext2::parse(&image).unwrap();
+        let inode = fs.inode(LARGE_FILE_INODE).unwrap();
+        assert_ne!(
+            inode.blocks[DOUBLE_INDIRECT_SLOT], 0,
+            "the double indirect slot is in use"
+        );
+        assert_eq!(read_large_file(&image), expected_large_file(size));
+        let last = fs.file_block(&inode, SINGLE_INDIRECT_REACH as u32).unwrap();
+        assert_eq!(last, &[large_file_byte(size - 1)], "the file's last byte");
+    }
+
+    /// 2 段目の途中の大きさ（内側の表を 2 つ使い、最後のブロックが途中で切れる）のファイルが、全体で一致する。
+    #[test]
+    fn reads_a_file_in_the_middle_of_the_double_indirect_range() {
+        let size = (SINGLE_INDIRECT_REACH + 1024 + 300) * 4096 + 123;
+        let image = build_image_with_large_file(size);
+        let fs = Ext2::parse(&image).unwrap();
+        let inode = fs.inode(LARGE_FILE_INODE).unwrap();
+        let outer = inode.blocks[DOUBLE_INDIRECT_SLOT] as usize * 4096;
+        assert_ne!(
+            read_u32(&image, outer + 4),
+            0,
+            "the second inner table is in use"
+        );
+        assert_eq!(read_large_file(&image), expected_large_file(size));
+    }
+
+    /// 二重間接の表の項が 0 なら穴である（外側の欄・外側の項・内側の項のどれでも）。**表が外を指していれば、
+    /// 名前のある失敗で断る。**
+    #[test]
+    fn holes_and_bad_entries_in_the_double_indirect_tables() {
+        let size = SINGLE_INDIRECT_REACH * 4096 + 1;
+        let index = SINGLE_INDIRECT_REACH as u32;
+        let base = build_image_with_large_file(size);
+        let fs = Ext2::parse(&base).unwrap();
+        let slot = fs.inode(LARGE_FILE_INODE).unwrap().blocks[DOUBLE_INDIRECT_SLOT];
+        let outer = slot as usize * 4096;
+        let inner = read_u32(&base, outer) as usize * 4096;
+        let slot_at =
+            4 * 4096 + (LARGE_FILE_INODE as usize - 1) * 256 + 40 + DOUBLE_INDIRECT_SLOT * 4;
+
+        for (at, value, expected) in [
+            (slot_at, 0, Ok(())),
+            (outer, 0, Ok(())),
+            (inner, 0, Ok(())),
+            (
+                outer,
+                0x00ff_ffff,
+                Err(Ext2Error::BlockOutOfRange(0x00ff_ffff)),
+            ),
+            (
+                inner,
+                0x00ff_ffff,
+                Err(Ext2Error::BlockOutOfRange(0x00ff_ffff)),
+            ),
+        ] {
+            let mut image = base.clone();
+            image[at..at + 4].copy_from_slice(&(value as u32).to_le_bytes());
+            let fs = Ext2::parse(&image).unwrap();
+            let inode = fs.inode(LARGE_FILE_INODE).unwrap();
+            match (fs.file_block(&inode, index), expected) {
+                (Ok(block), Ok(())) => assert_eq!(block, &[0], "a hole reads as zeros (at {at})"),
+                (got, Err(want)) => assert_eq!(got, Err(want), "at {at}"),
+                (got, want) => panic!("at {at}: got {got:?}, want {want:?}"),
+            }
+        }
     }
 
     /// 穴は全 0 として読める（ADR-0038）。

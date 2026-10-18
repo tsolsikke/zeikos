@@ -8474,10 +8474,11 @@ fn fs_read_whole_file(
 ///   何も起きない。**検査していないものを壊しても反証にならない**
 /// - **`s_state` が clean でない**: **読み取りは拒まない**（Linux も読み取り専用
 ///   マウントは許す）。**拒まないと決めたものを、拒むことの反証にはできない**
-/// - **二重・三重間接と穴**: **このイメージには作れない。** 二重間接が要るのは 4 MiB 超の
-///   ファイルからで 2 MiB のイメージに入らず、`mke2fs -d` は穴を作らない。
+/// - **三重間接と穴**: **このイメージには作れない。** 三重間接が要るのは約 4 GiB 超の
+///   ファイルからでイメージに入らず、`mke2fs -d` は穴を作らない。
 ///   **ホストテストが見ている**（`common::ext2` の
-///   `refuses_a_file_that_uses_the_double_or_triple_indirect_slots` ほか）
+///   `refuses_a_file_that_uses_the_triple_indirect_slot_but_not_one_that_uses_the_double` ほか。
+///   二重間接は 2026-10-19 から読む）
 fn verify_corrupt_fs_image_is_rejected(logger: &mut Logger<Serial>) {
     let Err(reason) = try_verify_corrupt_fs_image_is_rejected(logger) else {
         return;

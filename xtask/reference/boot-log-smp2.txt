@@ -17,7 +17,7 @@ Hello, ZeikOS!
 [INFO] cpu-state: EFER.NXE=1 (expected 1) on the BSP [read back]; it was already set when the kernel was entered, so the kernel did not write EFER: EFER 0xd00 -> 0xd00
 [INFO] fp: SSE is enabled on the bootstrap processor: CR0=0x80010033 (MP=true, EM=false),              CR4=0x668 (OSFXSR=true, OSXMMEXCPT=true), as intended = true [read back from the registers]
 [INFO] boot stack: 1152 of 16384 bytes used (high-water; 15232 bytes poison intact)
-[INFO] higher-half: arrived at high VA. RIP=0xffffffff80248228 in [0xffffffff80100000, 0xffffffff8043a180)=true, RSP=0xffffffff803bdeb0 high=true, CR3=0x2ce000 == bootstrap PML4 0x2ce000 = true, identity alive (phys 0x100000 read via low==high) = true
+[INFO] higher-half: arrived at high VA. RIP=0xffffffff802483f8 in [0xffffffff80100000, 0xffffffff8043a180)=true, RSP=0xffffffff803bdeb0 high=true, CR3=0x2ce000 == bootstrap PML4 0x2ce000 = true, identity alive (phys 0x100000 read via low==high) = true
 [INFO] percpu: cpu_id() now derives the slot from GDTR: base=0xffffffff803d21e0 first slot=0xffffffff803d21e0 stride=64 offset=0 index=0 (reader installed: false -> true, cpu_id() 0 -> 0)
 [INFO] interrupts: RFLAGS.IF before cli = false (raw RFLAGS=0x2)
 [INFO] interrupts: RFLAGS.IF after cli = false (raw RFLAGS=0x2)
@@ -84,7 +84,7 @@ Hello, ZeikOS!
 [INFO] paging: required range [framebuffer] 0x80000000..0x803e8000: OK
 [INFO] paging: required range [new page tables (PML4)] 0x3000..0x4000: OK
 [INFO] paging: required range [current RSP] 0x3be110..0x3be111: OK
-[INFO] paging: required range [current RIP] 0x248228..0x248229: OK
+[INFO] paging: required range [current RIP] 0x2483f8..0x2483f9: OK
 [INFO] paging: all required ranges mapped. proceeding to CR3 switch (d-2).
 [INFO] paging: current CR3 = 0x2ce000
 [INFO] paging: CR3 switch instruction executed
@@ -120,7 +120,7 @@ Hello, ZeikOS!
 [INFO] console: 114 log line(s) were emitted before the console existed (serial only)
 [INFO] heap: arena 0x43b000..0x53b000 (256 frames, 1 MiB), mapped=true
 [INFO] heap: initialized (1048576 bytes free, 1 block(s))
-[INFO] granularity: executing code (RIP) 0xffffffff80248228 -> phys 0x248228, mapped by a 4KiB page at 0xffffffff80248000 (entry=0x248021)
+[INFO] granularity: executing code (RIP) 0xffffffff802483f8 -> phys 0x2483f8, mapped by a 4KiB page at 0xffffffff80248000 (entry=0x248021)
 [INFO] granularity: kernel stack (RSP) 0xffffffff803bdb90 -> phys 0x3bdb90, mapped by a 4KiB page at 0xffffffff803bd000 (entry=0x80000000003bd063)
 [INFO] granularity: heap arena 0x43b000 -> phys 0x43b000, mapped by a 2MiB page at 0x400000 (entry=0x8000000000400083)
 [INFO] granularity: framebuffer 0x80000000 -> phys 0x80000000, mapped by a 2MiB page at 0x80000000 (entry=0x80000000800000b3)
@@ -286,7 +286,7 @@ Hello, ZeikOS!
 [INFO] percpu: 2 usable CPU(s) enumerated, 2 per-CPU slot(s) available, every CPU has a slot=true (a CPU without a slot is not started, so no slot is indexed out of range)
 [INFO] identity-removal: begin. live PML4=0x10000, saved PML4[0]=0x11023
 [INFO] identity-removal: PML4[0] subtree table frames = 7 (28 KiB) become unreachable; intentional leak. subtree frames [256]=10 [511]=5. disjoint(0,256)=true disjoint(0,511)=true disjoint(256,511)=true
-[INFO] identity-removal: required [RIP] 0xffffffff80248228 -> phys 0x248228 (huge=false): OK
+[INFO] identity-removal: required [RIP] 0xffffffff802483f8 -> phys 0x2483f8 (huge=false): OK
 [INFO] identity-removal: required [RSP] 0xffffffff803bd9e0 -> phys 0x3bd9e0 (huge=false): OK
 [INFO] identity-removal: required [direct map window] 0xffff800000010000 -> phys 0x10000 (huge=false): OK
 [INFO] identity-removal: required [kernel image] 0xffffffff80100000 -> phys 0x100000 (huge=false): OK
@@ -437,7 +437,7 @@ task: cooperative switch verified
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
 [INFO] user-load: the page below the stack (0x7fb000) is left unmapped as a guard; neither the heap nor mmap is placed on it
 [INFO] user-load: hello initial stack at 0x7ffea0 (argc=1, envc=4, 16-byte aligned=true,          initial data 352 of 4096 byte(s))
-[INFO] stack-water: before entering hello in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
+[INFO] stack-water: before entering hello in Ring 3, the kernel stack used 68128 of 131072 byte(s); 62944 left
 hello from ring 3
 [INFO] user-stack: hello used 352 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: hello slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
@@ -452,7 +452,7 @@ hello from ring 3
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
 [INFO] user-load: the page below the stack (0x7fb000) is left unmapped as a guard; neither the heap nor mmap is placed on it
 [INFO] user-load: nx-stack initial stack at 0x7ffea0 (argc=1, envc=4, 16-byte aligned=true,          initial data 352 of 4096 byte(s))
-[INFO] stack-water: before entering nx-stack in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
+[INFO] stack-water: before entering nx-stack in Ring 3, the kernel stack used 68128 of 131072 byte(s); 62944 left
 [INFO] user-stack: nx-stack used 4096 of 16384 byte(s) (25%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: nx-stack slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] ring3: nx-stack used 0 of 65536 byte(s) of the depth-0 excursion stack (0%), which has a guard page below it
@@ -467,7 +467,7 @@ hello from ring 3
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
 [INFO] user-load: the page below the stack (0x7fb000) is left unmapped as a guard; neither the heap nor mmap is placed on it
 [INFO] user-load: nx-data initial stack at 0x7ffea0 (argc=1, envc=4, 16-byte aligned=true,          initial data 352 of 4096 byte(s))
-[INFO] stack-water: before entering nx-data in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
+[INFO] stack-water: before entering nx-data in Ring 3, the kernel stack used 68128 of 131072 byte(s); 62944 left
 [INFO] user-stack: nx-data used 352 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: nx-data slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] ring3: nx-data used 0 of 65536 byte(s) of the depth-0 excursion stack (0%), which has a guard page below it
@@ -482,7 +482,7 @@ hello from ring 3
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
 [INFO] user-load: the page below the stack (0x7fb000) is left unmapped as a guard; neither the heap nor mmap is placed on it
 [INFO] user-load: nx-rodata initial stack at 0x7ffe90 (argc=1, envc=4, 16-byte aligned=true,          initial data 368 of 4096 byte(s))
-[INFO] stack-water: before entering nx-rodata in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
+[INFO] stack-water: before entering nx-rodata in Ring 3, the kernel stack used 68128 of 131072 byte(s); 62944 left
 [INFO] user-stack: nx-rodata used 368 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: nx-rodata slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] ring3: nx-rodata used 0 of 65536 byte(s) of the depth-0 excursion stack (0%), which has a guard page below it
@@ -496,7 +496,7 @@ hello from ring 3
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
 [INFO] user-load: the page below the stack (0x7fb000) is left unmapped as a guard; neither the heap nor mmap is placed on it
 [INFO] user-load: nx-brk initial stack at 0x7ffea0 (argc=1, envc=4, 16-byte aligned=true,          initial data 352 of 4096 byte(s))
-[INFO] stack-water: before entering nx-brk in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
+[INFO] stack-water: before entering nx-brk in Ring 3, the kernel stack used 68128 of 131072 byte(s); 62944 left
 [INFO] user-stack: nx-brk used 352 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: nx-brk slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] ring3: nx-brk used 4448 of 65536 byte(s) of the depth-0 excursion stack (6%), which has a guard page below it
@@ -510,7 +510,7 @@ hello from ring 3
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
 [INFO] user-load: the page below the stack (0x7fb000) is left unmapped as a guard; neither the heap nor mmap is placed on it
 [INFO] user-load: debug-trap initial stack at 0x7ffe90 (argc=1, envc=4, 16-byte aligned=true,          initial data 368 of 4096 byte(s))
-[INFO] stack-water: before entering debug-trap in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
+[INFO] stack-water: before entering debug-trap in Ring 3, the kernel stack used 68128 of 131072 byte(s); 62944 left
 [INFO] user-stack: debug-trap used 376 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: debug-trap slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] ring3: debug-trap used 0 of 65536 byte(s) of the depth-0 excursion stack (0%), which has a guard page below it
@@ -524,7 +524,7 @@ hello from ring 3
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
 [INFO] user-load: the page below the stack (0x7fb000) is left unmapped as a guard; neither the heap nor mmap is placed on it
 [INFO] user-load: fault-test initial stack at 0x7ffe90 (argc=1, envc=4, 16-byte aligned=true,          initial data 368 of 4096 byte(s))
-[INFO] stack-water: before entering fault-test in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
+[INFO] stack-water: before entering fault-test in Ring 3, the kernel stack used 68128 of 131072 byte(s); 62944 left
 [INFO] user-stack: fault-test used 368 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: fault-test slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] ring3: fault-test used 0 of 65536 byte(s) of the depth-0 excursion stack (0%), which has a guard page below it
@@ -540,7 +540,7 @@ hello from ring 3
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
 [INFO] user-load: the page below the stack (0x7fb000) is left unmapped as a guard; neither the heap nor mmap is placed on it
 [INFO] user-load: syscall-test initial stack at 0x7ffe80 (argc=2, envc=4, 16-byte aligned=true,          initial data 384 of 4096 byte(s))
-[INFO] stack-water: before entering syscall-test in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
+[INFO] stack-water: before entering syscall-test in Ring 3, the kernel stack used 68128 of 131072 byte(s); 62944 left
 syscall-test wrote this
 [INFO] spawn: /bin/hello is 8576 byte(s) at inode 27; entering at depth 2 (the parent's excursion stack 0xffffffff8034e000..0xffffffff8035e000 has 10249 byte(s) used and 55287 left)
 [INFO] user-load: /bin/hello mapped PT_LOAD 0x400000..0x400042 (filesz=0x42 memsz=0x42 w=false) pages 0x400000..0x400000
@@ -623,7 +623,7 @@ tmp
 welcome to ZeikOS
 [INFO] user-stack: /bin/cat used 584 of 16384 byte(s) (3%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: /bin/cat slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
-[INFO] ring3: /bin/cat used 7504 of 65536 byte(s) of the depth-1 excursion stack (11%), which has a guard page below it
+[INFO] ring3: /bin/cat used 7408 of 65536 byte(s) of the depth-1 excursion stack (11%), which has a guard page below it
 [INFO] vfs: /bin/cat opened 1 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
 [INFO] user-heap: /bin/cat had brk take 0 frame(s) and give back 0 (equal means the shrink actually returned them; a program that only grows will not be equal, and that is not a failure)
 [INFO] page-perms: user program /bin/cat: 4 row(s), 0 unnamed, 0 mapped where nothing should be, 0 dropped, digest=580a6969fad2b302
@@ -639,7 +639,7 @@ welcome to ZeikOS
 cat: cannot open
 [INFO] user-stack: /bin/cat used 592 of 16384 byte(s) (3%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: /bin/cat slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
-[INFO] ring3: /bin/cat used 7504 of 65536 byte(s) of the depth-1 excursion stack (11%), which has a guard page below it
+[INFO] ring3: /bin/cat used 7408 of 65536 byte(s) of the depth-1 excursion stack (11%), which has a guard page below it
 [INFO] vfs: /bin/cat opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
 [INFO] user-heap: /bin/cat had brk take 0 frame(s) and give back 0 (equal means the shrink actually returned them; a program that only grows will not be equal, and that is not a failure)
 [INFO] page-perms: user program /bin/cat: 4 row(s), 0 unnamed, 0 mapped where nothing should be, 0 dropped, digest=580a6969fad2b302
@@ -723,7 +723,7 @@ futex: task 0 would sleep on 0x7ffee0 in slot 0 with no one to wake it; the user
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
 [INFO] user-load: the page below the stack (0x7fb000) is left unmapped as a guard; neither the heap nor mmap is placed on it
 [INFO] user-load: syscall-insn initial stack at 0x7ffe90 (argc=1, envc=4, 16-byte aligned=true,          initial data 368 of 4096 byte(s))
-[INFO] stack-water: before entering syscall-insn in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
+[INFO] stack-water: before entering syscall-insn in Ring 3, the kernel stack used 68128 of 131072 byte(s); 62944 left
 syscall-insn wrote this
 syscall-insn wrote this
 [INFO] user-stack: syscall-insn used 384 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
@@ -741,7 +741,7 @@ syscall-insn wrote this
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
 [INFO] user-load: the page below the stack (0x7fb000) is left unmapped as a guard; neither the heap nor mmap is placed on it
 [INFO] user-load: debug-trap-syscall initial stack at 0x7ffe80 (argc=1, envc=4, 16-byte aligned=true,          initial data 384 of 4096 byte(s))
-[INFO] stack-water: before entering debug-trap-syscall in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
+[INFO] stack-water: before entering debug-trap-syscall in Ring 3, the kernel stack used 68128 of 131072 byte(s); 62944 left
 [INFO] user-stack: debug-trap-syscall used 392 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: debug-trap-syscall slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] ring3: debug-trap-syscall used 1826 of 65536 byte(s) of the depth-0 excursion stack (2%), which has a guard page below it
@@ -755,7 +755,7 @@ syscall-insn wrote this
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
 [INFO] user-load: the page below the stack (0x7fb000) is left unmapped as a guard; neither the heap nor mmap is placed on it
 [INFO] user-load: compat-syscall initial stack at 0x7ffe90 (argc=1, envc=4, 16-byte aligned=true,          initial data 368 of 4096 byte(s))
-[INFO] stack-water: before entering compat-syscall in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
+[INFO] stack-water: before entering compat-syscall in Ring 3, the kernel stack used 68128 of 131072 byte(s); 62944 left
 [INFO] user-stack: compat-syscall used 384 of 16384 byte(s) (2%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: compat-syscall slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] ring3: compat-syscall used 994 of 65536 byte(s) of the depth-0 excursion stack (1%), which has a guard page below it
@@ -772,7 +772,7 @@ syscall-insn wrote this
 [INFO] user-load: mapped the user stack 0x7ffffbf000..0x7ffffff000 (w=true)
 [INFO] user-load: the page below the stack (0x7ffffbe000) is left unmapped as a guard; neither the heap nor mmap is placed on it
 [INFO] user-load: pie-hello initial stack at 0x7fffffee80 (argc=1, envc=4, 16-byte aligned=true,          initial data 384 of 4096 byte(s))
-[INFO] stack-water: before entering pie-hello in Ring 3, the kernel stack used 68224 of 131072 byte(s); 62848 left
+[INFO] stack-water: before entering pie-hello in Ring 3, the kernel stack used 68128 of 131072 byte(s); 62944 left
 hello from a position-independent program
 [INFO] user-stack: pie-hello used 384 of 262144 byte(s) (0%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: pie-hello slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
@@ -847,7 +847,7 @@ task: starting preemptive demo with 2 busy-loop workers for 200 ticks
 [INFO] virtio-blk: blocking read: released the BKL before waiting; the completion was seen
 [INFO] timer: first tick arrived as vector 0x20 - this is the proof that ICW2 was written correctly (it cannot be read back)
 [INFO] timer: this is the end of the steady-loop observation, timer_accounting_balanced=true; the shell takes the foreground from here
-[INFO] stack-water: before init, the kernel stack used 68224 of 131072 byte(s); 62848 left
+[INFO] stack-water: before init, the kernel stack used 68128 of 131072 byte(s); 62944 left
 [INFO] spawn: /bin/bss-test is 12800 byte(s) at inode 13; entering at depth 1 (the parent runs on its task's kernel stack, which has a guard page)
 [INFO] user-load: /bin/bss-test mapped PT_LOAD 0x400000..0x4000f5 (filesz=0xf5 memsz=0xf5 w=false) pages 0x400000..0x400000
 [INFO] user-load: /bin/bss-test mapped PT_LOAD 0x401000..0x4010bc (filesz=0xbc memsz=0xbc w=false) pages 0x401000..0x401000
@@ -887,7 +887,7 @@ m1-rust: 1 MiB vector, ends 0x5a 0xa5, sum 255
 m1-rust: hash map with 4 entries, total 10, two = 2
 [INFO] user-stack: /bin/linux/m1-rust used 1848 of 262144 byte(s) (0%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: /bin/linux/m1-rust slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
-[INFO] ring3: /bin/linux/m1-rust used 7504 of 65536 byte(s) of the depth-0 excursion stack (11%), which has a guard page below it
+[INFO] ring3: /bin/linux/m1-rust used 7408 of 65536 byte(s) of the depth-0 excursion stack (11%), which has a guard page below it
 [INFO] vfs: /bin/linux/m1-rust opened 1 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
 [INFO] user-heap: /bin/linux/m1-rust had brk take 2 frame(s) and give back 1 (equal means the shrink actually returned them; a program that only grows will not be equal, and that is not a failure)
 [INFO] user-mmap: /bin/linux/m1-rust had its first mmap at 0x10000000 and would map next at 0x10004000 (every process starts at 0x10000000; a first address above it means the addresses were shared with another process); 2 mapping(s) still held, 2 anonymous page(s)
@@ -1129,7 +1129,7 @@ thread: tid 34 (task 6) exited with status 0; the clear-tid address was 0x475358
 m3a-spawn-from-thread-rust: spawn from the main thread after the join was attempted
 [INFO] user-stack: /bin/linux/m3a-spawn-from-thread-rust used 1560 of 262144 byte(s) (0%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: /bin/linux/m3a-spawn-from-thread-rust slept <n> time(s) and woke <n> waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
-[INFO] ring3: /bin/linux/m3a-spawn-from-thread-rust used 16336 of 65536 byte(s) of the depth-0 excursion stack (24%), which has a guard page below it
+[INFO] ring3: /bin/linux/m3a-spawn-from-thread-rust used 16240 of 65536 byte(s) of the depth-0 excursion stack (24%), which has a guard page below it
 [INFO] vfs: /bin/linux/m3a-spawn-from-thread-rust opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
 [INFO] user-heap: /bin/linux/m3a-spawn-from-thread-rust had brk take 2 frame(s) and give back 1 (equal means the shrink actually returned them; a program that only grows will not be equal, and that is not a failure)
 [INFO] user-mmap: /bin/linux/m3a-spawn-from-thread-rust had its first mmap at 0x10000000 and would map next at 0x10005000 (every process starts at 0x10000000; a first address above it means the addresses were shared with another process); 2 mapping(s) still held, 2 anonymous page(s)
