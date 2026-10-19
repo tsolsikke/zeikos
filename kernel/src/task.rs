@@ -424,6 +424,61 @@ pub enum Wait {
     Epoll,
 }
 
+/// 待ちの種類（2026-10-20）。**プロセスの終わりの印が起こした待ちと、印を見て出た待ちを、種類ごとに数えるために持つ**
+/// （起動時の確かめが、確かめのイメージの前後の差を `process-end:` の行に出す）。集合の種類は、先頭の理由の種類である（[`WaitSet::kind`]）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum WaitKind {
+    Pipe,
+    Socket,
+    EventFd,
+    TimerFd,
+    Epoll,
+    Keyboard,
+    Timer,
+    Futex,
+    FileLock,
+    Child,
+}
+
+/// [`WaitKind`] の数。
+pub const WAIT_KINDS: usize = 10;
+
+impl WaitKind {
+    /// 行に出す順と名前。
+    pub const ALL: [(WaitKind, &'static str); WAIT_KINDS] = [
+        (WaitKind::Pipe, "pipe"),
+        (WaitKind::Socket, "socket"),
+        (WaitKind::EventFd, "eventfd"),
+        (WaitKind::TimerFd, "timerfd"),
+        (WaitKind::Epoll, "epoll"),
+        (WaitKind::Keyboard, "keyboard"),
+        (WaitKind::Timer, "timer"),
+        (WaitKind::Futex, "futex"),
+        (WaitKind::FileLock, "file lock"),
+        (WaitKind::Child, "child"),
+    ];
+}
+
+impl Wait {
+    /// 待ちの種類。
+    pub fn kind(self) -> WaitKind {
+        match self {
+            Wait::Keyboard => WaitKind::Keyboard,
+            Wait::Child { .. } => WaitKind::Child,
+            Wait::PipeReadable { .. } | Wait::PipeWritable { .. } => WaitKind::Pipe,
+            Wait::Timer { .. } => WaitKind::Timer,
+            Wait::SocketAcceptable { .. }
+            | Wait::SocketReadable { .. }
+            | Wait::SocketWritable { .. } => WaitKind::Socket,
+            Wait::Futex { .. } => WaitKind::Futex,
+            Wait::FileLock { .. } => WaitKind::FileLock,
+            Wait::EventFdReadable { .. } | Wait::EventFdWritable { .. } => WaitKind::EventFd,
+            Wait::TimerFdReadable { .. } => WaitKind::TimerFd,
+            Wait::Epoll => WaitKind::Epoll,
+        }
+    }
+}
+
 /// 1 つのタスクが同時に待てる理由の本数（`ADR-0066` の Y-b）。
 ///
 /// # 設計の見込みは 8 だった。測って 4 にした
@@ -511,6 +566,13 @@ impl WaitSet {
         self.len as usize
     }
 
+    /// 集合の種類——先頭の理由の種類（2026-10-20。`poll` の集合は、渡された最初の fd の種類になる）。空なら `None`。
+    pub fn kind(&self) -> Option<WaitKind> {
+        self.reasons[..self.len as usize]
+            .first()
+            .map(|reason| reason.kind())
+    }
+
     /// futex 以外の理由が 1 本でも入っているか（futex の行き詰まりの判定。`another_task_of_the_slot_could_wake`）。
     /// **futex 以外の理由は、プロセスの外（パイプの相手・ソケットの相手・キーボード・タイマ）が起こせる。**
     pub fn has_a_reason_other_than_futex(&self) -> bool {
@@ -519,8 +581,8 @@ impl WaitSet {
             .any(|reason| !matches!(reason, Wait::Futex { .. }))
     }
 
-    /// そのスロット（プロセス）の futex の理由が入っているか（アドレスは問わない。プロセスの終わりの印で、同じスロットの
-    /// futex の待ちを全部起こす `wake_futex_waiters_of_slot`。M3a の 3-1b）。
+    /// そのスロット（プロセス）の futex の理由が入っているか（アドレスは問わない。M3a の 3-1b。プロセスの終わりの印が起こした
+    /// futex の待ちを数える `wake_waiting_tasks_of_slot`）。
     pub fn waits_on_a_futex_of_slot(&self, slot: u8) -> bool {
         self.reasons[..self.len as usize]
             .iter()
@@ -1512,9 +1574,10 @@ pub fn finish_thread_task_on_fault(
 ) -> ! {
     let bkl = crate::bkl::acquire(crate::bkl::KernelEntry::ThreadFault);
     crate::syscall::mark_process_ended_by_thread_fault();
-    // **同じスロットの futex の待ちを全部起こす**（[`wake_futex_waiters_of_slot`]）。主スレッドが `join` で眠っていれば、
-    // 起きて `futex` の戻りで印を見て出る。本数は `futex:` の行に出る。
-    wake_futex_waiters_of_slot(current_ring3_slot());
+    // **同じスロットの待っているタスクを、理由を問わず全部起こす**（[`wake_waiting_tasks_of_slot`]。2026-10-20 に futex の
+    // 待ちだけから広げた）。主スレッドが `join` やパイプ・epoll で眠っていれば、起きて待ちの所で印を見て出る。本数は
+    // `futex:` の行（futex の待ち）と、種類ごとの累計（`process_end_counts`）に入る。
+    wake_waiting_tasks_of_slot(current_ring3_slot());
     let task = THREAD_TASK_FIRST + index;
     serial_line(format_args!(
         "thread: tid {} (task {task}) faulted in ring 3 (vector {fault_number}, rip {instruction_address:#x}, cr2 \
@@ -1532,7 +1595,7 @@ pub fn finish_thread_task_on_fault(
 /// [`park_finished_thread_task`] で行う。
 ///
 /// `ended_it` が真なら、この呼び出し（`exit_group`・`tkill`・`futex` の行き詰まり）が印を立てた側である——**同じスロットの
-/// futex の待ちを全部起こす**（[`wake_futex_waiters_of_slot`]）。偽なら、印は別のスレッドが立てていて、このスレッドは
+/// 待っているタスクを全部起こす**（[`wake_waiting_tasks_of_slot`]）。偽なら、印は別のスレッドが立てていて、このスレッドは
 /// システムコールの入口か戻りでそれを見ただけである（起こされた側か、印の後に入った側）。起こすのは立てた側だけでよい。
 pub fn mark_current_thread_finished_after_process_exit(
     number: u64,
@@ -1544,7 +1607,7 @@ pub fn mark_current_thread_finished_after_process_exit(
     debug_assert!(crate::bkl::held_by_this_cpu());
     scheduler::set_state(task, TaskState::Finished);
     if ended_it {
-        wake_futex_waiters_of_slot(current_ring3_slot());
+        wake_waiting_tasks_of_slot(current_ring3_slot());
         serial_line(format_args!(
             "thread: tid {} (task {task}) ended the process through system call {number} with status {status}; the \
              process ends at the main thread's next system call or tick",
@@ -2198,18 +2261,20 @@ pub(crate) fn wake_up_to_tasks_waiting_on(on: Wait, limit: usize) -> usize {
     woken
 }
 
-/// そのスロット（プロセス）の futex で待つタスクを、アドレスを問わず全部起こす（M3a の 3-1b。2026-10-14。`ADR-0085` の
-/// Addendum）。**起こした本数を返す。** 空振りの起こしである——futex の仕様は空振りを許し、起きた側は値を見直して
-/// また待つか、システムコールの出口で印を見て出る。
+/// そのスロット（プロセス）の待っているタスクを、理由を問わず全部起こす（M3a の 3-1b。2026-10-14。2026-10-20 に futex の
+/// 待ちだけから広げた。`ADR-0085` の Addendum）。**起こした本数を返す。** 空振りの起こしである（`ADR-0061`）——起きた側は、
+/// 待ちの所（`crate::syscall` の `sleep_released`）で終わりの印を見て `-EINTR` で戻り、システムコールの出口で出る。
 ///
 /// **呼ぶのは、スレッドがプロセスを終わらせる印を立てた所である**（`finish_thread_task_on_fault` と、`exit_group`・`tkill`・
-/// `futex` の行き詰まりの出口）。主スレッドが `join` や `Mutex` の futex で眠っている間にスレッドがプロセスを終わらせると、
-/// 起こす者が居ない——印は次のシステムコールで見るので、眠ったままでは永久に終わらず、Ctrl+C も届かない。
-/// 起きた主スレッドは `futex` の戻りで印を見て出る。起きた側が別のスレッドなら、同じ出口で印を見て `Finished` になる。
-/// **パイプ・キーボード・タイマの待ちは起こさない**（起こしても眠り直す。`docs/deferred-decisions.md`）。
+/// `futex` の行き詰まりの出口）。主スレッドがパイプ・epoll・`join` の futex などで眠っている間にスレッドがプロセスを終わらせると、
+/// 起こす者が居ない——印はシステムコールの出口で見るので、眠ったままでは永久に終わらない。
 ///
-/// **BKL の内側（IF=0）で呼ぶ。** 合図で引く形は `wake_tasks_waiting_on` と同じで、キーがスロットだけである。
-pub fn wake_futex_waiters_of_slot(slot: usize) -> usize {
+/// **起こすのは、そのスロットの `Waiting` のタスクだけである**（`roused_by_process_end`）。ほかのスロット（切り離して起動した
+/// 1 本など）は起こさない。子の待ち（`Wait::Child`）は起きても待ち直す（`crate::userland` の `wait_for_ring3_task` は印を
+/// 見ない。待つのは子を起こした側で、スレッドを持たない）。
+///
+/// **BKL の内側（IF=0）で呼ぶ。**
+pub fn wake_waiting_tasks_of_slot(slot: usize) -> usize {
     debug_assert!(crate::bkl::held_by_this_cpu());
     // 破壊テスト (M3a の 3-2, process-end-keeps-futex-sleepers-test): 起こさない。`join` で眠る主スレッドが永久に残り、
     // `m3a-exit-group-join-rust` で起動が止まる（3-1b で 1 回確かめた形を、検査の項目にした）。
@@ -2217,25 +2282,64 @@ pub fn wake_futex_waiters_of_slot(slot: usize) -> usize {
         return 0;
     }
     let mut woken = 0;
-    // 起こした本数は、起動ログの `futex:` の行（プロセスごと）に出る。**`thread:` の行には出さない**——ティックでスレッドが
-    // 先に走ると主スレッドはまだ眠っておらず 0 になり、行が揺れる（実測）。`futex:` の行は伏せて範囲で見る。
+    // 起こした本数は、起動ログの `futex:` の行（futex の待ちだけ。プロセスごと）と、種類ごとの累計（[`process_end_counts`]）に入る。
+    // **`thread:` の行には出さない**——ティックでスレッドが先に走ると主スレッドはまだ眠っておらず 0 になり、行が揺れる（実測）。
     for index in 0..TASK_COUNT {
-        if let TaskState::Waiting(set) = scheduler::state(index) {
-            if set.waits_on_a_futex_of_slot(slot as u8) {
-                scheduler::set_state(index, TaskState::Ready);
-                woken += 1;
-            }
+        let Some(set) =
+            roused_by_process_end(scheduler::state(index), scheduler::ring3_slot(index), slot)
+        else {
+            continue;
+        };
+        scheduler::set_state(index, TaskState::Ready);
+        woken += 1;
+        if let Some(kind) = set.kind() {
+            PROCESS_END_ROUSED[kind as usize].fetch_add(1, Ordering::Relaxed);
+        }
+        if set.waits_on_a_futex_of_slot(slot as u8) {
+            PROCESS_END_WAKES.fetch_add(1, Ordering::Relaxed);
         }
     }
     if woken > 0 {
         WAKES_ISSUED.fetch_add(woken as u64, Ordering::Relaxed);
-        PROCESS_END_WAKES.fetch_add(woken as u64, Ordering::Relaxed);
     }
     woken
 }
 
-/// プロセスの終わりの印が起こした futex の待ちの本数の累計（[`wake_futex_waiters_of_slot`]。計測）。
+/// プロセスの終わりの印で起こすタスクか（純粋な論理。2026-10-20）。**そのスロットの `Waiting` のタスクなら、その待ちの集合を
+/// 返す。** `Ready`・`Finished` などと、ほかのスロットのタスクは `None`。
+fn roused_by_process_end(state: TaskState, task_slot: usize, slot: usize) -> Option<WaitSet> {
+    match state {
+        TaskState::Waiting(set) if task_slot == slot => Some(set),
+        _ => None,
+    }
+}
+
+/// プロセスの終わりの印が起こした futex の待ちの本数の累計（[`wake_waiting_tasks_of_slot`]。計測）。
 static PROCESS_END_WAKES: AtomicU64 = AtomicU64::new(0);
+
+/// プロセスの終わりの印が起こした待ちの本数の累計、種類ごと（[`wake_waiting_tasks_of_slot`]。2026-10-20）。
+static PROCESS_END_ROUSED: [AtomicU64; WAIT_KINDS] = [const { AtomicU64::new(0) }; WAIT_KINDS];
+
+/// 待ちの所が終わりの印を見て、眠らずに（または起きた後に）`-EINTR` で戻った回数の累計、種類ごと（2026-10-20。
+/// `crate::syscall` の `sleep_released`）。
+static WAITS_LEFT_AT_PROCESS_END: [AtomicU64; WAIT_KINDS] =
+    [const { AtomicU64::new(0) }; WAIT_KINDS];
+
+/// 待ちの所が終わりの印を見て戻ったことを数える（`crate::syscall` の `sleep_released`）。
+pub fn note_wait_left_at_process_end(set: WaitSet) {
+    if let Some(kind) = set.kind() {
+        WAITS_LEFT_AT_PROCESS_END[kind as usize].fetch_add(1, Ordering::Relaxed);
+    }
+}
+
+/// 種類ごとの、終わりの印が起こした待ちの本数と、印を見て戻った待ちの数（累計。起動時の確かめが、確かめのイメージの前後の差を
+/// 出す）。
+pub fn process_end_counts() -> ([u64; WAIT_KINDS], [u64; WAIT_KINDS]) {
+    (
+        core::array::from_fn(|kind| PROCESS_END_ROUSED[kind].load(Ordering::Relaxed)),
+        core::array::from_fn(|kind| WAITS_LEFT_AT_PROCESS_END[kind].load(Ordering::Relaxed)),
+    )
+}
 
 /// `PROCESS_END_WAKES` の値。`crate::syscall::futex_counts` が返し、`crate::userland` がプロセスごとの差を出す。
 pub fn process_end_wakes() -> u64 {
@@ -4678,8 +4782,8 @@ mod tests {
         }
     }
 
-    /// プロセスの終わりの印で起こすのは、同じスロットの futex の理由を持つ集合だけである（アドレスは問わない。別のスロットの
-    /// futex と、futex 以外の理由は引かない。M3a の 3-1b）。
+    /// futex の理由が同じスロットのものかの判定（アドレスは問わない。別のスロットの futex と、futex 以外の理由は引かない。
+    /// M3a の 3-1b。2026-10-20 からは、終わりの印が起こした futex の待ちを数えるのに使う）。
     #[test]
     fn a_wait_set_matches_a_futex_of_its_slot_at_any_address() {
         use super::{Wait, WaitSet};
@@ -4702,6 +4806,59 @@ mod tests {
         }));
         assert!(mixed.waits_on_a_futex_of_slot(2));
         assert!(!mixed.waits_on_a_futex_of_slot(0));
+    }
+
+    /// プロセスの終わりの印で起こすのは、そのスロットの `Waiting` のタスクだけである（2026-10-20）——理由は問わない。ほかの
+    /// スロットの待ちと、`Ready`・`Finished` のタスクは起こさない。
+    #[test]
+    fn the_process_end_rouses_only_the_waiting_tasks_of_its_slot() {
+        use super::{roused_by_process_end, Wait, WaitSet};
+        let pipe = WaitSet::single(Wait::PipeReadable { pipe: 0 });
+        let mut epoll = WaitSet::single(Wait::Epoll);
+        assert!(epoll.push(Wait::Timer { deadline: 10 }));
+        let futex = WaitSet::single(Wait::Futex {
+            slot: 0,
+            address: 0x1000,
+        });
+        for set in [pipe, epoll, futex] {
+            assert_eq!(
+                roused_by_process_end(TaskState::Waiting(set), 0, 0),
+                Some(set)
+            );
+            assert_eq!(
+                roused_by_process_end(TaskState::Waiting(set), 1, 0),
+                None,
+                "a waiting task of another slot is left alone"
+            );
+        }
+        assert_eq!(roused_by_process_end(TaskState::Ready, 0, 0), None);
+        assert_eq!(roused_by_process_end(TaskState::Finished, 0, 0), None);
+    }
+
+    /// 待ちの集合の種類は、先頭の理由の種類である（2026-10-20。`process-end:` の行の数え方）。
+    #[test]
+    fn a_wait_set_is_counted_by_the_kind_of_its_first_reason() {
+        use super::{Wait, WaitKind, WaitSet};
+        let mut epoll = WaitSet::single(Wait::Epoll);
+        assert!(epoll.push(Wait::Timer { deadline: 10 }));
+        assert!(epoll.push(Wait::Keyboard));
+        assert_eq!(epoll.kind(), Some(WaitKind::Epoll));
+        let mut timerfd = WaitSet::single(Wait::TimerFdReadable { id: 0 });
+        assert!(timerfd.push(Wait::Timer { deadline: 10 }));
+        assert_eq!(timerfd.kind(), Some(WaitKind::TimerFd));
+        assert_eq!(
+            WaitSet::single(Wait::SocketWritable {
+                conn: 0,
+                side: crate::socket::Side::Client
+            })
+            .kind(),
+            Some(WaitKind::Socket)
+        );
+        assert_eq!(WaitSet::empty().kind(), None);
+        assert_eq!(WaitKind::ALL.len(), super::WAIT_KINDS);
+        for (index, (kind, _)) in WaitKind::ALL.iter().enumerate() {
+            assert_eq!(*kind as usize, index, "ALL is in the order of the counters");
+        }
     }
 
     /// futex の行き詰まりの判定（`ADR-0081` の Addendum）——同じスロットに `Ready` か futex 以外で待つタスクが居るときだけ

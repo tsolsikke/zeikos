@@ -363,7 +363,7 @@ struct SyscallState {
     /// 終了なのか例外による終了処理なのかをこれで区別する。**
     process_exited: AtomicBool,
     /// 印を立てた側（M3a の 3-1b。2026-10-14）。池のスレッドのタスクなら池の添字、主スレッドなら [`NO_THREAD`]。
-    /// **印を立てたスレッドだけが、同じスロットの futex の待ちを起こす**（[`end_thread_after_process_exit`]）——眠っている
+    /// **印を立てたスレッドだけが、同じスロットの待っているタスクを起こす**（[`end_thread_after_process_exit`]）——眠っている
     /// 間に別のスレッドが印を立てた側と、入口の前後の値では見分けられない（眠る `futex` は、入口では印が無く、戻りでは在る）。
     process_end_setter: AtomicUsize,
     /// [`SYS_EXIT`] が受け取った終了状態（RDI）。[`SyscallState::process_exited`] が真のときだけ意味を持つ。
@@ -1342,11 +1342,46 @@ pub fn detached_starts() -> u64 {
 /// **呼ぶのはシステムコールの入口の中（IF=0）で、BKL を持っている。** 待つと決めてから `Waiting` を据えるまで BKL を
 /// 放さないので、その間に起こす側の合図が入っても取りこぼさない（`ADR-0061`）。**BKL を解いてから譲る**（`ADR-0036`）。
 /// 譲る前の枠には `Drop` の要るものを残さない（`crate::task::finish_threads_of_slot` の doc）。
-fn sleep_released(set: crate::task::WaitSet, bkl: &mut Option<crate::bkl::BklGuard>) {
+///
+/// # プロセスの終わりの印を見る（2026-10-20。`ADR-0085` の Addendum）
+///
+/// **眠る前と、起きて BKL を取り直した直後に、終わりの印を見る。** 立っていれば [`Woke::ProcessEnded`] を返す——呼び手は、
+/// 書き込みも取り出しもせずに `-EINTR` を返す。システムコールの出口（[`syscall_entry`]）が印を見て、主スレッドなら遠征を出て、
+/// 池のスレッドなら終える。`-EINTR` は Ring 3 へは届かない。**印を立てた側は、同じスロットの待っているタスクを全部起こす**
+/// （`crate::task::wake_waiting_tasks_of_slot`）。眠る前にも見るのは、同じシステムコールの中で 2 度目に眠る形
+/// （`recvmsg` の待ちの後の読み）が、印の後に眠り込まないためである。
+fn sleep_released(set: crate::task::WaitSet, bkl: &mut Option<crate::bkl::BklGuard>) -> Woke {
+    if left_at_process_end(set) {
+        return Woke::ProcessEnded;
+    }
     crate::task::set_current_waiting_set(set);
     drop(bkl.take());
     crate::task::yield_now();
     *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
+    if left_at_process_end(set) {
+        Woke::ProcessEnded
+    } else {
+        Woke::Woken
+    }
+}
+
+/// 眠りから戻った理由（[`sleep_released`]）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[must_use]
+enum Woke {
+    /// 起こされた（空振りを含む。呼び手は条件を見直す）。
+    Woken,
+    /// プロセスを終わらせる印が立っている。**呼び手は、何もせずに `-EINTR` を返す。**
+    ProcessEnded,
+}
+
+/// 終わりの印が立っていれば、数えて真を返す（[`sleep_released`]）。
+fn left_at_process_end(set: crate::task::WaitSet) -> bool {
+    if !process_exited() {
+        return false;
+    }
+    crate::task::note_wait_left_at_process_end(set);
+    true
 }
 
 /// パイプの読み端から読む（`ADR-0063` の (b3)）。**空なら待つ。**
@@ -1390,10 +1425,13 @@ unsafe fn read_from_pipe(
             crate::pipe::ReadOutcome::Eof => return 0,
             crate::pipe::ReadOutcome::Empty => {
                 crate::pipe::note_reader_wait();
-                sleep_released(
+                if sleep_released(
                     crate::task::WaitSet::single(crate::task::Wait::PipeReadable { pipe }),
                     bkl,
-                );
+                ) == Woke::ProcessEnded
+                {
+                    return (-EINTR) as u64;
+                }
             }
         }
     }
@@ -1435,10 +1473,13 @@ unsafe fn write_to_pipe(
             crate::pipe::WriteOutcome::NoReader => return (-EPIPE) as u64,
             crate::pipe::WriteOutcome::Full => {
                 crate::pipe::note_writer_wait();
-                sleep_released(
+                if sleep_released(
                     crate::task::WaitSet::single(crate::task::Wait::PipeWritable { pipe }),
                     bkl,
-                );
+                ) == Woke::ProcessEnded
+                {
+                    return (-EINTR) as u64;
+                }
             }
         }
     }
@@ -1678,10 +1719,13 @@ unsafe fn read_eventfd(
                     return (-EAGAIN) as u64;
                 }
                 crate::eventfd::note_reader_wait();
-                sleep_released(
+                if sleep_released(
                     crate::task::WaitSet::single(crate::task::Wait::EventFdReadable { id }),
                     bkl,
-                );
+                ) == Woke::ProcessEnded
+                {
+                    return (-EINTR) as u64;
+                }
             }
         }
     }
@@ -1721,10 +1765,13 @@ unsafe fn write_eventfd(
                     return (-EAGAIN) as u64;
                 }
                 crate::eventfd::note_writer_wait();
-                sleep_released(
+                if sleep_released(
                     crate::task::WaitSet::single(crate::task::Wait::EventFdWritable { id }),
                     bkl,
-                );
+                ) == Woke::ProcessEnded
+                {
+                    return (-EINTR) as u64;
+                }
             }
         }
     }
@@ -1945,7 +1992,9 @@ unsafe fn read_timerfd(
         if let Some(deadline) = state.deadline() {
             set.push(crate::task::Wait::Timer { deadline });
         }
-        sleep_released(set, bkl);
+        if sleep_released(set, bkl) == Woke::ProcessEnded {
+            return (-EINTR) as u64;
+        }
     }
 }
 
@@ -2211,9 +2260,8 @@ unsafe fn epoll_wait_from_ring3(
         }
         crate::epoll::note_wait();
         waited = true;
-        sleep_released(set, bkl);
-        // **起きたら、プロセスの終わりの印を見る**（futex 以外の待ちを終わりの印が起こす形は、別の課題で足す）。
-        if process_exited() {
+        // **起きたら、プロセスの終わりの印を見る**（[`sleep_released`]。2026-10-20 から、印を立てた側が epoll の待ちも起こす）。
+        if sleep_released(set, bkl) == Woke::ProcessEnded {
             return (-EINTR) as u64;
         }
     }
@@ -2394,11 +2442,12 @@ unsafe fn read_input_events(
         return (-EAGAIN) as u64;
         #[cfg(not(feature = "input-read-never-waits"))]
         {
-            if wait_for_keyboard(bkl) {
-                continue;
+            match wait_for_keyboard(bkl) {
+                KeyboardWait::Again => continue,
+                // **前景を失った。** 待ち続けない。
+                KeyboardWait::ForegroundLost => return (-EBADF) as u64,
+                KeyboardWait::ProcessEnded => return (-EINTR) as u64,
             }
-            // **前景を失った。** 待ち続けない。
-            return (-EBADF) as u64;
         }
     };
     // SAFETY: slice は検証済みで、got は cap を越えない。
@@ -2879,7 +2928,9 @@ unsafe fn poll_from_ring3(
             return 0;
         }
         POLL_WAITS.fetch_add(1, Ordering::Relaxed);
-        sleep_released(set, bkl);
+        if sleep_released(set, bkl) == Woke::ProcessEnded {
+            return (-EINTR) as u64;
+        }
     }
 }
 
@@ -3058,12 +3109,15 @@ unsafe fn accept_from_ring3(
                 #[cfg(not(feature = "socket-accept-does-not-wait"))]
                 {
                     crate::socket::note_accept_wait();
-                    sleep_released(
+                    if sleep_released(
                         crate::task::WaitSet::single(crate::task::Wait::SocketAcceptable {
                             listener,
                         }),
                         bkl,
-                    );
+                    ) == Woke::ProcessEnded
+                    {
+                        return (-EINTR) as u64;
+                    }
                 }
             }
         }
@@ -3164,10 +3218,13 @@ unsafe fn read_from_socket(
                     return (-EAGAIN) as u64;
                 }
                 crate::socket::note_reader_wait();
-                sleep_released(
+                if sleep_released(
                     crate::task::WaitSet::single(crate::task::Wait::SocketReadable { conn, side }),
                     bkl,
-                );
+                ) == Woke::ProcessEnded
+                {
+                    return (-EINTR) as u64;
+                }
             }
         }
     }
@@ -3176,20 +3233,25 @@ unsafe fn read_from_socket(
 /// ソケットのその側が読める（データか EOF）か、接続が無くなるまで待つ（2026-09-23）。
 ///
 /// **読みはしない**——**続く [`read_from_socket`] が読む。** **待ち方は [`read_from_socket`] と同じで、
-/// 待ちの数も同じ計測へ数える。** **接続が無ければ待たない**（続く読みが `-ENOTCONN` を返す）。
+/// 待ちの数も同じ計測へ数える。** **接続が無ければ待たない**（続く読みが `-ENOTCONN` を返す）。**プロセスの終わりの印で
+/// 戻ったら [`Woke::ProcessEnded`] を返す**（呼び手は `-EINTR` を返す）。
 #[cfg_attr(feature = "socket-recvmsg-takes-fd-first", allow(dead_code))]
 fn wait_until_readable(
     conn: u8,
     side: crate::socket::Side,
     bkl: &mut Option<crate::bkl::BklGuard>,
-) {
+) -> Woke {
     while !crate::socket::readable_or_gone(conn, side) {
         crate::socket::note_reader_wait();
-        sleep_released(
+        if sleep_released(
             crate::task::WaitSet::single(crate::task::Wait::SocketReadable { conn, side }),
             bkl,
-        );
+        ) == Woke::ProcessEnded
+        {
+            return Woke::ProcessEnded;
+        }
     }
+    Woke::Woken
 }
 
 /// ソケットのストリームへ書く（`ADR-0064`）。**満杯なら待つ。相手が閉じていれば `-EPIPE`。**
@@ -3237,10 +3299,13 @@ unsafe fn write_to_socket(
                     return (-EAGAIN) as u64;
                 }
                 crate::socket::note_writer_wait();
-                sleep_released(
+                if sleep_released(
                     crate::task::WaitSet::single(crate::task::Wait::SocketWritable { conn, side }),
                     bkl,
-                );
+                ) == Woke::ProcessEnded
+                {
+                    return (-EINTR) as u64;
+                }
             }
         }
     }
@@ -4297,7 +4362,9 @@ unsafe fn recvmsg_from_ring3(
     // 待つスクリプト（`sockc shmlate`）で fd が届かず、`shm-ok` が返らない。**
     #[cfg(not(feature = "socket-recvmsg-takes-fd-first"))]
     if wait {
-        wait_until_readable(conn, side, bkl);
+        if wait_until_readable(conn, side, bkl) == Woke::ProcessEnded {
+            return (-EINTR) as u64;
+        }
     } else if !crate::socket::readable_or_gone(conn, side) {
         return (-EAGAIN) as u64;
     }
@@ -4977,7 +5044,7 @@ pub(crate) unsafe extern "sysv64" fn syscall_entry(
     #[cfg(not(feature = "user-exit-ignored"))]
     if state.process_exited.load(Ordering::SeqCst) {
         // **池のスレッドのタスクからは、印を主スレッドへ残して、そのスレッドだけを終える**（M3a の 3-1b。
-        // [`end_thread_after_process_exit`]）。印をこの呼び出しが立てたのなら、同じスロットの futex の待ちを起こすのもここ
+        // [`end_thread_after_process_exit`]）。印をこの呼び出しが立てたのなら、同じスロットの待っているタスクを起こすのもここ
         // である（立てた側は `process_end_setter` で見る）。
         if crate::task::current_thread_index().is_some() {
             end_thread_after_process_exit(request.number, &mut bkl);
@@ -5103,17 +5170,20 @@ pub fn slow_waits() -> u64 {
 /// **`ADR-0036` の「保持したまま眠らない・待たない」に従う。** **起きたら取り直す。**
 // 破壊テスト `read-never-waits` では呼ばれない（あちらは `-EAGAIN` を返して空回りする）。
 #[cfg_attr(feature = "read-never-waits", allow(dead_code))]
-fn wait_for_keyboard(bkl: &mut Option<crate::bkl::BklGuard>) -> bool {
+fn wait_for_keyboard(bkl: &mut Option<crate::bkl::BklGuard>) -> KeyboardWait {
     KEYBOARD_WAITS.fetch_add(1, Ordering::Relaxed);
     let since = crate::arch::x86_64::timer_ticks();
 
     // **欄を `Waiting` にし、BKL を解いて譲る。** **ここは IF=0 で、まだ BKL を持っている。** `pick_next` は待っている者を
     // 飛ばし、走れる者が居なければ BSP 用アイドルへ落ちる（W2-c-1 で置いた）。**起こされるまで戻らず、起きたら BKL を
     // 取り直してから戻る**（[`sleep_released`]）。
-    sleep_released(
+    if sleep_released(
         crate::task::WaitSet::single(crate::task::Wait::Keyboard),
         bkl,
-    );
+    ) == Woke::ProcessEnded
+    {
+        return KeyboardWait::ProcessEnded;
+    }
 
     // **安全網（`ADR-0061`）。止めない。数えるだけである。**
     //
@@ -5127,7 +5197,23 @@ fn wait_for_keyboard(bkl: &mut Option<crate::bkl::BklGuard>) -> bool {
     }
 
     // **前景を持っていなければ、もう読めない。**
-    crate::input::foreground_is_claimed()
+    if crate::input::foreground_is_claimed() {
+        KeyboardWait::Again
+    } else {
+        KeyboardWait::ForegroundLost
+    }
+}
+
+/// [`wait_for_keyboard`] から戻った理由（2026-10-20 に `bool` から分けた）。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[cfg_attr(feature = "read-never-waits", allow(dead_code))]
+enum KeyboardWait {
+    /// 起こされた。もう 1 度読みを試す。
+    Again,
+    /// 待っている間に前景を失った。もう読めない（`-EBADF`）。
+    ForegroundLost,
+    /// プロセスを終わらせる印が立った（`-EINTR`。[`sleep_released`]）。
+    ProcessEnded,
 }
 
 /// `read(fd, buf, count)` の本体（S10-b）。
@@ -5407,13 +5493,16 @@ unsafe fn sys_read(
                 return (-EAGAIN) as u64;
                 #[cfg(not(feature = "read-never-waits"))]
                 {
-                    if wait_for_keyboard(bkl) {
-                        // **次の周で空振りだったら数える**（上の `waited_once`）。
-                        waited_once = true;
-                        continue;
+                    match wait_for_keyboard(bkl) {
+                        KeyboardWait::Again => {
+                            // **次の周で空振りだったら数える**（上の `waited_once`）。
+                            waited_once = true;
+                            continue;
+                        }
+                        // **前景を失った**（待っている間に取り上げられた）。**待ち続けない。**
+                        KeyboardWait::ForegroundLost => return (-EBADF) as u64,
+                        KeyboardWait::ProcessEnded => return (-EINTR) as u64,
                     }
-                    // **前景を失った**（待っている間に取り上げられた）。**待ち続けない。**
-                    return (-EBADF) as u64;
                 }
             };
             // SAFETY: slice は検証済みで、`got` は `want` を越えない。
@@ -6973,9 +7062,9 @@ unsafe fn exit_thread_from_ring3(
 ///
 /// 印（`process_exited` と終了ステータス）はスロットの表に在り、主スレッドが次のシステムコールの入口か戻りで見て出る
 /// （[`syscall_entry`] の同じ分岐）。ここではそのスレッドを `Finished` にして、BKL を解き、切り替えて二度と戻らない。
-/// **印を立てた側（`process_end_setter` が自分）は、同じスロットの futex の待ちを全部起こす**——主スレッドが `join` や `Mutex` の futex で
-/// 眠っていても、起きて `futex` の戻りで印を見て出る。**パイプ・キーボード・タイマで待っている主スレッドは起こさない**
-/// （`docs/deferred-decisions.md`。起こしても眠り直すので、プロセスの終わり方の課題で扱う）。
+/// **印を立てた側（`process_end_setter` が自分）は、同じスロットの待っているタスクを、理由を問わず全部起こす**
+/// （`crate::task::wake_waiting_tasks_of_slot`。2026-10-20 に futex の待ちだけから広げた）——主スレッドが `join` の futex や
+/// パイプ・epoll で眠っていても、起きて待ちの所（[`sleep_released`]）で印を見て `-EINTR` で戻り、システムコールの出口で出る。
 ///
 /// # 捨てる枠に `Drop` の要るものを残さない
 ///
@@ -7114,7 +7203,7 @@ static FUTEX_SLEEPS: AtomicU64 = AtomicU64::new(0);
 static FUTEX_WOKEN: AtomicU64 = AtomicU64::new(0);
 
 /// `FUTEX_WAIT` で本当に眠った回数と、`FUTEX_WAKE` が起こした本数と、プロセスの終わりの印が起こした futex の待ちの本数
-/// （`crate::task` の `wake_futex_waiters_of_slot`。3-1b）の累計。
+/// （`crate::task` の `wake_waiting_tasks_of_slot` が起こしたうちの futex の待ち。3-1b）の累計。
 pub fn futex_counts() -> (u64, u64, u64) {
     (
         FUTEX_SLEEPS.load(Ordering::Relaxed),
@@ -7180,8 +7269,10 @@ unsafe fn sys_futex(
                 end_process_on_futex_deadlock(args[0]);
                 return 0;
             }
-            sleep_on_futex(crate::arch::x86_64::current_excursion_slot(), args[0], bkl);
-            0
+            match sleep_on_futex(crate::arch::x86_64::current_excursion_slot(), args[0], bkl) {
+                Woke::Woken => 0,
+                Woke::ProcessEnded => (-EINTR) as u64,
+            }
         }
         FutexRequest::Unsupported => (-ENOSYS) as u64,
     }
@@ -7224,7 +7315,7 @@ fn wake_futex_waiters(slot: usize, uaddr: u64, limit: u64) -> u64 {
 /// `FUTEX_WAIT` の眠る本体——キーを欄に書き、BKL を解いて譲り、起こされたら BKL を取り直す。**別の関数にしてあるのは
 /// [`wake_futex_waiters`] と同じ理由**（行き詰まりで終わる道しか通らないプログラムの高水位に、眠る道の枠を乗せない）。
 #[inline(never)]
-fn sleep_on_futex(slot: usize, uaddr: u64, bkl: &mut Option<crate::bkl::BklGuard>) {
+fn sleep_on_futex(slot: usize, uaddr: u64, bkl: &mut Option<crate::bkl::BklGuard>) -> Woke {
     FUTEX_SLEEPS.fetch_add(1, Ordering::Relaxed);
     sleep_released(
         crate::task::WaitSet::single(crate::task::Wait::Futex {
@@ -7232,7 +7323,7 @@ fn sleep_on_futex(slot: usize, uaddr: u64, bkl: &mut Option<crate::bkl::BklGuard
             address: uaddr,
         }),
         bkl,
-    );
+    )
 }
 
 /// `FUTEX_WAIT` で待つ場面になったプロセスの終了状態（2026-10-06）。**128 + 9（`SIGKILL`）**——シェルが「シグナルで
@@ -7288,10 +7379,13 @@ fn sys_flock(fd: u64, operation: u64, bkl: &mut Option<crate::bkl::BklGuard>) ->
                 if nonblocking {
                     return (-EAGAIN) as u64;
                 }
-                sleep_released(
+                if sleep_released(
                     crate::task::WaitSet::single(crate::task::Wait::FileLock { inode }),
                     bkl,
-                );
+                ) == Woke::ProcessEnded
+                {
+                    return (-EINTR) as u64;
+                }
             }
         }
     }
@@ -7739,23 +7833,30 @@ unsafe fn sys_nanosleep(
         return (-EINVAL) as u64;
     };
     let deadline = crate::arch::x86_64::monotonic_ticks().saturating_add(ticks);
-    sleep_until_ticks(deadline, bkl);
-    0
+    match sleep_until_ticks(deadline, bkl) {
+        Woke::Woken => 0,
+        Woke::ProcessEnded => (-EINTR) as u64,
+    }
 }
 
 /// タイマのティック `deadline` まで眠る（`nanosleep`・`clock_nanosleep` の本体。2026-10-07 に分けた）。**BKL を解いて譲り、
 /// 起きたら取り直す。** 早く起きたら数えて、もう 1 度眠る。
-fn sleep_until_ticks(deadline: u64, bkl: &mut Option<crate::bkl::BklGuard>) {
+fn sleep_until_ticks(deadline: u64, bkl: &mut Option<crate::bkl::BklGuard>) -> Woke {
     while crate::arch::x86_64::monotonic_ticks() < deadline {
         TIMER_WAITS.fetch_add(1, Ordering::Relaxed);
-        sleep_released(
+        // **プロセスの終わりの印で戻ったら、数えずに戻る**（[`sleep_released`]。2026-10-20）。
+        if sleep_released(
             crate::task::WaitSet::single(crate::task::Wait::Timer { deadline }),
             bkl,
-        );
+        ) == Woke::ProcessEnded
+        {
+            return Woke::ProcessEnded;
+        }
         if crate::arch::x86_64::monotonic_ticks() < deadline {
             EARLY_TIMER_WAKES.fetch_add(1, Ordering::Relaxed);
         }
     }
+    Woke::Woken
 }
 
 /// アロケータが借りられないときに待つ上限（タイマのティック。2026-10-08）。100 Hz で 1 秒である。
@@ -7809,10 +7910,14 @@ fn borrow_allocator_counting(
         }
         ALLOCATOR_WAITS.fetch_add(1, Ordering::Relaxed);
         waited += 1;
-        sleep_until_ticks(
+        // **プロセスの終わりの印が立ったら、借りずに戻る**（2026-10-20。断ったとは数えない）。
+        if sleep_until_ticks(
             crate::arch::x86_64::monotonic_ticks().saturating_add(1),
             bkl,
-        );
+        ) == Woke::ProcessEnded
+        {
+            return (None, waited);
+        }
     }
 }
 
@@ -7909,8 +8014,10 @@ unsafe fn sys_clock_nanosleep(
     } else {
         crate::arch::x86_64::monotonic_ticks().saturating_add(ticks)
     };
-    sleep_until_ticks(deadline, bkl);
-    0
+    match sleep_until_ticks(deadline, bkl) {
+        Woke::Woken => 0,
+        Woke::ProcessEnded => (-EINTR) as u64,
+    }
 }
 
 /// `stat(path, statbuf)` の本体（S10-b）。
