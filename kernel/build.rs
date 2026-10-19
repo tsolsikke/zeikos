@@ -636,6 +636,9 @@ const LINUX_PROGRAMS: &[&str] = &[
     // **Seinas の listen のソケットとロックファイルの一連**（`ADR-0087`。`linux-socket-test` のビルドだけが起動時に起こす——
     // ロックファイルを ext2 に作って消すので、既定の起動には入れない）。
     "wl-socket-lock-rust",
+    // **ソケットの待たない形と待つ形**（2026-10-19。`linux-socket-test` のビルドだけが起動時に起こす。`pipe-test` のスクリプトは
+    // `writev-pipe` でパイプの左に置く）。
+    "wl-nonblock-rust",
     // **ZeikOS と Linux で結果が違うイメージ**（マップ中の memfd を縮める ftruncate。`memfd-shrink-test` のビルドだけが起こす）。
     "m3a-memfd-shrink-rust",
 ];

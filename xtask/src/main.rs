@@ -875,6 +875,51 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
+    // **ソケットの待たない形の破壊テスト 3 件（2026-10-19）。** どれも確かめのイメージ（`wl-nonblock-rust`）が、遅れて動く
+    // スレッドの繋ぎ・書きを待って受けてしまったこと、または来ないはずの fd が来たことを自分で見つけ、名指しの行を出して
+    // 引数の数でない状態で終わる。起動時の確かめが `expected Exited(4)` と名指しして止まる。
+    CriticalTest {
+        name: "socket-ignores-nonblocking",
+        feature: "linux-socket-test,socket-ignores-nonblocking-test",
+        expected_markers: &[
+            "accept on a listener that does not wait took a connection instead of WouldBlock; exiting with 95",
+            "ended Ok(Exited(95)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &[
+            "accept on a listener that does not wait returned WouldBlock = true",
+            "zash: ready",
+        ],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    CriticalTest {
+        name: "msg-dontwait-ignored",
+        feature: "linux-socket-test,msg-dontwait-ignored-test",
+        expected_markers: &[
+            "recv with MSG_DONTWAIT on an empty stream waited and got bytes instead of EAGAIN; exiting with 96",
+            "ended Ok(Exited(96)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &[
+            "recv with MSG_DONTWAIT on a stream that waits returned EAGAIN = true",
+            "zash: ready",
+        ],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    CriticalTest {
+        name: "eagain-passes-fd",
+        feature: "linux-socket-test,eagain-passes-fd-test",
+        expected_markers: &[
+            "an fd arrived with the bytes sent before it, though sendmsg had returned EAGAIN; exiting with 94",
+            "ended Ok(Exited(94)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &["the reader got every byte in order and no fd = true", "zash: ready"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
 ];
 
 /// 逆アセンブル（`objdump -d` の AT&T 記法）の中で、棚卸しが「使わない」ことに依っているアドレス指定と
@@ -9823,9 +9868,28 @@ fn cmd_pipe_test(features: &[&str], expect_pass: bool) -> Result<()> {
         && reservations_dropped == Some(1)
         && again_once;
 
-    // **判定 7**——7 本とも左が起動し、スクリプトが最後まで届いた。
+    // **判定 7**——8 本とも左が起動し、スクリプトが最後まで届いた（2026-10-19 に 7 本から 8 本にした）。
     let reached_the_end = stripped.contains("script-done:");
-    let all_left_sides_started = detached_starts == Some(7) && created == Some(7);
+    let all_left_sides_started = detached_starts == Some(8) && created == Some(8);
+
+    // **判定 9**——`writev` が短く返った後に、後ろの iovec を先に書かない（2026-10-19）。左（`wl-nonblock-rust writev-pipe`）が
+    // 300 バイトと `|tail-ok|` を `writev` で書き、短く返った分は残りから書き直す。**輪は 256 バイトなので 1 本目は必ず短く返る。**
+    // 右の `cat` が出す 1 行が、300 バイトの後に `|tail-ok|` が続く形なら、並びに穴が無い。**カーネルの行が `cat` の 1 行の
+    // 途中に割り込む**（実測。2026-10-19。左の終わりの行が挟まった）ので、`/data/big` と同じく取り除いてから比べる。
+    let writev_line: String = (0..300u16)
+        .map(|i| char::from(b'a' + (i % 26) as u8))
+        .chain("|tail-ok|".chars())
+        .collect();
+    let writev_printed = program_output(&strip_embedded_kernel_lines(
+        stripped
+            .split("/bin/linux/wl-nonblock-rust writev-pipe | /bin/cat")
+            .nth(1)
+            .unwrap_or("")
+            .split("zeikos$")
+            .next()
+            .unwrap_or(""),
+    ));
+    let writev_kept_the_order = writev_printed.trim_end() == writev_line;
 
     // **判定 8**——起こせなかった右は `/bin/nonexist` だけである（`ADR-0066` の Y-c の `--full` で
     // 足した。2026-09-21）。**破壊テスト `spawn-detached-returns-early` は、左の読み込みと右の `spawn` を
@@ -9883,6 +9947,12 @@ fn cmd_pipe_test(features: &[&str], expect_pass: bool) -> Result<()> {
     println!(
         "{context}: every right side started except the missing one = {every_right_side_started} \
          (could not run: {cannot_run:?})"
+    );
+    println!(
+        "{context}: a writev that came back short on the pipe did not put the later iovec first = \
+         {writev_kept_the_order} ({} byte(s) printed, {} wanted)",
+        writev_printed.trim_end().len(),
+        writev_line.len()
     );
     println!("{context}: no [ERROR] line = {no_error} (the first were {error_lines:?})");
     println!(
@@ -9968,6 +10038,7 @@ fn cmd_pipe_test(features: &[&str], expect_pass: bool) -> Result<()> {
             && reached_the_end
             && all_left_sides_started
             && every_right_side_started
+            && writev_kept_the_order
             && no_error
     };
     if passed {
@@ -23552,6 +23623,9 @@ fn cmd_linux_c_test() -> Result<()> {
 ///
 /// 見るのは 5 つ——引数の数（4）で終わったこと、出した行が Linux と同じこと（`linux-programs/reference`）、3 本の
 /// listener を同時に持ったこと、カーネルの知らない番号を打っていないこと、`[ERROR]` が無いこと。
+///
+/// **同じビルドで、ソケットの待たない形と待つ形のイメージ（`wl-nonblock-rust`。2026-10-19）も起こす。** そちらも、引数の数で
+/// 終わったこと、出した行が Linux と同じこと、カーネルの知らない番号を打っていないことを見る。
 fn cmd_linux_socket_test() -> Result<()> {
     let context = "linux-socket-test";
     let workspace_root = workspace_root()?;
@@ -23586,13 +23660,16 @@ fn cmd_linux_socket_test() -> Result<()> {
     ))?;
     let name = "wl-socket-lock-rust";
     let ended = format!("spawn: /bin/linux/{name} ended");
+    let nonblock = "wl-nonblock-rust";
+    let nonblock_ended = format!("spawn: /bin/linux/{nonblock} ended");
     let deadline = Instant::now() + PIPE_TEST_TIMEOUT;
     loop {
         if child.was_cut() {
             break;
         }
         let text = read_lossy(&serial_log);
-        if text.contains(&ended) || text.contains("[ERROR]") || Instant::now() >= deadline {
+        if text.contains(&nonblock_ended) || text.contains("[ERROR]") || Instant::now() >= deadline
+        {
             break;
         }
         metrics::sleep_poll(PANIC_TEST_POLL_INTERVAL);
@@ -23612,6 +23689,32 @@ fn cmd_linux_socket_test() -> Result<()> {
         .lines()
         .find(|line| line.contains(&ended))
         .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
+    let nonblock_ran = serial.contains(&format!("spawn: /bin/linux/{nonblock} ended (Exited(4))"));
+    let nonblock_matched = linux_program_output_matches(
+        &workspace_root,
+        nonblock,
+        &serial,
+        LinuxReferenceEnvironment::ExactCount,
+    )?;
+    let nonblock_unknown_free = serial
+        .lines()
+        .find(|line| line.contains(&nonblock_ended))
+        .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
+    // **待つ経路を数で見る**（2026-10-19）。イメージのスレッドが遅れて繋ぐ・書く形なので、行だけでは、スレッドが先に動いて
+    // 待たずに通った回と区別が付かない。カーネルが出す実行の前後の差で、`accept` と読みが 1 回以上待ったことを見る。
+    let waits_line = serial
+        .lines()
+        .find(|line| line.contains("socket-waits: /bin/linux/wl-nonblock-rust"))
+        .unwrap_or("");
+    let wait_count = |key: &str| -> Option<u64> {
+        let rest = &waits_line[waits_line.find(key)? + key.len()..];
+        rest.split_whitespace().next()?.parse().ok()
+    };
+    let accept_waited = wait_count("made accept wait ");
+    let read_waited = wait_count("reads wait ");
+    let write_waited = wait_count("writes wait ");
+    let nonblock_waited =
+        accept_waited.is_some_and(|n| n >= 1) && read_waited.is_some_and(|n| n >= 1);
     let no_error = !serial.contains("[ERROR]");
     println!("{context}: {name} ended with status 4 = {ran}");
     println!(
@@ -23619,15 +23722,36 @@ fn cmd_linux_socket_test() -> Result<()> {
     );
     println!("{context}: {name} held 3 listeners at once = {three}");
     println!("{context}: {name} hit no number the kernel does not know = {unknown_free}");
+    println!("{context}: {nonblock} ended with status 4 = {nonblock_ran}");
+    println!(
+        "{context}: {nonblock} printed what Linux prints (linux-programs/reference/{nonblock}.txt) = \
+         {nonblock_matched}"
+    );
+    println!(
+        "{context}: {nonblock} hit no number the kernel does not know = {nonblock_unknown_free}"
+    );
+    println!(
+        "{context}: {nonblock} made accept and a read actually wait = {nonblock_waited} (accept waits \
+         {accept_waited:?}, read waits {read_waited:?}, write waits {write_waited:?})"
+    );
     println!("{context}: no [ERROR] line = {no_error}");
-    if ran && matched && three && unknown_free && no_error {
+    if ran
+        && matched
+        && three
+        && unknown_free
+        && nonblock_ran
+        && nonblock_matched
+        && nonblock_unknown_free
+        && nonblock_waited
+        && no_error
+    {
         println!("{context}: PASS");
         return Ok(());
     }
     for line in serial
         .lines()
-        .filter(|l| l.contains(name) || l.contains("[ERROR]"))
-        .take(32)
+        .filter(|l| l.contains(name) || l.contains(nonblock) || l.contains("[ERROR]"))
+        .take(48)
     {
         println!("{context}: (info) {}", line.trim_end());
     }
@@ -34756,7 +34880,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 67,
-    full: 537,
+    full: 540,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` とスクリプトのグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

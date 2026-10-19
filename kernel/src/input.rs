@@ -1186,7 +1186,7 @@ pub(crate) mod script {
 
     /// スクリプト（`ADR-0063` の (b3)）。**シェルの `|` を見る。** **判定は `xtask` の `pipe-test` が読む。**
     ///
-    /// **7 本の `|` で、判定と対になっている**（`docs/verification-coverage.md`）。
+    /// **8 本の `|` で、判定と対になっている**（`docs/verification-coverage.md`。2026-10-19 に 7 本から 8 本にした）。
     ///
     /// - **`sleep 0.2 | cat`** は読み手が先に待つ形——**`sleep` は Timer、`cat` は PipeReadable で、
     ///   2 本が同時に待つ**（持ち越しの行「作っても出ない」が偽になる観測）
@@ -1194,6 +1194,8 @@ pub(crate) mod script {
     /// - **`cat /data/big | hello`** は読み手が読まずに終わる形（`-EPIPE`）
     /// - **`echo x | nonexist`** は右が居ない形（予約が消え、左が回収される）
     /// - **`echo again | cat`** は 2 本目が起動し直せる形
+    /// - **`wl-nonblock-rust writev-pipe | cat`** は、左が `writev` で 300 バイトと 10 バイトを書く形（2026-10-19）。輪は
+    ///   256 バイトなので 1 本目が短く返る。**短く返った後に 2 本目の iovec を書くと、右が出す 1 行に穴が開く**
     ///
     /// **`exit` を 2 回打つ**——**計測の行（`pipe:`）はセッションが終わってから出る。**
     /// **1 回目は `sleep 0.2 | cat` の後である**（2026-09-30）——**判定 2 はこの行を読む。** **破壊テスト
@@ -1236,6 +1238,7 @@ pub(crate) mod script {
         /bin/cat /data/big | /bin/hello\n\
         /bin/echo x | /bin/nonexist\n\
         /bin/echo again | /bin/cat\n\
+        /bin/linux/wl-nonblock-rust writev-pipe | /bin/cat\n\
         exit\n\x0c";
 
     /// スクリプト（TAB-1）。**Tab の補完を見る。**

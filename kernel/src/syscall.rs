@@ -1450,6 +1450,8 @@ struct StreamEnd {
 
 /// ソケットの 1 回の呼び出しが待つか（2026-10-19）。**fd の待たない印も、呼び出しの `MSG_DONTWAIT` も無いときだけ待つ。**
 fn socket_call_waits(nonblocking: bool, dont_wait: bool) -> bool {
+    // 破壊テスト (2026-10-19, socket-ignores-nonblocking-test): fd の待たない印を見ない。
+    let nonblocking = nonblocking && !cfg!(feature = "socket-ignores-nonblocking-test");
     !(nonblocking || dont_wait)
 }
 
@@ -1462,7 +1464,9 @@ fn msg_flags_dont_wait(flags: u64, call: &str, fd: u64) -> Result<bool, u64> {
         report_msg_flags_refused(call, fd, unknown);
         return Err((-EINVAL) as u64);
     }
-    Ok(flags & MSG_DONTWAIT != 0)
+    // 破壊テスト (2026-10-19, msg-dontwait-ignored-test): `MSG_DONTWAIT` を見ない。**待つ fd への `recv(MSG_DONTWAIT)` が、
+    // 後から書かれたバイトを待って受ける。**
+    Ok(flags & MSG_DONTWAIT != 0 && !cfg!(feature = "msg-dontwait-ignored-test"))
 }
 
 /// 知らない `flags` を断った行（2026-10-19）。
@@ -2368,7 +2372,9 @@ unsafe fn accept_from_ring3(
             crate::socket::AcceptOutcome::NoListener => return (-EINVAL) as u64,
             crate::socket::AcceptOutcome::Empty => {
                 // **印が立っていれば待たない**（2026-10-19）。
-                if listener_nonblocking {
+                // 破壊テスト (2026-10-19, socket-ignores-nonblocking-test): listener の印を見ずに待つ。**待たない listener の
+                // `accept` が、後から繋がった接続を待って受ける。**
+                if listener_nonblocking && !cfg!(feature = "socket-ignores-nonblocking-test") {
                     return (-EAGAIN) as u64;
                 }
                 #[cfg(feature = "socket-accept-does-not-wait")]
@@ -3539,7 +3545,12 @@ unsafe fn sendmsg_from_ring3(
         Err(errno) => return (-errno) as u64,
     };
     // **待たないなら、空きを見てから fd を渡す**（上の doc）。
-    if !wait && !crate::socket::writable_or_gone(conn, side) {
+    // 破壊テスト (2026-10-19, eagain-passes-fd-test): 空きを見ずに fd を渡す。**満ちたソケットへの待たない `sendmsg` が
+    // fd を相手の待ち行列へ置いてから `-EAGAIN` を返し、受ける側が満ちたバイトと一緒に fd を受ける。**
+    if !cfg!(feature = "eagain-passes-fd-test")
+        && !wait
+        && !crate::socket::writable_or_gone(conn, side)
+    {
         return (-EAGAIN) as u64;
     }
     // **fd を先に渡す**——**`SCM_RIGHTS`。共有メモリの fd を相手の待ち行列へ。**

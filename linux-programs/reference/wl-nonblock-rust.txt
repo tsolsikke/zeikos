@@ -1,0 +1,16 @@
+wl-nonblock-rust: main starts with 4 argument(s)
+wl-nonblock-rust: accept on a listener that does not wait returned WouldBlock = true
+wl-nonblock-rust: the listener has O_NONBLOCK = true
+wl-nonblock-rust: accept on a listener that waits got the connection made later = true
+wl-nonblock-rust: the fd accepted from a listener that does not wait has O_NONBLOCK = false
+wl-nonblock-rust: a read on a stream that does not wait returned WouldBlock = true
+wl-nonblock-rust: a read on a stream that waits got the bytes written later = late
+wl-nonblock-rust: recv with MSG_DONTWAIT on a stream that waits returned EAGAIN = true
+wl-nonblock-rust: the read after it waited for the bytes written later = later
+wl-nonblock-rust: the first write to a stream that does not wait took some bytes = true
+wl-nonblock-rust: filling a stream that does not wait ended with WouldBlock = true
+wl-nonblock-rust: sendmsg with an fd on a full stream returned EAGAIN = true
+wl-nonblock-rust: the reader got every byte in order and no fd = true
+wl-nonblock-rust: after the drain, sendmsg passed the fd and the reader took it = true
+wl-nonblock-rust: a writev that came back short did not put the later iovec first on the stream = true
+exit status: 4

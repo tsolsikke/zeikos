@@ -42,5 +42,6 @@ record m3a-exit-group-thread-spins-rust
 record m3a-channel-tls-rust
 record m3a-exit-with-waiting-thread-rust
 record wl-socket-lock-rust
+record wl-nonblock-rust
 record m1-c
 record m3a-c

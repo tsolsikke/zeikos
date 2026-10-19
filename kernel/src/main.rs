@@ -6795,6 +6795,33 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
         b"/bin/linux/wl-socket-lock-rust",
         b"wl-socket-lock-rust\0/etc/motd\0a\0b\0",
     );
+    // **ソケットの待たない形と待つ形**（2026-10-19）。listener と接続を待たない形にした `accept`・`read`・`recv(MSG_DONTWAIT)`・
+    // 満ちたソケットへの `sendmsg` と、待つ形の `accept`・`read`・`writev` を同じプロセスで通す。判定は
+    // `cargo xtask run --linux-socket-test`（Linux の参照と突き合わせる）と、破壊テスト 3 つ（`--critical-test
+    // socket-ignores-nonblocking`・`msg-dontwait-ignored`・`eagain-passes-fd`）。
+    #[cfg(feature = "linux-socket-test")]
+    {
+        // **待つ経路を、時間ではなく数で確かめる**（2026-10-19）。イメージのスレッドが遅れて繋ぐ・書く形なので、スレッドが
+        // 先に動けば、待たずに通っても行は同じになる。実行の前後で、`accept` と読みが待った数の差を出し、xtask が 1 以上を
+        // 見る。
+        let before = (
+            kernel::socket::accept_waits(),
+            kernel::socket::reader_waits(),
+            kernel::socket::writer_waits(),
+        );
+        verify_linux_program(
+            logger,
+            b"/bin/linux/wl-nonblock-rust",
+            b"wl-nonblock-rust\0/etc/motd\0a\0b\0",
+        );
+        logger.info(format_args!(
+            "socket-waits: /bin/linux/wl-nonblock-rust made accept wait {} time(s), reads wait {} time(s) and writes \
+             wait {} time(s) during its run",
+            kernel::socket::accept_waits() - before.0,
+            kernel::socket::reader_waits() - before.1,
+            kernel::socket::writer_waits() - before.2,
+        ));
+    }
 }
 
 /// [`verify_linux_programs`] の、終わり方を名指しする形（M3a の 3-1b。2026-10-14）。**`spawn` の結果が `wanted` と違えば
@@ -14337,6 +14364,22 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "flock-keeps-lock-after-close-test",
         cfg!(feature = "flock-keeps-lock-after-close-test"),
         "flock のロックを close で放さない",
+    ),
+    // ソケットの待たない形（2026-10-19）。
+    (
+        "socket-ignores-nonblocking-test",
+        cfg!(feature = "socket-ignores-nonblocking-test"),
+        "ソケットの待たない印を見ずに、accept と読み書きで待つ",
+    ),
+    (
+        "msg-dontwait-ignored-test",
+        cfg!(feature = "msg-dontwait-ignored-test"),
+        "send・recv の系統の MSG_DONTWAIT を見ずに待つ",
+    ),
+    (
+        "eagain-passes-fd-test",
+        cfg!(feature = "eagain-passes-fd-test"),
+        "待たない sendmsg が、相手の輪に空きが無くても SCM_RIGHTS の fd を先に渡してから -EAGAIN を返す",
     ),
     // スレッドの破壊テスト、スレッドの検証の5（2026-10-15）。
     (

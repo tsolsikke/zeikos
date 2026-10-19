@@ -1318,3 +1318,13 @@ flock-ignores-holder-test = []
 # 破壊（2026-10-16。ADR-0087）: flock のロックを close で放さない。閉じた後の LOCK_EX|LOCK_NB が -EWOULDBLOCK のまま。
 # `--critical-test flock-keeps-lock-after-close`。
 flock-keeps-lock-after-close-test = []
+# 破壊（2026-10-19）: ソケットの待たない印を見ずに、accept と読み書きで待つ。確かめのイメージ（wl-nonblock-rust）の
+# 待たない listener の accept が、500 ms 後に繋がった接続を受けてしまい、イメージが 95 で終わる。
+# `--critical-test socket-ignores-nonblocking`。
+socket-ignores-nonblocking-test = []
+# 破壊（2026-10-19）: send・recv の系統の MSG_DONTWAIT を見ずに待つ。待つ fd への recv(MSG_DONTWAIT) が、500 ms 後に
+# 書かれたバイトを受けてしまい、イメージが 96 で終わる。`--critical-test msg-dontwait-ignored`。
+msg-dontwait-ignored-test = []
+# 破壊（2026-10-19）: 待たない sendmsg が、相手の輪に空きが無くても SCM_RIGHTS の fd を先に渡してから -EAGAIN を返す。
+# 受ける側が満ちたバイトを読むと fd が届き、イメージが 94 で終わる。`--critical-test eagain-passes-fd`。
+eagain-passes-fd-test = []
