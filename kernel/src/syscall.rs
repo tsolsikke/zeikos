@@ -58,12 +58,12 @@ use crate::abi::linux::{
     winsize_bytes, CmsgOneFd, Dirent64, DrmClipRect, FbBitfield, FbFixScreeninfo, FbVarScreeninfo,
     Iovec, Msghdr, Stat, Timespec, Winsize, AF_UNIX, CLOCK_MONOTONIC, CMSG_ONE_FD_LEN,
     DIRENT64_ALIGN, DIRENT64_HEADER_LEN, DRM_CLIP_RECT_LEN, DT_DIR, DT_REG, DT_UNKNOWN,
-    FBIOGET_FSCREENINFO, FBIOGET_VSCREENINFO, FB_TYPE_PACKED_PIXELS, FB_VISUAL_TRUECOLOR,
+    FBIOGET_FSCREENINFO, FBIOGET_VSCREENINFO, FB_TYPE_PACKED_PIXELS, FB_VISUAL_TRUECOLOR, FIONBIO,
     INPUT_EVENT_LEN, IOVEC_LEN, MAP_ANONYMOUS, MAP_FIXED, MAP_FIXED_NOREPLACE, MSGHDR_CONTROLLEN,
-    MSGHDR_LEN, O_ACCMODE, O_APPEND, O_CREAT, O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY, POLLFD_LEN,
-    POLLIN, POLLNVAL, PROT_EXEC, PROT_READ, PROT_WRITE, SCM_RIGHTS, SEEK_CUR, SEEK_END, SEEK_SET,
-    SOCKADDR_UN_LEN, SOCK_CLOEXEC, SOCK_STREAM, SOCK_TYPE_MASK, SOL_SOCKET, TIMESPEC_LEN,
-    TIOCGWINSZ, WINSIZE_LEN,
+    MSGHDR_LEN, O_ACCMODE, O_APPEND, O_CREAT, O_NONBLOCK, O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY,
+    POLLFD_LEN, POLLIN, POLLNVAL, PROT_EXEC, PROT_READ, PROT_WRITE, SCM_RIGHTS, SEEK_CUR, SEEK_END,
+    SEEK_SET, SOCKADDR_UN_LEN, SOCK_CLOEXEC, SOCK_NONBLOCK, SOCK_STREAM, SOCK_TYPE_MASK,
+    SOL_SOCKET, TIMESPEC_LEN, TIOCGWINSZ, WINSIZE_LEN,
 };
 use crate::abi::linux::{
     E2BIG, EACCES, EADDRINUSE, EAFNOSUPPORT, EAGAIN, EBADF, EBUSY, ECHILD, ECONNREFUSED, EEXIST,
@@ -912,6 +912,12 @@ unsafe fn dispatch(
             // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
             unsafe { sys_open(args[0], args[1], page_table_root, direct_map) }
         }
+        // **`FIONBIO` は fd の種類によらない**（2026-10-19。Linux も種類を問わず `O_NONBLOCK` を変える）。画面と端末の
+        // 振り分けより前に分ける。
+        // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+        SYS_IOCTL if args[1] == FIONBIO => unsafe {
+            fionbio_from_ring3(args[0], args[2], page_table_root, direct_map)
+        },
         SYS_IOCTL => {
             // **画面の fd は別の関数（`ADR-0066` の Y-c）。** **`present` は BKL を解いてコピーする**ので、
             // ガードを渡せる関数へ分ける。**`#[inline(never)]` で、コピーは `dispatch` の枠に乗らない。**
@@ -1000,7 +1006,8 @@ unsafe fn dispatch(
                 bkl,
             )
         },
-        // **`accept4` は `SOCK_CLOEXEC` を無視して `accept` と同じ**（`ADR-0087`。Rust の std が打つ）。
+        // **`accept4` は `SOCK_CLOEXEC` を無視し、`SOCK_NONBLOCK` で受けた fd に待たない印を立てる**（`ADR-0087`。
+        // Rust の std が打つ。印は 2026-10-19 から）。
         // SAFETY: 同上。
         SYS_ACCEPT4 => unsafe {
             accept_from_ring3(
@@ -1406,6 +1413,43 @@ fn socket_state_of(fd: u64) -> Result<crate::vfs::SocketState, u64> {
     }
 }
 
+/// fd のソケットに待たない印が立っているか（2026-10-19）。**ソケットでない・無い fd は偽**（状態は
+/// [`socket_state_of`] が先に見て断る）。
+fn socket_nonblocking_of(fd: u64) -> bool {
+    crate::vfs::with_current_files(|files| {
+        files
+            .get(fd as usize)
+            .ok()
+            .and_then(crate::vfs::File::socket_nonblocking)
+    })
+    .unwrap_or(false)
+}
+
+/// 待たない印を立てる・下ろす（`fcntl(F_SETFL)`・`ioctl(FIONBIO)`。2026-10-19）。**ソケットの外では受けて無視し、
+/// 立てる求めなら名前のある行を出す**——待たない前提で使ったプログラムが止まったとき、原因がすぐ分かるように。
+fn set_nonblocking_of(fd: u64, on: bool, by: &str) -> u64 {
+    match crate::vfs::with_current_files(|files| files.set_socket_nonblocking(fd as usize, on)) {
+        Ok(None) => 0,
+        Ok(Some(kind)) => {
+            if on {
+                report_nonblocking_ignored(fd, kind, by);
+            }
+            0
+        }
+        Err(error) => (-errno_for_file_table(error)) as u64,
+    }
+}
+
+/// ソケットの外へ立てようとした待たない印を、受けて無視した行（2026-10-19）。
+#[inline(never)]
+#[cold]
+fn report_nonblocking_ignored(fd: u64, kind: &str, by: &str) {
+    serial_line(format_args!(
+        "nonblock-ignored: {by} asked fd {fd} (a {kind}) not to wait; only sockets honour it, so reads and writes \
+         on this fd still wait"
+    ));
+}
+
 /// `sockaddr_un` を読み、名前を `name` へコピーする。**長さを返す。失敗は `-errno`。**
 ///
 /// **`sun_path` の先頭から最初の NUL まで、または `addrlen - 2` までが名前である**（Linux の形）。
@@ -1461,15 +1505,17 @@ unsafe fn read_socket_name(
 /// （`ADR-0020`。**私物にしない**——**パイプの入口が私物だったのは `spawn` の形に付いたからで、
 /// ソケットは Linux の形そのものが在る**）。
 ///
-/// **受けるのは `socket(AF_UNIX, SOCK_STREAM, 0)` と、それに `SOCK_CLOEXEC` を付けた形である**（`ADR-0087`。
-/// `SOCK_CLOEXEC` は `exec` が無いので無視する。Rust の std と wayland-server は必ず付ける）。**`SOCK_NONBLOCK` は
-/// `-EINVAL` で断る**（待たない形は別の課題。`docs/deferred-decisions.md`）。
+/// **受けるのは `socket(AF_UNIX, SOCK_STREAM, 0)` と、それに `SOCK_CLOEXEC`・`SOCK_NONBLOCK` を付けた形である**
+/// （`ADR-0087`。`SOCK_CLOEXEC` は `exec` が無いので無視する。Rust の std と wayland-server は必ず付ける）。
+/// **`SOCK_NONBLOCK` は、fd に待たない印を立てる**（2026-10-19。それまでは `-EINVAL` で断っていた）。
 #[inline(never)]
 fn socket_from_ring3(domain: u64, kind: u64, protocol: u64) -> u64 {
     if domain != AF_UNIX {
         return (-EAFNOSUPPORT) as u64;
     }
-    if kind & SOCK_TYPE_MASK != SOCK_STREAM || kind & !SOCK_TYPE_MASK & !SOCK_CLOEXEC != 0 {
+    if kind & SOCK_TYPE_MASK != SOCK_STREAM
+        || kind & !SOCK_TYPE_MASK & !(SOCK_CLOEXEC | SOCK_NONBLOCK) != 0
+    {
         return (-EINVAL) as u64;
     }
     if protocol != 0 {
@@ -1478,6 +1524,7 @@ fn socket_from_ring3(domain: u64, kind: u64, protocol: u64) -> u64 {
     let inserted = crate::vfs::with_current_files(|files| {
         files.insert(crate::vfs::File::Socket {
             state: crate::vfs::SocketState::Unbound,
+            nonblocking: kind & SOCK_NONBLOCK != 0,
         })
     });
     match inserted {
@@ -2092,14 +2139,14 @@ unsafe fn bind_from_ring3(
         };
     match crate::socket::bind(&name[..len]) {
         Ok(listener) => {
-            crate::vfs::with_current_files(|files| {
-                files.replace(
-                    fd as usize,
-                    crate::vfs::File::Socket {
-                        state: crate::vfs::SocketState::Listener { listener },
-                    },
-                )
+            let set = crate::vfs::with_current_files(|files| {
+                files.set_socket_state(fd as usize, crate::vfs::SocketState::Listener { listener })
             });
+            // 上の `socket_state_of` から BKL を放していない（この関数はガードを受けない）ので、別のスレッドが fd を差し替える間は無い。
+            debug_assert!(
+                set,
+                "bind: fd {fd} stopped being a socket while the BKL was held"
+            );
             0
         }
         Err(crate::socket::BindError::NameTaken) => (-EADDRINUSE) as u64,
@@ -2129,7 +2176,14 @@ fn listen_from_ring3(fd: u64, _backlog: u64) -> u64 {
 ///
 /// **`addr` が NULL でなければ、相手の名前として `AF_UNIX` の空の名前を書き、`*addrlen` を 2 にする**（Linux が
 /// 名前の無い相手に返す形。`ADR-0087`。それまでは `-EINVAL` だった——`ADR-0064` の限界 3）。**`accept4` の `flags` は
-/// `SOCK_CLOEXEC` だけ受けて無視する**（`SOCK_NONBLOCK` は `-EINVAL`）。
+/// `SOCK_CLOEXEC` と `SOCK_NONBLOCK` を受ける**（前者は無視する）。
+///
+/// # 待たない印（2026-10-19）
+///
+/// - **listener に印が立っていれば、待ち行列が空のとき `-EAGAIN` を返す**（wayland-server は、これを「もう無い」の
+///   意味に使う）。
+/// - **受けた fd の印は、`accept4` の `SOCK_NONBLOCK` だけで決まる。** listener の印は引き継がない（Linux と同じ。
+///   `accept` で受けた fd は待つ）。
 ///
 /// 破壊テスト (`ADR-0064`, socket-accept-does-not-wait): 待たずに `-EAGAIN` を返す。
 /// **`sockd` が `accept failed` で終わる。**
@@ -2152,9 +2206,10 @@ unsafe fn accept_from_ring3(
         Ok(_) => return (-EINVAL) as u64,
         Err(errno) => return errno,
     };
-    if flags & !SOCK_CLOEXEC != 0 {
+    if flags & !(SOCK_CLOEXEC | SOCK_NONBLOCK) != 0 {
         return (-EINVAL) as u64;
     }
+    let listener_nonblocking = socket_nonblocking_of(fd);
     if addr != 0 {
         // **書けることを先に見る**（取った接続を戻せないため）。`addrlen` は `socklen_t`（4 バイト）。
         // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
@@ -2203,6 +2258,8 @@ unsafe fn accept_from_ring3(
                             conn,
                             side: crate::socket::Side::Server,
                         },
+                        // **listener の印は引き継がない**（Linux と同じ。上の doc）。
+                        nonblocking: flags & SOCK_NONBLOCK != 0,
                     })
                 });
                 return match inserted {
@@ -2216,6 +2273,10 @@ unsafe fn accept_from_ring3(
             }
             crate::socket::AcceptOutcome::NoListener => return (-EINVAL) as u64,
             crate::socket::AcceptOutcome::Empty => {
+                // **印が立っていれば待たない**（2026-10-19）。
+                if listener_nonblocking {
+                    return (-EAGAIN) as u64;
+                }
                 #[cfg(feature = "socket-accept-does-not-wait")]
                 return (-EAGAIN) as u64;
                 #[cfg(not(feature = "socket-accept-does-not-wait"))]
@@ -2263,17 +2324,20 @@ unsafe fn connect_from_ring3(
         };
     match crate::socket::connect(&name[..len]) {
         Ok(conn) => {
-            crate::vfs::with_current_files(|files| {
-                files.replace(
+            let set = crate::vfs::with_current_files(|files| {
+                files.set_socket_state(
                     fd as usize,
-                    crate::vfs::File::Socket {
-                        state: crate::vfs::SocketState::Stream {
-                            conn,
-                            side: crate::socket::Side::Client,
-                        },
+                    crate::vfs::SocketState::Stream {
+                        conn,
+                        side: crate::socket::Side::Client,
                     },
                 )
             });
+            // 上の `socket_state_of` から BKL を放していない（この関数はガードを受けない）ので、別のスレッドが fd を差し替える間は無い。
+            debug_assert!(
+                set,
+                "connect: fd {fd} stopped being a socket while the BKL was held"
+            );
             0
         }
         Err(crate::socket::ConnectError::NoListener) => (-ECONNREFUSED) as u64,
@@ -6538,8 +6602,10 @@ const F_GET_SEALS: u64 = 1034;
 /// `fcntl(fd, cmd, arg)`（2026-10-06）。**fd の表の小物。**
 ///
 /// - `F_GETFD`・`F_SETFD`: `FD_CLOEXEC` は持たない（`exec` が無い）。問い合わせは 0、設定は受けて 0。
-/// - `F_GETFL`・`F_SETFL`: 開いたときのフラグは持たない。問い合わせは 0、設定（`O_NONBLOCK` など）は受けて 0
-///   ——**ソケットの読みは、もとから待たない**（`-EAGAIN`）。
+/// - `F_GETFL`・`F_SETFL`: ソケットは待たない印（`O_NONBLOCK`）を持つ（2026-10-19）。問い合わせは `O_RDWR` に印を
+///   足した値（Linux のソケットと同じ形）、設定は `O_NONBLOCK` のビットで印を立てるか下ろす。**ソケットの外は開いたときの
+///   フラグを持たない**——問い合わせは 0、設定は受けて 0 で、`O_NONBLOCK` を立てる求めなら名前のある行を出す
+///   （`nonblock-ignored:`）。
 /// - `F_DUPFD`・`F_DUPFD_CLOEXEC`: 同じ `File` を、`arg` 以上の最小の空き番号へコピーする。**Regular は位置を共有しない**
 ///   （Linux は共有する。`File` が位置を持つため。`docs/deferred-decisions.md`）。
 /// - `F_ADD_SEALS`・`F_GET_SEALS`: 共有メモリにだけ。印は持たないので、足す求めは受けて 0、問い合わせは 0。
@@ -6547,12 +6613,23 @@ const F_GET_SEALS: u64 = 1034;
 fn sys_fcntl(fd: u64, cmd: u64, arg: u64) -> u64 {
     let fd = fd as usize;
     match cmd {
-        F_GETFD | F_SETFD | F_GETFL | F_SETFL => {
-            crate::vfs::with_current_files(|files| match files.get(fd) {
-                Ok(_) => 0,
-                Err(error) => (-errno_for_file_table(error)) as u64,
-            })
-        }
+        F_GETFD | F_SETFD => crate::vfs::with_current_files(|files| match files.get(fd) {
+            Ok(_) => 0,
+            Err(error) => (-errno_for_file_table(error)) as u64,
+        }),
+        F_GETFL => crate::vfs::with_current_files(|files| match files.get(fd) {
+            Ok(file) => match file.socket_nonblocking() {
+                Some(true) => O_RDWR | O_NONBLOCK,
+                Some(false) => O_RDWR,
+                None => 0,
+            },
+            Err(error) => (-errno_for_file_table(error)) as u64,
+        }),
+        F_SETFL => set_nonblocking_of(
+            fd as u64,
+            arg & O_NONBLOCK != 0,
+            "fcntl(F_SETFL, O_NONBLOCK)",
+        ),
         F_DUPFD | F_DUPFD_CLOEXEC => crate::vfs::with_current_files(|files| {
             let mut copy = match files.get(fd) {
                 Ok(file) => *file,
@@ -7021,6 +7098,29 @@ unsafe fn sys_stat(
         return (-EFAULT) as u64;
     }
     0
+}
+
+/// `ioctl(fd, FIONBIO, &int)`（2026-10-19）。**`int` が 0 でなければ待たない印を立て、0 なら下ろす。**
+///
+/// **Rust の std の `set_nonblocking` が打つ**（wayland-server は listener にこれを掛ける）。ソケットの外は受けて無視し、
+/// 立てる求めなら名前のある行を出す（[`set_nonblocking_of`]）。`int` を読めなければ `-EFAULT`。
+///
+/// # Safety
+///
+/// `page_table_root` / `direct_map` が [`validate_user_range`] の契約を満たすこと。
+#[inline(never)]
+unsafe fn fionbio_from_ring3(
+    fd: u64,
+    arg: u64,
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+) -> u64 {
+    // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。`read_user_fixed` は範囲を確かめてから読み、
+    // 読めなければ `None` を返す（`accept` の `addrlen` を読むのと同じ形）。
+    let Some(bytes) = (unsafe { read_user_fixed::<4>(page_table_root, direct_map, arg) }) else {
+        return (-EFAULT) as u64;
+    };
+    set_nonblocking_of(fd, i32::from_le_bytes(bytes) != 0, "ioctl(FIONBIO)")
 }
 
 /// `ioctl(fd, request, arg)`（e-1）。**端末の問い合わせだけを受ける。**

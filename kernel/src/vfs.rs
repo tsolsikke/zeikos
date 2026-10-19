@@ -325,8 +325,16 @@ pub enum File {
     PipeWrite { pipe: u8 },
     /// unix ドメインのストリームソケット（`ADR-0064`）。**1 つの fd で読み書き両方**——
     /// **向きは [`SocketState::Stream`] の `side` が持つ。** **`socket` → `bind`/`listen` →
-    /// `accept`、または `socket` → `connect` で、状態がその場で進む**（[`FileTable::replace`]）。
-    Socket { state: SocketState },
+    /// `accept`、または `socket` → `connect` で、状態がその場で進む**（[`FileTable::set_socket_state`]）。
+    ///
+    /// `nonblocking` は待たない印（`O_NONBLOCK`）である。**立っていれば、`accept` と読み書きは待たずに `-EAGAIN` を返す。**
+    /// 立てるのは `socket(SOCK_NONBLOCK)`・`accept4(SOCK_NONBLOCK)`・`fcntl(F_SETFL, O_NONBLOCK)`・`ioctl(FIONBIO)` で、
+    /// **`accept` で受けた fd は listener の印を引き継がない**（Linux と同じ）。`F_DUPFD` のコピーは印をコピーして別に持つ
+    /// ——Linux は open file description を共有するので、コピーの後にどちらかで変えたときだけ違う（`flock` と同じ限界）。
+    Socket {
+        state: SocketState,
+        nonblocking: bool,
+    },
     /// 共有メモリ（`ADR-0065`）。**`shm` は `crate::shm` の表の添字。** **`memfd_create` が作り、
     /// `mmap` が自分の空間へマップし、`sendmsg` の `SCM_RIGHTS` で相手の表へコピーされる。**
     Shm { shm: u8 },
@@ -366,8 +374,30 @@ impl File {
     /// ソケットなら、その状態。
     pub fn socket_state(&self) -> Option<SocketState> {
         match self {
-            Self::Socket { state } => Some(*state),
+            Self::Socket { state, .. } => Some(*state),
             _ => None,
+        }
+    }
+
+    /// ソケットなら、待たない印が立っているか。
+    pub fn socket_nonblocking(&self) -> Option<bool> {
+        match self {
+            Self::Socket { nonblocking, .. } => Some(*nonblocking),
+            _ => None,
+        }
+    }
+
+    /// 種類の名前（判定行と、受けて無視した求めの行に出す）。
+    pub fn kind_name(&self) -> &'static str {
+        match self {
+            Self::Regular { .. } => "regular file",
+            Self::Terminal { .. } => "terminal",
+            Self::PipeRead { .. } => "pipe read end",
+            Self::PipeWrite { .. } => "pipe write end",
+            Self::Socket { .. } => "socket",
+            Self::Shm { .. } => "shared memory",
+            Self::Input => "input",
+            Self::Screen => "screen",
         }
     }
 
@@ -379,9 +409,11 @@ impl File {
             Self::PipeWrite { pipe } => crate::pipe::close_write_end(*pipe),
             Self::Socket {
                 state: SocketState::Stream { conn, side },
+                ..
             } => crate::socket::close_end(*conn, *side),
             Self::Socket {
                 state: SocketState::Listener { listener },
+                ..
             } => crate::socket::close_listener(*listener),
             Self::Shm { shm } => crate::shm::detach(*shm),
             // **画面の fd を手放したら図形モードから抜ける（`ADR-0066` の Y-c）。** **プロセスが
@@ -392,6 +424,7 @@ impl File {
             Self::Regular { lock, .. } => crate::flock::release_on_close(*lock),
             Self::Socket {
                 state: SocketState::Unbound,
+                ..
             }
             | Self::Terminal { .. }
             | Self::Input => {}
@@ -654,6 +687,37 @@ impl FileTable {
             previous.release_end();
         }
         previous
+    }
+
+    /// ソケットの状態を進める（`bind`・`connect`。2026-10-19）。**待たない印はそのまま残す。** ソケットでなければ偽。
+    ///
+    /// **以前は [`FileTable::replace`] で fd ごと差し替えていた**——印を持つようになったので、差し替えると印が消える。
+    /// 前の状態は `Unbound` で、手放す端が無いので、その場で書き換えても同じである。
+    pub fn set_socket_state(&mut self, fd: usize, new_state: SocketState) -> bool {
+        match self.slots.get_mut(fd).and_then(Option::as_mut) {
+            Some(File::Socket { state, .. }) => {
+                *state = new_state;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// ソケットの待たない印を立てるか下ろす（`fcntl(F_SETFL)`・`ioctl(FIONBIO)`。2026-10-19）。
+    ///
+    /// **ソケットでなければ何も変えず、その種類の名前を返す**（呼び手が「受けて無視した」行を出す）。無い fd は失敗。
+    pub fn set_socket_nonblocking(
+        &mut self,
+        fd: usize,
+        on: bool,
+    ) -> Result<Option<&'static str>, FileTableError> {
+        match self.get_mut(fd)? {
+            File::Socket { nonblocking, .. } => {
+                *nonblocking = on;
+                Ok(None)
+            }
+            other => Ok(Some(other.kind_name())),
+        }
     }
 
     /// 開いている本数。**判定行に出す。**
