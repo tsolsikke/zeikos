@@ -53,6 +53,11 @@ impl TimerState {
 
     /// `now` までの満了の回数（取らずに数える）。
     pub fn expirations(&self, now: u64) -> u64 {
+        // 破壊テスト (2026-10-19, timerfd-ignores-deadline-test): 締切を見ず、据えたらすぐ満了とする。確かめのイメージ
+        // （wl-epoll-rust）の絶対時刻の timerfd が、据えた時刻より前に epoll を起こし、92 で終わる。
+        if cfg!(feature = "timerfd-ignores-deadline-test") && self.deadline.is_some() {
+            return 1;
+        }
         match self.deadline {
             // **間隔が 0 なら 1 回きり**（`checked_div` が `None` を返す）。
             Some(deadline) if now >= deadline => (now - deadline)

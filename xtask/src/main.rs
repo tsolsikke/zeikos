@@ -920,6 +920,84 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
+    // **epoll・eventfd・timerfd の破壊テスト 5 件（2026-10-19。`ADR-0088`）。** どれも確かめのイメージ（`wl-epoll-rust`）が、
+    // 返り方や起き方の違いを自分で見つけ、名指しの行を出して引数の数でない状態で終わる。起動時の確かめが
+    // `expected Exited(4)` と名指しして止まる。
+    CriticalTest {
+        name: "epoll-ignores-oneshot",
+        feature: "linux-socket-test,epoll-ignores-oneshot-test",
+        expected_markers: &[
+            "a oneshot entry came back before it was modified; exiting with 91",
+            "ended Ok(Exited(91)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &[
+            "and not again before it is modified = []",
+            "zash: ready",
+        ],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    CriticalTest {
+        name: "timerfd-ignores-deadline",
+        feature: "linux-socket-test,timerfd-ignores-deadline-test",
+        expected_markers: &[
+            "the absolute timer woke epoll before the time it was set for; exiting with 92",
+            "ended Ok(Exited(92)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &[
+            "not before the set time",
+            "zash: ready",
+        ],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    CriticalTest {
+        name: "eventfd-write-does-not-wake-epoll",
+        feature: "linux-socket-test,eventfd-write-does-not-wake-epoll-test",
+        expected_markers: &[
+            "epoll woke only at its time limit, not when another thread wrote the eventfd; exiting with 87",
+            "ended Ok(Exited(87)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &[
+            "epoll woke when another thread wrote the eventfd = [7]",
+            "zash: ready",
+        ],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    CriticalTest {
+        name: "epoll-nested-never-ready",
+        feature: "linux-socket-test,epoll-nested-never-ready-test",
+        expected_markers: &[
+            "the outer epoll did not wake when the inner one became ready; exiting with 90",
+            "ended Ok(Exited(90)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &[
+            "the outer epoll woke for the nested copy of the inner one",
+            "zash: ready",
+        ],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    CriticalTest {
+        name: "epoll-level-reported-once",
+        feature: "linux-socket-test,epoll-level-reported-once-test",
+        expected_markers: &[
+            "a level-triggered entry did not come back while it was still ready; exiting with 86",
+            "ended Ok(Exited(86)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &[
+            "without reading, the level-triggered entry comes back = [7]",
+            "zash: ready",
+        ],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
 ];
 
 /// 逆アセンブル（`objdump -d` の AT&T 記法）の中で、棚卸しが「使わない」ことに依っているアドレス指定と
@@ -23662,13 +23740,17 @@ fn cmd_linux_socket_test() -> Result<()> {
     let ended = format!("spawn: /bin/linux/{name} ended");
     let nonblock = "wl-nonblock-rust";
     let nonblock_ended = format!("spawn: /bin/linux/{nonblock} ended");
+    let epoll = "wl-epoll-rust";
+    let epoll_ended = format!("spawn: /bin/linux/{epoll} ended");
     let deadline = Instant::now() + PIPE_TEST_TIMEOUT;
     loop {
         if child.was_cut() {
             break;
         }
         let text = read_lossy(&serial_log);
-        if text.contains(&nonblock_ended) || text.contains("[ERROR]") || Instant::now() >= deadline
+        if text.contains("epoll-waits: /bin/linux/wl-epoll-rust")
+            || text.contains("[ERROR]")
+            || Instant::now() >= deadline
         {
             break;
         }
@@ -23715,6 +23797,45 @@ fn cmd_linux_socket_test() -> Result<()> {
     let write_waited = wait_count("writes wait ");
     let nonblock_waited =
         accept_waited.is_some_and(|n| n >= 1) && read_waited.is_some_and(|n| n >= 1);
+    // **epoll・eventfd・timerfd**（2026-10-19。`ADR-0088`）。終わり方と Linux の参照に加えて、待つ経路を数で見る——epoll が
+    // 待ち、その待ちがソケット・eventfd・timerfd・入れ子の epoll のそれぞれで終わった数が 1 以上であること。
+    let epoll_ran = serial.contains(&format!("{epoll_ended} (Exited(4))"));
+    let epoll_matched = linux_program_output_matches(
+        &workspace_root,
+        epoll,
+        &serial,
+        LinuxReferenceEnvironment::ExactCount,
+    )?;
+    let epoll_unknown_free = serial
+        .lines()
+        .find(|line| line.contains(&epoll_ended))
+        .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
+    let epoll_line = serial
+        .lines()
+        .find(|line| line.contains("epoll-waits: /bin/linux/wl-epoll-rust"))
+        .unwrap_or("");
+    let epoll_count = |key: &str| -> Option<u64> {
+        let rest = &epoll_line[epoll_line.find(key)? + key.len()..];
+        rest.split_whitespace()
+            .next()?
+            .trim_end_matches([';', ','])
+            .parse()
+            .ok()
+    };
+    let epoll_waits = epoll_count("made epoll_pwait wait ");
+    let ended_socket = epoll_count("ended with a socket ");
+    let ended_eventfd = epoll_count("an eventfd ");
+    let ended_timerfd = epoll_count("a timerfd ");
+    let ended_nested = epoll_count("a nested epoll ");
+    let epoll_waited = [
+        epoll_waits,
+        ended_socket,
+        ended_eventfd,
+        ended_timerfd,
+        ended_nested,
+    ]
+    .iter()
+    .all(|count| count.is_some_and(|n| n >= 1));
     let no_error = !serial.contains("[ERROR]");
     println!("{context}: {name} ended with status 4 = {ran}");
     println!(
@@ -23734,6 +23855,16 @@ fn cmd_linux_socket_test() -> Result<()> {
         "{context}: {nonblock} made accept and a read actually wait = {nonblock_waited} (accept waits \
          {accept_waited:?}, read waits {read_waited:?}, write waits {write_waited:?})"
     );
+    println!("{context}: {epoll} ended with status 4 = {epoll_ran}");
+    println!(
+        "{context}: {epoll} printed what Linux prints (linux-programs/reference/{epoll}.txt) = {epoll_matched}"
+    );
+    println!("{context}: {epoll} hit no number the kernel does not know = {epoll_unknown_free}");
+    println!(
+        "{context}: {epoll} made epoll wait and the waits ended with a socket, an eventfd, a timerfd and a nested \
+         epoll = {epoll_waited} (waits {epoll_waits:?}, socket {ended_socket:?}, eventfd {ended_eventfd:?}, timerfd \
+         {ended_timerfd:?}, nested {ended_nested:?})"
+    );
     println!("{context}: no [ERROR] line = {no_error}");
     if ran
         && matched
@@ -23743,6 +23874,10 @@ fn cmd_linux_socket_test() -> Result<()> {
         && nonblock_matched
         && nonblock_unknown_free
         && nonblock_waited
+        && epoll_ran
+        && epoll_matched
+        && epoll_unknown_free
+        && epoll_waited
         && no_error
     {
         println!("{context}: PASS");
@@ -23750,7 +23885,9 @@ fn cmd_linux_socket_test() -> Result<()> {
     }
     for line in serial
         .lines()
-        .filter(|l| l.contains(name) || l.contains(nonblock) || l.contains("[ERROR]"))
+        .filter(|l| {
+            l.contains(name) || l.contains(nonblock) || l.contains(epoll) || l.contains("[ERROR]")
+        })
         .take(48)
     {
         println!("{context}: (info) {}", line.trim_end());
@@ -34880,7 +35017,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 67,
-    full: 540,
+    full: 545,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` とスクリプトのグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

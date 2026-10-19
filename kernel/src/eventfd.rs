@@ -240,6 +240,9 @@ pub fn write(id: u8, add: u64) -> Option<WriteOutcome> {
     };
     if outcome == WriteOutcome::Added && add != 0 {
         crate::task::wake_tasks_waiting_on(crate::task::Wait::EventFdReadable { id });
+        // 破壊テスト (2026-10-19, eventfd-write-does-not-wake-epoll-test): 書いても epoll で待つ者を起こさない。確かめの
+        // イメージの、ほかのスレッドが書く eventfd を待つ epoll が、待ちの期限まで起きず、87 で終わる。
+        #[cfg(not(feature = "eventfd-write-does-not-wake-epoll-test"))]
         crate::epoll::notify();
     }
     Some(outcome)

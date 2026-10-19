@@ -1328,3 +1328,18 @@ msg-dontwait-ignored-test = []
 # 破壊（2026-10-19）: 待たない sendmsg が、相手の輪に空きが無くても SCM_RIGHTS の fd を先に渡してから -EAGAIN を返す。
 # 受ける側が満ちたバイトを読むと fd が届き、イメージが 94 で終わる。`--critical-test eagain-passes-fd`。
 eagain-passes-fd-test = []
+# 破壊（2026-10-19。ADR-0088）: epoll が ONESHOT を見ずに返し続ける。確かめのイメージ（wl-epoll-rust）の ONESHOT の項目が、
+# 付け直す前にまた返り、イメージが 91 で終わる。`--critical-test epoll-ignores-oneshot`。
+epoll-ignores-oneshot-test = []
+# 破壊（2026-10-19。ADR-0088）: timerfd が締切を見ず、据えたらすぐ満了とする。絶対時刻の timerfd が、据えた時刻より前に
+# epoll を起こし、イメージが 92 で終わる。`--critical-test timerfd-ignores-deadline`。
+timerfd-ignores-deadline-test = []
+# 破壊（2026-10-19。ADR-0088）: eventfd へ書いても epoll で待つ者を起こさない。ほかのスレッドが書く eventfd を待つ epoll が、
+# 待ちの期限まで起きず、イメージが 87 で終わる。`--critical-test eventfd-write-does-not-wake-epoll`。
+eventfd-write-does-not-wake-epoll-test = []
+# 破壊（2026-10-19。ADR-0088）: 入れ子の epoll を準備なしと見る。外側の epoll が、内側の eventfd が書かれても待ちの期限まで
+# 返らず、イメージが 90 で終わる。`--critical-test epoll-nested-never-ready`。
+epoll-nested-never-ready-test = []
+# 破壊（2026-10-19。ADR-0088）: epoll がどの項目も一度返したら止める。レベルトリガーの項目が、読まずに待ち直しても返らず、
+# イメージが 86 で終わる。`--critical-test epoll-level-reported-once`。
+epoll-level-reported-once-test = []

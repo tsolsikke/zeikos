@@ -6821,6 +6821,27 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
             kernel::socket::reader_waits() - before.1,
             kernel::socket::writer_waits() - before.2,
         ));
+        // **epoll・eventfd・timerfd**（2026-10-19。`ADR-0088`）。待つ経路は、実行の前後の epoll の待ちの数と、待ちが何で
+        // 終わったか（eventfd・timerfd・ソケット・入れ子）の差で見る（xtask が 1 以上を見る）。破壊テストは 5 つ
+        // （`--critical-test epoll-ignores-oneshot`・`timerfd-ignores-deadline`・`eventfd-write-does-not-wake-epoll`・
+        // `epoll-nested-never-ready`・`epoll-level-reported-once`）。
+        let waits = kernel::epoll::waits();
+        let ended = kernel::epoll::ended_by();
+        verify_linux_program(
+            logger,
+            b"/bin/linux/wl-epoll-rust",
+            b"wl-epoll-rust\0/etc/motd\0a\0b\0",
+        );
+        let ended_after = kernel::epoll::ended_by();
+        logger.info(format_args!(
+            "epoll-waits: /bin/linux/wl-epoll-rust made epoll_pwait wait {} time(s); the waits ended with a socket {}, \
+             an eventfd {}, a timerfd {} and a nested epoll {} time(s)",
+            kernel::epoll::waits() - waits,
+            ended_after[0] - ended[0],
+            ended_after[2] - ended[2],
+            ended_after[3] - ended[3],
+            ended_after[4] - ended[4],
+        ));
     }
 }
 
@@ -14380,6 +14401,32 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "eagain-passes-fd-test",
         cfg!(feature = "eagain-passes-fd-test"),
         "待たない sendmsg が、相手の輪に空きが無くても SCM_RIGHTS の fd を先に渡してから -EAGAIN を返す",
+    ),
+    // epoll・eventfd・timerfd（2026-10-19。`ADR-0088`）。
+    (
+        "epoll-ignores-oneshot-test",
+        cfg!(feature = "epoll-ignores-oneshot-test"),
+        "epoll が ONESHOT を見ずに返し続ける",
+    ),
+    (
+        "timerfd-ignores-deadline-test",
+        cfg!(feature = "timerfd-ignores-deadline-test"),
+        "timerfd が締切を見ず、据えたらすぐ満了とする",
+    ),
+    (
+        "eventfd-write-does-not-wake-epoll-test",
+        cfg!(feature = "eventfd-write-does-not-wake-epoll-test"),
+        "eventfd へ書いても epoll で待つ者を起こさない",
+    ),
+    (
+        "epoll-nested-never-ready-test",
+        cfg!(feature = "epoll-nested-never-ready-test"),
+        "入れ子の epoll を準備なしと見る",
+    ),
+    (
+        "epoll-level-reported-once-test",
+        cfg!(feature = "epoll-level-reported-once-test"),
+        "epoll がどの項目も一度返したら止める",
     ),
     // スレッドの破壊テスト、スレッドの検証の5（2026-10-15）。
     (

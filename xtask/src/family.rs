@@ -267,6 +267,7 @@ pub const PATH_RULES: &[PathRule] = &[
             "kernel/src/flock.rs",
             "linux-programs/wl-socket-lock-rust.rs",
             "linux-programs/wl-nonblock-rust.rs",
+            "linux-programs/wl-epoll-rust.rs",
         ],
         reach: Reach::Families(&[Family::Ipc, Family::Interrupts]),
     },

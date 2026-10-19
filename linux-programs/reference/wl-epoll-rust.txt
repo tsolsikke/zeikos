@@ -1,0 +1,27 @@
+wl-epoll-rust: main starts with 4 argument(s)
+wl-epoll-rust: an empty eventfd that does not wait reads EAGAIN = true
+wl-epoll-rust: writing 3 and 4 and reading the eventfd gives Ok(7)
+wl-epoll-rust: a semaphore eventfd started at 2 reads Ok(1) Ok(1) Err(11)
+wl-epoll-rust: epoll woke when another thread wrote the eventfd = [7]
+wl-epoll-rust: without reading, the level-triggered entry comes back = [7]
+wl-epoll-rust: after reading, nothing is ready = []
+wl-epoll-rust: a oneshot entry comes back once = [8]
+wl-epoll-rust: and not again before it is modified = []
+wl-epoll-rust: after EPOLL_CTL_MOD it comes back = [9]
+wl-epoll-rust: a stopped timerfd that does not wait reads EAGAIN = true
+wl-epoll-rust: epoll woke for the relative timer = [1]; reading it gives Ok(1)
+wl-epoll-rust: after stopping it, timerfd_gettime gives 0 = true
+wl-epoll-rust: epoll woke for the absolute timer = [1], not before the set time; reading gives Ok(1)
+wl-epoll-rust: epoll woke for the listener when a client connected later = [5], accepted = true
+wl-epoll-rust: and the listener has no more connections = true
+wl-epoll-rust: the outer epoll woke for the nested copy of the inner one = [12]
+wl-epoll-rust: and the inner one returns the eventfd = [11]
+wl-epoll-rust: a closed fd leaves the epoll; a new eventfd with the same number (true) is not returned = []
+wl-epoll-rust: adding an epoll to itself gives errno 22
+wl-epoll-rust: adding the outer epoll into the inner one gives errno 40
+wl-epoll-rust: building a chain of six epolls gives errnos [0, 0, 0, 0, 40]
+wl-epoll-rust: adding the same fd twice gives errnos 0 and 17
+wl-epoll-rust: adding a regular file gives errno 1
+wl-epoll-rust: a wait with timeout 0 returns []
+wl-epoll-rust: a wait with timeout 50 ms returns []
+exit status: 4

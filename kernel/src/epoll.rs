@@ -380,7 +380,11 @@ impl Table {
     fn entry_bits(&self, entry: &Entry, depth: usize, leaf: &dyn Fn(Source) -> u32) -> u32 {
         let ready = match entry.source {
             Source::Epoll { id } => {
-                if self.any_ready(id, depth + 1, leaf) {
+                // 破壊テスト (2026-10-19, epoll-nested-never-ready-test): 入れ子の epoll を準備なしと見る。確かめのイメージ
+                // （wl-epoll-rust）の外側の epoll が、内側の eventfd が書かれても待ちの期限まで返らず、90 で終わる。
+                if !cfg!(feature = "epoll-nested-never-ready-test")
+                    && self.any_ready(id, depth + 1, leaf)
+                {
                     EPOLLIN
                 } else {
                     0
@@ -435,7 +439,13 @@ impl Table {
                 kind: Some(entry.source.kind()),
             };
             count += 1;
-            if commit && entry.events & EPOLLONESHOT != 0 {
+            // 破壊テスト (2026-10-19, epoll-ignores-oneshot-test): ONESHOT を見ずに返し続ける。確かめのイメージの ONESHOT の
+            // 項目が付け直す前にまた返り、91 で終わる。
+            let oneshot =
+                entry.events & EPOLLONESHOT != 0 && !cfg!(feature = "epoll-ignores-oneshot-test");
+            // 破壊テスト (2026-10-19, epoll-level-reported-once-test): どの項目も一度返したら止める（ONESHOT と同じ扱い）。
+            // 確かめのイメージのレベルトリガーの項目が、読まずに待ち直しても返らず、86 で終わる。
+            if commit && (oneshot || cfg!(feature = "epoll-level-reported-once-test")) {
                 if let Some(Some(stored)) = self
                     .live_mut(id)
                     .and_then(|instance| instance.entries.get_mut(index))

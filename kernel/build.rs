@@ -639,6 +639,8 @@ const LINUX_PROGRAMS: &[&str] = &[
     // **ソケットの待たない形と待つ形**（2026-10-19。`linux-socket-test` のビルドだけが起動時に起こす。`pipe-test` のスクリプトは
     // `writev-pipe` でパイプの左に置く）。
     "wl-nonblock-rust",
+    // **epoll・eventfd・timerfd**（2026-10-19。`ADR-0088`。`linux-socket-test` のビルドだけが起動時に起こす）。
+    "wl-epoll-rust",
     // **ZeikOS と Linux で結果が違うイメージ**（マップ中の memfd を縮める ftruncate。`memfd-shrink-test` のビルドだけが起こす）。
     "m3a-memfd-shrink-rust",
 ];
