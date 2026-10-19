@@ -360,6 +360,9 @@ pub enum File {
     /// 指し、最後のコピーを閉じたときに空ける（[`File::release_end`]）。`nonblocking` は待たない印（`EFD_NONBLOCK`・
     /// `F_SETFL`・`FIONBIO`）で、ソケットと同じく fd の側が持つ。
     EventFd { id: u8, nonblocking: bool },
+    /// timerfd（2026-10-19）。**`id` は `crate::timerfd` の表の番号で、参照を数える**（eventfd と同じ）。`nonblocking` は
+    /// 待たない印（`TFD_NONBLOCK`・`F_SETFL`・`FIONBIO`）。
+    TimerFd { id: u8, nonblocking: bool },
 }
 
 impl File {
@@ -395,12 +398,12 @@ impl File {
         }
     }
 
-    /// 待たない印を持つ種類（ソケットと eventfd）なら、その印（`F_GETFL` が読む。2026-10-19）。
+    /// 待たない印を持つ種類（ソケット・eventfd・timerfd）なら、その印（`F_GETFL` が読む。2026-10-19）。
     pub fn nonblocking(&self) -> Option<bool> {
         match self {
-            Self::Socket { nonblocking, .. } | Self::EventFd { nonblocking, .. } => {
-                Some(*nonblocking)
-            }
+            Self::Socket { nonblocking, .. }
+            | Self::EventFd { nonblocking, .. }
+            | Self::TimerFd { nonblocking, .. } => Some(*nonblocking),
             _ => None,
         }
     }
@@ -413,13 +416,22 @@ impl File {
         }
     }
 
-    /// コピーを作る（`F_DUPFD`）。**参照を数える種類は、数を 1 つ足す**（2026-10-19。eventfd）。`flock` のロックは
+    /// timerfd なら、その番号と待たない印（2026-10-19）。
+    pub fn timerfd_parts(&self) -> Option<(u8, bool)> {
+        match self {
+            Self::TimerFd { id, nonblocking } => Some((*id, *nonblocking)),
+            _ => None,
+        }
+    }
+
+    /// コピーを作る（`F_DUPFD`）。**参照を数える種類は、数を 1 つ足す**（2026-10-19。eventfd・timerfd）。`flock` のロックは
     /// コピーに渡さない（`ADR-0087`。コピーは別の持ち主）。
     pub fn duplicate(&self) -> Self {
         let mut copy = *self;
         match &mut copy {
             Self::Regular { lock, .. } => *lock = 0,
             Self::EventFd { id, .. } => crate::eventfd::attach(*id),
+            Self::TimerFd { id, .. } => crate::timerfd::attach(*id),
             _ => {}
         }
         copy
@@ -437,6 +449,7 @@ impl File {
             Self::Input => "input",
             Self::Screen => "screen",
             Self::EventFd { .. } => "eventfd",
+            Self::TimerFd { .. } => "timerfd",
         }
     }
 
@@ -463,6 +476,7 @@ impl File {
             Self::Regular { lock, .. } => crate::flock::release_on_close(*lock),
             // **eventfd は参照を数える**（2026-10-19）。最後のコピーで空ける。
             Self::EventFd { id, .. } => crate::eventfd::detach(*id),
+            Self::TimerFd { id, .. } => crate::timerfd::detach(*id),
             Self::Socket {
                 state: SocketState::Unbound,
                 ..
@@ -537,7 +551,8 @@ impl File {
             | Self::Shm { .. }
             | Self::Input
             | Self::Screen
-            | Self::EventFd { .. } => None,
+            | Self::EventFd { .. }
+            | Self::TimerFd { .. } => None,
         }
     }
 
@@ -552,7 +567,8 @@ impl File {
             | Self::Shm { .. }
             | Self::Input
             | Self::Screen
-            | Self::EventFd { .. } => 0,
+            | Self::EventFd { .. }
+            | Self::TimerFd { .. } => 0,
         }
     }
 
@@ -746,7 +762,7 @@ impl FileTable {
         }
     }
 
-    /// 待たない印を立てるか下ろす（`fcntl(F_SETFL)`・`ioctl(FIONBIO)`。2026-10-19）。**印を持つのはソケットと eventfd である。**
+    /// 待たない印を立てるか下ろす（`fcntl(F_SETFL)`・`ioctl(FIONBIO)`。2026-10-19）。**印を持つのはソケット・eventfd・timerfd である。**
     ///
     /// **印を持たない種類なら何も変えず、その種類の名前を返す**（呼び手が「受けて無視した」行を出す）。無い fd は失敗。
     pub fn set_nonblocking(
@@ -755,7 +771,9 @@ impl FileTable {
         on: bool,
     ) -> Result<Option<&'static str>, FileTableError> {
         match self.get_mut(fd)? {
-            File::Socket { nonblocking, .. } | File::EventFd { nonblocking, .. } => {
+            File::Socket { nonblocking, .. }
+            | File::EventFd { nonblocking, .. }
+            | File::TimerFd { nonblocking, .. } => {
                 *nonblocking = on;
                 Ok(None)
             }

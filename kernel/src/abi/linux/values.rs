@@ -96,6 +96,15 @@ pub const EFD_CLOEXEC: u64 = 0o2000000;
 /// `EFD_NONBLOCK`（`O_NONBLOCK` と同じ値）。fd に待たない印を立てる。
 pub const EFD_NONBLOCK: u64 = 0o4000;
 
+/// `TFD_CLOEXEC`（`timerfd_create` の `flags`。`O_CLOEXEC` と同じ値。2026-10-19）。受けて無視する（`exec` が無い）。
+pub const TFD_CLOEXEC: u64 = 0o2000000;
+/// `TFD_NONBLOCK`（`O_NONBLOCK` と同じ値）。fd に待たない印を立てる。
+pub const TFD_NONBLOCK: u64 = 0o4000;
+/// `TFD_TIMER_ABSTIME`（`timerfd_settime` の `flags`）。締切を `CLOCK_MONOTONIC` の絶対の時刻で受ける。
+pub const TFD_TIMER_ABSTIME: u64 = 1;
+/// `struct itimerspec` の大きさ（`it_interval` と `it_value` の `timespec` が 2 つ）。
+pub const ITIMERSPEC_LEN: usize = 32;
+
 /// `FIONBIO`（Linux の `asm-generic/ioctls.h` の値）。`int` を指す引数が 0 でなければ待たない印を立て、0 なら下ろす
 /// （2026-10-19。Rust の std の `set_nonblocking` が打つ）。
 pub const FIONBIO: u64 = 0x5421;

@@ -415,6 +415,9 @@ pub enum Wait {
     EventFdReadable { id: u8 },
     /// eventfd の値が最大で、`write` が待つ（2026-10-19）。読んだ側が起こす（`crate::eventfd::read`）。
     EventFdWritable { id: u8 },
+    /// timerfd の満了がまだで、`read` が待つ（2026-10-19）。**締切は同じ集合の `Timer` の理由が受け持つ**（ティックの
+    /// `wake_expired_timers` が起こす）。こちらは `timerfd_settime` と、最後のコピーを閉じたときに起こす。
+    TimerFdReadable { id: u8 },
 }
 
 /// 1 つのタスクが同時に待てる理由の本数（`ADR-0066` の Y-b）。

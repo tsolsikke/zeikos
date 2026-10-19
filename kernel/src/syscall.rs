@@ -51,7 +51,9 @@ use crate::abi::linux::x86_64::{
     SYS_SENDMSG, SYS_SENDTO, SYS_SET_TID_ADDRESS, SYS_SIGALTSTACK, SYS_SOCKET, SYS_STAT, SYS_TKILL,
     SYS_UNAME, SYS_UNLINK, SYS_WRITE, SYS_WRITEV,
 };
-use crate::abi::linux::x86_64::{SYS_EVENTFD, SYS_EVENTFD2};
+use crate::abi::linux::x86_64::{
+    SYS_EVENTFD, SYS_EVENTFD2, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
+};
 use crate::abi::linux::{
     cmsg_one_fd_bytes, dirent64_record, dirent64_record_len, fb_fix_screeninfo_bytes,
     fb_var_screeninfo_bytes, parse_cmsg_one_fd, parse_drm_clip_rect, parse_iovec, parse_msghdr,
@@ -60,12 +62,13 @@ use crate::abi::linux::{
     Iovec, Msghdr, Stat, Timespec, Winsize, AF_UNIX, CLOCK_MONOTONIC, CMSG_ONE_FD_LEN,
     DIRENT64_ALIGN, DIRENT64_HEADER_LEN, DRM_CLIP_RECT_LEN, DT_DIR, DT_REG, DT_UNKNOWN,
     EFD_CLOEXEC, EFD_NONBLOCK, EFD_SEMAPHORE, FBIOGET_FSCREENINFO, FBIOGET_VSCREENINFO,
-    FB_TYPE_PACKED_PIXELS, FB_VISUAL_TRUECOLOR, FIONBIO, INPUT_EVENT_LEN, IOVEC_LEN, MAP_ANONYMOUS,
-    MAP_FIXED, MAP_FIXED_NOREPLACE, MSGHDR_CONTROLLEN, MSGHDR_LEN, MSG_CMSG_CLOEXEC, MSG_DONTWAIT,
-    MSG_NOSIGNAL, O_ACCMODE, O_APPEND, O_CREAT, O_NONBLOCK, O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY,
-    POLLFD_LEN, POLLIN, POLLNVAL, PROT_EXEC, PROT_READ, PROT_WRITE, SCM_RIGHTS, SEEK_CUR, SEEK_END,
-    SEEK_SET, SOCKADDR_UN_LEN, SOCK_CLOEXEC, SOCK_NONBLOCK, SOCK_STREAM, SOCK_TYPE_MASK,
-    SOL_SOCKET, TIMESPEC_LEN, TIOCGWINSZ, WINSIZE_LEN,
+    FB_TYPE_PACKED_PIXELS, FB_VISUAL_TRUECOLOR, FIONBIO, INPUT_EVENT_LEN, IOVEC_LEN,
+    ITIMERSPEC_LEN, MAP_ANONYMOUS, MAP_FIXED, MAP_FIXED_NOREPLACE, MSGHDR_CONTROLLEN, MSGHDR_LEN,
+    MSG_CMSG_CLOEXEC, MSG_DONTWAIT, MSG_NOSIGNAL, O_ACCMODE, O_APPEND, O_CREAT, O_NONBLOCK,
+    O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY, POLLFD_LEN, POLLIN, POLLNVAL, PROT_EXEC, PROT_READ,
+    PROT_WRITE, SCM_RIGHTS, SEEK_CUR, SEEK_END, SEEK_SET, SOCKADDR_UN_LEN, SOCK_CLOEXEC,
+    SOCK_NONBLOCK, SOCK_STREAM, SOCK_TYPE_MASK, SOL_SOCKET, TFD_CLOEXEC, TFD_NONBLOCK,
+    TFD_TIMER_ABSTIME, TIMESPEC_LEN, TIOCGWINSZ, WINSIZE_LEN,
 };
 use crate::abi::linux::{
     E2BIG, EACCES, EADDRINUSE, EAFNOSUPPORT, EAGAIN, EBADF, EBUSY, ECHILD, ECONNREFUSED, EEXIST,
@@ -1034,6 +1037,16 @@ unsafe fn dispatch(
         // **eventfd**（2026-10-19）。`eventfd` は `flags` の無い古い形である。
         SYS_EVENTFD2 => eventfd_from_ring3(args[0], args[1]),
         SYS_EVENTFD => eventfd_from_ring3(args[0], 0),
+        // **timerfd**（2026-10-19）。
+        SYS_TIMERFD_CREATE => timerfd_create_from_ring3(args[0], args[1]),
+        // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+        SYS_TIMERFD_SETTIME => unsafe {
+            timerfd_settime_from_ring3(args, page_table_root, direct_map)
+        },
+        // SAFETY: 同上。
+        SYS_TIMERFD_GETTIME => unsafe {
+            timerfd_gettime_from_ring3(args[0], args[1], page_table_root, direct_map)
+        },
         // SAFETY: 呼び出し元契約により direct_map は有効で、遠征の中なので CR3 はこのプロセスのもの。
         SYS_MMAP => unsafe { mmap_from_ring3(args, direct_map, bkl) },
         // SAFETY: 同上。
@@ -1419,9 +1432,9 @@ fn socket_nonblocking_of(fd: u64) -> bool {
     .unwrap_or(false)
 }
 
-/// 待たない印を立てる・下ろす（`fcntl(F_SETFL)`・`ioctl(FIONBIO)`。2026-10-19）。**印を持つのはソケットと eventfd である。
-/// ほかの種類では受けて無視し、
-/// 立てる求めなら名前のある行を出す**——待たない前提で使ったプログラムが止まったとき、原因がすぐ分かるように。
+/// 待たない印を立てる・下ろす（`fcntl(F_SETFL)`・`ioctl(FIONBIO)`。2026-10-19）。印を持つのはソケット・eventfd・timerfd
+/// である。**ほかの種類では受けて無視し、立てる求めなら名前のある行を出す**——待たない前提で使ったプログラムが止まった
+/// とき、原因がすぐ分かるように。
 fn set_nonblocking_of(fd: u64, on: bool, by: &str) -> u64 {
     match crate::vfs::with_current_files(|files| files.set_nonblocking(fd as usize, on)) {
         Ok(None) => 0,
@@ -1440,7 +1453,7 @@ fn set_nonblocking_of(fd: u64, on: bool, by: &str) -> u64 {
 #[cold]
 fn report_nonblocking_ignored(fd: u64, kind: &str, by: &str) {
     serial_line(format_args!(
-        "nonblock-ignored: {by} asked fd {fd} (a {kind}) not to wait; only sockets and eventfds honour it, so reads \
+        "nonblock-ignored: {by} asked fd {fd} (a {kind}) not to wait; only sockets, eventfds and timerfds honour it, so reads \
          and writes on this fd still wait"
     ));
 }
@@ -1678,6 +1691,228 @@ unsafe fn write_eventfd(
                 *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
             }
         }
+    }
+}
+
+/// [`SYS_TIMERFD_CREATE`] の本体（2026-10-19）。**止まった timerfd を作り、最小の空き fd に置く。**
+///
+/// 時計は `CLOCK_MONOTONIC` だけを受ける（ほかは `-EINVAL`。`CLOCK_REALTIME` は壁の時計の課題の範囲）。`flags` は
+/// `TFD_CLOEXEC`（無視する）と `TFD_NONBLOCK` を受け、ほかのビットは `-EINVAL`。表が尽きれば `-ENOMEM`。
+#[inline(never)]
+fn timerfd_create_from_ring3(clockid: u64, flags: u64) -> u64 {
+    if clockid != CLOCK_MONOTONIC || flags & !(TFD_CLOEXEC | TFD_NONBLOCK) != 0 {
+        return (-EINVAL) as u64;
+    }
+    let Some(id) = crate::timerfd::create() else {
+        return (-ENOMEM) as u64;
+    };
+    let inserted = crate::vfs::with_current_files(|files| {
+        files.insert(crate::vfs::File::TimerFd {
+            id,
+            nonblocking: flags & TFD_NONBLOCK != 0,
+        })
+    });
+    match inserted {
+        Ok(fd) => fd as u64,
+        Err(error) => {
+            crate::timerfd::detach(id);
+            (-errno_for_file_table(error)) as u64
+        }
+    }
+}
+
+/// fd が timerfd なら、その番号と待たない印（2026-10-19）。**無い fd は `-EBADF`、timerfd でなければ `-EINVAL`**（Linux の
+/// `timerfd_settime`・`timerfd_gettime` と同じ答え）。
+fn timerfd_of(fd: u64) -> Result<(u8, bool), u64> {
+    match crate::vfs::with_current_files(|files| {
+        files.get(fd as usize).map(crate::vfs::File::timerfd_parts)
+    }) {
+        Ok(Some(parts)) => Ok(parts),
+        Ok(None) => Err((-EINVAL) as u64),
+        Err(error) => Err((-errno_for_file_table(error)) as u64),
+    }
+}
+
+/// timerfd の状態を `struct itimerspec`（`it_interval`、`it_value` の順）にする。残りと間隔はティックから換算する。
+fn itimerspec_of(state: crate::timerfd::TimerState, now: u64) -> [u8; ITIMERSPEC_LEN] {
+    let hz = u64::from(crate::machine::pc::timer_frequency_hz());
+    let (remaining, interval) = state.remaining(now);
+    let timespec = |ticks: u64| {
+        let (sec, nsec) = common::time::timespec_from_ticks(ticks, hz);
+        timespec_bytes(&Timespec {
+            sec: sec as i64,
+            nsec: nsec as i64,
+        })
+    };
+    let mut out = [0u8; ITIMERSPEC_LEN];
+    out[..TIMESPEC_LEN].copy_from_slice(&timespec(interval));
+    out[TIMESPEC_LEN..].copy_from_slice(&timespec(remaining));
+    out
+}
+
+/// [`SYS_TIMERFD_SETTIME`] の本体（2026-10-19）。`args` は `(fd, flags, new_value, old_value)` である。
+///
+/// - `flags` は 0（相対）と `TFD_TIMER_ABSTIME`（`CLOCK_MONOTONIC` の絶対の時刻）を受け、ほかは `-EINVAL`。
+/// - `it_value` が 0 なら止める。**締切はティックに切り上げる**（`common::time::ticks_for_duration`。`nanosleep` と同じ）。
+///   絶対の時刻が過ぎていれば、すぐ満了する。`it_interval` が 0 でなければ、その間隔で満了し続ける。
+/// - `old_value` が NULL でなければ、前の状態を書く（書けるかは、据える前に確かめる）。
+///
+/// # 安全性
+///
+/// 呼び出し元契約により `page_table_root` / `direct_map` は有効。
+#[inline(never)]
+unsafe fn timerfd_settime_from_ring3(
+    args: &[u64; 6],
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+) -> u64 {
+    let [fd, flags, new_value, old_value, _, _] = *args;
+    let (id, _) = match timerfd_of(fd) {
+        Ok(parts) => parts,
+        Err(errno) => return errno,
+    };
+    if flags & !TFD_TIMER_ABSTIME != 0 {
+        return (-EINVAL) as u64;
+    }
+    // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。`read_user_fixed` は範囲を確かめてから読む。
+    let Some(raw) =
+        (unsafe { read_user_fixed::<ITIMERSPEC_LEN>(page_table_root, direct_map, new_value) })
+    else {
+        return (-EFAULT) as u64;
+    };
+    let mut interval_raw = [0u8; TIMESPEC_LEN];
+    interval_raw.copy_from_slice(&raw[..TIMESPEC_LEN]);
+    let mut value_raw = [0u8; TIMESPEC_LEN];
+    value_raw.copy_from_slice(&raw[TIMESPEC_LEN..]);
+    let interval = parse_timespec(&interval_raw);
+    let value = parse_timespec(&value_raw);
+    let hz = u64::from(crate::machine::pc::timer_frequency_hz());
+    let (Ok(interval_ticks), Ok(value_ticks)) = (
+        common::time::ticks_for_duration(interval.sec, interval.nsec, hz),
+        common::time::ticks_for_duration(value.sec, value.nsec, hz),
+    ) else {
+        return (-EINVAL) as u64;
+    };
+    // **前の状態を書く先は、据える前に確かめる**（据えてから書けないと分かっても、戻せないため）。確かめてから書くまで
+    // BKL を放さない。
+    let old_slot = if old_value != 0 {
+        // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+        match unsafe {
+            validate_user_range_for_write(
+                page_table_root,
+                direct_map,
+                old_value,
+                ITIMERSPEC_LEN as u64,
+            )
+        } {
+            Some(slice) => Some(slice),
+            None => return (-EFAULT) as u64,
+        }
+    } else {
+        None
+    };
+    let now = crate::arch::x86_64::monotonic_ticks();
+    let stopped = value.sec == 0 && value.nsec == 0;
+    let deadline = if stopped {
+        None
+    } else if flags & TFD_TIMER_ABSTIME != 0 {
+        Some(value_ticks)
+    } else {
+        Some(now.saturating_add(value_ticks))
+    };
+    let Some(old) = crate::timerfd::set(id, deadline, interval_ticks) else {
+        return (-EBADF) as u64;
+    };
+    if let Some(slice) = old_slot {
+        // SAFETY: `slice` は上で確かめた 32 バイトで、確かめてから BKL を放していない。
+        unsafe { copy_to_user(&slice, 0, &itimerspec_of(old, now)) };
+    }
+    0
+}
+
+/// [`SYS_TIMERFD_GETTIME`] の本体（2026-10-19）。**次の満了までの残りと間隔を `struct itimerspec` で書く。**
+///
+/// # 安全性
+///
+/// 呼び出し元契約により `page_table_root` / `direct_map` は有効。
+#[inline(never)]
+unsafe fn timerfd_gettime_from_ring3(
+    fd: u64,
+    curr_value: u64,
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+) -> u64 {
+    let (id, _) = match timerfd_of(fd) {
+        Ok(parts) => parts,
+        Err(errno) => return errno,
+    };
+    let Some(state) = crate::timerfd::state(id) else {
+        return (-EBADF) as u64;
+    };
+    let out = itimerspec_of(state, crate::arch::x86_64::monotonic_ticks());
+    // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。`write_user_fixed` は範囲を確かめてから書く。
+    if !unsafe { write_user_fixed(page_table_root, direct_map, curr_value, &out) } {
+        return (-EFAULT) as u64;
+    }
+    0
+}
+
+/// timerfd を読む（2026-10-19）。**8 バイトに満たない置き場は `-EINVAL`。** 満了の回数を返して 0 に戻す。満了がまだなら、
+/// 待たない印があれば `-EAGAIN`、無ければ満了するか `timerfd_settime` で据え直されるまで待つ。
+///
+/// **待ちの集合は 2 本である**——`Wait::TimerFdReadable`（据え直しと、最後のコピーを閉じたとき）と、腕が立っていれば
+/// その締切の `Wait::Timer`（ティックの `wake_expired_timers` が起こす。ティックの道には何も足さない）。
+///
+/// # 安全性
+///
+/// 呼び出し元契約により `page_table_root` / `direct_map` は有効。
+#[inline(never)]
+unsafe fn read_timerfd(
+    id: u8,
+    nonblocking: bool,
+    buf: u64,
+    count: u64,
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+    bkl: &mut Option<crate::bkl::BklGuard>,
+) -> u64 {
+    if count < 8 {
+        return (-EINVAL) as u64;
+    }
+    loop {
+        let now = crate::arch::x86_64::monotonic_ticks();
+        let Some(state) = crate::timerfd::state(id) else {
+            return (-EBADF) as u64;
+        };
+        if state.expirations(now) > 0 {
+            // **書き先は、回数を取り出す直前に確かめる**（`read_eventfd` と同じ理由。確かめ・取り出し・書きの間は BKL を
+            // 放さない）。書けなければ、回数を取らずに `-EFAULT`。
+            // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+            let Some(slice) =
+                (unsafe { validate_user_range_for_write(page_table_root, direct_map, buf, 8) })
+            else {
+                return (-EFAULT) as u64;
+            };
+            let Some(expirations) = crate::timerfd::take(id, now) else {
+                return (-EBADF) as u64;
+            };
+            // SAFETY: `slice` はいま確かめた 8 バイトで、確かめてから BKL を放していない。
+            let written = unsafe { copy_to_user(&slice, 0, &expirations.to_le_bytes()) };
+            return written as u64;
+        }
+        if nonblocking {
+            return (-EAGAIN) as u64;
+        }
+        crate::timerfd::note_reader_wait();
+        let mut set = crate::task::WaitSet::empty();
+        set.push(crate::task::Wait::TimerFdReadable { id });
+        if let Some(deadline) = state.deadline() {
+            set.push(crate::task::Wait::Timer { deadline });
+        }
+        crate::task::set_current_waiting_set(set);
+        drop(bkl.take());
+        crate::task::yield_now();
+        *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
     }
 }
 
@@ -4679,6 +4914,28 @@ unsafe fn sys_read(
         };
     }
 
+    // **timerfd**（2026-10-19）。
+    let timerfd = crate::vfs::with_current_files(|files| {
+        files
+            .get(fd as usize)
+            .ok()
+            .and_then(crate::vfs::File::timerfd_parts)
+    });
+    if let Some((id, nonblocking)) = timerfd {
+        // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+        return unsafe {
+            read_timerfd(
+                id,
+                nonblocking,
+                buf,
+                count,
+                page_table_root,
+                direct_map,
+                bkl,
+            )
+        };
+    }
+
     // **ソケット（`ADR-0064`）。** **繋がっていなければ `-ENOTCONN`。** **待たない印が立っていれば待たない**（2026-10-19）。
     let socket = crate::vfs::with_current_files(|files| {
         files
@@ -6948,10 +7205,13 @@ fn sys_fcntl(fd: u64, cmd: u64, arg: u64) -> u64 {
             match files.insert_at_or_above(copy, arg as usize) {
                 Ok(new_fd) => new_fd as u64,
                 Err(error) => {
-                    // **置けなかったコピーの、足した参照を戻す**（eventfd だけ。ソケットとパイプの端は数えていないので、
+                    // **置けなかったコピーの、足した参照を戻す**（eventfd と timerfd だけ。ソケットとパイプの端は数えていないので、
                     // `release_end` を呼ぶと端そのものを閉じてしまう）。
                     if let Some((id, _)) = copy.eventfd_parts() {
                         crate::eventfd::detach(id);
+                    }
+                    if let Some((id, _)) = copy.timerfd_parts() {
+                        crate::timerfd::detach(id);
                     }
                     (-errno_for_file_table(error)) as u64
                 }
@@ -7015,8 +7275,8 @@ unsafe fn sys_fstat(
             size: 0,
             blocks: 0,
         },
-        // **eventfd は、種類のビットの無い 0600 で答える**（Linux の無名の inode と同じ形。2026-10-19）。
-        Ok(crate::vfs::File::EventFd { .. }) => Stat {
+        // **eventfd と timerfd は、種類のビットの無い 0600 で答える**（Linux の無名の inode と同じ形。2026-10-19）。
+        Ok(crate::vfs::File::EventFd { .. }) | Ok(crate::vfs::File::TimerFd { .. }) => Stat {
             ino: 0,
             nlink: 1,
             mode: 0o600,
@@ -7804,6 +8064,18 @@ unsafe fn sys_write(
                 bkl,
             )
         };
+    }
+
+    // **timerfd へは書けない**（2026-10-19。Linux と同じく `-EINVAL`）。
+    if crate::vfs::with_current_files(|files| {
+        files
+            .get(fd as usize)
+            .ok()
+            .and_then(crate::vfs::File::timerfd_parts)
+    })
+    .is_some()
+    {
+        return (-EINVAL) as u64;
     }
 
     // **ソケット（`ADR-0064`）。** **繋がっていなければ `-ENOTCONN`。** **待たない印が立っていれば待たない**（2026-10-19）。

@@ -61,6 +61,7 @@ pub mod smp;
 pub mod socket;
 pub mod syscall;
 pub mod task;
+pub mod timerfd;
 pub mod userland;
 pub mod vfs;
 pub mod virtio;

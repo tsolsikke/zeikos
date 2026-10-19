@@ -804,6 +804,11 @@ kernel::task::tests::the_user_ring_lists_the_ring3_task_the_pool_and_main_in_ord
 kernel::task::tests::uninitialized_slots_are_never_chosen
 kernel::task::tests::workers_come_before_the_ring3_task
 kernel::task::tests::workers_rotate
+kernel::timerfd::tests::a_deadline_already_in_the_past_expires_at_once
+kernel::timerfd::tests::a_one_shot_timer_expires_once_and_stops_when_read
+kernel::timerfd::tests::a_stopped_timer_never_expires
+kernel::timerfd::tests::an_interval_timer_counts_every_period_and_moves_its_deadline
+kernel::timerfd::tests::setting_no_deadline_stops_but_keeps_the_interval
 kernel::userland::tests::executable_segments_may_end_at_the_user_address_limit_and_no_further
 kernel::userland::tests::mmap_hands_out_ranges_up_to_the_user_address_limit_and_no_further
 kernel::userland::tests::the_default_environment_carries_home

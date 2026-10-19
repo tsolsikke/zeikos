@@ -163,3 +163,9 @@ pub const SYS_CLOCK_NANOSLEEP: u64 = 230;
 pub const SYS_EVENTFD: u64 = 284;
 /// `eventfd2(initval, flags)` の番号（2026-10-19。`__NR_eventfd2`。calloop と polling の起こし役）。
 pub const SYS_EVENTFD2: u64 = 290;
+/// `timerfd_create(clockid, flags)` の番号（2026-10-19。`__NR_timerfd_create`。polling の待ちの期限）。
+pub const SYS_TIMERFD_CREATE: u64 = 283;
+/// `timerfd_settime(fd, flags, new_value, old_value)` の番号（2026-10-19。`__NR_timerfd_settime`）。
+pub const SYS_TIMERFD_SETTIME: u64 = 286;
+/// `timerfd_gettime(fd, curr_value)` の番号（2026-10-19。`__NR_timerfd_gettime`）。
+pub const SYS_TIMERFD_GETTIME: u64 = 287;
