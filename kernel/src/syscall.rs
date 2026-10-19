@@ -1334,6 +1334,21 @@ pub fn detached_starts() -> u64 {
     DETACHED_STARTS.load(Ordering::Relaxed)
 }
 
+/// 待ちの集合を据え、BKL を解いて譲り、起こされたら BKL を取り直す（2026-10-20）。**システムコールの中の眠る所は、どれも
+/// ここを通す**（パイプ・ソケット・`accept`・eventfd・timerfd・epoll・`poll`・端末・futex・`flock`・`nanosleep`）。
+///
+/// # 待ちを据えてから譲るまで
+///
+/// **呼ぶのはシステムコールの入口の中（IF=0）で、BKL を持っている。** 待つと決めてから `Waiting` を据えるまで BKL を
+/// 放さないので、その間に起こす側の合図が入っても取りこぼさない（`ADR-0061`）。**BKL を解いてから譲る**（`ADR-0036`）。
+/// 譲る前の枠には `Drop` の要るものを残さない（`crate::task::finish_threads_of_slot` の doc）。
+fn sleep_released(set: crate::task::WaitSet, bkl: &mut Option<crate::bkl::BklGuard>) {
+    crate::task::set_current_waiting_set(set);
+    drop(bkl.take());
+    crate::task::yield_now();
+    *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
+}
+
 /// パイプの読み端から読む（`ADR-0063` の (b3)）。**空なら待つ。**
 ///
 /// # ウィンドウは構造で閉じている
@@ -1375,10 +1390,10 @@ unsafe fn read_from_pipe(
             crate::pipe::ReadOutcome::Eof => return 0,
             crate::pipe::ReadOutcome::Empty => {
                 crate::pipe::note_reader_wait();
-                crate::task::set_current_waiting(crate::task::Wait::PipeReadable { pipe });
-                drop(bkl.take());
-                crate::task::yield_now();
-                *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
+                sleep_released(
+                    crate::task::WaitSet::single(crate::task::Wait::PipeReadable { pipe }),
+                    bkl,
+                );
             }
         }
     }
@@ -1420,10 +1435,10 @@ unsafe fn write_to_pipe(
             crate::pipe::WriteOutcome::NoReader => return (-EPIPE) as u64,
             crate::pipe::WriteOutcome::Full => {
                 crate::pipe::note_writer_wait();
-                crate::task::set_current_waiting(crate::task::Wait::PipeWritable { pipe });
-                drop(bkl.take());
-                crate::task::yield_now();
-                *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
+                sleep_released(
+                    crate::task::WaitSet::single(crate::task::Wait::PipeWritable { pipe }),
+                    bkl,
+                );
             }
         }
     }
@@ -1663,10 +1678,10 @@ unsafe fn read_eventfd(
                     return (-EAGAIN) as u64;
                 }
                 crate::eventfd::note_reader_wait();
-                crate::task::set_current_waiting(crate::task::Wait::EventFdReadable { id });
-                drop(bkl.take());
-                crate::task::yield_now();
-                *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
+                sleep_released(
+                    crate::task::WaitSet::single(crate::task::Wait::EventFdReadable { id }),
+                    bkl,
+                );
             }
         }
     }
@@ -1706,10 +1721,10 @@ unsafe fn write_eventfd(
                     return (-EAGAIN) as u64;
                 }
                 crate::eventfd::note_writer_wait();
-                crate::task::set_current_waiting(crate::task::Wait::EventFdWritable { id });
-                drop(bkl.take());
-                crate::task::yield_now();
-                *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
+                sleep_released(
+                    crate::task::WaitSet::single(crate::task::Wait::EventFdWritable { id }),
+                    bkl,
+                );
             }
         }
     }
@@ -1930,10 +1945,7 @@ unsafe fn read_timerfd(
         if let Some(deadline) = state.deadline() {
             set.push(crate::task::Wait::Timer { deadline });
         }
-        crate::task::set_current_waiting_set(set);
-        drop(bkl.take());
-        crate::task::yield_now();
-        *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
+        sleep_released(set, bkl);
     }
 }
 
@@ -2199,10 +2211,7 @@ unsafe fn epoll_wait_from_ring3(
         }
         crate::epoll::note_wait();
         waited = true;
-        crate::task::set_current_waiting_set(set);
-        drop(bkl.take());
-        crate::task::yield_now();
-        *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
+        sleep_released(set, bkl);
         // **起きたら、プロセスの終わりの印を見る**（futex 以外の待ちを終わりの印が起こす形は、別の課題で足す）。
         if process_exited() {
             return (-EINTR) as u64;
@@ -2870,10 +2879,7 @@ unsafe fn poll_from_ring3(
             return 0;
         }
         POLL_WAITS.fetch_add(1, Ordering::Relaxed);
-        crate::task::set_current_waiting_set(set);
-        drop(bkl.take());
-        crate::task::yield_now();
-        *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
+        sleep_released(set, bkl);
     }
 }
 
@@ -3052,12 +3058,12 @@ unsafe fn accept_from_ring3(
                 #[cfg(not(feature = "socket-accept-does-not-wait"))]
                 {
                     crate::socket::note_accept_wait();
-                    crate::task::set_current_waiting(crate::task::Wait::SocketAcceptable {
-                        listener,
-                    });
-                    drop(bkl.take());
-                    crate::task::yield_now();
-                    *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
+                    sleep_released(
+                        crate::task::WaitSet::single(crate::task::Wait::SocketAcceptable {
+                            listener,
+                        }),
+                        bkl,
+                    );
                 }
             }
         }
@@ -3158,10 +3164,10 @@ unsafe fn read_from_socket(
                     return (-EAGAIN) as u64;
                 }
                 crate::socket::note_reader_wait();
-                crate::task::set_current_waiting(crate::task::Wait::SocketReadable { conn, side });
-                drop(bkl.take());
-                crate::task::yield_now();
-                *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
+                sleep_released(
+                    crate::task::WaitSet::single(crate::task::Wait::SocketReadable { conn, side }),
+                    bkl,
+                );
             }
         }
     }
@@ -3179,10 +3185,10 @@ fn wait_until_readable(
 ) {
     while !crate::socket::readable_or_gone(conn, side) {
         crate::socket::note_reader_wait();
-        crate::task::set_current_waiting(crate::task::Wait::SocketReadable { conn, side });
-        drop(bkl.take());
-        crate::task::yield_now();
-        *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
+        sleep_released(
+            crate::task::WaitSet::single(crate::task::Wait::SocketReadable { conn, side }),
+            bkl,
+        );
     }
 }
 
@@ -3231,10 +3237,10 @@ unsafe fn write_to_socket(
                     return (-EAGAIN) as u64;
                 }
                 crate::socket::note_writer_wait();
-                crate::task::set_current_waiting(crate::task::Wait::SocketWritable { conn, side });
-                drop(bkl.take());
-                crate::task::yield_now();
-                *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
+                sleep_released(
+                    crate::task::WaitSet::single(crate::task::Wait::SocketWritable { conn, side }),
+                    bkl,
+                );
             }
         }
     }
@@ -5101,15 +5107,13 @@ fn wait_for_keyboard(bkl: &mut Option<crate::bkl::BklGuard>) -> bool {
     KEYBOARD_WAITS.fetch_add(1, Ordering::Relaxed);
     let since = crate::arch::x86_64::timer_ticks();
 
-    // **欄を `Waiting` にする。** **ここは IF=0 で、まだ BKL を持っている。**
-    crate::task::set_current_waiting(crate::task::Wait::Keyboard);
-    // **BKL を解く。** 保持したまま譲ると、次に走るタスクがカーネルへ入れない。
-    drop(bkl.take());
-    // **譲る。** `pick_next` は待っている者を飛ばし、走れる者が居なければ BSP 用アイドルへ
-    // 落ちる（W2-c-1 で置いた）。**起こされるまでここへは戻らない。**
-    crate::task::yield_now();
-    // **起きた。BKL を取り直す。**
-    *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
+    // **欄を `Waiting` にし、BKL を解いて譲る。** **ここは IF=0 で、まだ BKL を持っている。** `pick_next` は待っている者を
+    // 飛ばし、走れる者が居なければ BSP 用アイドルへ落ちる（W2-c-1 で置いた）。**起こされるまで戻らず、起きたら BKL を
+    // 取り直してから戻る**（[`sleep_released`]）。
+    sleep_released(
+        crate::task::WaitSet::single(crate::task::Wait::Keyboard),
+        bkl,
+    );
 
     // **安全網（`ADR-0061`）。止めない。数えるだけである。**
     //
@@ -7222,13 +7226,13 @@ fn wake_futex_waiters(slot: usize, uaddr: u64, limit: u64) -> u64 {
 #[inline(never)]
 fn sleep_on_futex(slot: usize, uaddr: u64, bkl: &mut Option<crate::bkl::BklGuard>) {
     FUTEX_SLEEPS.fetch_add(1, Ordering::Relaxed);
-    crate::task::set_current_waiting(crate::task::Wait::Futex {
-        slot: slot as u8,
-        address: uaddr,
-    });
-    drop(bkl.take());
-    crate::task::yield_now();
-    *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
+    sleep_released(
+        crate::task::WaitSet::single(crate::task::Wait::Futex {
+            slot: slot as u8,
+            address: uaddr,
+        }),
+        bkl,
+    );
 }
 
 /// `FUTEX_WAIT` で待つ場面になったプロセスの終了状態（2026-10-06）。**128 + 9（`SIGKILL`）**——シェルが「シグナルで
@@ -7284,10 +7288,10 @@ fn sys_flock(fd: u64, operation: u64, bkl: &mut Option<crate::bkl::BklGuard>) ->
                 if nonblocking {
                     return (-EAGAIN) as u64;
                 }
-                crate::task::set_current_waiting(crate::task::Wait::FileLock { inode });
-                drop(bkl.take());
-                crate::task::yield_now();
-                *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
+                sleep_released(
+                    crate::task::WaitSet::single(crate::task::Wait::FileLock { inode }),
+                    bkl,
+                );
             }
         }
     }
@@ -7744,10 +7748,10 @@ unsafe fn sys_nanosleep(
 fn sleep_until_ticks(deadline: u64, bkl: &mut Option<crate::bkl::BklGuard>) {
     while crate::arch::x86_64::monotonic_ticks() < deadline {
         TIMER_WAITS.fetch_add(1, Ordering::Relaxed);
-        crate::task::set_current_waiting(crate::task::Wait::Timer { deadline });
-        drop(bkl.take());
-        crate::task::yield_now();
-        *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
+        sleep_released(
+            crate::task::WaitSet::single(crate::task::Wait::Timer { deadline }),
+            bkl,
+        );
         if crate::arch::x86_64::monotonic_ticks() < deadline {
             EARLY_TIMER_WAKES.fetch_add(1, Ordering::Relaxed);
         }
