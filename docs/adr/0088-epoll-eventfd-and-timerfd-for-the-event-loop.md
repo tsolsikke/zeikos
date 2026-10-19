@@ -126,3 +126,7 @@ wayland-backend（0.3）は自分の epoll を作り、Seinas はそれを `F_DU
   繋がったソケットは、相手が閉じたら `EPOLLIN|EPOLLRDHUP|EPOLLHUP` を返す（Linux の `unix_poll` と同じ）。
 - 時計は `CLOCK_MONOTONIC` だけで、`CLOCK_REALTIME` と `CLOCK_BOOTTIME`、`TFD_TIMER_CANCEL_ON_SET` は `-EINVAL`。
 - `ppoll` と、`poll` の `POLLOUT`・`POLLERR` は、この ADR の範囲に入れていない（別の課題）。
+
+## Addendum（2026-10-20。終わりの印が、epollの待ちも起こす）
+
+既知の差の1つ目（プロセスの終わりの印がepollの待ちを起こさない）を閉じた。印を立てた側は、そのスロットの待っているタスクを、理由を問わず全部起こす（`ADR-0085`の2026-10-20のAddendum）。`epoll_pwait`が起きた後に印を見て`-EINTR`を返す所は、眠る所に共通の関数（`kernel/src/syscall.rs`の`sleep_released`）へ移した。
