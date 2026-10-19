@@ -329,8 +329,12 @@ pub enum File {
     ///
     /// `nonblocking` は待たない印（`O_NONBLOCK`）である。**立っていれば、`accept` と読み書きは待たずに `-EAGAIN` を返す。**
     /// 立てるのは `socket(SOCK_NONBLOCK)`・`accept4(SOCK_NONBLOCK)`・`fcntl(F_SETFL, O_NONBLOCK)`・`ioctl(FIONBIO)` で、
-    /// **`accept` で受けた fd は listener の印を引き継がない**（Linux と同じ）。`F_DUPFD` のコピーは印をコピーして別に持つ
-    /// ——Linux は open file description を共有するので、コピーの後にどちらかで変えたときだけ違う（`flock` と同じ限界）。
+    /// **`accept` で受けた fd は listener の印を引き継がない**（Linux と同じ）。
+    ///
+    /// **`F_DUPFD` のコピーは、端を数えない**（既知の不具合。別の課題で直す）。コピーは `File` を値でコピーするだけなので、
+    /// **どちらか 1 つを閉じると [`File::release_end`] が端そのものを閉じ、残ったほうも相手から見て閉じた形になる**
+    /// （2026-10-19 に、確かめのイメージのスレッドへ `try_clone` で渡して踏んだ）。パイプの端も同じ形である。印もコピーごとに
+    /// 別に持つので、コピーの後にどちらかで変えると、もう一方には効かない（Linux は open file description を共有する）。
     Socket {
         state: SocketState,
         nonblocking: bool,

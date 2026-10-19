@@ -159,3 +159,23 @@ Accepted
 107バイトにする。**名前はカーネルの表のまま**（決定3は保つ。ext2にinodeは作らない）。`socket`の`SOCK_CLOEXEC`は無視して
 受け、`accept4`を足す。**限界の3も見直した**——`accept`は、`addr`がNULLでなければ相手の名前として`AF_UNIX`の空の名前を
 書き、`*addrlen`を2にする（Linuxが名前の無い相手に返す形。Rustのstdは必ず置き場を渡す）。本体はそちらにある。
+
+## Addendum（2026-10-19。待たない形）
+
+Seinas（wayland-server・wayland-backend・calloop）は、listener と接続を待たない形にして、`-EAGAIN`を「もう無い」の意味に使う。そのための形を足した。
+
+- **fdごとに待たない印を持つ**（`vfs::File::Socket`の`nonblocking`）。立てる口は4つ——`socket(SOCK_NONBLOCK)`・`accept4(SOCK_NONBLOCK)`・`fcntl(F_SETFL, O_NONBLOCK)`・`ioctl(FIONBIO)`。`F_GETFL`は、ソケットに`O_RDWR`を返し、印が立っていれば`O_NONBLOCK`を足す。
+- **`accept`で受けたfdは、listenerの印を引き継がない**（Linuxと同じ。印が付くのは`accept4(SOCK_NONBLOCK)`のときだけ）。
+- **印が立っていれば、`accept`・`read`・`write`・`recvfrom`・`sendto`・`recvmsg`・`sendmsg`は待たずに`-EAGAIN`を返す。** 書きは、少しでも空きがあれば入った数を返す（待つときと同じ）。
+- **呼び出しごとのフラグ**——`MSG_DONTWAIT`はその呼び出しだけ待たない。`MSG_NOSIGNAL`は受ける（シグナルは配送しないので、今までどおり`-EPIPE`）。`MSG_CMSG_CLOEXEC`は受けて無視する。ほかのビットは、名前のある行（`msg-flags-refused:`）を出して`-EINVAL`で断る。
+- **待たない`sendmsg`は、相手の輪に空きが無ければ、`SCM_RIGHTS`のfdを渡さずに`-EAGAIN`を返す**（空きを見てから渡すまでBKLを放さない）。待たない`recvmsg`は、読めるものが無ければfdも取らずに`-EAGAIN`を返す。
+- **ソケットの外への`O_NONBLOCK`**（パイプ・端末など）は、受けて無視し、立てる求めのたびに名前のある行（`nonblock-ignored:`）を出す。
+- **`writev`が短く書けたiovecの後へ進んでいた前からの不具合を直した。** 待つ形でも、輪に少しだけ空きがあれば短く書いて返すので、次のiovecを書くと、相手が読む並びに穴が開いていた（ソケットとパイプの両方）。
+
+確かめは、Linux向けのイメージ`wl-nonblock-rust`（待たない側と待つ側を同じプロセスで通し、Linuxの参照と突き合わせる。待つ経路は、カーネルが出す実行の前後の待ちの数で見る）、`pipe-test`の`writev`の行、破壊テスト3件（`socket-ignores-nonblocking`・`msg-dontwait-ignored`・`eagain-passes-fd`）である。
+
+既知の不具合（どれも別の課題で直す）:
+
+- **`F_DUPFD`のコピーは端を数えない。** どちらか1つを閉じると端そのものが閉じ、残ったほうも相手から見て閉じた形になる。パイプの端も同じ形である。待たない印もコピーごとに別に持つ。
+- **相手が閉じた接続への`sendmsg`で、渡したfd（共有メモリー）の参照が漏れる。** `queue_fd`は相手が閉じていてもfdを置き、接続の欄を空けるときに待ち行列に残ったfdを手放さない。待つ形でも、受け手が`recvmsg`の前に閉じれば同じである。
+- **`recvmsg`は、fdが無いときに`msg_controllen`を0に書き戻さず、`msg_name`がNULLでないと`-EINVAL`で断る**（`msg_flags`も書き戻さない）。wayland-backendが使うrustixの`recvmsg`は、`msg_name`に置き場を必ず渡し、戻った`msg_controllen`の長さを制御のデータとして読む。どちらもSeinasの受信の道に当たる。
