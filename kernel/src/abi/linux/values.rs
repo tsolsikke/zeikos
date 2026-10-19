@@ -89,6 +89,13 @@ pub const SOCK_NONBLOCK: u64 = 0o4000;
 /// 受けて無視する。
 pub const O_NONBLOCK: u64 = 0o4000;
 
+/// `EFD_SEMAPHORE`（`eventfd2` の `flags`。2026-10-19）。`read` が 1 を返して 1 減らす。
+pub const EFD_SEMAPHORE: u64 = 1;
+/// `EFD_CLOEXEC`（`O_CLOEXEC` と同じ値）。受けて無視する（`exec` が無い）。
+pub const EFD_CLOEXEC: u64 = 0o2000000;
+/// `EFD_NONBLOCK`（`O_NONBLOCK` と同じ値）。fd に待たない印を立てる。
+pub const EFD_NONBLOCK: u64 = 0o4000;
+
 /// `FIONBIO`（Linux の `asm-generic/ioctls.h` の値）。`int` を指す引数が 0 でなければ待たない印を立て、0 なら下ろす
 /// （2026-10-19。Rust の std の `set_nonblocking` が打つ）。
 pub const FIONBIO: u64 = 0x5421;

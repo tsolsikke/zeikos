@@ -159,3 +159,7 @@ pub const SYS_TKILL: u64 = 200;
 /// `clock_nanosleep(clockid, flags, req, rem)` の番号（2026-10-07。`__NR_clock_nanosleep`。musl の `nanosleep` と
 /// Rust の `std::thread::sleep` は、`nanosleep` ではなくこちらを打つ）。
 pub const SYS_CLOCK_NANOSLEEP: u64 = 230;
+/// `eventfd(initval)` の番号（2026-10-19。`__NR_eventfd`。フラグの無い古い形）。
+pub const SYS_EVENTFD: u64 = 284;
+/// `eventfd2(initval, flags)` の番号（2026-10-19。`__NR_eventfd2`。calloop と polling の起こし役）。
+pub const SYS_EVENTFD2: u64 = 290;

@@ -270,6 +270,12 @@ pub const PATH_RULES: &[PathRule] = &[
         ],
         reach: Reach::Families(&[Family::Ipc, Family::Interrupts]),
     },
+    // **eventfd・timerfd・epoll**（2026-10-19）。確かめの Linux 向けのイメージは ipc の項目が起こし、破壊テストは
+    // `--critical-test` の列（interrupts）に在る。
+    PathRule {
+        patterns: &["kernel/src/eventfd.rs"],
+        reach: Reach::Families(&[Family::Ipc, Family::Interrupts]),
+    },
     PathRule {
         patterns: &["kernel/userland/zash.rs"],
         reach: Reach::Families(RING3_FAMILIES),

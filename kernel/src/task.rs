@@ -411,6 +411,10 @@ pub enum Wait {
     },
     /// `flock` の取り直し待ち（`ADR-0087`。2026-10-16）。キーは ext2 の inode 番号。放した側が起こす（空振りを許す）。
     FileLock { inode: u32 },
+    /// eventfd の値が 0 で、`read` が待つ（2026-10-19）。書いた側が起こす（`crate::eventfd::write`）。
+    EventFdReadable { id: u8 },
+    /// eventfd の値が最大で、`write` が待つ（2026-10-19）。読んだ側が起こす（`crate::eventfd::read`）。
+    EventFdWritable { id: u8 },
 }
 
 /// 1 つのタスクが同時に待てる理由の本数（`ADR-0066` の Y-b）。

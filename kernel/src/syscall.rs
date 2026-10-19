@@ -51,6 +51,7 @@ use crate::abi::linux::x86_64::{
     SYS_SENDMSG, SYS_SENDTO, SYS_SET_TID_ADDRESS, SYS_SIGALTSTACK, SYS_SOCKET, SYS_STAT, SYS_TKILL,
     SYS_UNAME, SYS_UNLINK, SYS_WRITE, SYS_WRITEV,
 };
+use crate::abi::linux::x86_64::{SYS_EVENTFD, SYS_EVENTFD2};
 use crate::abi::linux::{
     cmsg_one_fd_bytes, dirent64_record, dirent64_record_len, fb_fix_screeninfo_bytes,
     fb_var_screeninfo_bytes, parse_cmsg_one_fd, parse_drm_clip_rect, parse_iovec, parse_msghdr,
@@ -58,12 +59,13 @@ use crate::abi::linux::{
     winsize_bytes, CmsgOneFd, Dirent64, DrmClipRect, FbBitfield, FbFixScreeninfo, FbVarScreeninfo,
     Iovec, Msghdr, Stat, Timespec, Winsize, AF_UNIX, CLOCK_MONOTONIC, CMSG_ONE_FD_LEN,
     DIRENT64_ALIGN, DIRENT64_HEADER_LEN, DRM_CLIP_RECT_LEN, DT_DIR, DT_REG, DT_UNKNOWN,
-    FBIOGET_FSCREENINFO, FBIOGET_VSCREENINFO, FB_TYPE_PACKED_PIXELS, FB_VISUAL_TRUECOLOR, FIONBIO,
-    INPUT_EVENT_LEN, IOVEC_LEN, MAP_ANONYMOUS, MAP_FIXED, MAP_FIXED_NOREPLACE, MSGHDR_CONTROLLEN,
-    MSGHDR_LEN, MSG_CMSG_CLOEXEC, MSG_DONTWAIT, MSG_NOSIGNAL, O_ACCMODE, O_APPEND, O_CREAT,
-    O_NONBLOCK, O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY, POLLFD_LEN, POLLIN, POLLNVAL, PROT_EXEC,
-    PROT_READ, PROT_WRITE, SCM_RIGHTS, SEEK_CUR, SEEK_END, SEEK_SET, SOCKADDR_UN_LEN, SOCK_CLOEXEC,
-    SOCK_NONBLOCK, SOCK_STREAM, SOCK_TYPE_MASK, SOL_SOCKET, TIMESPEC_LEN, TIOCGWINSZ, WINSIZE_LEN,
+    EFD_CLOEXEC, EFD_NONBLOCK, EFD_SEMAPHORE, FBIOGET_FSCREENINFO, FBIOGET_VSCREENINFO,
+    FB_TYPE_PACKED_PIXELS, FB_VISUAL_TRUECOLOR, FIONBIO, INPUT_EVENT_LEN, IOVEC_LEN, MAP_ANONYMOUS,
+    MAP_FIXED, MAP_FIXED_NOREPLACE, MSGHDR_CONTROLLEN, MSGHDR_LEN, MSG_CMSG_CLOEXEC, MSG_DONTWAIT,
+    MSG_NOSIGNAL, O_ACCMODE, O_APPEND, O_CREAT, O_NONBLOCK, O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY,
+    POLLFD_LEN, POLLIN, POLLNVAL, PROT_EXEC, PROT_READ, PROT_WRITE, SCM_RIGHTS, SEEK_CUR, SEEK_END,
+    SEEK_SET, SOCKADDR_UN_LEN, SOCK_CLOEXEC, SOCK_NONBLOCK, SOCK_STREAM, SOCK_TYPE_MASK,
+    SOL_SOCKET, TIMESPEC_LEN, TIOCGWINSZ, WINSIZE_LEN,
 };
 use crate::abi::linux::{
     E2BIG, EACCES, EADDRINUSE, EAFNOSUPPORT, EAGAIN, EBADF, EBUSY, ECHILD, ECONNREFUSED, EEXIST,
@@ -1029,6 +1031,9 @@ unsafe fn dispatch(
         SYS_MEMFD_CREATE => memfd_create_from_ring3(),
         SYS_FTRUNCATE => ftruncate_from_ring3(args[0], args[1], bkl),
         SYS_FLOCK => sys_flock(args[0], args[1], bkl),
+        // **eventfd**（2026-10-19）。`eventfd` は `flags` の無い古い形である。
+        SYS_EVENTFD2 => eventfd_from_ring3(args[0], args[1]),
+        SYS_EVENTFD => eventfd_from_ring3(args[0], 0),
         // SAFETY: 呼び出し元契約により direct_map は有効で、遠征の中なので CR3 はこのプロセスのもの。
         SYS_MMAP => unsafe { mmap_from_ring3(args, direct_map, bkl) },
         // SAFETY: 同上。
@@ -1414,10 +1419,11 @@ fn socket_nonblocking_of(fd: u64) -> bool {
     .unwrap_or(false)
 }
 
-/// 待たない印を立てる・下ろす（`fcntl(F_SETFL)`・`ioctl(FIONBIO)`。2026-10-19）。**ソケットの外では受けて無視し、
+/// 待たない印を立てる・下ろす（`fcntl(F_SETFL)`・`ioctl(FIONBIO)`。2026-10-19）。**印を持つのはソケットと eventfd である。
+/// ほかの種類では受けて無視し、
 /// 立てる求めなら名前のある行を出す**——待たない前提で使ったプログラムが止まったとき、原因がすぐ分かるように。
 fn set_nonblocking_of(fd: u64, on: bool, by: &str) -> u64 {
-    match crate::vfs::with_current_files(|files| files.set_socket_nonblocking(fd as usize, on)) {
+    match crate::vfs::with_current_files(|files| files.set_nonblocking(fd as usize, on)) {
         Ok(None) => 0,
         Ok(Some(kind)) => {
             if on {
@@ -1434,8 +1440,8 @@ fn set_nonblocking_of(fd: u64, on: bool, by: &str) -> u64 {
 #[cold]
 fn report_nonblocking_ignored(fd: u64, kind: &str, by: &str) {
     serial_line(format_args!(
-        "nonblock-ignored: {by} asked fd {fd} (a {kind}) not to wait; only sockets honour it, so reads and writes \
-         on this fd still wait"
+        "nonblock-ignored: {by} asked fd {fd} (a {kind}) not to wait; only sockets and eventfds honour it, so reads \
+         and writes on this fd still wait"
     ));
 }
 
@@ -1544,6 +1550,133 @@ unsafe fn sendto_recvfrom_from_ring3(
                 direct_map,
                 bkl,
             )
+        }
+    }
+}
+
+/// [`SYS_EVENTFD2`] と [`SYS_EVENTFD`] の本体（2026-10-19）。**eventfd を作り、最小の空き fd に置く。**
+///
+/// `flags` は `EFD_SEMAPHORE`・`EFD_CLOEXEC`・`EFD_NONBLOCK` を受ける（`EFD_CLOEXEC` は `exec` が無いので無視する）。ほかの
+/// ビットは `-EINVAL`。表が尽きれば `-ENOMEM`。
+#[inline(never)]
+fn eventfd_from_ring3(initial: u64, flags: u64) -> u64 {
+    if flags & !(EFD_SEMAPHORE | EFD_CLOEXEC | EFD_NONBLOCK) != 0 {
+        return (-EINVAL) as u64;
+    }
+    // **`initval` は `unsigned int` である**（下位 32 ビットを読む）。
+    let initial = u64::from(initial as u32);
+    let Some(id) = crate::eventfd::create(initial, flags & EFD_SEMAPHORE != 0) else {
+        return (-ENOMEM) as u64;
+    };
+    let inserted = crate::vfs::with_current_files(|files| {
+        files.insert(crate::vfs::File::EventFd {
+            id,
+            nonblocking: flags & EFD_NONBLOCK != 0,
+        })
+    });
+    match inserted {
+        Ok(fd) => fd as u64,
+        Err(error) => {
+            crate::eventfd::detach(id);
+            (-errno_for_file_table(error)) as u64
+        }
+    }
+}
+
+/// eventfd を読む（2026-10-19）。**8 バイトに満たない置き場は `-EINVAL`。** 値が 0 なら、待たない印があれば `-EAGAIN`、
+/// 無ければ書かれるまで待つ（`Wait::EventFdReadable`）。
+///
+/// # 安全性
+///
+/// 呼び出し元契約により `page_table_root` / `direct_map` は有効。
+#[inline(never)]
+unsafe fn read_eventfd(
+    id: u8,
+    nonblocking: bool,
+    buf: u64,
+    count: u64,
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+    bkl: &mut Option<crate::bkl::BklGuard>,
+) -> u64 {
+    if count < 8 {
+        return (-EINVAL) as u64;
+    }
+    loop {
+        match crate::eventfd::readable(id) {
+            None => return (-EBADF) as u64,
+            Some(true) => {
+                // **書き先は、値を取り出す直前に、毎回確かめる**（2026-10-19）。待つ前に確かめた範囲は、眠っている間
+                // （BKL を放している間）に同じプロセスの別のスレッドが `munmap`・`mprotect` しうる。**確かめ・取り出し・
+                // 書きの間は BKL を放さない**ので、この 3 つの間に範囲は変わらない。書けなければ、値を取らずに `-EFAULT`。
+                // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+                let Some(slice) =
+                    (unsafe { validate_user_range_for_write(page_table_root, direct_map, buf, 8) })
+                else {
+                    return (-EFAULT) as u64;
+                };
+                let Some(crate::eventfd::ReadOutcome::Value(value)) = crate::eventfd::read(id)
+                else {
+                    // 上で読めると見てから BKL を放していないので、ここへは来ない。
+                    return (-EBADF) as u64;
+                };
+                // SAFETY: `slice` はいま確かめた 8 バイトで、確かめてから BKL を放していない。
+                let written = unsafe { copy_to_user(&slice, 0, &value.to_le_bytes()) };
+                return written as u64;
+            }
+            Some(false) => {
+                if nonblocking {
+                    return (-EAGAIN) as u64;
+                }
+                crate::eventfd::note_reader_wait();
+                crate::task::set_current_waiting(crate::task::Wait::EventFdReadable { id });
+                drop(bkl.take());
+                crate::task::yield_now();
+                *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
+            }
+        }
+    }
+}
+
+/// eventfd へ書く（2026-10-19）。**8 バイトに満たない値は `-EINVAL`。** 値を足すと最大を越えるなら、待たない印があれば
+/// `-EAGAIN`、無ければ読まれるまで待つ（`Wait::EventFdWritable`）。`2^64 - 1` は `-EINVAL`。
+///
+/// # 安全性
+///
+/// 呼び出し元契約により `page_table_root` / `direct_map` は有効。
+#[inline(never)]
+unsafe fn write_eventfd(
+    id: u8,
+    nonblocking: bool,
+    buf: u64,
+    count: u64,
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+    bkl: &mut Option<crate::bkl::BklGuard>,
+) -> u64 {
+    if count < 8 {
+        return (-EINVAL) as u64;
+    }
+    // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。`read_user_fixed` は範囲を確かめてから読む。
+    let Some(bytes) = (unsafe { read_user_fixed::<8>(page_table_root, direct_map, buf) }) else {
+        return (-EFAULT) as u64;
+    };
+    let add = u64::from_le_bytes(bytes);
+    loop {
+        match crate::eventfd::write(id, add) {
+            None => return (-EBADF) as u64,
+            Some(crate::eventfd::WriteOutcome::Added) => return 8,
+            Some(crate::eventfd::WriteOutcome::Invalid) => return (-EINVAL) as u64,
+            Some(crate::eventfd::WriteOutcome::Full) => {
+                if nonblocking {
+                    return (-EAGAIN) as u64;
+                }
+                crate::eventfd::note_writer_wait();
+                crate::task::set_current_waiting(crate::task::Wait::EventFdWritable { id });
+                drop(bkl.take());
+                crate::task::yield_now();
+                *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
+            }
         }
     }
 }
@@ -4524,6 +4657,28 @@ unsafe fn sys_read(
         return unsafe { read_from_pipe(pipe, buf, count, page_table_root, direct_map, bkl) };
     }
 
+    // **eventfd**（2026-10-19）。
+    let eventfd = crate::vfs::with_current_files(|files| {
+        files
+            .get(fd as usize)
+            .ok()
+            .and_then(crate::vfs::File::eventfd_parts)
+    });
+    if let Some((id, nonblocking)) = eventfd {
+        // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+        return unsafe {
+            read_eventfd(
+                id,
+                nonblocking,
+                buf,
+                count,
+                page_table_root,
+                direct_map,
+                bkl,
+            )
+        };
+    }
+
     // **ソケット（`ADR-0064`）。** **繋がっていなければ `-ENOTCONN`。** **待たない印が立っていれば待たない**（2026-10-19）。
     let socket = crate::vfs::with_current_files(|files| {
         files
@@ -6771,7 +6926,7 @@ fn sys_fcntl(fd: u64, cmd: u64, arg: u64) -> u64 {
             Err(error) => (-errno_for_file_table(error)) as u64,
         }),
         F_GETFL => crate::vfs::with_current_files(|files| match files.get(fd) {
-            Ok(file) => match file.socket_nonblocking() {
+            Ok(file) => match file.nonblocking() {
                 Some(true) => O_RDWR | O_NONBLOCK,
                 Some(false) => O_RDWR,
                 None => 0,
@@ -6784,18 +6939,22 @@ fn sys_fcntl(fd: u64, cmd: u64, arg: u64) -> u64 {
             "fcntl(F_SETFL, O_NONBLOCK)",
         ),
         F_DUPFD | F_DUPFD_CLOEXEC => crate::vfs::with_current_files(|files| {
-            let mut copy = match files.get(fd) {
-                Ok(file) => *file,
+            // **コピーは [`crate::vfs::File::duplicate`] が作る**——`flock` のロックは渡さず（`ADR-0087`。コピーは別の
+            // 持ち主。Linux は open file description を共有するので違う——Seinas は dup しない）、eventfd は参照を足す。
+            let copy = match files.get(fd) {
+                Ok(file) => file.duplicate(),
                 Err(error) => return (-errno_for_file_table(error)) as u64,
             };
-            // **`flock` のロックはコピーに渡さない**（`ADR-0087`。コピーは別の持ち主。Linux は open file description を共有
-            // するので違う——Seinas は dup しない）。
-            if let crate::vfs::File::Regular { lock, .. } = &mut copy {
-                *lock = 0;
-            }
             match files.insert_at_or_above(copy, arg as usize) {
                 Ok(new_fd) => new_fd as u64,
-                Err(error) => (-errno_for_file_table(error)) as u64,
+                Err(error) => {
+                    // **置けなかったコピーの、足した参照を戻す**（eventfd だけ。ソケットとパイプの端は数えていないので、
+                    // `release_end` を呼ぶと端そのものを閉じてしまう）。
+                    if let Some((id, _)) = copy.eventfd_parts() {
+                        crate::eventfd::detach(id);
+                    }
+                    (-errno_for_file_table(error)) as u64
+                }
             }
         }),
         F_ADD_SEALS | F_GET_SEALS => crate::vfs::with_current_files(|files| match files.get(fd) {
@@ -6853,6 +7012,14 @@ unsafe fn sys_fstat(
             ino: 0,
             nlink: 1,
             mode: S_IFSOCK | 0o777,
+            size: 0,
+            blocks: 0,
+        },
+        // **eventfd は、種類のビットの無い 0600 で答える**（Linux の無名の inode と同じ形。2026-10-19）。
+        Ok(crate::vfs::File::EventFd { .. }) => Stat {
+            ino: 0,
+            nlink: 1,
+            mode: 0o600,
             size: 0,
             blocks: 0,
         },
@@ -7615,6 +7782,28 @@ unsafe fn sys_write(
     if let Some(pipe) = pipe_write {
         // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
         return unsafe { write_to_pipe(pipe, buf, count, page_table_root, direct_map, bkl) };
+    }
+
+    // **eventfd**（2026-10-19）。
+    let eventfd = crate::vfs::with_current_files(|files| {
+        files
+            .get(fd as usize)
+            .ok()
+            .and_then(crate::vfs::File::eventfd_parts)
+    });
+    if let Some((id, nonblocking)) = eventfd {
+        // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+        return unsafe {
+            write_eventfd(
+                id,
+                nonblocking,
+                buf,
+                count,
+                page_table_root,
+                direct_map,
+                bkl,
+            )
+        };
     }
 
     // **ソケット（`ADR-0064`）。** **繋がっていなければ `-ENOTCONN`。** **待たない印が立っていれば待たない**（2026-10-19）。
