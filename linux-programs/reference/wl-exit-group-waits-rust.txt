@@ -1,0 +1,3 @@
+wl-exit-group-waits-rust: main starts with 4 argument(s); the main thread sleeps in a pipe read, one thread in epoll_pwait, and a third thread ends the process
+wl-exit-group-waits-rust: the third thread calls exit_group(3) while the others sleep
+exit status: 3

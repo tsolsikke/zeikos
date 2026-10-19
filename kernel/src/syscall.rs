@@ -1377,7 +1377,9 @@ enum Woke {
 
 /// 終わりの印が立っていれば、数えて真を返す（[`sleep_released`]）。
 fn left_at_process_end(set: crate::task::WaitSet) -> bool {
-    if !process_exited() {
+    // 破壊テスト (2026-10-20, wait-ignores-process-end-test): 終わりの印を見ない。起こされた待ちが条件を見直して眠り直し、確かめの
+    // イメージ（wl-exit-group-waits-rust）の主スレッドがパイプで眠ったまま残って、起動が止まる。
+    if !process_exited() || cfg!(feature = "wait-ignores-process-end-test") {
         return false;
     }
     crate::task::note_wait_left_at_process_end(set);

@@ -641,6 +641,9 @@ const LINUX_PROGRAMS: &[&str] = &[
     "wl-nonblock-rust",
     // **epoll・eventfd・timerfd**（2026-10-19。`ADR-0088`。`linux-socket-test` のビルドだけが起動時に起こす）。
     "wl-epoll-rust",
+    // **プロセスの終わりの印が、パイプと epoll の待ちを起こす**（2026-10-20。`ADR-0085` の Addendum。`linux-socket-test` の
+    // ビルドだけが起動時に起こす）。
+    "wl-exit-group-waits-rust",
     // **ZeikOS と Linux で結果が違うイメージ**（マップ中の memfd を縮める ftruncate。`memfd-shrink-test` のビルドだけが起こす）。
     "m3a-memfd-shrink-rust",
 ];

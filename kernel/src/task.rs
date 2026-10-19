@@ -2290,6 +2290,13 @@ pub fn wake_waiting_tasks_of_slot(slot: usize) -> usize {
         else {
             continue;
         };
+        // 破壊テスト (2026-10-20, process-end-wakes-only-futex-test): futex の待ちだけを起こす（2026-10-19 までの形）。確かめの
+        // イメージ（wl-exit-group-waits-rust）の主スレッドがパイプで眠ったまま残り、起動が止まる。
+        if cfg!(feature = "process-end-wakes-only-futex-test")
+            && !set.waits_on_a_futex_of_slot(slot as u8)
+        {
+            continue;
+        }
         scheduler::set_state(index, TaskState::Ready);
         woken += 1;
         if let Some(kind) = set.kind() {

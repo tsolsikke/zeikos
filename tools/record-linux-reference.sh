@@ -25,6 +25,19 @@ record() {
     printf 'exit status: %d\n' "$status" >> "$ref/$name.txt"
     echo "recorded: $ref/$name.txt (exit status $status)"
 }
+record_with_open_stdin() {
+    name=$1
+    if [ ! -x "$bin/$name" ]; then
+        echo "skipped: $name (not built at $bin/$name)"
+        return
+    fi
+    set +e
+    sleep 3 | env -i "$bin/$name" "$root/kernel/fsimage/seed/etc/motd" a b > "$ref/$name.txt"
+    status=$?
+    set -e
+    printf 'exit status: %d\n' "$status" >> "$ref/$name.txt"
+    echo "recorded: $ref/$name.txt (exit status $status)"
+}
 
 record m1-rust
 record m3a-rust
@@ -44,5 +57,7 @@ record m3a-exit-with-waiting-thread-rust
 record wl-socket-lock-rust
 record wl-nonblock-rust
 record wl-epoll-rust
+# 主スレッドが標準入力を読んで眠るイメージ。書き手を開いたままのパイプを渡す（ZeikOS の起動時の確かめと同じ形）。
+record_with_open_stdin wl-exit-group-waits-rust
 record m1-c
 record m3a-c

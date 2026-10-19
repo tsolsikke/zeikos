@@ -6842,6 +6842,75 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
             ended_after[3] - ended[3],
             ended_after[4] - ended[4],
         ));
+        // **プロセスの終わりの印が、パイプと epoll の待ちを起こす**（2026-10-20。`ADR-0085` の Addendum）。
+        verify_process_end_wakes(logger);
+    }
+}
+
+/// 主スレッドがパイプで、スレッドが epoll で眠っている間に、別のスレッドが `exit_group(3)` で終えるイメージを起こし、
+/// 終わりの印が起こした待ちと、印を見て `-EINTR` で戻った待ちを、種類ごとに 1 行出す（2026-10-20。`ADR-0085` の Addendum）。
+/// **行はこの確かめのイメージの前後の差である**——プロセスごとに出すと、ティックの位置で揺れる既存のイメージ（`m3a-exit-group-*`）
+/// で行が出たり出なかったりして、起動ログの突き合わせが揺れる。xtask が、パイプと epoll の起こしと、戻った待ちの数を見る。
+/// 破壊テストは 2 つ（`--critical-test process-end-wakes-only-futex`・`wait-ignores-process-end`）。
+#[cfg(feature = "linux-socket-test")]
+#[inline(never)]
+fn verify_process_end_wakes(logger: &mut Logger<Serial>) {
+    // **標準入力に、書き端をここで持ったままのパイプを据える**（シェルの `a | b` の右と同じ道。`crate::syscall` の
+    // `spawn_with_piped_stdin_from_ring3`）。主スレッドは fd 0 を読んで、パイプの待ちで眠る。起動時の確かめはスロット 0 で走る。
+    let Some(pipe) = kernel::pipe::create(true) else {
+        logger.error(format_args!(
+            "process-end: no pipe was free for /bin/linux/wl-exit-group-waits-rust. halting"
+        ));
+        cpu::halt_forever();
+    };
+    if !kernel::pipe::claim_reserved_reader(pipe) {
+        logger.error(format_args!(
+            "process-end: the reserved reader of pipe {pipe} could not be claimed. halting"
+        ));
+        cpu::halt_forever();
+    }
+    kernel::userland::set_inherit_stdin(0, pipe);
+    let (roused_before, left_before) = kernel::task::process_end_counts();
+    verify_linux_program_ending(
+        logger,
+        b"/bin/linux/wl-exit-group-waits-rust",
+        b"wl-exit-group-waits-rust\0/etc/motd\0a\0b\0",
+        kernel::userland::SpawnOutcome::Exited(3),
+    );
+    let (roused_after, left_after) = kernel::task::process_end_counts();
+    // **読み端はプロセスの表が手放した。** 読み込みの前に失敗して据えたままなら、ここで返す。書き端はここで閉じる。
+    if let Some(unused) = kernel::userland::take_inherit_stdin(0) {
+        kernel::pipe::close_read_end(unused);
+    }
+    kernel::pipe::close_write_end(pipe);
+    let roused: [u64; kernel::task::WAIT_KINDS] =
+        core::array::from_fn(|kind| roused_after[kind] - roused_before[kind]);
+    let left: [u64; kernel::task::WAIT_KINDS] =
+        core::array::from_fn(|kind| left_after[kind] - left_before[kind]);
+    logger.info(format_args!(
+        "process-end: /bin/linux/wl-exit-group-waits-rust ended by a thread's exit_group roused {} sleeper(s) ({}); {} \
+         wait(s) saw the end and left with -EINTR ({})",
+        roused.iter().sum::<u64>(),
+        WaitKindCounts(&roused),
+        left.iter().sum::<u64>(),
+        WaitKindCounts(&left),
+    ));
+}
+
+/// 種類ごとの数を、全部の種類について `pipe 1, socket 0, …` の形で並べる（`process-end:` の行。xtask が名前で数を拾う）。
+#[cfg(feature = "linux-socket-test")]
+struct WaitKindCounts<'a>(&'a [u64; kernel::task::WAIT_KINDS]);
+
+#[cfg(feature = "linux-socket-test")]
+impl core::fmt::Display for WaitKindCounts<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        for (index, (kind, label)) in kernel::task::WaitKind::ALL.iter().enumerate() {
+            if index > 0 {
+                f.write_str(", ")?;
+            }
+            write!(f, "{label} {}", self.0[*kind as usize])?;
+        }
+        Ok(())
     }
 }
 
@@ -14427,6 +14496,17 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "epoll-level-reported-once-test",
         cfg!(feature = "epoll-level-reported-once-test"),
         "epoll がどの項目も一度返したら止める",
+    ),
+    // プロセスの終わりの印が、どの待ちも起こす（2026-10-20。`ADR-0085` の Addendum）。
+    (
+        "process-end-wakes-only-futex-test",
+        cfg!(feature = "process-end-wakes-only-futex-test"),
+        "プロセスの終わりの印が futex の待ちだけを起こす",
+    ),
+    (
+        "wait-ignores-process-end-test",
+        cfg!(feature = "wait-ignores-process-end-test"),
+        "待ちの所が終わりの印を見ない",
     ),
     // スレッドの破壊テスト、スレッドの検証の5（2026-10-15）。
     (

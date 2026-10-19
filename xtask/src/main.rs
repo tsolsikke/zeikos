@@ -998,6 +998,39 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
+    // **プロセスの終わりの印の破壊テスト 2 件（2026-10-20。`ADR-0085` の Addendum）。** どちらも確かめのイメージ
+    // （`wl-exit-group-waits-rust`）の主スレッドがパイプで眠ったまま残り、起動が止まる（スレッドの `exit_group(3)` の行は出るが、
+    // 終わり方の行と `process-end:` の行は出ない）。1 つ目は起こさない形、2 つ目は起こしても印を見ずに眠り直す形である。
+    CriticalTest {
+        name: "process-end-wakes-only-futex",
+        feature: "linux-socket-test,process-end-wakes-only-futex-test",
+        expected_markers: &[
+            "wl-exit-group-waits-rust: the third thread calls exit_group(3) while the others sleep",
+            "ended the process through system call 231 with status 3",
+        ],
+        forbidden_markers: &[
+            "linux-check: /bin/linux/wl-exit-group-waits-rust ended",
+            "process-end: /bin/linux/wl-exit-group-waits-rust",
+            "zash: ready",
+        ],
+        wait_for_full_timeout: true,
+        min_heartbeats: None,
+    },
+    CriticalTest {
+        name: "wait-ignores-process-end",
+        feature: "linux-socket-test,wait-ignores-process-end-test",
+        expected_markers: &[
+            "wl-exit-group-waits-rust: the third thread calls exit_group(3) while the others sleep",
+            "ended the process through system call 231 with status 3",
+        ],
+        forbidden_markers: &[
+            "linux-check: /bin/linux/wl-exit-group-waits-rust ended",
+            "process-end: /bin/linux/wl-exit-group-waits-rust",
+            "zash: ready",
+        ],
+        wait_for_full_timeout: true,
+        min_heartbeats: None,
+    },
 ];
 
 /// 逆アセンブル（`objdump -d` の AT&T 記法）の中で、棚卸しが「使わない」ことに依っているアドレス指定と
@@ -23742,13 +23775,15 @@ fn cmd_linux_socket_test() -> Result<()> {
     let nonblock_ended = format!("spawn: /bin/linux/{nonblock} ended");
     let epoll = "wl-epoll-rust";
     let epoll_ended = format!("spawn: /bin/linux/{epoll} ended");
+    let waits = "wl-exit-group-waits-rust";
+    let waits_ended = format!("spawn: /bin/linux/{waits} ended");
     let deadline = Instant::now() + PIPE_TEST_TIMEOUT;
     loop {
         if child.was_cut() {
             break;
         }
         let text = read_lossy(&serial_log);
-        if text.contains("epoll-waits: /bin/linux/wl-epoll-rust")
+        if text.contains("process-end: /bin/linux/wl-exit-group-waits-rust")
             || text.contains("[ERROR]")
             || Instant::now() >= deadline
         {
@@ -23836,6 +23871,53 @@ fn cmd_linux_socket_test() -> Result<()> {
     ]
     .iter()
     .all(|count| count.is_some_and(|n| n >= 1));
+    // **プロセスの終わりの印が、パイプと epoll の待ちを起こす**（2026-10-20。`ADR-0085` の Addendum）。終わり方（`exit_group(3)`）と
+    // Linux の参照に加えて、カーネルが出す前後の差で、眠っていたパイプの待ちと epoll の待ちが起こされたことと、起きた待ちが印を見て
+    // `-EINTR` で戻ったことを見る。経過時間では見ない。
+    let waits_ran = serial.contains(&format!(
+        "linux-check: /bin/linux/{waits} ended Ok(Exited(3)), the wanted ending"
+    ));
+    let waits_matched = linux_program_output_matches(
+        &workspace_root,
+        waits,
+        &serial,
+        LinuxReferenceEnvironment::ExactCount,
+    )?;
+    let waits_unknown_free = serial
+        .lines()
+        .find(|line| line.contains(&waits_ended))
+        .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
+    let end_line = serial
+        .lines()
+        .find(|line| line.contains("process-end: /bin/linux/wl-exit-group-waits-rust"))
+        .unwrap_or("");
+    let (roused_part, left_part) = end_line.split_once("; ").unwrap_or(("", ""));
+    let kind_count = |part: &str, key: &str| -> Option<u64> {
+        let rest = &part[part.find(key)? + key.len()..];
+        rest.split(|c: char| !c.is_ascii_digit())
+            .next()?
+            .parse()
+            .ok()
+    };
+    let roused_pipe = kind_count(roused_part, "(pipe ");
+    let roused_epoll = kind_count(roused_part, ", epoll ");
+    let left_pipe = kind_count(left_part, "(pipe ");
+    let left_epoll = kind_count(left_part, ", epoll ");
+    // 起こされた epoll の待ちは、主スレッドより先に走れば印を見て戻り（`left` の epoll）、後なら主スレッドの終わりが、カーネルの
+    // 中の待ちで止まっていたスレッドとして片付ける（`thread:` の行の `parked inside the kernel at a wait`）。どちらの順も通る。
+    let parked = serial
+        .lines()
+        .find(|line| {
+            line.contains(&format!(
+                "thread(s) of /bin/linux/{waits} were still runnable"
+            ))
+        })
+        .and_then(|line| kind_count(line, "process ended ("))
+        .unwrap_or(0);
+    let process_end_woke = roused_pipe.is_some_and(|n| n >= 1)
+        && roused_epoll.is_some_and(|n| n >= 1)
+        && left_pipe.is_some_and(|n| n >= 1)
+        && (left_epoll.is_some_and(|n| n >= 1) || parked >= 1);
     let no_error = !serial.contains("[ERROR]");
     println!("{context}: {name} ended with status 4 = {ran}");
     println!(
@@ -23865,6 +23947,16 @@ fn cmd_linux_socket_test() -> Result<()> {
          epoll = {epoll_waited} (waits {epoll_waits:?}, socket {ended_socket:?}, eventfd {ended_eventfd:?}, timerfd \
          {ended_timerfd:?}, nested {ended_nested:?})"
     );
+    println!("{context}: {waits} ended with status 3 (exit_group from a thread) = {waits_ran}");
+    println!(
+        "{context}: {waits} printed what Linux prints (linux-programs/reference/{waits}.txt) = {waits_matched}"
+    );
+    println!("{context}: {waits} hit no number the kernel does not know = {waits_unknown_free}");
+    println!(
+        "{context}: the end of {waits} roused the pipe and epoll sleepers and they left with -EINTR = {process_end_woke} \
+         (roused pipe {roused_pipe:?}, epoll {roused_epoll:?}; left pipe {left_pipe:?}, epoll {left_epoll:?}; the \
+         epoll thread reaped while parked at a wait {parked})"
+    );
     println!("{context}: no [ERROR] line = {no_error}");
     if ran
         && matched
@@ -23878,6 +23970,10 @@ fn cmd_linux_socket_test() -> Result<()> {
         && epoll_matched
         && epoll_unknown_free
         && epoll_waited
+        && waits_ran
+        && waits_matched
+        && waits_unknown_free
+        && process_end_woke
         && no_error
     {
         println!("{context}: PASS");
@@ -23886,7 +23982,11 @@ fn cmd_linux_socket_test() -> Result<()> {
     for line in serial
         .lines()
         .filter(|l| {
-            l.contains(name) || l.contains(nonblock) || l.contains(epoll) || l.contains("[ERROR]")
+            l.contains(name)
+                || l.contains(nonblock)
+                || l.contains(epoll)
+                || l.contains(waits)
+                || l.contains("[ERROR]")
         })
         .take(48)
     {
@@ -35017,7 +35117,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 67,
-    full: 545,
+    full: 547,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` とスクリプトのグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

@@ -1343,3 +1343,9 @@ epoll-nested-never-ready-test = []
 # 破壊（2026-10-19。ADR-0088）: epoll がどの項目も一度返したら止める。レベルトリガーの項目が、読まずに待ち直しても返らず、
 # イメージが 86 で終わる。`--critical-test epoll-level-reported-once`。
 epoll-level-reported-once-test = []
+# 破壊（2026-10-20。ADR-0085 の Addendum）: プロセスの終わりの印が futex の待ちだけを起こす。確かめのイメージ
+# （wl-exit-group-waits-rust）の主スレッドがパイプで眠ったまま残り、起動が止まる。`--critical-test process-end-wakes-only-futex`。
+process-end-wakes-only-futex-test = []
+# 破壊（2026-10-20。ADR-0085 の Addendum）: 待ちの所が終わりの印を見ない。起こされた主スレッドがパイプで眠り直し、起動が止まる。
+# `--critical-test wait-ignores-process-end`。
+wait-ignores-process-end-test = []
