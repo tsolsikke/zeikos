@@ -418,6 +418,10 @@ pub enum Wait {
     /// timerfd の満了がまだで、`read` が待つ（2026-10-19）。**締切は同じ集合の `Timer` の理由が受け持つ**（ティックの
     /// `wake_expired_timers` が起こす）。こちらは `timerfd_settime` と、最後のコピーを閉じたときに起こす。
     TimerFdReadable { id: u8 },
+    /// `epoll_pwait` で待つ（2026-10-19。`ADR-0088`）。**どの epoll かは持たない**——ソケット・パイプ・eventfd・timerfd の
+    /// 変化と、epoll の項目の足し・付け直しで、epoll で待つ者を全部起こす（`crate::epoll::notify`。空振りを許す。起きた
+    /// 側が問い合わせ直す）。timerfd の締切は同じ集合の `Timer` の理由が、入力は `Keyboard` の理由が受け持つ。
+    Epoll,
 }
 
 /// 1 つのタスクが同時に待てる理由の本数（`ADR-0066` の Y-b）。

@@ -431,6 +431,18 @@ kernel::console::screen::tests::the_baseline_is_zero_before_any_flush
 kernel::console::screen::tests::the_percentage_compares_against_full_screen_transfers
 kernel::console::screen::tests::transferring_everything_every_time_shows_as_one_hundred_percent
 kernel::console::tests::the_grid_can_hold_the_widest_glyph_in_the_font
+kernel::epoll::tests::a_chain_of_five_epolls_is_allowed_and_a_sixth_is_a_loop_from_either_end
+kernel::epoll::tests::a_level_triggered_entry_is_returned_every_time_it_is_ready
+kernel::epoll::tests::a_nested_epoll_is_ready_when_something_inside_is_ready
+kernel::epoll::tests::a_oneshot_entry_is_returned_once_until_it_is_modified
+kernel::epoll::tests::a_timerfd_entry_that_does_not_ask_for_epollin_puts_no_deadline_in_the_wait
+kernel::epoll::tests::adding_itself_is_invalid_and_a_ring_is_a_loop
+kernel::epoll::tests::adding_twice_deleting_and_modifying_missing_entries_are_refused
+kernel::epoll::tests::closing_another_open_of_the_input_keeps_this_input_entry
+kernel::epoll::tests::err_and_hup_are_returned_even_when_not_requested
+kernel::epoll::tests::forgetting_an_object_removes_it_from_every_epoll
+kernel::epoll::tests::freeing_an_epoll_removes_the_entries_that_point_at_it
+kernel::epoll::tests::wait_hints_find_the_earliest_timer_and_input_through_nesting
 kernel::eventfd::tests::a_read_returns_the_whole_value_and_resets_it
 kernel::eventfd::tests::a_semaphore_read_returns_one_at_a_time
 kernel::eventfd::tests::a_write_past_the_maximum_is_full_and_leaves_the_value
@@ -521,6 +533,7 @@ kernel::heap::plan::tests::plan_allocation_large_alignment_may_require_a_large_r
 kernel::heap::plan::tests::plan_allocation_leftover_exactly_min_block_size_is_split
 kernel::heap::plan::tests::plan_allocation_splits_off_trailing_free_block_when_large_enough
 kernel::heap::plan::tests::plan_allocation_zero_size_request_still_produces_a_valid_plan
+kernel::input::tests::closing_another_open_of_the_input_leaves_this_one_open
 kernel::input::tests::esc_is_a_bare_byte_and_arrows_are_csi_sequences
 kernel::input::tests::home_and_end_are_csi_number_tilde
 kernel::input::tests::plain_bytes_and_dropped_events_are_unchanged

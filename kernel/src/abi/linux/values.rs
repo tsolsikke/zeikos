@@ -105,6 +105,15 @@ pub const TFD_TIMER_ABSTIME: u64 = 1;
 /// `struct itimerspec` の大きさ（`it_interval` と `it_value` の `timespec` が 2 つ）。
 pub const ITIMERSPEC_LEN: usize = 32;
 
+/// `EPOLL_CLOEXEC`（`epoll_create1` の `flags`。`O_CLOEXEC` と同じ値。2026-10-19）。受けて無視する（`exec` が無い）。
+pub const EPOLL_CLOEXEC: u64 = 0o2000000;
+/// `epoll_ctl` の `op`（Linux の値）。
+pub const EPOLL_CTL_ADD: u64 = 1;
+pub const EPOLL_CTL_DEL: u64 = 2;
+pub const EPOLL_CTL_MOD: u64 = 3;
+/// `struct epoll_event` の大きさ。**x86_64 では packed で 12 バイト**（`events` の `u32` と `data` の `u64`）。
+pub const EPOLL_EVENT_LEN: usize = 12;
+
 /// `FIONBIO`（Linux の `asm-generic/ioctls.h` の値）。`int` を指す引数が 0 でなければ待たない印を立て、0 なら下ろす
 /// （2026-10-19。Rust の std の `set_nonblocking` が打つ）。
 pub const FIONBIO: u64 = 0x5421;

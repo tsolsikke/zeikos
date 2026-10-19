@@ -345,9 +345,12 @@ pub enum File {
     /// 入力の生イベント（`ADR-0066` の Y-a）。**`read` が `struct input_event` を返す。**
     ///
     /// **前景の持ち主だけが `open_input` で開ける**（開く時点の1箇所で守る。`ADR-0066` の
-    /// 「入力 fd の前景の関所」）。**キーボードは1つなので添字を持たない。** **`SCM_RIGHTS` は
-    /// shm の fd だけを運ぶので、この fd は相手の表へコピーされない**（開いた持ち主に留まる）。
-    Input,
+    /// 「入力 fd の前景の関所」）。**`SCM_RIGHTS` は shm の fd だけを運ぶので、この fd は相手の表へコピーされない**
+    /// （開いた持ち主に留まる）。
+    ///
+    /// **`open` は開いたごとの番号で、参照を数える**（2026-10-19。`crate::input::open_handle`）。キーボードは 1 つだが、
+    /// epoll の項目は開いたごとに分けて持つ——ほかの者が入力の fd を開いて閉じても、自分の項目は外れない（`ADR-0088`）。
+    Input { open: u8 },
     /// 画面（`ADR-0066` の Y-c）。**持っている間は図形モードである。**
     ///
     /// **前景の系統だけが `open_screen` で開ける**（`crate::input::caller_is_foreground`）。
@@ -363,6 +366,9 @@ pub enum File {
     /// timerfd（2026-10-19）。**`id` は `crate::timerfd` の表の番号で、参照を数える**（eventfd と同じ）。`nonblocking` は
     /// 待たない印（`TFD_NONBLOCK`・`F_SETFL`・`FIONBIO`）。
     TimerFd { id: u8, nonblocking: bool },
+    /// epoll（2026-10-19。`ADR-0088`）。**`id` は `crate::epoll` の表の番号で、参照を数える**（`F_DUPFD` のコピーは同じ
+    /// epoll を指す。wayland-backend の epoll を複製して calloop の epoll へ入れる形）。
+    Epoll { id: u8 },
 }
 
 impl File {
@@ -424,7 +430,50 @@ impl File {
         }
     }
 
-    /// コピーを作る（`F_DUPFD`）。**参照を数える種類は、数を 1 つ足す**（2026-10-19。eventfd・timerfd）。`flock` のロックは
+    /// epoll なら、その番号（2026-10-19）。
+    pub fn epoll_id(&self) -> Option<u8> {
+        match self {
+            Self::Epoll { id } => Some(*id),
+            _ => None,
+        }
+    }
+
+    /// epoll の項目として見張れるなら、そのオブジェクト（`epoll_ctl`。2026-10-19）。**普通のファイル・端末・共有メモリー・
+    /// 画面・繋がっていないソケットは `None`**（`-EPERM`。Linux も普通のファイルを断る）。
+    pub fn epoll_source(&self) -> Option<crate::epoll::Source> {
+        use crate::epoll::Source;
+        match self {
+            Self::Socket {
+                state: SocketState::Listener { listener },
+                ..
+            } => Some(Source::Listener {
+                listener: *listener,
+            }),
+            Self::Socket {
+                state: SocketState::Stream { conn, side },
+                ..
+            } => Some(Source::Stream {
+                conn: *conn,
+                side: *side as u8,
+            }),
+            Self::PipeRead { pipe } => Some(Source::PipeRead { pipe: *pipe }),
+            Self::PipeWrite { pipe } => Some(Source::PipeWrite { pipe: *pipe }),
+            Self::EventFd { id, .. } => Some(Source::EventFd { id: *id }),
+            Self::TimerFd { id, .. } => Some(Source::TimerFd { id: *id }),
+            Self::Epoll { id } => Some(Source::Epoll { id: *id }),
+            Self::Input { open } => Some(Source::Input { open: *open }),
+            Self::Regular { .. }
+            | Self::Terminal { .. }
+            | Self::Shm { .. }
+            | Self::Screen
+            | Self::Socket {
+                state: SocketState::Unbound,
+                ..
+            } => None,
+        }
+    }
+
+    /// コピーを作る（`F_DUPFD`）。**参照を数える種類は、数を 1 つ足す**（2026-10-19。eventfd・timerfd・epoll・入力）。`flock` のロックは
     /// コピーに渡さない（`ADR-0087`。コピーは別の持ち主）。
     pub fn duplicate(&self) -> Self {
         let mut copy = *self;
@@ -432,6 +481,8 @@ impl File {
             Self::Regular { lock, .. } => *lock = 0,
             Self::EventFd { id, .. } => crate::eventfd::attach(*id),
             Self::TimerFd { id, .. } => crate::timerfd::attach(*id),
+            Self::Epoll { id } => crate::epoll::attach(*id),
+            Self::Input { open } => crate::input::attach_handle(*open),
             _ => {}
         }
         copy
@@ -446,10 +497,11 @@ impl File {
             Self::PipeWrite { .. } => "pipe write end",
             Self::Socket { .. } => "socket",
             Self::Shm { .. } => "shared memory",
-            Self::Input => "input",
+            Self::Input { .. } => "input",
             Self::Screen => "screen",
             Self::EventFd { .. } => "eventfd",
             Self::TimerFd { .. } => "timerfd",
+            Self::Epoll { .. } => "epoll",
         }
     }
 
@@ -457,16 +509,35 @@ impl File {
     /// 集める**——**`close` からも、表の `Drop`（プロセスの終わり）からも来る。**
     pub fn release_end(&self) {
         match self {
-            Self::PipeRead { pipe } => crate::pipe::close_read_end(*pipe),
-            Self::PipeWrite { pipe } => crate::pipe::close_write_end(*pipe),
+            // **手放す端を指す epoll の項目は外す**（2026-10-19。`crate::epoll` の「項目が指すもの」）。端は参照を数えて
+            // いないので、コピーのどれかを閉じたときに外れる（`ADR-0064` の 2026-10-19 の Addendum の既知の不具合の範囲）。
+            Self::PipeRead { pipe } => {
+                crate::pipe::close_read_end(*pipe);
+                crate::epoll::forget(crate::epoll::Source::PipeRead { pipe: *pipe });
+            }
+            Self::PipeWrite { pipe } => {
+                crate::pipe::close_write_end(*pipe);
+                crate::epoll::forget(crate::epoll::Source::PipeWrite { pipe: *pipe });
+            }
             Self::Socket {
                 state: SocketState::Stream { conn, side },
                 ..
-            } => crate::socket::close_end(*conn, *side),
+            } => {
+                crate::socket::close_end(*conn, *side);
+                crate::epoll::forget(crate::epoll::Source::Stream {
+                    conn: *conn,
+                    side: *side as u8,
+                });
+            }
             Self::Socket {
                 state: SocketState::Listener { listener },
                 ..
-            } => crate::socket::close_listener(*listener),
+            } => {
+                crate::socket::close_listener(*listener);
+                crate::epoll::forget(crate::epoll::Source::Listener {
+                    listener: *listener,
+                });
+            }
             Self::Shm { shm } => crate::shm::detach(*shm),
             // **画面の fd を手放したら図形モードから抜ける（`ADR-0066` の Y-c）。** **プロセスが
             // 終われば表ごと解放されるので、`close` を忘れて落ちたプログラムでも文字の画面へ戻る。**
@@ -477,18 +548,21 @@ impl File {
             // **eventfd は参照を数える**（2026-10-19）。最後のコピーで空ける。
             Self::EventFd { id, .. } => crate::eventfd::detach(*id),
             Self::TimerFd { id, .. } => crate::timerfd::detach(*id),
+            // **epoll も参照を数える**（最後のコピーで空け、この epoll を指す項目を外す）。
+            Self::Epoll { id } => crate::epoll::detach(*id),
+            // **入力の fd も参照を数える**（最後のコピーで、その開いた分を指す epoll の項目だけを外す）。
+            Self::Input { open } => crate::input::detach_handle(*open),
             Self::Socket {
                 state: SocketState::Unbound,
                 ..
             }
-            | Self::Terminal { .. }
-            | Self::Input => {}
+            | Self::Terminal { .. } => {}
         }
     }
 
     /// 入力の生イベントの fd か（`ADR-0066` の Y-a）。
     pub fn is_input(&self) -> bool {
-        matches!(self, Self::Input)
+        matches!(self, Self::Input { .. })
     }
 
     /// 画面の fd か（`ADR-0066` の Y-c）。
@@ -549,10 +623,11 @@ impl File {
             | Self::PipeWrite { .. }
             | Self::Socket { .. }
             | Self::Shm { .. }
-            | Self::Input
+            | Self::Input { .. }
             | Self::Screen
             | Self::EventFd { .. }
-            | Self::TimerFd { .. } => None,
+            | Self::TimerFd { .. }
+            | Self::Epoll { .. } => None,
         }
     }
 
@@ -565,10 +640,11 @@ impl File {
             | Self::PipeWrite { .. }
             | Self::Socket { .. }
             | Self::Shm { .. }
-            | Self::Input
+            | Self::Input { .. }
             | Self::Screen
             | Self::EventFd { .. }
-            | Self::TimerFd { .. } => 0,
+            | Self::TimerFd { .. }
+            | Self::Epoll { .. } => 0,
         }
     }
 

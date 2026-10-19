@@ -314,6 +314,83 @@ pub fn caller_is_foreground() -> bool {
     foreground_is_claimed() && crate::arch::x86_64::current_excursion_slot() == 0
 }
 
+/// 同時に開ける入力の fd の数（開いた回の数。`F_DUPFD` のコピーは数えない。2026-10-19）。
+pub const MAX_INPUT_OPENS: usize = 8;
+
+/// 開いた入力の fd の参照の数（2026-10-19。`ADR-0088`）。**`open_input` で開くごとに番号を 1 つ取り、`F_DUPFD` の
+/// コピーは同じ番号の参照を足す。** 最後のコピーを閉じたら番号を空ける。
+///
+/// **epoll の項目を、開いた回ごとに分けるために持つ**——キーボードは 1 つなので、番号が無いと、ある者が入力の fd を
+/// 閉じたときに、ほかの者の epoll の入力の項目まで外してしまう。
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct OpenCounts {
+    refs: [u32; MAX_INPUT_OPENS],
+}
+
+impl OpenCounts {
+    /// 何も開いていない表。
+    pub const fn new() -> Self {
+        Self {
+            refs: [0; MAX_INPUT_OPENS],
+        }
+    }
+
+    /// 開く。**空きが無ければ `None`。** 参照は 1 から始まる。
+    pub fn open(&mut self) -> Option<u8> {
+        let index = self.refs.iter().position(|refs| *refs == 0)?;
+        self.refs[index] = 1;
+        Some(index as u8)
+    }
+
+    /// 参照を 1 つ足す（`F_DUPFD` のコピー）。
+    pub fn attach(&mut self, open: u8) {
+        if let Some(refs) = self.refs.get_mut(open as usize).filter(|refs| **refs != 0) {
+            *refs += 1;
+        }
+    }
+
+    /// 参照を 1 つ減らす。**最後の参照なら番号を空けて `true` を返す。**
+    pub fn detach(&mut self, open: u8) -> bool {
+        let Some(refs) = self.refs.get_mut(open as usize).filter(|refs| **refs != 0) else {
+            return false;
+        };
+        *refs -= 1;
+        *refs == 0
+    }
+
+    /// その番号が開いているか。
+    pub fn is_open(&self, open: u8) -> bool {
+        self.refs.get(open as usize).is_some_and(|refs| *refs != 0)
+    }
+}
+
+impl Default for OpenCounts {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+static INPUT_OPENS: Locked<OpenCounts> = Locked::new(OpenCounts::new());
+
+/// 入力の fd を開いた回の番号を取る（`open_input`）。**空きが無ければ `None`。**
+pub fn open_handle() -> Option<u8> {
+    INPUT_OPENS.lock().open()
+}
+
+/// 参照を 1 つ足す（`F_DUPFD` のコピー）。
+pub fn attach_handle(open: u8) {
+    INPUT_OPENS.lock().attach(open);
+}
+
+/// 参照を 1 つ減らす（`close` と、表の `Drop`）。**最後の参照なら、その開いた回を指す epoll の項目を外す**
+/// （ほかの者が開いた入力の fd の項目は残す）。
+pub fn detach_handle(open: u8) {
+    let freed = INPUT_OPENS.lock().detach(open);
+    if freed {
+        crate::epoll::forget(crate::epoll::Source::Input { open });
+    }
+}
+
 /// Ring 3 へ届けたバイトの累計（判定行）。
 pub fn delivered_count() -> u64 {
     DELIVERED.load(Ordering::SeqCst)
@@ -593,8 +670,23 @@ pub(crate) fn bytes_for_event(event: crate::keyboard::decode::KeyEvent) -> Deliv
 
 #[cfg(test)]
 mod tests {
-    use super::{bytes_for_event, DeliveredBytes};
+    use super::{bytes_for_event, DeliveredBytes, OpenCounts};
     use crate::keyboard::decode::KeyEvent;
+
+    /// **開いた回ごとに番号を持ち、コピーの参照を数える**（2026-10-19）。ほかの回を閉じても、自分の回は開いたままである。
+    #[test]
+    fn closing_another_open_of_the_input_leaves_this_one_open() {
+        let mut opens = OpenCounts::new();
+        let mine = opens.open().unwrap();
+        let other = opens.open().unwrap();
+        assert_ne!(mine, other);
+        opens.attach(other);
+        assert!(!opens.detach(other), "a copy of the other open is left");
+        assert!(opens.detach(other), "the last copy frees the other open");
+        assert!(opens.is_open(mine));
+        assert!(!opens.is_open(other));
+        assert_eq!(opens.open(), Some(other), "the freed number comes back");
+    }
 
     /// **Esc は素の 1 バイト、矢印は CSI**——出し分けの規約を固定する（zi-a）。
     #[test]

@@ -169,3 +169,14 @@ pub const SYS_TIMERFD_CREATE: u64 = 283;
 pub const SYS_TIMERFD_SETTIME: u64 = 286;
 /// `timerfd_gettime(fd, curr_value)` の番号（2026-10-19。`__NR_timerfd_gettime`）。
 pub const SYS_TIMERFD_GETTIME: u64 = 287;
+/// `epoll_create(size)` の番号（2026-10-19。`__NR_epoll_create`。`size` は 0 より大きければ見ない古い形）。
+pub const SYS_EPOLL_CREATE: u64 = 213;
+/// `epoll_wait(epfd, events, maxevents, timeout)` の番号（2026-10-19。`__NR_epoll_wait`）。
+pub const SYS_EPOLL_WAIT: u64 = 232;
+/// `epoll_ctl(epfd, op, fd, event)` の番号（2026-10-19。`__NR_epoll_ctl`）。
+pub const SYS_EPOLL_CTL: u64 = 233;
+/// `epoll_pwait(epfd, events, maxevents, timeout, sigmask, sigsetsize)` の番号（2026-10-19。`__NR_epoll_pwait`。rustix は
+/// これを打つ）。
+pub const SYS_EPOLL_PWAIT: u64 = 281;
+/// `epoll_create1(flags)` の番号（2026-10-19。`__NR_epoll_create1`）。
+pub const SYS_EPOLL_CREATE1: u64 = 291;

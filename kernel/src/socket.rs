@@ -36,7 +36,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 use common::critical::Locked;
 
 use crate::ring::Ring;
-use crate::task::{self, Wait};
+use crate::task::Wait;
 
 /// 輪の大きさ（バイト。向きごと）。**根拠はモジュールの doc にある。**
 pub const SOCKET_RING: usize = 1024;
@@ -159,6 +159,14 @@ static WRITERS_WOKEN_BY_READ: AtomicU64 = AtomicU64::new(0);
 static EPIPE_SEEN: AtomicU64 = AtomicU64::new(0);
 /// 相手側が閉じて EOF を返した回数（計測）。
 static EOF_SEEN: AtomicU64 = AtomicU64::new(0);
+
+/// その合図を待っている者を起こし、epoll で待つ者も起こす（2026-10-19。`crate::epoll::notify`）。**状態が変わる所は、どれも
+/// ここを通す**——epoll の待ちは、どのオブジェクトの変化でも起き直して問い合わせ直す（空振りを許す）。
+fn wake_and_notify_epoll(on: crate::task::Wait) -> usize {
+    let woken = crate::task::wake_tasks_waiting_on(on);
+    crate::epoll::notify();
+    woken
+}
 
 macro_rules! gauge {
     ($name:ident, $static:ident) => {
@@ -297,7 +305,7 @@ pub fn connect(name: &[u8]) -> Result<u8, ConnectError> {
     CONNECTIONS_CREATED.fetch_add(1, Ordering::Relaxed);
     let at_once = CONNECTIONS.iter().filter(|slot| slot.lock().in_use).count() as u64;
     CONNECTIONS_AT_ONCE_MAX.fetch_max(at_once, Ordering::Relaxed);
-    task::wake_tasks_waiting_on(Wait::SocketAcceptable {
+    wake_and_notify_epoll(Wait::SocketAcceptable {
         listener: listener as u8,
     });
     Ok(index)
@@ -398,6 +406,47 @@ pub fn writable_or_gone(conn: u8, side: Side) -> bool {
     !state.in_use || !state.is_open(side.peer()) || state.rings[side.peer() as usize].room() > 0
 }
 
+/// その側の準備（epoll の問い合わせ。2026-10-19）。**取らずに覗くだけである。**
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StreamPoll {
+    /// データか EOF がある。
+    pub readable: bool,
+    /// 相手の輪に空きがあり、相手が開いている。
+    pub writable: bool,
+    /// 相手が閉じた。
+    pub peer_closed: bool,
+    /// 接続がもう無い。
+    pub gone: bool,
+}
+
+/// その側の準備を覗く（epoll の問い合わせ。2026-10-19）。
+pub fn poll_stream(conn: u8, side: Side) -> StreamPoll {
+    let Some(slot) = CONNECTIONS.get(conn as usize) else {
+        return StreamPoll {
+            readable: false,
+            writable: false,
+            peer_closed: false,
+            gone: true,
+        };
+    };
+    let state = slot.lock();
+    if !state.in_use {
+        return StreamPoll {
+            readable: false,
+            writable: false,
+            peer_closed: false,
+            gone: true,
+        };
+    }
+    let peer_closed = !state.is_open(side.peer());
+    StreamPoll {
+        readable: !state.rings[side as usize].is_empty() || peer_closed,
+        writable: !peer_closed && state.rings[side.peer() as usize].room() > 0,
+        peer_closed,
+        gone: false,
+    }
+}
+
 /// 読んだ結果。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadOutcome {
@@ -440,7 +489,7 @@ pub fn read_into(conn: u8, side: Side, dst: &mut [u8]) -> ReadOutcome {
     };
     match outcome {
         ReadOutcome::Bytes(_) => {
-            let woken = task::wake_tasks_waiting_on(Wait::SocketWritable {
+            let woken = wake_and_notify_epoll(Wait::SocketWritable {
                 conn,
                 side: side.peer(),
             });
@@ -500,7 +549,7 @@ pub fn write_from(conn: u8, side: Side, src: &[u8]) -> WriteOutcome {
     };
     #[cfg(not(feature = "socket-write-does-not-wake-reader"))]
     if matches!(outcome, WriteOutcome::Bytes(_)) {
-        let woken = task::wake_tasks_waiting_on(Wait::SocketReadable {
+        let woken = wake_and_notify_epoll(Wait::SocketReadable {
             conn,
             side: side.peer(),
         });
@@ -539,11 +588,11 @@ pub fn close_end(conn: u8, side: Side) {
         }
     };
     if closed {
-        task::wake_tasks_waiting_on(Wait::SocketReadable {
+        wake_and_notify_epoll(Wait::SocketReadable {
             conn,
             side: side.peer(),
         });
-        task::wake_tasks_waiting_on(Wait::SocketWritable {
+        wake_and_notify_epoll(Wait::SocketWritable {
             conn,
             side: side.peer(),
         });
@@ -598,7 +647,7 @@ pub fn queue_fd(conn: u8, side: Side, shm: u8) -> bool {
         }
     };
     if queued {
-        task::wake_tasks_waiting_on(Wait::SocketReadable {
+        wake_and_notify_epoll(Wait::SocketReadable {
             conn,
             side: side.peer(),
         });

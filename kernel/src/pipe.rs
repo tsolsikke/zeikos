@@ -92,6 +92,14 @@ static RESERVATIONS_DROPPED: AtomicU64 = AtomicU64::new(0);
 /// 3 回のうち 1 回しか落ちなかった）。**「誰が起こしたか」を数えれば、肩代わりは見える。**
 static READERS_WOKEN_BY_WRITE: AtomicU64 = AtomicU64::new(0);
 
+/// その合図を待っている者を起こし、epoll で待つ者も起こす（2026-10-19。`crate::epoll::notify`）。**状態が変わる所は、どれも
+/// ここを通す**——epoll の待ちは、どのオブジェクトの変化でも起き直して問い合わせ直す（空振りを許す）。
+fn wake_and_notify_epoll(on: crate::task::Wait) -> usize {
+    let woken = crate::task::wake_tasks_waiting_on(on);
+    crate::epoll::notify();
+    woken
+}
+
 pub fn reader_waits() -> u64 {
     READER_WAITS.load(Ordering::Relaxed)
 }
@@ -187,7 +195,7 @@ pub fn drop_reservation(pipe: u8) -> bool {
     };
     if dropped {
         RESERVATIONS_DROPPED.fetch_add(1, Ordering::Relaxed);
-        crate::task::wake_tasks_waiting_on(crate::task::Wait::PipeWritable { pipe });
+        wake_and_notify_epoll(crate::task::Wait::PipeWritable { pipe });
     }
     dropped
 }
@@ -201,6 +209,27 @@ pub enum ReadOutcome {
     Eof,
     /// 空だが、書き手がまだ居る。**待つこと。**
     Empty,
+}
+
+/// 読み端の準備を覗く（epoll の問い合わせ。2026-10-19）。1 つ目は「データがある」、2 つ目は「書き手が居ない」。
+/// **書き手が居ないだけでは読めるとしない**——Linux の `pipe_poll` と同じく、EOF は `EPOLLHUP` だけで知らせる。
+pub fn poll_read_end(pipe: u8) -> (bool, bool) {
+    let Some(slot) = PIPES.get(pipe as usize) else {
+        return (false, true);
+    };
+    let state = slot.lock();
+    (!state.ring.is_empty(), state.writers == 0)
+}
+
+/// 書き端の準備を覗く（epoll の問い合わせ。2026-10-19）。**読み手が居て、空きがあれば書ける。** 2 つ目は「読み手が
+/// 居ない」（`-EPIPE` になる）。
+pub fn poll_write_end(pipe: u8) -> (bool, bool) {
+    let Some(slot) = PIPES.get(pipe as usize) else {
+        return (false, true);
+    };
+    let state = slot.lock();
+    let no_reader = state.readers == 0 && !state.reserved_reader;
+    (!no_reader && state.ring.room() > 0, no_reader)
 }
 
 /// 溜まっているバイトを `dst` へ移す。**取れたら書き手を起こす**（空きができた）。
@@ -229,7 +258,7 @@ pub fn read_into(pipe: u8, dst: &mut [u8]) -> ReadOutcome {
         }
     };
     if matches!(outcome, ReadOutcome::Bytes(_)) {
-        crate::task::wake_tasks_waiting_on(crate::task::Wait::PipeWritable { pipe });
+        wake_and_notify_epoll(crate::task::Wait::PipeWritable { pipe });
     }
     outcome
 }
@@ -277,7 +306,7 @@ pub fn write_from(pipe: u8, src: &[u8]) -> WriteOutcome {
     };
     #[cfg(not(feature = "pipe-write-does-not-wake-reader"))]
     if matches!(outcome, WriteOutcome::Bytes(_)) {
-        let woken = crate::task::wake_tasks_waiting_on(crate::task::Wait::PipeReadable { pipe });
+        let woken = wake_and_notify_epoll(crate::task::Wait::PipeReadable { pipe });
         READERS_WOKEN_BY_WRITE.fetch_add(woken as u64, Ordering::Relaxed);
     }
     outcome
@@ -300,7 +329,7 @@ pub fn close_read_end(pipe: u8) {
         }
     };
     if last {
-        crate::task::wake_tasks_waiting_on(crate::task::Wait::PipeWritable { pipe });
+        wake_and_notify_epoll(crate::task::Wait::PipeWritable { pipe });
     }
 }
 
@@ -327,7 +356,7 @@ pub fn close_write_end(pipe: u8) {
         }
     };
     if last {
-        crate::task::wake_tasks_waiting_on(crate::task::Wait::PipeReadable { pipe });
+        wake_and_notify_epoll(crate::task::Wait::PipeReadable { pipe });
     }
 }
 

@@ -52,6 +52,7 @@ use crate::abi::linux::x86_64::{
     SYS_UNAME, SYS_UNLINK, SYS_WRITE, SYS_WRITEV,
 };
 use crate::abi::linux::x86_64::{
+    SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_PWAIT, SYS_EPOLL_WAIT,
     SYS_EVENTFD, SYS_EVENTFD2, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
 };
 use crate::abi::linux::{
@@ -61,7 +62,8 @@ use crate::abi::linux::{
     winsize_bytes, CmsgOneFd, Dirent64, DrmClipRect, FbBitfield, FbFixScreeninfo, FbVarScreeninfo,
     Iovec, Msghdr, Stat, Timespec, Winsize, AF_UNIX, CLOCK_MONOTONIC, CMSG_ONE_FD_LEN,
     DIRENT64_ALIGN, DIRENT64_HEADER_LEN, DRM_CLIP_RECT_LEN, DT_DIR, DT_REG, DT_UNKNOWN,
-    EFD_CLOEXEC, EFD_NONBLOCK, EFD_SEMAPHORE, FBIOGET_FSCREENINFO, FBIOGET_VSCREENINFO,
+    EFD_CLOEXEC, EFD_NONBLOCK, EFD_SEMAPHORE, EPOLL_CLOEXEC, EPOLL_CTL_ADD, EPOLL_CTL_DEL,
+    EPOLL_CTL_MOD, EPOLL_EVENT_LEN, FBIOGET_FSCREENINFO, FBIOGET_VSCREENINFO,
     FB_TYPE_PACKED_PIXELS, FB_VISUAL_TRUECOLOR, FIONBIO, INPUT_EVENT_LEN, IOVEC_LEN,
     ITIMERSPEC_LEN, MAP_ANONYMOUS, MAP_FIXED, MAP_FIXED_NOREPLACE, MSGHDR_CONTROLLEN, MSGHDR_LEN,
     MSG_CMSG_CLOEXEC, MSG_DONTWAIT, MSG_NOSIGNAL, O_ACCMODE, O_APPEND, O_CREAT, O_NONBLOCK,
@@ -72,9 +74,9 @@ use crate::abi::linux::{
 };
 use crate::abi::linux::{
     E2BIG, EACCES, EADDRINUSE, EAFNOSUPPORT, EAGAIN, EBADF, EBUSY, ECHILD, ECONNREFUSED, EEXIST,
-    EFAULT, EINVAL, EIO, EISCONN, EISDIR, EMFILE, EMSGSIZE, ENAMETOOLONG, ENOBUFS, ENODEV, ENOENT,
-    ENOEXEC, ENOLCK, ENOMEM, ENOSPC, ENOSYS, ENOTCONN, ENOTDIR, ENOTEMPTY, ENOTSOCK, ENOTTY, EPERM,
-    EPIPE, EPROTONOSUPPORT, EROFS, ESPIPE, ESRCH,
+    EFAULT, EINTR, EINVAL, EIO, EISCONN, EISDIR, ELOOP, EMFILE, EMSGSIZE, ENAMETOOLONG, ENOBUFS,
+    ENODEV, ENOENT, ENOEXEC, ENOLCK, ENOMEM, ENOSPC, ENOSYS, ENOTCONN, ENOTDIR, ENOTEMPTY,
+    ENOTSOCK, ENOTTY, EPERM, EPIPE, EPROTONOSUPPORT, EROFS, ESPIPE, ESRCH,
 };
 use crate::abi::private::{
     zdiag_text_len, DETACHED_STDOUT_TO_PIPE, FBIOZPRESENT, PROBE_NUMBER, SPAWN_FOLDED_FLAG,
@@ -1039,6 +1041,25 @@ unsafe fn dispatch(
         SYS_EVENTFD => eventfd_from_ring3(args[0], 0),
         // **timerfd**（2026-10-19）。
         SYS_TIMERFD_CREATE => timerfd_create_from_ring3(args[0], args[1]),
+        // **epoll**（2026-10-19。`ADR-0088`）。`epoll_create` は `size` だけの古い形、`epoll_wait` は `sigmask` の無い形である。
+        SYS_EPOLL_CREATE1 => epoll_create_from_ring3(args[0]),
+        SYS_EPOLL_CREATE => {
+            if (args[0] as i32) <= 0 {
+                (-EINVAL) as u64
+            } else {
+                epoll_create_from_ring3(0)
+            }
+        }
+        // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+        SYS_EPOLL_CTL => unsafe { epoll_ctl_from_ring3(args, page_table_root, direct_map) },
+        // SAFETY: 同上。`bkl` はいま保持しているガードである。
+        SYS_EPOLL_PWAIT => unsafe {
+            epoll_wait_from_ring3(args, true, page_table_root, direct_map, bkl)
+        },
+        // SAFETY: 同上。
+        SYS_EPOLL_WAIT => unsafe {
+            epoll_wait_from_ring3(args, false, page_table_root, direct_map, bkl)
+        },
         // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
         SYS_TIMERFD_SETTIME => unsafe {
             timerfd_settime_from_ring3(args, page_table_root, direct_map)
@@ -1916,6 +1937,279 @@ unsafe fn read_timerfd(
     }
 }
 
+/// [`SYS_EPOLL_CREATE1`] の本体（2026-10-19。`ADR-0088`）。**空の epoll を作り、最小の空き fd に置く。** `flags` は
+/// `EPOLL_CLOEXEC`（無視する）だけを受け、ほかのビットは `-EINVAL`。表が尽きれば `-ENOMEM`。
+#[inline(never)]
+fn epoll_create_from_ring3(flags: u64) -> u64 {
+    if flags & !EPOLL_CLOEXEC != 0 {
+        return (-EINVAL) as u64;
+    }
+    let Some(id) = crate::epoll::create() else {
+        return (-ENOMEM) as u64;
+    };
+    match crate::vfs::with_current_files(|files| files.insert(crate::vfs::File::Epoll { id })) {
+        Ok(fd) => fd as u64,
+        Err(error) => {
+            crate::epoll::detach(id);
+            (-errno_for_file_table(error)) as u64
+        }
+    }
+}
+
+/// fd が epoll なら、その番号（2026-10-19）。**無い fd は `-EBADF`、epoll でなければ `-EINVAL`**（Linux と同じ答え）。
+fn epoll_of(fd: u64) -> Result<u8, u64> {
+    match crate::vfs::with_current_files(|files| {
+        files.get(fd as usize).map(crate::vfs::File::epoll_id)
+    }) {
+        Ok(Some(id)) => Ok(id),
+        Ok(None) => Err((-EINVAL) as u64),
+        Err(error) => Err((-errno_for_file_table(error)) as u64),
+    }
+}
+
+/// `epoll_ctl` で受ける `events` のビット。**`EPOLLET` は受けない**（名前のある行を出して `-EINVAL`）。`EPOLLEXCLUSIVE`・
+/// `EPOLLWAKEUP` は受けて見ない（起こすのは全部の待ちで、眠りを妨げる仕組みも無い）。知らないビットは Linux と同じく
+/// 黙って持つ（返すときは準備のビットと突き合わせるので、出てこない）。
+fn epoll_events_ok(events: u32, fd: u64) -> bool {
+    if events & crate::epoll::EPOLLET != 0 {
+        report_epollet_refused(fd);
+        return false;
+    }
+    true
+}
+
+/// `EPOLLET` を断った行（2026-10-19）。
+#[inline(never)]
+#[cold]
+fn report_epollet_refused(fd: u64) {
+    serial_line(format_args!(
+        "epollet-refused: epoll_ctl was asked to watch fd {fd} edge-triggered (EPOLLET); only level-triggered and \
+         EPOLLONESHOT entries are kept, so the call is -EINVAL"
+    ));
+}
+
+/// [`SYS_EPOLL_CTL`] の本体（2026-10-19。`ADR-0088`）。`args` は `(epfd, op, fd, event)` である。
+///
+/// - `EPOLL_CTL_ADD`・`EPOLL_CTL_MOD` は `struct epoll_event`（12 バイト。packed）を読む。`EPOLL_CTL_DEL` は読まない。
+/// - 見張れない種類（普通のファイル・端末・共有メモリー・画面・繋がっていないソケット）は `-EPERM`。
+/// - 自分自身は `-EINVAL`、輪と長すぎる鎖は `-ELOOP`、同じ組は `-EEXIST`、無い組は `-ENOENT`、項目が尽きたら `-ENOSPC`。
+///
+/// # 安全性
+///
+/// 呼び出し元契約により `page_table_root` / `direct_map` は有効。
+#[inline(never)]
+unsafe fn epoll_ctl_from_ring3(
+    args: &[u64; 6],
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+) -> u64 {
+    let [epfd, op, fd, event, _, _] = *args;
+    let id = match epoll_of(epfd) {
+        Ok(id) => id,
+        Err(errno) => return errno,
+    };
+    let source = match crate::vfs::with_current_files(|files| {
+        files.get(fd as usize).map(crate::vfs::File::epoll_source)
+    }) {
+        Ok(Some(source)) => source,
+        Ok(None) => return (-EPERM) as u64,
+        Err(error) => return (-errno_for_file_table(error)) as u64,
+    };
+    let fd32 = fd as u32;
+    let result = match op {
+        EPOLL_CTL_ADD | EPOLL_CTL_MOD => {
+            // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。`read_user_fixed` は範囲を確かめてから読む。
+            let Some(raw) =
+                (unsafe { read_user_fixed::<EPOLL_EVENT_LEN>(page_table_root, direct_map, event) })
+            else {
+                return (-EFAULT) as u64;
+            };
+            let events = u32::from_le_bytes([raw[0], raw[1], raw[2], raw[3]]);
+            let mut data = [0u8; 8];
+            data.copy_from_slice(&raw[4..12]);
+            let data = u64::from_le_bytes(data);
+            if !epoll_events_ok(events, fd) {
+                return (-EINVAL) as u64;
+            }
+            if op == EPOLL_CTL_ADD {
+                crate::epoll::add(id, source, fd32, events, data)
+            } else {
+                crate::epoll::modify(id, source, fd32, events, data)
+            }
+        }
+        EPOLL_CTL_DEL => crate::epoll::delete(id, source, fd32),
+        _ => return (-EINVAL) as u64,
+    };
+    match result {
+        Ok(()) => 0,
+        Err(crate::epoll::CtlError::NoEpoll) => (-EBADF) as u64,
+        Err(crate::epoll::CtlError::SelfAdd) => (-EINVAL) as u64,
+        Err(crate::epoll::CtlError::Exists) => (-EEXIST) as u64,
+        Err(crate::epoll::CtlError::NotFound) => (-ENOENT) as u64,
+        Err(crate::epoll::CtlError::Loop) => (-ELOOP) as u64,
+        Err(crate::epoll::CtlError::NoSpace) => (-ENOSPC) as u64,
+    }
+}
+
+/// epoll のリーフのオブジェクトの、今の準備のビット（2026-10-19。`ADR-0088`）。**取らずに覗くだけである**——ここで状態を
+/// 変えない。入れ子の epoll は `crate::epoll::Table` が辿るので、ここへは来ない。
+fn epoll_leaf_bits(source: crate::epoll::Source, now: u64) -> u32 {
+    use crate::epoll::{Source, EPOLLERR, EPOLLHUP, EPOLLIN, EPOLLOUT, EPOLLRDHUP};
+    let bit = |on: bool, bit: u32| if on { bit } else { 0 };
+    match source {
+        Source::Listener { listener } => bit(crate::socket::acceptable(listener), EPOLLIN),
+        Source::Stream { conn, side } => {
+            let side = if side == crate::socket::Side::Client as u8 {
+                crate::socket::Side::Client
+            } else {
+                crate::socket::Side::Server
+            };
+            let poll = crate::socket::poll_stream(conn, side);
+            if poll.gone {
+                return EPOLLERR | EPOLLHUP;
+            }
+            bit(poll.readable, EPOLLIN)
+                | bit(poll.writable, EPOLLOUT)
+                | bit(poll.peer_closed, EPOLLRDHUP | EPOLLHUP)
+        }
+        Source::PipeRead { pipe } => {
+            let (has_data, no_writer) = crate::pipe::poll_read_end(pipe);
+            bit(has_data, EPOLLIN) | bit(no_writer, EPOLLHUP)
+        }
+        Source::PipeWrite { pipe } => {
+            let (writable, no_reader) = crate::pipe::poll_write_end(pipe);
+            bit(writable, EPOLLOUT) | bit(no_reader, EPOLLERR)
+        }
+        Source::EventFd { id } => match crate::eventfd::poll(id) {
+            Some((readable, writable)) => bit(readable, EPOLLIN) | bit(writable, EPOLLOUT),
+            None => 0,
+        },
+        Source::TimerFd { id } => {
+            crate::timerfd::state(id).map_or(0, |state| bit(state.expirations(now) > 0, EPOLLIN))
+        }
+        Source::Input { .. } => bit(crate::input::has_raw_events(), EPOLLIN),
+        Source::Epoll { .. } => 0,
+    }
+}
+
+/// 1 回の `epoll_pwait` で返す件数の上限（2026-10-19）。**`maxevents` がこれより大きくても、ここまでで返す**——レベル
+/// トリガーなので、残りは次の呼び出しで返る。
+const EPOLL_BATCH: usize = 32;
+
+/// [`SYS_EPOLL_PWAIT`] と [`SYS_EPOLL_WAIT`] の本体（2026-10-19。`ADR-0088`）。`args` は
+/// `(epfd, events, maxevents, timeout, sigmask, sigsetsize)` である（`epoll_wait` は後ろの 2 つを持たない）。
+///
+/// - `maxevents` が 0 以下なら `-EINVAL`。`timeout`（ミリ秒）が負なら待ち続け、0 なら待たず、正ならティックに切り上げた
+///   締切まで待つ。
+/// - `sigmask` が NULL でなければ、受けて無視する（シグナルは配送しないので、マスクを換えてもどの道も変わらない）。ただし
+///   `sigsetsize` が 8 でなければ `-EINVAL`（Linux と同じ）。
+/// - **返すものがあれば、`events` の書き先をその直前に確かめる。** 書けなければ、ONESHOT の項目も止めずに `-EFAULT`。
+///   確かめ・集め直し・書きの間は BKL を放さないので、確かめた範囲は変わらない（待つ前に確かめた範囲へ、待った後に
+///   書かない）。
+/// - 何も無ければ、待ちの集合に `Epoll` と、辿れる timerfd と `timeout` の締切の早いほうの `Timer`、入力が辿れれば
+///   `Keyboard` を入れて眠る。**問い合わせから待ちを据えるまで BKL を放さない**——状態を変える側はどれも BKL の内側で
+///   変えるので、問い合わせより前に変われば問い合わせが見つけ、待ちを据えた後なら変える側が起こす（`ADR-0061`）。
+/// - 起きたら、プロセスの終わりの印を見る（立っていれば `-EINTR`。戻りの道でスレッドが終わる）。
+///
+/// # 安全性
+///
+/// 呼び出し元契約により `page_table_root` / `direct_map` は有効。`bkl` は今持っているガードであること。
+#[inline(never)]
+unsafe fn epoll_wait_from_ring3(
+    args: &[u64; 6],
+    pwait: bool,
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+    bkl: &mut Option<crate::bkl::BklGuard>,
+) -> u64 {
+    let [epfd, events, maxevents, timeout, sigmask, sigsetsize] = *args;
+    let maxevents = maxevents as i32;
+    if maxevents <= 0 {
+        return (-EINVAL) as u64;
+    }
+    if pwait && sigmask != 0 && sigsetsize != 8 {
+        return (-EINVAL) as u64;
+    }
+    let id = match epoll_of(epfd) {
+        Ok(id) => id,
+        Err(errno) => return errno,
+    };
+    let timeout = timeout as i32;
+    let deadline = if timeout > 0 {
+        let hz = u64::from(crate::machine::pc::timer_frequency_hz());
+        let ms = timeout as i64;
+        let ticks =
+            common::time::ticks_for_duration(ms / 1000, (ms % 1000) * 1_000_000, hz).unwrap_or(0);
+        Some(crate::arch::x86_64::monotonic_ticks().saturating_add(ticks))
+    } else {
+        None
+    };
+    let capacity = (maxevents as usize).min(EPOLL_BATCH);
+    let mut waited = false;
+    loop {
+        let now = crate::arch::x86_64::monotonic_ticks();
+        let leaf = |source| epoll_leaf_bits(source, now);
+        let mut ready = [crate::epoll::Ready::default(); EPOLL_BATCH];
+        let Some(count) = crate::epoll::collect(id, &mut ready[..capacity], false, &leaf) else {
+            return (-EBADF) as u64;
+        };
+        if count > 0 {
+            // **書き先は、返す直前に確かめる。** 書けなければ何も変えずに `-EFAULT`。
+            // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+            let Some(slice) = (unsafe {
+                validate_user_range_for_write(
+                    page_table_root,
+                    direct_map,
+                    events,
+                    (count * EPOLL_EVENT_LEN) as u64,
+                )
+            }) else {
+                return (-EFAULT) as u64;
+            };
+            // **確かめてから BKL を放していないので、集め直しても同じ件数になる。** ここで ONESHOT の項目を止める。
+            let count = crate::epoll::collect(id, &mut ready[..count], true, &leaf).unwrap_or(0);
+            let mut raw = [0u8; EPOLL_BATCH * EPOLL_EVENT_LEN];
+            for (index, item) in ready[..count].iter().enumerate() {
+                let at = index * EPOLL_EVENT_LEN;
+                raw[at..at + 4].copy_from_slice(&item.events.to_le_bytes());
+                raw[at + 4..at + 12].copy_from_slice(&item.data.to_le_bytes());
+            }
+            // SAFETY: `slice` はいま確かめた範囲で、確かめてから BKL を放していない。
+            unsafe { copy_to_user(&slice, 0, &raw[..count * EPOLL_EVENT_LEN]) };
+            if waited {
+                crate::epoll::note_ended_by(&ready[..count]);
+            }
+            return count as u64;
+        }
+        if timeout == 0 || deadline.is_some_and(|deadline| now >= deadline) {
+            return 0;
+        }
+        let hints = crate::epoll::wait_hints(id, &|timer| crate::timerfd::state(timer)?.deadline());
+        let mut set = crate::task::WaitSet::empty();
+        set.push(crate::task::Wait::Epoll);
+        let timer = match (hints.timer_deadline, deadline) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
+        if let Some(deadline) = timer {
+            set.push(crate::task::Wait::Timer { deadline });
+        }
+        if hints.input {
+            set.push(crate::task::Wait::Keyboard);
+        }
+        crate::epoll::note_wait();
+        waited = true;
+        crate::task::set_current_waiting_set(set);
+        drop(bkl.take());
+        crate::task::yield_now();
+        *bkl = Some(crate::bkl::acquire(crate::bkl::KernelEntry::Syscall));
+        // **起きたら、プロセスの終わりの印を見る**（futex 以外の待ちを終わりの印が起こす形は、別の課題で足す）。
+        if process_exited() {
+            return (-EINTR) as u64;
+        }
+    }
+}
+
 /// `sockaddr_un` を読み、名前を `name` へコピーする。**長さを返す。失敗は `-errno`。**
 ///
 /// **`sun_path` の先頭から最初の NUL まで、または `addrlen - 2` までが名前である**（Linux の形）。
@@ -2022,10 +2316,18 @@ fn open_input_from_ring3() -> u64 {
     if !crate::input::caller_is_foreground() {
         return (-EBADF) as u64;
     }
-    let inserted = crate::vfs::with_current_files(|files| files.insert(crate::vfs::File::Input));
+    // **開いた回ごとに番号を取る**（2026-10-19。`crate::input::open_handle`。epoll の項目を開いた回ごとに分ける）。
+    let Some(open) = crate::input::open_handle() else {
+        return (-ENOMEM) as u64;
+    };
+    let inserted =
+        crate::vfs::with_current_files(|files| files.insert(crate::vfs::File::Input { open }));
     match inserted {
         Ok(fd) => fd as u64,
-        Err(error) => (-errno_for_file_table(error)) as u64,
+        Err(error) => {
+            crate::input::detach_handle(open);
+            (-errno_for_file_table(error)) as u64
+        }
     }
 }
 
@@ -4914,6 +5216,18 @@ unsafe fn sys_read(
         };
     }
 
+    // **epoll は読めない**（2026-10-19。Linux と同じく `-EINVAL`）。
+    if crate::vfs::with_current_files(|files| {
+        files
+            .get(fd as usize)
+            .ok()
+            .and_then(crate::vfs::File::epoll_id)
+    })
+    .is_some()
+    {
+        return (-EINVAL) as u64;
+    }
+
     // **timerfd**（2026-10-19）。
     let timerfd = crate::vfs::with_current_files(|files| {
         files
@@ -7205,13 +7519,19 @@ fn sys_fcntl(fd: u64, cmd: u64, arg: u64) -> u64 {
             match files.insert_at_or_above(copy, arg as usize) {
                 Ok(new_fd) => new_fd as u64,
                 Err(error) => {
-                    // **置けなかったコピーの、足した参照を戻す**（eventfd と timerfd だけ。ソケットとパイプの端は数えていないので、
+                    // **置けなかったコピーの、足した参照を戻す**（eventfd・timerfd・epoll・入力だけ。ソケットとパイプの端は数えていないので、
                     // `release_end` を呼ぶと端そのものを閉じてしまう）。
                     if let Some((id, _)) = copy.eventfd_parts() {
                         crate::eventfd::detach(id);
                     }
                     if let Some((id, _)) = copy.timerfd_parts() {
                         crate::timerfd::detach(id);
+                    }
+                    if let Some(id) = copy.epoll_id() {
+                        crate::epoll::detach(id);
+                    }
+                    if let crate::vfs::File::Input { open } = copy {
+                        crate::input::detach_handle(open);
                     }
                     (-errno_for_file_table(error)) as u64
                 }
@@ -7276,7 +7596,9 @@ unsafe fn sys_fstat(
             blocks: 0,
         },
         // **eventfd と timerfd は、種類のビットの無い 0600 で答える**（Linux の無名の inode と同じ形。2026-10-19）。
-        Ok(crate::vfs::File::EventFd { .. }) | Ok(crate::vfs::File::TimerFd { .. }) => Stat {
+        Ok(crate::vfs::File::EventFd { .. })
+        | Ok(crate::vfs::File::TimerFd { .. })
+        | Ok(crate::vfs::File::Epoll { .. }) => Stat {
             ino: 0,
             nlink: 1,
             mode: 0o600,
@@ -8072,6 +8394,18 @@ unsafe fn sys_write(
             .get(fd as usize)
             .ok()
             .and_then(crate::vfs::File::timerfd_parts)
+    })
+    .is_some()
+    {
+        return (-EINVAL) as u64;
+    }
+
+    // **epoll へは書けない**（2026-10-19。Linux と同じく `-EINVAL`）。
+    if crate::vfs::with_current_files(|files| {
+        files
+            .get(fd as usize)
+            .ok()
+            .and_then(crate::vfs::File::epoll_id)
     })
     .is_some()
     {

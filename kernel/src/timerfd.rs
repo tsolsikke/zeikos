@@ -172,6 +172,8 @@ pub fn detach(id: u8) {
     };
     if freed {
         crate::task::wake_tasks_waiting_on(crate::task::Wait::TimerFdReadable { id });
+        // **最後のコピーを閉じたので、この timerfd を指す epoll の項目を外す**（2026-10-19。`crate::epoll`）。
+        crate::epoll::forget(crate::epoll::Source::TimerFd { id });
     }
 }
 
@@ -195,6 +197,8 @@ pub fn set(id: u8, deadline: Option<u64>, interval: u64) -> Option<TimerState> {
         old
     };
     crate::task::wake_tasks_waiting_on(crate::task::Wait::TimerFdReadable { id });
+    // **epoll で待つ者も起こす**（新しい締切で待ち直させる。締切そのものは待つ側が `Timer` の理由に入れる）。
+    crate::epoll::notify();
     Some(old)
 }
 

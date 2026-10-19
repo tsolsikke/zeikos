@@ -197,7 +197,16 @@ pub fn detach(id: u8) {
     if freed {
         crate::task::wake_tasks_waiting_on(crate::task::Wait::EventFdReadable { id });
         crate::task::wake_tasks_waiting_on(crate::task::Wait::EventFdWritable { id });
+        // **最後のコピーを閉じたので、この eventfd を指す epoll の項目を外す**（2026-10-19。`crate::epoll`）。
+        crate::epoll::forget(crate::epoll::Source::EventFd { id });
     }
+}
+
+/// 値を取らずに、読めるか・書けるか（epoll の問い合わせ。2026-10-19）。**無い番号は `None`。**
+pub fn poll(id: u8) -> Option<(bool, bool)> {
+    let slots = EVENTFDS.lock();
+    let slot = slots.get(id as usize).filter(|slot| slot.refs != 0)?;
+    Some((slot.counter.readable(), slot.counter.writable()))
 }
 
 /// 値を取らずに、読めるか（値が 0 でない）を見る。**無い番号は `None`。** `read` の前に書き先を確かめるために使う
@@ -217,6 +226,7 @@ pub fn read(id: u8) -> Option<ReadOutcome> {
     };
     if matches!(outcome, ReadOutcome::Value(_)) {
         crate::task::wake_tasks_waiting_on(crate::task::Wait::EventFdWritable { id });
+        crate::epoll::notify();
     }
     Some(outcome)
 }
@@ -230,6 +240,7 @@ pub fn write(id: u8, add: u64) -> Option<WriteOutcome> {
     };
     if outcome == WriteOutcome::Added && add != 0 {
         crate::task::wake_tasks_waiting_on(crate::task::Wait::EventFdReadable { id });
+        crate::epoll::notify();
     }
     Some(outcome)
 }

@@ -119,6 +119,14 @@ pub const EEXIST: i64 = 17;
 /// （`noexec` でマウントされたファイルなど）に `PROT_EXEC` を求められると `EPERM` を返す。
 pub const EPERM: i64 = 1;
 
+/// `-ELOOP` の errno（2026-10-19。Linux の `asm-generic/errno.h` の値）。**`epoll_ctl` が、輪になる足し方と、入れ子の鎖が
+/// 長すぎる足し方に返す。**
+pub const ELOOP: i64 = 40;
+
+/// `-EINTR` の errno（2026-10-19。Linux の値）。**`epoll_pwait` が、待っている間にプロセスが終わったと見たときに返す**
+/// （戻りの道でスレッドが終わるので、Ring 3 へは届かない）。
+pub const EINTR: i64 = 4;
+
 /// `-EACCES`（許されない）の errno（S11-5）。
 ///
 /// **[`crate::abi::private::SYS_SPAWN`] が通常ファイルでないものを渡されたときに返す。**

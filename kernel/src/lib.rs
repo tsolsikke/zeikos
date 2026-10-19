@@ -39,6 +39,7 @@ pub mod arch;
 pub mod bkl;
 pub mod boot;
 pub mod console;
+pub mod epoll;
 pub mod eventfd;
 pub mod flock;
 pub mod frame_allocator;
