@@ -386,6 +386,18 @@ pub fn readable_or_gone(conn: u8, side: Side) -> bool {
     !state.in_use || !state.rings[side as usize].is_empty() || !state.is_open(side.peer())
 }
 
+/// その側の書きが待たずに進めるか（2026-10-19）。**相手の輪に 1 バイトでも空きがあるか、相手が閉じているか、接続がもう
+/// 無い**（後の 2 つは、続く書きが `-EPIPE`・`-ENOTCONN` を返す）。
+///
+/// **待たない `sendmsg` が、`SCM_RIGHTS` の fd を渡す前に見る**——空きが無くて `-EAGAIN` を返すなら、fd も渡さない。
+pub fn writable_or_gone(conn: u8, side: Side) -> bool {
+    let Some(slot) = CONNECTIONS.get(conn as usize) else {
+        return true;
+    };
+    let state = slot.lock();
+    !state.in_use || !state.is_open(side.peer()) || state.rings[side.peer() as usize].room() > 0
+}
+
 /// 読んだ結果。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReadOutcome {

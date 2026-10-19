@@ -60,10 +60,10 @@ use crate::abi::linux::{
     DIRENT64_ALIGN, DIRENT64_HEADER_LEN, DRM_CLIP_RECT_LEN, DT_DIR, DT_REG, DT_UNKNOWN,
     FBIOGET_FSCREENINFO, FBIOGET_VSCREENINFO, FB_TYPE_PACKED_PIXELS, FB_VISUAL_TRUECOLOR, FIONBIO,
     INPUT_EVENT_LEN, IOVEC_LEN, MAP_ANONYMOUS, MAP_FIXED, MAP_FIXED_NOREPLACE, MSGHDR_CONTROLLEN,
-    MSGHDR_LEN, O_ACCMODE, O_APPEND, O_CREAT, O_NONBLOCK, O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY,
-    POLLFD_LEN, POLLIN, POLLNVAL, PROT_EXEC, PROT_READ, PROT_WRITE, SCM_RIGHTS, SEEK_CUR, SEEK_END,
-    SEEK_SET, SOCKADDR_UN_LEN, SOCK_CLOEXEC, SOCK_NONBLOCK, SOCK_STREAM, SOCK_TYPE_MASK,
-    SOL_SOCKET, TIMESPEC_LEN, TIOCGWINSZ, WINSIZE_LEN,
+    MSGHDR_LEN, MSG_CMSG_CLOEXEC, MSG_DONTWAIT, MSG_NOSIGNAL, O_ACCMODE, O_APPEND, O_CREAT,
+    O_NONBLOCK, O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY, POLLFD_LEN, POLLIN, POLLNVAL, PROT_EXEC,
+    PROT_READ, PROT_WRITE, SCM_RIGHTS, SEEK_CUR, SEEK_END, SEEK_SET, SOCKADDR_UN_LEN, SOCK_CLOEXEC,
+    SOCK_NONBLOCK, SOCK_STREAM, SOCK_TYPE_MASK, SOL_SOCKET, TIMESPEC_LEN, TIOCGWINSZ, WINSIZE_LEN,
 };
 use crate::abi::linux::{
     E2BIG, EACCES, EADDRINUSE, EAFNOSUPPORT, EAGAIN, EBADF, EBUSY, ECHILD, ECONNREFUSED, EEXIST,
@@ -1037,11 +1037,11 @@ unsafe fn dispatch(
         SYS_MPROTECT => unsafe { mprotect_from_ring3(args[0], args[1], args[2], direct_map, bkl) },
         // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
         SYS_SENDMSG => unsafe {
-            sendmsg_from_ring3(args[0], args[1], page_table_root, direct_map, bkl)
+            sendmsg_from_ring3(args[0], args[1], args[2], page_table_root, direct_map, bkl)
         },
         // SAFETY: 同上。
         SYS_RECVMSG => unsafe {
-            recvmsg_from_ring3(args[0], args[1], page_table_root, direct_map, bkl)
+            recvmsg_from_ring3(args[0], args[1], args[2], page_table_root, direct_map, bkl)
         },
         SYS_CLOSE => {
             // **書きで開いたファイルを閉じたら、イメージを装置へ書き戻す（P-c-1）。**
@@ -1135,30 +1135,19 @@ unsafe fn dispatch(
             unsafe { sys_readlink(args[0], args[1], args[2], page_table_root, direct_map) }
         }
         SYS_FCNTL => sys_fcntl(args[0], args[1], args[2]),
-        // **繋いだ相手から受ける `recvfrom` は `read` と同じである**（`ADR-0087`。musl の `recv`——Rust の std のソケットの
-        // `read`——はこれを打つ）。`src_addr`（相手の名前の置き場）と `flags` は 0 だけ受ける（`MSG_PEEK`・`MSG_DONTWAIT` は
-        // 無い）。ソケットでなければ `-ENOTSOCK`。
-        SYS_RECVFROM => {
-            if args[3] != 0 || args[4] != 0 {
-                (-EINVAL) as u64
-            } else if let Err(errno) = socket_state_of(args[0]) {
-                errno
-            } else {
-                // SAFETY: 同上。
-                unsafe { sys_read(args[0], args[1], args[2], page_table_root, direct_map, bkl) }
-            }
-        }
-        SYS_SENDTO => {
-            // **繋いだ相手へ送る `sendto` は `write` と同じである**（`addr` を渡す形は、繋がないソケットの
-            // ものなので断る）。`flags`（`MSG_DONTWAIT`・`MSG_NOSIGNAL`）は見ない——ソケットへの `write` は
-            // 待たないし、シグナルは無い。
-            if args[4] != 0 {
-                (-EISCONN) as u64
-            } else {
-                // SAFETY: 同上。
-                unsafe { sys_write(args[0], args[1], args[2], page_table_root, direct_map, bkl) }
-            }
-        }
+        // **繋いだ相手から受ける `recvfrom` は `read` に `flags` を足した形である**（`ADR-0087`。musl の `recv`——Rust の std の
+        // ソケットの `read`——はこれを打つ）。`src_addr`（相手の名前の置き場）は 0 だけ受け、`flags` は [`msg_flags_dont_wait`]
+        // が読む（2026-10-19。それまでは 0 だけ受けた）。ソケットでなければ `-ENOTSOCK`。
+        // SAFETY: 同上。
+        SYS_RECVFROM => unsafe {
+            sendto_recvfrom_from_ring3(false, args, page_table_root, direct_map, bkl)
+        },
+        // **繋いだ相手へ送る `sendto` は `write` に `flags` を足した形である**（宛先を渡す形は、繋がないソケットの
+        // ものなので断る）。`flags` は [`msg_flags_dont_wait`] が読む（2026-10-19。それまでは見なかった）。
+        // SAFETY: 同上。
+        SYS_SENDTO => unsafe {
+            sendto_recvfrom_from_ring3(true, args, page_table_root, direct_map, bkl)
+        },
         // **`exit_group` は、スレッドが無い間は `exit` と同じである**（この関数の doc。2026-10-06 に足した）。
         SYS_EXIT | SYS_EXIT_GROUP => {
             // **記録するだけである。** Ring 3 へ返らない分岐は `syscall_entry` が
@@ -1448,6 +1437,111 @@ fn report_nonblocking_ignored(fd: u64, kind: &str, by: &str) {
         "nonblock-ignored: {by} asked fd {fd} (a {kind}) not to wait; only sockets honour it, so reads and writes \
          on this fd still wait"
     ));
+}
+
+/// 読み書きするストリームの端と、その呼び出しが待つか（2026-10-19）。**[`read_from_socket`] と [`write_to_socket`] が受ける。**
+#[derive(Debug, Clone, Copy)]
+struct StreamEnd {
+    conn: u8,
+    side: crate::socket::Side,
+    /// 偽なら、空・満杯のとき待たずに `-EAGAIN` を返す（[`socket_call_waits`]）。
+    wait: bool,
+}
+
+/// ソケットの 1 回の呼び出しが待つか（2026-10-19）。**fd の待たない印も、呼び出しの `MSG_DONTWAIT` も無いときだけ待つ。**
+fn socket_call_waits(nonblocking: bool, dont_wait: bool) -> bool {
+    !(nonblocking || dont_wait)
+}
+
+/// `send`・`recv` の系統の `flags` を読む（2026-10-19）。**`MSG_DONTWAIT` が立っていれば真を返す。** `MSG_NOSIGNAL` と
+/// `MSG_CMSG_CLOEXEC` は受けて無視する（シグナルは配送しない。`exec` が無い）。**ほかのビットは、名前のある行を出して
+/// `-EINVAL` で断る**（`MSG_PEEK`・`MSG_WAITALL` などを黙って無視すると、待つ・覗くのつもりの呼び手が違う形で進む）。
+fn msg_flags_dont_wait(flags: u64, call: &str, fd: u64) -> Result<bool, u64> {
+    let unknown = flags & !(MSG_DONTWAIT | MSG_NOSIGNAL | MSG_CMSG_CLOEXEC);
+    if unknown != 0 {
+        report_msg_flags_refused(call, fd, unknown);
+        return Err((-EINVAL) as u64);
+    }
+    Ok(flags & MSG_DONTWAIT != 0)
+}
+
+/// 知らない `flags` を断った行（2026-10-19）。
+#[inline(never)]
+#[cold]
+fn report_msg_flags_refused(call: &str, fd: u64, unknown: u64) {
+    serial_line(format_args!(
+        "msg-flags-refused: {call} on fd {fd} has flag(s) {unknown:#x} the kernel does not understand; only \
+         MSG_DONTWAIT, MSG_NOSIGNAL and MSG_CMSG_CLOEXEC are taken, so the call is -EINVAL"
+    ));
+}
+
+/// fd が繋がったソケットなら、その接続・側・待たない印（2026-10-19）。**ソケットでなければ `-ENOTSOCK`、繋がっていなければ
+/// `-ENOTCONN`、無い fd は `-EBADF`。**
+fn socket_stream_of(fd: u64) -> Result<(u8, crate::socket::Side, bool), u64> {
+    let state = socket_state_of(fd)?;
+    match state {
+        crate::vfs::SocketState::Stream { conn, side } => {
+            Ok((conn, side, socket_nonblocking_of(fd)))
+        }
+        _ => Err((-ENOTCONN) as u64),
+    }
+}
+
+/// [`SYS_RECVFROM`] と [`SYS_SENDTO`] の本体（2026-10-19）。**繋いだ相手との `read`・`write` に、`flags` を足した形である。**
+/// `args` は `(fd, buf, len, flags, addr, addrlen)` である。
+///
+/// **それまでは `read`・`write` へそのまま渡していた**（`recvfrom` は `flags` が 0 の形だけ、`sendto` は `flags` を見なかった）。
+/// ソケットでない fd は `-ENOTSOCK` になる（Linux と同じ。以前は `sendto` が普通の `write` として通していた）。
+///
+/// # 安全性
+///
+/// 呼び出し元契約により `page_table_root` / `direct_map` は有効。
+#[inline(never)]
+unsafe fn sendto_recvfrom_from_ring3(
+    send: bool,
+    args: &[u64; 6],
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+    bkl: &mut Option<crate::bkl::BklGuard>,
+) -> u64 {
+    let [fd, buf, len, flags, addr, _] = *args;
+    // **相手の名前は受けない**（繋いだソケットだけを扱う）。`sendto` の宛先は Linux と同じく `-EISCONN`、`recvfrom` の
+    // 名前の置き場は `-EINVAL` のまま（2026-10-19 より前と同じ答え）。
+    if addr != 0 {
+        return (if send { -EISCONN } else { -EINVAL }) as u64;
+    }
+    let (conn, side, nonblocking) = match socket_stream_of(fd) {
+        Ok(stream) => stream,
+        Err(errno) => return errno,
+    };
+    let call = if send { "sendto" } else { "recvfrom" };
+    let dont_wait = match msg_flags_dont_wait(flags, call, fd) {
+        Ok(dont_wait) => dont_wait,
+        Err(errno) => return errno,
+    };
+    let wait = socket_call_waits(nonblocking, dont_wait);
+    // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+    unsafe {
+        if send {
+            write_to_socket(
+                StreamEnd { conn, side, wait },
+                buf,
+                len,
+                page_table_root,
+                direct_map,
+                bkl,
+            )
+        } else {
+            read_from_socket(
+                StreamEnd { conn, side, wait },
+                buf,
+                len,
+                page_table_root,
+                direct_map,
+                bkl,
+            )
+        }
+    }
 }
 
 /// `sockaddr_un` を読み、名前を `name` へコピーする。**長さを返す。失敗は `-errno`。**
@@ -2347,19 +2441,22 @@ unsafe fn connect_from_ring3(
 
 /// ソケットのストリームから読む（`ADR-0064`）。**空なら待つ。相手が閉じていれば 0（EOF）。**
 ///
+/// **`wait` が偽なら、空のとき待たずに `-EAGAIN` を返す**（2026-10-19。待たない印か `MSG_DONTWAIT`。
+/// [`socket_call_waits`]）。
+///
 /// # 安全性
 ///
 /// 呼び出し元契約により `page_table_root` / `direct_map` は有効。
 #[inline(never)]
 unsafe fn read_from_socket(
-    conn: u8,
-    side: crate::socket::Side,
+    end: StreamEnd,
     buf: u64,
     count: u64,
     page_table_root: PhysAddr,
     direct_map: DirectMap,
     bkl: &mut Option<crate::bkl::BklGuard>,
 ) -> u64 {
+    let StreamEnd { conn, side, wait } = end;
     if count == 0 {
         return 0;
     }
@@ -2381,6 +2478,9 @@ unsafe fn read_from_socket(
             crate::socket::ReadOutcome::Eof => return 0,
             crate::socket::ReadOutcome::NoConnection => return (-ENOTCONN) as u64,
             crate::socket::ReadOutcome::Empty => {
+                if !wait {
+                    return (-EAGAIN) as u64;
+                }
                 crate::socket::note_reader_wait();
                 crate::task::set_current_waiting(crate::task::Wait::SocketReadable { conn, side });
                 drop(bkl.take());
@@ -2414,19 +2514,22 @@ fn wait_until_readable(
 ///
 /// **部分書きである**——**入った数を返す。** **`userlib::write_all` が残りを回す。**
 ///
+/// **`wait` が偽なら、満杯のとき待たずに `-EAGAIN` を返す**（2026-10-19。少しでも空きがあれば、入った数を返すのは
+/// 待つときと同じである。[`socket_call_waits`]）。
+///
 /// # 安全性
 ///
 /// 呼び出し元契約により `page_table_root` / `direct_map` は有効。
 #[inline(never)]
 unsafe fn write_to_socket(
-    conn: u8,
-    side: crate::socket::Side,
+    end: StreamEnd,
     buf: u64,
     count: u64,
     page_table_root: PhysAddr,
     direct_map: DirectMap,
     bkl: &mut Option<crate::bkl::BklGuard>,
 ) -> u64 {
+    let StreamEnd { conn, side, wait } = end;
     if count == 0 {
         return 0;
     }
@@ -2448,6 +2551,9 @@ unsafe fn write_to_socket(
             crate::socket::WriteOutcome::PeerClosed => return (-EPIPE) as u64,
             crate::socket::WriteOutcome::NoConnection => return (-ENOTCONN) as u64,
             crate::socket::WriteOutcome::Full => {
+                if !wait {
+                    return (-EAGAIN) as u64;
+                }
                 crate::socket::note_writer_wait();
                 crate::task::set_current_waiting(crate::task::Wait::SocketWritable { conn, side });
                 drop(bkl.take());
@@ -3400,6 +3506,12 @@ unsafe fn read_msghdr(
 
 /// [`SYS_SENDMSG`] の本体。**iov のバイトをソケットへ書き、`SCM_RIGHTS` の fd を相手へ渡す。**
 ///
+/// # 待たない形（2026-10-19）
+///
+/// **待たない印か `MSG_DONTWAIT` があり、相手の輪に空きが無ければ、fd を渡さずに `-EAGAIN` を返す。** 待つ形は fd を先に
+/// 渡してから書くので、待たない形でもそのままにすると、バイトの無い fd だけが相手に残る（呼び手は `-EAGAIN` を見て
+/// 送り直すので、同じ fd を 2 回渡すことになる）。空きを見てから渡すまで BKL を放さないので、間に埋まることは無い。
+///
 /// # 安全性
 ///
 /// 呼び出し元契約により `page_table_root` / `direct_map` は有効。
@@ -3407,20 +3519,29 @@ unsafe fn read_msghdr(
 unsafe fn sendmsg_from_ring3(
     fd: u64,
     msg: u64,
+    flags: u64,
     page_table_root: PhysAddr,
     direct_map: DirectMap,
     bkl: &mut Option<crate::bkl::BklGuard>,
 ) -> u64 {
-    let (conn, side) = match socket_state_of(fd) {
-        Ok(crate::vfs::SocketState::Stream { conn, side }) => (conn, side),
-        Ok(_) => return (-ENOTCONN) as u64,
+    let (conn, side, nonblocking) = match socket_stream_of(fd) {
+        Ok(stream) => stream,
         Err(errno) => return errno,
     };
+    let dont_wait = match msg_flags_dont_wait(flags, "sendmsg", fd) {
+        Ok(dont_wait) => dont_wait,
+        Err(errno) => return errno,
+    };
+    let wait = socket_call_waits(nonblocking, dont_wait);
     // SAFETY: 呼び出し元契約による。
     let parsed = match unsafe { read_msghdr(msg, page_table_root, direct_map, true) } {
         Ok(parsed) => parsed,
         Err(errno) => return (-errno) as u64,
     };
+    // **待たないなら、空きを見てから fd を渡す**（上の doc）。
+    if !wait && !crate::socket::writable_or_gone(conn, side) {
+        return (-EAGAIN) as u64;
+    }
     // **fd を先に渡す**——**`SCM_RIGHTS`。共有メモリの fd を相手の待ち行列へ。**
     if let Some(shm_fd) = parsed.control_fd {
         let shm = match shm_of(shm_fd) {
@@ -3437,8 +3558,7 @@ unsafe fn sendmsg_from_ring3(
     // SAFETY: 呼び出し元契約による。
     unsafe {
         write_to_socket(
-            conn,
-            side,
+            StreamEnd { conn, side, wait },
             parsed.iov_base,
             parsed.iov_len,
             page_table_root,
@@ -3450,6 +3570,9 @@ unsafe fn sendmsg_from_ring3(
 
 /// [`SYS_RECVMSG`] の本体。**ソケットのバイトを iov へ、渡された fd を自分の表へ。**
 ///
+/// **待たない印か `MSG_DONTWAIT` があり、読めるもの（データか EOF）が無ければ、fd も取らずに `-EAGAIN` を返す**
+/// （2026-10-19）。
+///
 /// # 安全性
 ///
 /// 呼び出し元契約により `page_table_root` / `direct_map` は有効。
@@ -3457,15 +3580,20 @@ unsafe fn sendmsg_from_ring3(
 unsafe fn recvmsg_from_ring3(
     fd: u64,
     msg: u64,
+    flags: u64,
     page_table_root: PhysAddr,
     direct_map: DirectMap,
     bkl: &mut Option<crate::bkl::BklGuard>,
 ) -> u64 {
-    let (conn, side) = match socket_state_of(fd) {
-        Ok(crate::vfs::SocketState::Stream { conn, side }) => (conn, side),
-        Ok(_) => return (-ENOTCONN) as u64,
+    let (conn, side, nonblocking) = match socket_stream_of(fd) {
+        Ok(stream) => stream,
         Err(errno) => return errno,
     };
+    let dont_wait = match msg_flags_dont_wait(flags, "recvmsg", fd) {
+        Ok(dont_wait) => dont_wait,
+        Err(errno) => return errno,
+    };
+    let wait = socket_call_waits(nonblocking, dont_wait);
     // SAFETY: 呼び出し元契約による。
     let parsed = match unsafe { read_msghdr(msg, page_table_root, direct_map, false) } {
         Ok(parsed) => parsed,
@@ -3481,7 +3609,11 @@ unsafe fn recvmsg_from_ring3(
     // 破壊テスト (2026-09-23, socket-recvmsg-takes-fd-first): 待たずに取る（直す前の形）。**受け手が先に
     // 待つスクリプト（`sockc shmlate`）で fd が届かず、`shm-ok` が返らない。**
     #[cfg(not(feature = "socket-recvmsg-takes-fd-first"))]
-    wait_until_readable(conn, side, bkl);
+    if wait {
+        wait_until_readable(conn, side, bkl);
+    } else if !crate::socket::readable_or_gone(conn, side) {
+        return (-EAGAIN) as u64;
+    }
     // **渡された fd が在れば、自分の表へ据え、cmsghdr を書き戻す。**
     if let Some(shm) = crate::socket::take_fd(conn, side) {
         let inserted =
@@ -3534,8 +3666,7 @@ unsafe fn recvmsg_from_ring3(
     // SAFETY: 呼び出し元契約による。
     unsafe {
         read_from_socket(
-            conn,
-            side,
+            StreamEnd { conn, side, wait },
             parsed.iov_base,
             parsed.iov_len,
             page_table_root,
@@ -4382,18 +4513,26 @@ unsafe fn sys_read(
         return unsafe { read_from_pipe(pipe, buf, count, page_table_root, direct_map, bkl) };
     }
 
-    // **ソケット（`ADR-0064`）。** **繋がっていなければ `-ENOTCONN`。**
+    // **ソケット（`ADR-0064`）。** **繋がっていなければ `-ENOTCONN`。** **待たない印が立っていれば待たない**（2026-10-19）。
     let socket = crate::vfs::with_current_files(|files| {
         files
             .get(fd as usize)
             .ok()
-            .and_then(|file| file.socket_state())
+            .and_then(|file| Some((file.socket_state()?, file.socket_nonblocking()?)))
     });
     match socket {
-        Some(crate::vfs::SocketState::Stream { conn, side }) => {
+        Some((crate::vfs::SocketState::Stream { conn, side }, nonblocking)) => {
+            let wait = socket_call_waits(nonblocking, false);
             // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
             return unsafe {
-                read_from_socket(conn, side, buf, count, page_table_root, direct_map, bkl)
+                read_from_socket(
+                    StreamEnd { conn, side, wait },
+                    buf,
+                    count,
+                    page_table_root,
+                    direct_map,
+                    bkl,
+                )
             };
         }
         Some(_) => return (-ENOTCONN) as u64,
@@ -5820,7 +5959,10 @@ unsafe fn vectored_from_ring3(
             return if total > 0 { total } else { moved };
         }
         total += moved;
-        if !write && moved < len {
+        // **書きも、短く終わったらそこで止める**（2026-10-19。以前は読みだけだった）。ソケットとパイプの書きは、空きの分だけ
+        // 入れて戻る（待たない印なら特に）ので、次の iovec へ進むと、書けなかった残りを飛ばして後ろを書き、相手が読む並びに
+        // 穴が開く。
+        if moved < len {
             break;
         }
     }
@@ -7464,18 +7606,26 @@ unsafe fn sys_write(
         return unsafe { write_to_pipe(pipe, buf, count, page_table_root, direct_map, bkl) };
     }
 
-    // **ソケット（`ADR-0064`）。** **繋がっていなければ `-ENOTCONN`。**
+    // **ソケット（`ADR-0064`）。** **繋がっていなければ `-ENOTCONN`。** **待たない印が立っていれば待たない**（2026-10-19）。
     let socket = crate::vfs::with_current_files(|files| {
         files
             .get(fd as usize)
             .ok()
-            .and_then(|file| file.socket_state())
+            .and_then(|file| Some((file.socket_state()?, file.socket_nonblocking()?)))
     });
     match socket {
-        Some(crate::vfs::SocketState::Stream { conn, side }) => {
+        Some((crate::vfs::SocketState::Stream { conn, side }, nonblocking)) => {
+            let wait = socket_call_waits(nonblocking, false);
             // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
             return unsafe {
-                write_to_socket(conn, side, buf, count, page_table_root, direct_map, bkl)
+                write_to_socket(
+                    StreamEnd { conn, side, wait },
+                    buf,
+                    count,
+                    page_table_root,
+                    direct_map,
+                    bkl,
+                )
             };
         }
         Some(_) => return (-ENOTCONN) as u64,

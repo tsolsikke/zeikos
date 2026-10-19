@@ -115,6 +115,17 @@ pub const MAP_FIXED_NOREPLACE: u64 = 0x10_0000;
 /// `MAP_ANONYMOUS`（fd の無い、ゼロで埋めたマッピング。2026-10-06）。
 pub const MAP_ANONYMOUS: u64 = 0x20;
 
+/// `MSG_DONTWAIT`（`send`・`recv` の `flags`。Linux の値）。**その呼び出しだけ待たない**（2026-10-19）。
+pub const MSG_DONTWAIT: u64 = 0x40;
+
+/// `MSG_NOSIGNAL`（Linux の値）。相手が閉じていても `SIGPIPE` を送らない。**受ける**——シグナルは配送しないので、
+/// 今までどおり `-EPIPE` を返すだけである（2026-10-19）。
+pub const MSG_NOSIGNAL: u64 = 0x4000;
+
+/// `MSG_CMSG_CLOEXEC`（Linux の値）。受け取った fd に `FD_CLOEXEC` を付ける。**受けて無視する**（`exec` が無い。
+/// 2026-10-19）。
+pub const MSG_CMSG_CLOEXEC: u64 = 0x4000_0000;
+
 /// `SOL_SOCKET`（`cmsghdr` の level）。
 pub const SOL_SOCKET: u32 = 1;
 
