@@ -6,7 +6,7 @@
 //! # 読むのは `IAPC_BOOT_ARCH` の 8042 のビットだけである
 //!
 //! **i8042 が無い機械で、起動を止めないために読む。** 他の欄は、消費者が現れた段階で足す
-//! （PM タイマは HW-c）。
+//! （PM タイマは HW-c、RTC の世紀のレジスタは壁の時計。2026-10-20）。
 //!
 //! # リビジョンで読むかを決める
 //!
@@ -28,6 +28,7 @@ pub const V1_LENGTH: usize = 116;
 const OFFSET_REVISION: usize = 8;
 const OFFSET_PM_TMR_BLK: usize = 76;
 const OFFSET_PM_TMR_LEN: usize = 91;
+const OFFSET_CENTURY: usize = 108;
 const OFFSET_IAPC_BOOT_ARCH: usize = 109;
 const OFFSET_FLAGS: usize = 112;
 const OFFSET_X_PM_TMR_BLK: usize = 208;
@@ -83,6 +84,10 @@ pub struct Fadt {
     pub revision: u8,
     /// `IAPC_BOOT_ARCH`。**リビジョンが 3 未満なら `None`**（その位置は予約である）。
     pub iapc_boot_arch: Option<u16>,
+    /// `CENTURY`（2026-10-20。壁の時計）。**RTC の、世紀を持つレジスタの番号である。** **0 なら `None`**——仕様は
+    /// 「0 なら世紀の機能を持たない」と定めている。**ACPI 1.0 から在る欄なので、リビジョンによらず読む**（QEMU の
+    /// `pc` のリビジョン 1 の FADT も 0x32 を入れている）。
+    pub century_register: Option<u8>,
 }
 
 impl Fadt {
@@ -157,9 +162,11 @@ pub fn parse(bytes: &[u8]) -> Result<Fadt, FadtError> {
             bytes[OFFSET_IAPC_BOOT_ARCH + 1],
         ])
     });
+    let century_register = (bytes[OFFSET_CENTURY] != 0).then_some(bytes[OFFSET_CENTURY]);
     Ok(Fadt {
         revision,
         iapc_boot_arch,
+        century_register,
     })
 }
 
@@ -219,6 +226,25 @@ mod tests {
                 assert_eq!(fadt.iapc_boot_arch, None, "revision {revision}");
                 assert_eq!(fadt.has_8042(), None, "revision {revision}");
             }
+        }
+    }
+
+    /// **世紀のレジスタは、リビジョンによらず読む。0 は「持たない」である**（2026-10-20。QEMU の `pc` と `q35` は 0x32）。
+    #[test]
+    fn the_century_register_is_read_in_every_revision() {
+        for (revision, length) in [(1, V1_LENGTH), (3, 244)] {
+            let mut bytes = table(revision, length, 0);
+            assert_eq!(
+                parse(&bytes).unwrap().century_register,
+                None,
+                "revision {revision}"
+            );
+            bytes[OFFSET_CENTURY] = 0x32;
+            assert_eq!(
+                parse(&bytes).unwrap().century_register,
+                Some(0x32),
+                "revision {revision}"
+            );
         }
     }
 

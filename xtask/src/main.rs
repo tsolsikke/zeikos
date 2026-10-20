@@ -28473,6 +28473,12 @@ struct CommonItemsForHomes {
 /// 表に足すときは、置き場の都合（CPU や機械の言葉）が、共通の側の名前に入り込んでいないかを見る。
 const COMMON_ITEMS_FOR_HOMES: &[CommonItemsForHomes] = &[
     CommonItemsForHomes {
+        module: "common::time",
+        items: &["CivilTime", "unix_seconds"],
+        reason: "暦の日時の型と、日時を Unix 秒へ直す純粋な関数（2026-10-20。PC の RTC が読んだ日時を、どの装置に\
+                 よらない形で返す）",
+    },
+    CommonItemsForHomes {
         module: "common::addr",
         items: &[
             "DirectMap",
