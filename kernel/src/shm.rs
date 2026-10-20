@@ -146,6 +146,9 @@ pub enum SealError {
 }
 
 /// 封を足した後の値（純粋な論理。Linux の `memfd_add_seals` と同じ順で見る——知らないビットが先、`F_SEAL_SEAL` が後）。
+///
+/// **`F_SEAL_EXEC` は、書き・伸び縮みの封も一緒に立てる**（2026-10-20。Linux 6.3 からの形で、実行のビットを持つ memfd の
+/// とき。ZeikOS の memfd は `fstat` で 0777 と答えるので、いつもこの形になる。WSL で測った値は 62）。
 pub fn added_seals(current: u32, add: u32) -> Result<u32, SealError> {
     if add & !ALL_SEALS != 0 {
         return Err(SealError::Unknown);
@@ -153,7 +156,12 @@ pub fn added_seals(current: u32, add: u32) -> Result<u32, SealError> {
     if current & F_SEAL_SEAL != 0 {
         return Err(SealError::Sealed);
     }
-    Ok(current | add)
+    let implied = if add & F_SEAL_EXEC != 0 {
+        F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE | F_SEAL_FUTURE_WRITE
+    } else {
+        0
+    };
+    Ok(current | add | implied)
 }
 
 /// 作ったときの封（純粋な論理）。**`MFD_ALLOW_SEALING` が無ければ、最初から `F_SEAL_SEAL` を持つ**（Linux と同じ。封を足す
@@ -436,6 +444,10 @@ mod tests {
             "an unknown bit is -EINVAL before the sealed check"
         );
         assert_eq!(added_seals(0, F_SEAL_FUTURE_WRITE), Ok(F_SEAL_FUTURE_WRITE));
-        assert_eq!(added_seals(0, F_SEAL_EXEC), Ok(F_SEAL_EXEC));
+        assert_eq!(
+            added_seals(0, F_SEAL_EXEC),
+            Ok(F_SEAL_EXEC | F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE | F_SEAL_FUTURE_WRITE),
+            "F_SEAL_EXEC brings the write and size seals with it (62, as Linux answers)"
+        );
     }
 }
