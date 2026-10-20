@@ -236,7 +236,7 @@ Hello, ZeikOS!
 [INFO] virtio-blk: handshake: ACKNOWLEDGE -> DRIVER; capacity=65536 sector(s)
 [INFO] virtio-blk: request limit: 1048576 byte(s) in one data segment (the device declares size_max=None seg_max=Some(254); None means the device does not declare a limit; ours is 1048576)
 [INFO] virtio-blk: queue 0: size 256; ring at phys 0x3c000..0x40000 (4 page(s), 4096-aligned=true); zeroed 16384 byte(s) (0 were nonzero before)
-[INFO] virtio-blk: read sector 2: 512 byte(s) requested, status=0 (OK); checksum=0x000a1627 first bytes=[00, 04, 00, 00, 00, 20, 00, 00]
+[INFO] virtio-blk: read sector 2: 512 byte(s) requested, status=0 (OK); checksum=0x0009d01a first bytes=[00, 04, 00, 00, 00, 20, 00, 00]
 [INFO] smp: mapped per-CPU stacks for slot 1 at 0xffff81000003a000 (PML4[258], not [257] which a sabotage VA depends on): kernel top 0xffff81000005b000, IST1 top 0xffff810000060000, IST2 top 0xffff810000065000, IST3 top 0xffff81000006a000, IST4 top 0xffff81000006f000, IST5 top 0xffff810000074000; 55 frame(s) consumed (pages plus page tables), guards left unmapped
 [INFO] nx-probe: mapped a probe page at 0xffff828000000000 -> 0x77000 with the execute-disable bit (entry 0x8000000000077001, bit 63 set = true) [read back from the live table]
 [INFO] nx-probe: cpu 0 read the probe page: value=0x4e585f50524f4245 (expected 0x4e585f50524f4245), EFER.NXE=1 (expected 1)
@@ -348,32 +348,32 @@ task: cooperative switch verified
 [INFO] ext2: image 33554432 byte(s) built by "mke2fs 1.47.0 (5-Feb-2023)" and "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0"
 [INFO] ext2: superblock rev=1 block_size=4096 inode_size=256 inodes=1024 blocks=8192 blocks_per_group=32768 inodes_per_group=1024 first_ino=11 groups=1
 [INFO] ext2: features compat=0x38 incompat=0x2 ro_compat=0x3 (only unknown incompat bits are refused; unknown ro_compat and compat are accepted for reading, as Linux does)
-[INFO] ext2: superblock free counts: blocks=5315 inodes=929
+[INFO] ext2: superblock free counts: blocks=5316 inodes=929
 [INFO] ext2: group 0: block bitmap at 3 inode bitmap at 4 inode table at 5
-[INFO] ext2: group 0 free counts: blocks=5315 inodes=929 dirs=10
+[INFO] ext2: group 0 free counts: blocks=5316 inodes=929 dirs=10
 [INFO] ext2: root inode 2: mode=040755 size=4096 links=9 i_block[0]=69 directory=true
 [INFO] ext2: root directory block 0 of 1: 4096 byte(s) via the direct blocks
 [INFO] ext2: root directory: 9 entr(y/ies): . .. lost+found bin data etc lib root tmp
 [INFO] ext2: resolved /etc/motd to inode 87: 18 byte(s) = "welcome to ZeikOS" (trailing newline trimmed for this line only); matches the seed file byte for byte: true
 [INFO] ext2: /data/direct-max inode=78 size=49152 blocks=12 single indirect=0 last byte=0xce (expected 0xce)
-[INFO] ext2: /data/indirect-first inode=79 size=49153 blocks=13 single indirect=2774 last byte=0xcf (expected 0xcf)
+[INFO] ext2: /data/indirect-first inode=79 size=49153 blocks=13 single indirect=2773 last byte=0xcf (expected 0xcf)
 [INFO] fs-image-source: root_filesystem reads from virt 0xffff800001c00000 (phys 0x1c00000)
-[INFO] fs-image-copy: copied 33554432 byte(s) to phys 0x1c00000..0x3c00000 (8192 frame(s), 2MiB-aligned=true), checksum=0x515f525c; the checksum covers the first 282624 byte(s) (the superblock through the inode table of group 0); the kernel image is 0x100000..0x44ead8
+[INFO] fs-image-copy: copied 33554432 byte(s) to phys 0x1c00000..0x3c00000 (8192 frame(s), 2MiB-aligned=true), checksum=0x516dfb1e; the checksum covers the first 282624 byte(s) (the superblock through the inode table of group 0); the kernel image is 0x100000..0x44ead8
 [INFO] fs-sparse: /data/sparse-hole reads block 1 as a full block of zeros = true (the blocks around it have content: head=true tail=true); i_size=12288 i_blocks_512=16
-[INFO] fs-bitmap: allocated one block (number 2877); free counts are now blocks=5314 group0=5314
-[INFO] fs-write: append 1 wrote 200 byte(s) to inode 84; free blocks are now 5314
-[INFO] fs-write: append 2 wrote 4000 byte(s) to inode 84; free blocks are now 5313
-[INFO] fs-truncate: shrank inode 84 to 8192 byte(s); free blocks 5311 -> 5313 (returned 2)
-[INFO] fs-truncate: shrank inode 84 to 4097 byte(s); free blocks 5313 -> 5313 (returned 0)
-[INFO] fs-truncate: shrank inode 84 to 4096 byte(s); free blocks 5313 -> 5314 (returned 1)
-[INFO] fs-truncate: shrank inode 84 to 4000 byte(s); free blocks 5314 -> 5314 (returned 0)
+[INFO] fs-bitmap: allocated one block (number 2876); free counts are now blocks=5315 group0=5315
+[INFO] fs-write: append 1 wrote 200 byte(s) to inode 84; free blocks are now 5315
+[INFO] fs-write: append 2 wrote 4000 byte(s) to inode 84; free blocks are now 5314
+[INFO] fs-truncate: shrank inode 84 to 8192 byte(s); free blocks 5312 -> 5314 (returned 2)
+[INFO] fs-truncate: shrank inode 84 to 4097 byte(s); free blocks 5314 -> 5314 (returned 0)
+[INFO] fs-truncate: shrank inode 84 to 4096 byte(s); free blocks 5314 -> 5315 (returned 1)
+[INFO] fs-truncate: shrank inode 84 to 4000 byte(s); free blocks 5315 -> 5315 (returned 0)
 [INFO] fs-truncate: restored inode 84 to 100 byte(s)
-[INFO] fs-create: created inode 96 under inode 75 and wrote 300 byte(s); free blocks=5313 inodes=928, i_extra_isize=32
-[INFO] fs-create: unlinked inode 96; free blocks=5314 inodes=929
-[INFO] fs-mkdir: created directory inode 96 under inode 75; free blocks=5313 inodes=928 dirs=Ok(11)
+[INFO] fs-create: created inode 96 under inode 75 and wrote 300 byte(s); free blocks=5314 inodes=928, i_extra_isize=32
+[INFO] fs-create: unlinked inode 96; free blocks=5315 inodes=929
+[INFO] fs-mkdir: created directory inode 96 under inode 75; free blocks=5314 inodes=928 dirs=Ok(11)
 [INFO] fs-mkdir: rmdir on a directory that is not empty was refused = true
-[INFO] fs-mkdir: removed directory inode 96; free blocks=5314 inodes=929 dirs=Ok(10)
-[INFO] fs-bitmap: freed block 2877; the image should be back to what was built
+[INFO] fs-mkdir: removed directory inode 96; free blocks=5315 inodes=929 dirs=Ok(10)
+[INFO] fs-bitmap: freed block 2876; the image should be back to what was built
 [INFO] fs-image-flush: wrote 33554432 byte(s) back to the virtio disk
 [INFO] fs-image-ready: the image is in its final state for this run
 [INFO] keymap: the keyboard layout is jis (KEYMAP was not set)
@@ -383,7 +383,7 @@ task: cooperative switch verified
 [INFO] ext2-corrupt: s_rev_level set to 0 (no s_inode_size, no s_first_ino) -> UnsupportedRevision(0)
 [INFO] ext2-corrupt: an unknown INCOMPAT bit set alongside FILETYPE -> UnsupportedIncompatFeatures(64)
 [INFO] ext2-corrupt: s_log_block_size set to 31 (1024 << 31 overflows) -> BadBlockSizeShift(31)
-[INFO] ext2-corrupt: s_blocks_count claiming 65536 blocks (256 MiB) -> ImageTooSmall { needed: 268435456, actual: 11784192 }
+[INFO] ext2-corrupt: s_blocks_count claiming 65536 blocks (256 MiB) -> ImageTooSmall { needed: 268435456, actual: 11780096 }
 [INFO] ext2-corrupt: s_inodes_per_group zeroed (a divisor of zero) -> ZeroPerGroup
 [INFO] ext2-corrupt: group 0's bg_inode_table pointing past the filesystem -> BlockOutOfRange(65535)
 [INFO] ext2-corrupt: the inode table stretched past the end of the image -> InodeTableOutOfRange { inode: 600000, needed: 153620352 }
@@ -398,7 +398,7 @@ task: cooperative switch verified
 [INFO] ext2-corrupt: the single indirect table's first entry pointing past the filesystem -> BlockOutOfRange(65535)
 [INFO] ext2-corrupt: /etc/motd's i_size shrunk to 4 bytes -> read 4 byte(s) that differ from the seed
 [INFO] ext2-corrupt: the first byte of /etc/motd's contents zeroed -> read 18 byte(s) that differ from the seed
-[INFO] ext2-corrupt: all 20 corrupted image(s) were refused with the expected reason, and the kernel continued (the embedded image is untouched; one copy of the 2877 block(s) the image uses, in as many frames borrowed from the frame allocator, is patched for each case and restored, and the untouched control passed again after every case)
+[INFO] ext2-corrupt: all 20 corrupted image(s) were refused with the expected reason, and the kernel continued (the embedded image is untouched; one copy of the 2876 block(s) the image uses, in as many frames borrowed from the frame allocator, is patched for each case and restored, and the untouched control passed again after every case)
 [INFO] user-elf: embedded hello is 8576 byte(s), entry 0x400010, 3 program header(s)
 [INFO] user-elf: PT_LOAD vaddr=0x400000 filesz=0x42 memsz=0x42 flags=0x5 (r=true w=false x=true)
 [INFO] user-elf: PT_LOAD vaddr=0x401000 filesz=0x12 memsz=0x12 flags=0x4 (r=true w=false x=false)
@@ -923,8 +923,8 @@ thread: task 6 (tid 2) reaped; it used <n> of 65536 byte(s) of its kernel stack 
 [INFO] spawn: /bin/linux/m3a-mutex-rust is 475776 byte(s) at inode 43; entering at depth 1 (the parent runs on its task's kernel stack, which has a guard page)
 [INFO] user-load: /bin/linux/m3a-mutex-rust is position-independent; placed at 0x400000 (image 0x400000..0x475360, entry 0x40a50b)
 [INFO] user-load: /bin/linux/m3a-mutex-rust mapped PT_LOAD 0x400000..0x4043b8 (filesz=0x43b8 memsz=0x43b8 w=false) pages 0x400000..0x404000
-[INFO] user-load: /bin/linux/m3a-mutex-rust mapped PT_LOAD 0x405000..0x45ac16 (filesz=0x55c16 memsz=0x55c16 w=false) pages 0x405000..0x45a000
-[INFO] user-load: /bin/linux/m3a-mutex-rust mapped PT_LOAD 0x45b000..0x46fdc8 (filesz=0x14dc8 memsz=0x14dc8 w=false) pages 0x45b000..0x46f000
+[INFO] user-load: /bin/linux/m3a-mutex-rust mapped PT_LOAD 0x405000..0x45ac26 (filesz=0x55c26 memsz=0x55c26 w=false) pages 0x405000..0x45a000
+[INFO] user-load: /bin/linux/m3a-mutex-rust mapped PT_LOAD 0x45b000..0x46fdcc (filesz=0x14dcc memsz=0x14dcc w=false) pages 0x45b000..0x46f000
 [INFO] user-load: /bin/linux/m3a-mutex-rust mapped PT_LOAD 0x4705d0..0x475360 (filesz=0x3510 memsz=0x4d90 w=true) pages 0x470000..0x475000
 [INFO] user-load: /bin/linux/m3a-mutex-rust PT_LOAD segments: declared=4 mapped=4 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7ffffbf000..0x7ffffff000 (w=true)
@@ -937,7 +937,7 @@ m3a-mutex-rust: unlocking after 64 yields
 m3a-mutex-rust: the thread took the lock and set the value to 7
 thread: tid 6 (task 6) exited with status 0; the clear-tid address was 0x475358 (0 written = true)
 m3a-mutex-rust: joined, the thread returned 7; the value is now 7
-[INFO] user-stack: /bin/linux/m3a-mutex-rust used 1560 of 262144 byte(s) (0%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
+[INFO] user-stack: /bin/linux/m3a-mutex-rust used 1544 of 262144 byte(s) (0%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: /bin/linux/m3a-mutex-rust slept <n> time(s) and woke <n> waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] ring3: /bin/linux/m3a-mutex-rust used 6480 of 65536 byte(s) of the depth-0 excursion stack (9%), which has a guard page below it
 [INFO] vfs: /bin/linux/m3a-mutex-rust opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
@@ -975,8 +975,8 @@ thread: task 6 (tid 10) reaped; it used <n> of 65536 byte(s) of its kernel stack
 [INFO] spawn: /bin/linux/m3a-exit-group-rust is 475776 byte(s) at inode 35; entering at depth 1 (the parent runs on its task's kernel stack, which has a guard page)
 [INFO] user-load: /bin/linux/m3a-exit-group-rust is position-independent; placed at 0x400000 (image 0x400000..0x475360, entry 0x40a4eb)
 [INFO] user-load: /bin/linux/m3a-exit-group-rust mapped PT_LOAD 0x400000..0x4042b0 (filesz=0x42b0 memsz=0x42b0 w=false) pages 0x400000..0x404000
-[INFO] user-load: /bin/linux/m3a-exit-group-rust mapped PT_LOAD 0x405000..0x45a436 (filesz=0x55436 memsz=0x55436 w=false) pages 0x405000..0x45a000
-[INFO] user-load: /bin/linux/m3a-exit-group-rust mapped PT_LOAD 0x45b000..0x46f930 (filesz=0x14930 memsz=0x14930 w=false) pages 0x45b000..0x46f000
+[INFO] user-load: /bin/linux/m3a-exit-group-rust mapped PT_LOAD 0x405000..0x45a896 (filesz=0x55896 memsz=0x55896 w=false) pages 0x405000..0x45a000
+[INFO] user-load: /bin/linux/m3a-exit-group-rust mapped PT_LOAD 0x45b000..0x46faac (filesz=0x14aac memsz=0x14aac w=false) pages 0x45b000..0x46f000
 [INFO] user-load: /bin/linux/m3a-exit-group-rust mapped PT_LOAD 0x470688..0x475360 (filesz=0x3458 memsz=0x4cd8 w=true) pages 0x470000..0x475000
 [INFO] user-load: /bin/linux/m3a-exit-group-rust PT_LOAD segments: declared=4 mapped=4 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7ffffbf000..0x7ffffff000 (w=true)
@@ -987,7 +987,7 @@ m3a-exit-group-rust: main starts with 4 argument(s)
 thread: task 6 started as tid 14 (pool index 0, generation 3) for ring3 slot 0 at depth 1, owned by cpu 0 like its parent task 0; user stack 0x10207a98, tls 0x10207b38, clear-tid address 0x475358
 m3a-exit-group-rust: the thread calls exit_group(7) now
 thread: tid 14 (task 6) ended the process through system call 231 with status 7; the process ends at the main thread's next system call or tick
-[INFO] user-stack: /bin/linux/m3a-exit-group-rust used 1520 of 262144 byte(s) (0%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
+[INFO] user-stack: /bin/linux/m3a-exit-group-rust used 1640 of 262144 byte(s) (0%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: /bin/linux/m3a-exit-group-rust slept <n> time(s) and woke <n> waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] ring3: /bin/linux/m3a-exit-group-rust used 6480 of 65536 byte(s) of the depth-0 excursion stack (9%), which has a guard page below it
 [INFO] vfs: /bin/linux/m3a-exit-group-rust opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
@@ -1025,8 +1025,8 @@ thread: task 6 (tid 18) reaped; it used <n> of 65536 byte(s) of its kernel stack
 [INFO] spawn: /bin/linux/m3a-exit-group-waiters-rust is 479872 byte(s) at inode 38; entering at depth 1 (the parent runs on its task's kernel stack, which has a guard page)
 [INFO] user-load: /bin/linux/m3a-exit-group-waiters-rust is position-independent; placed at 0x400000 (image 0x400000..0x476360, entry 0x40a50b)
 [INFO] user-load: /bin/linux/m3a-exit-group-waiters-rust mapped PT_LOAD 0x400000..0x404370 (filesz=0x4370 memsz=0x4370 w=false) pages 0x400000..0x404000
-[INFO] user-load: /bin/linux/m3a-exit-group-waiters-rust mapped PT_LOAD 0x405000..0x45b3a6 (filesz=0x563a6 memsz=0x563a6 w=false) pages 0x405000..0x45b000
-[INFO] user-load: /bin/linux/m3a-exit-group-waiters-rust mapped PT_LOAD 0x45c000..0x470f40 (filesz=0x14f40 memsz=0x14f40 w=false) pages 0x45c000..0x470000
+[INFO] user-load: /bin/linux/m3a-exit-group-waiters-rust mapped PT_LOAD 0x405000..0x45b516 (filesz=0x56516 memsz=0x56516 w=false) pages 0x405000..0x45b000
+[INFO] user-load: /bin/linux/m3a-exit-group-waiters-rust mapped PT_LOAD 0x45c000..0x470f78 (filesz=0x14f78 memsz=0x14f78 w=false) pages 0x45c000..0x470000
 [INFO] user-load: /bin/linux/m3a-exit-group-waiters-rust mapped PT_LOAD 0x471608..0x476360 (filesz=0x34d8 memsz=0x4d58 w=true) pages 0x471000..0x476000
 [INFO] user-load: /bin/linux/m3a-exit-group-waiters-rust PT_LOAD segments: declared=4 mapped=4 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7ffffbf000..0x7ffffff000 (w=true)
@@ -1040,7 +1040,7 @@ m3a-exit-group-waiters-rust: the waiter thread waits for the mutex now
 m3a-exit-group-waiters-rust: the ender thread calls exit_group(7) now
 thread: tid 22 (task 6) ended the process through system call 231 with status 7; the process ends at the main thread's next system call or tick
 thread: tid 3 (task 7) found the process ended at system call 202; it is finished
-[INFO] user-stack: /bin/linux/m3a-exit-group-waiters-rust used 1816 of 262144 byte(s) (0%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
+[INFO] user-stack: /bin/linux/m3a-exit-group-waiters-rust used 1864 of 262144 byte(s) (0%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: /bin/linux/m3a-exit-group-waiters-rust slept <n> time(s) and woke <n> waiter(s) (0 and 0 unless the program has threads); the process end roused <n> sleeper(s)
 [INFO] ring3: /bin/linux/m3a-exit-group-waiters-rust used 6480 of 65536 byte(s) of the depth-0 excursion stack (9%), which has a guard page below it
 [INFO] vfs: /bin/linux/m3a-exit-group-waiters-rust opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
@@ -1081,8 +1081,8 @@ thread: task 6 (tid 26) reaped; it used <n> of 65536 byte(s) of its kernel stack
 [INFO] spawn: /bin/linux/m3a-nested-clone-rust is 475776 byte(s) at inode 44; entering at depth 1 (the parent runs on its task's kernel stack, which has a guard page)
 [INFO] user-load: /bin/linux/m3a-nested-clone-rust is position-independent; placed at 0x400000 (image 0x400000..0x475360, entry 0x40a4eb)
 [INFO] user-load: /bin/linux/m3a-nested-clone-rust mapped PT_LOAD 0x400000..0x4042e0 (filesz=0x42e0 memsz=0x42e0 w=false) pages 0x400000..0x404000
-[INFO] user-load: /bin/linux/m3a-nested-clone-rust mapped PT_LOAD 0x405000..0x45aaa6 (filesz=0x55aa6 memsz=0x55aa6 w=false) pages 0x405000..0x45a000
-[INFO] user-load: /bin/linux/m3a-nested-clone-rust mapped PT_LOAD 0x45b000..0x46fb24 (filesz=0x14b24 memsz=0x14b24 w=false) pages 0x45b000..0x46f000
+[INFO] user-load: /bin/linux/m3a-nested-clone-rust mapped PT_LOAD 0x405000..0x45adc6 (filesz=0x55dc6 memsz=0x55dc6 w=false) pages 0x405000..0x45a000
+[INFO] user-load: /bin/linux/m3a-nested-clone-rust mapped PT_LOAD 0x45b000..0x46fc04 (filesz=0x14c04 memsz=0x14c04 w=false) pages 0x45b000..0x46f000
 [INFO] user-load: /bin/linux/m3a-nested-clone-rust mapped PT_LOAD 0x470668..0x475360 (filesz=0x3478 memsz=0x4cf8 w=true) pages 0x470000..0x475000
 [INFO] user-load: /bin/linux/m3a-nested-clone-rust PT_LOAD segments: declared=4 mapped=4 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7ffffbf000..0x7ffffff000 (w=true)
@@ -1097,7 +1097,7 @@ m3a-nested-clone-rust: the inner thread runs
 thread: tid 7 (task 7) exited with status 0; the clear-tid address was 0x475358 (0 written = true)
 thread: tid 30 (task 6) exited with status 0; the clear-tid address was 0x475358 (0 written = true)
 m3a-nested-clone-rust: joined, the outer thread returned 7
-[INFO] user-stack: /bin/linux/m3a-nested-clone-rust used 1520 of 262144 byte(s) (0%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
+[INFO] user-stack: /bin/linux/m3a-nested-clone-rust used 1560 of 262144 byte(s) (0%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: /bin/linux/m3a-nested-clone-rust slept <n> time(s) and woke <n> waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] ring3: /bin/linux/m3a-nested-clone-rust used 6480 of 65536 byte(s) of the depth-0 excursion stack (9%), which has a guard page below it
 [INFO] vfs: /bin/linux/m3a-nested-clone-rust opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
@@ -1221,12 +1221,12 @@ thread: task 7 (tid 11) reaped; it used <n> of 65536 byte(s) of its kernel stack
 [INFO] spawn: /bin/linux/m3a-exit-group-thread-spins-rust ended (Exited(7)) after 47 syscall(s) (0 with a number the kernel does not know; the last such number was 0); its kernel entries ran on RSP 0xffffffff80414f50 (inside its own excursion stack 0xffffffff80405000..0xffffffff80415000 = true); the space was destroyed (0 frame(s) left the allocator; 1219 returned at once, 0 still quarantined (0 its own + 0 from what it spawned), match=true leaked=0, idle returned 0 of earlier destroys meanwhile); the space took 1219 frame(s) and the destroy collected 1219 (match=true); the global difference was checked (checked 36 time(s) so far)
 [INFO] linux-check: /bin/linux/m3a-exit-group-thread-spins-rust ended Ok(Exited(7)), the wanted ending (a thread ended the process; the lines it printed are compared with linux-programs/reference by the base check)
 [INFO] linux-check: m3a-exit-group-thread-spins-rust had threads finished at a tick = 1 (expected 1); thread B was in ring 3 after thread A ended the process
-[INFO] spawn: /bin/linux/m3a-channel-tls-rust is 529024 byte(s) at inode 32; entering at depth 1 (the parent runs on its task's kernel stack, which has a guard page)
-[INFO] user-load: /bin/linux/m3a-channel-tls-rust is position-independent; placed at 0x400000 (image 0x400000..0x482360, entry 0x40ae2b)
-[INFO] user-load: /bin/linux/m3a-channel-tls-rust mapped PT_LOAD 0x400000..0x404a18 (filesz=0x4a18 memsz=0x4a18 w=false) pages 0x400000..0x404000
-[INFO] user-load: /bin/linux/m3a-channel-tls-rust mapped PT_LOAD 0x405000..0x464a56 (filesz=0x5fa56 memsz=0x5fa56 w=false) pages 0x405000..0x464000
-[INFO] user-load: /bin/linux/m3a-channel-tls-rust mapped PT_LOAD 0x465000..0x47c6e0 (filesz=0x176e0 memsz=0x176e0 w=false) pages 0x465000..0x47c000
-[INFO] user-load: /bin/linux/m3a-channel-tls-rust mapped PT_LOAD 0x47d010..0x482360 (filesz=0x3ad0 memsz=0x5350 w=true) pages 0x47d000..0x482000
+[INFO] spawn: /bin/linux/m3a-channel-tls-rust is 524928 byte(s) at inode 32; entering at depth 1 (the parent runs on its task's kernel stack, which has a guard page)
+[INFO] user-load: /bin/linux/m3a-channel-tls-rust is position-independent; placed at 0x400000 (image 0x400000..0x482360, entry 0x40ad7b)
+[INFO] user-load: /bin/linux/m3a-channel-tls-rust mapped PT_LOAD 0x400000..0x404a90 (filesz=0x4a90 memsz=0x4a90 w=false) pages 0x400000..0x404000
+[INFO] user-load: /bin/linux/m3a-channel-tls-rust mapped PT_LOAD 0x405000..0x463b56 (filesz=0x5eb56 memsz=0x5eb56 w=false) pages 0x405000..0x463000
+[INFO] user-load: /bin/linux/m3a-channel-tls-rust mapped PT_LOAD 0x464000..0x47b548 (filesz=0x17548 memsz=0x17548 w=false) pages 0x464000..0x47b000
+[INFO] user-load: /bin/linux/m3a-channel-tls-rust mapped PT_LOAD 0x47cfc8..0x482360 (filesz=0x3b18 memsz=0x5398 w=true) pages 0x47c000..0x482000
 [INFO] user-load: /bin/linux/m3a-channel-tls-rust PT_LOAD segments: declared=4 mapped=4 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7ffffbf000..0x7ffffff000 (w=true)
 [INFO] user-load: the page below the stack (0x7ffffbe000) is left unmapped as a guard; neither the heap nor mmap is placed on it
@@ -1237,13 +1237,13 @@ thread: task 6 started as tid 50 (pool index 0, generation 12) for ring3 slot 0 
 thread: tid 50 (task 6) exited with status 0; the clear-tid address was 0x482358 (0 written = true)
 m3a-channel-tls-rust: the worker summed the channel to 10 = true
 m3a-channel-tls-rust: tls kept apart (main 1, worker 2) = true
-[INFO] user-stack: /bin/linux/m3a-channel-tls-rust used 2000 of 262144 byte(s) (0%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
+[INFO] user-stack: /bin/linux/m3a-channel-tls-rust used 2744 of 262144 byte(s) (1%), over half=false, pages that did not resolve=0 (the initial argv/envp/auxv table is counted in; ADR-0041 says to decide about growing the stack when this goes over half)
 [INFO] futex: /bin/linux/m3a-channel-tls-rust slept <n> time(s) and woke <n> waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] ring3: /bin/linux/m3a-channel-tls-rust used 6480 of 65536 byte(s) of the depth-0 excursion stack (9%), which has a guard page below it
 [INFO] vfs: /bin/linux/m3a-channel-tls-rust opened 0 file(s) in total and left Ring 3 with 0 still open (MAX_OPEN_FILES=16); it was handed 0 byte(s) of input
 [INFO] user-heap: /bin/linux/m3a-channel-tls-rust had brk take 2 frame(s) and give back 1 (equal means the shrink actually returned them; a program that only grows will not be equal, and that is not a failure)
 [INFO] user-mmap: /bin/linux/m3a-channel-tls-rust had its first mmap at 0x10000000 and would map next at <n> (every process starts at 0x10000000; a first address above it means the addresses were shared with another process); <n> mapping(s) still held, <n> anonymous page(s)
-[INFO] page-perms: user program /bin/linux/m3a-channel-tls-rust: 7 row(s), 0 unnamed, 0 mapped where nothing should be, 0 dropped, digest=dbe6fd59532acdbc
+[INFO] page-perms: user program /bin/linux/m3a-channel-tls-rust: 7 row(s), 0 unnamed, 0 mapped where nothing should be, 0 dropped, digest=9920573ac3156e00
 thread: task 6 (tid 50) reaped; it used <n> of 65536 byte(s) of its kernel stack (<n>%), over half=false (expected false); the pool index 0 moves to generation 13; the page below the stack is a guard page
 [INFO] spawn: /bin/linux/m3a-channel-tls-rust ended (Exited(4)) after <n> syscall(s) (0 with a number the kernel does not know; the last such number was 0); its kernel entries ran on RSP 0xffffffff80414f50 (inside its own excursion stack 0xffffffff80405000..0xffffffff80415000 = true); the space was destroyed (0 frame(s) left the allocator; <n> returned at once, 0 still quarantined (0 its own + 0 from what it spawned), match=true leaked=0, idle returned 0 of earlier destroys meanwhile); the space took <n> frame(s) and the destroy collected <n> (match=true); the global difference was checked (checked 37 time(s) so far)
 [INFO] linux-check: /bin/linux/m3a-channel-tls-rust ended Ok(Exited(4)) (4 is the argument count; the lines it printed are compared with linux-programs/reference by the base check)

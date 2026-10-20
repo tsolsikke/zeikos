@@ -21109,9 +21109,9 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         line: "spawn: /bin/linux/m3a-mutex-rust ended",
         before: " after ",
         after: " syscall(s)",
-        min: 110,
-        max: 113,
-        what: "m3a-mutex-rust's system calls (measured 110 or 111 in 113 boots: 111, or 110 when a tick let the thread finish between the unlock and the join so the join did not sleep; room for one tick in musl's thread-list-lock window, +2)",
+        min: 174,
+        max: 174,
+        what: "m3a-mutex-rust's system calls (174 in all 298 boots since the 2026-10-20 change: the main thread yields 64 more times after the unlock, so the thread is gone before the join and neither the join nor musl's thread-list lock sleeps; the program's doc. Before, 110..=112 in 700 boots: 111, 110 when a tick let the thread finish before the join, 112 when a tick landed between the thread's wake of the joiner and its exit)",
     },
     BootLogRange {
         line: "spawn: /bin/linux/m3a-fault-rust ended",
@@ -21125,9 +21125,9 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         line: "spawn: /bin/linux/m3a-exit-group-rust ended",
         before: " after ",
         after: " syscall(s)",
-        min: 37,
-        max: 40,
-        what: "m3a-exit-group-rust's system calls (measured 37..=39 in 110 boots: 38, moved by 1 per tick in the sched_yield window; room for two landings above)",
+        min: 38,
+        max: 38,
+        what: "m3a-exit-group-rust's system calls (38 in all 298 boots since the 2026-10-20 change: the thread waits for the main thread's return from spawn, prints, and waits for the main thread's go without system calls; the main thread yields only after that, so its first yield runs the thread into exit_group. A tick in the thread's exit path after the go would add one yield; not seen. Before, 37..=40 in 781 boots by the tick position)",
     },
     BootLogRange {
         line: "spawn: /bin/linux/m3a-exit-group-join-rust ended",
@@ -21142,8 +21142,8 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         before: " after ",
         after: " syscall(s)",
         min: 56,
-        max: 63,
-        what: "m3a-exit-group-waiters-rust's system calls (measured 56..=60 in 107 boots: 58, moved by the sched_yield loops that wait for the flag, +2 per tick in musl's thread-list-lock window of either clone; room for both windows)",
+        max: 56,
+        what: "m3a-exit-group-waiters-rust's system calls (56 in all 298 boots since the 2026-10-20 change: the ender waits for the waiter's flag without system calls, and the main thread creates the waiter only after the ender's closure started (Rust's thread start-up takes musl's malloc lock). Before, 56..=60 and 63 in 773 boots, moved by the sched_yield loop that waited for the flag)",
     },
     BootLogRange {
         line: "thread: task ",
@@ -21174,16 +21174,16 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         before: " slept ",
         after: " time(s)",
         min: 1,
-        max: 3,
-        what: "m3a-mutex-rust's futex sleeps (measured 1 or 2: the mutex and the join; 1 when a tick let the thread finish before the join; room for the thread-list-lock window, +1)",
+        max: 1,
+        what: "m3a-mutex-rust's futex sleeps (1 in all 298 boots since the 2026-10-20 change: the thread's wait for the mutex; the join does not sleep. Before, 1..=3 in 785 boots by the tick position)",
     },
     BootLogRange {
         line: "futex: /bin/linux/m3a-mutex-rust slept",
         before: " woke ",
         after: " waiter(s)",
         min: 1,
-        max: 3,
-        what: "m3a-mutex-rust's futex wakes (measured 1 or 2, paired with the sleeps; same room)",
+        max: 1,
+        what: "m3a-mutex-rust's futex wakes (1 in all 298 boots since the 2026-10-20 change: the unlock wakes the thread)",
     },
     BootLogRange {
         line: "futex: /bin/linux/m3a-fault-rust slept",
@@ -21237,17 +21237,17 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         line: "futex: /bin/linux/m3a-exit-group-waiters-rust slept",
         before: " slept ",
         after: " time(s)",
-        min: 1,
-        max: 4,
-        what: "m3a-exit-group-waiters-rust's futex sleeps (measured 1..=3: the waiter's mutex and the main thread's join; 1 when a tick kept the main thread from the join before the ender exited; +1 per tick in musl's thread-list-lock window of either clone)",
+        min: 2,
+        max: 2,
+        what: "m3a-exit-group-waiters-rust's futex sleeps (2 in all 298 boots since the 2026-10-20 change: the waiter's mutex and the main thread's join; the ender's 8 yields let both reach their sleep before the exit_group)",
     },
     BootLogRange {
         line: "futex: /bin/linux/m3a-exit-group-waiters-rust slept",
         before: " woke ",
         after: " waiter(s)",
         min: 0,
-        max: 2,
-        what: "m3a-exit-group-waiters-rust's futex wakes (measured 0 or 1: nobody unlocks; 1 per tick in musl's thread-list-lock window of either clone, paired with the sleep)",
+        max: 0,
+        what: "m3a-exit-group-waiters-rust's futex wakes (0 in all 298 boots since the 2026-10-20 change: nobody unlocks; the process end is the roused count)",
     },
     BootLogRange {
         line: "futex: /bin/linux/m3a-exit-group-join-rust slept",
@@ -21261,9 +21261,9 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         line: "futex: /bin/linux/m3a-exit-group-waiters-rust slept",
         before: " roused ",
         after: " sleeper(s)",
-        min: 1,
+        min: 2,
         max: 2,
-        what: "the sleepers the process end roused in m3a-exit-group-waiters-rust (measured 2 in 69 boots: the waiter and the main thread; 1 if a tick kept the main thread from the join)",
+        what: "the sleepers the process end roused in m3a-exit-group-waiters-rust (2 in all 298 boots since the 2026-10-20 change: the waiter and the main thread)",
     },
     BootLogRange {
         line: "spawn: /bin/linux/m3a-exit-while-spinning-rust ended",
@@ -21277,9 +21277,9 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         line: "spawn: /bin/linux/m3a-nested-clone-rust ended",
         before: " after ",
         after: " syscall(s)",
-        min: 119,
-        max: 124,
-        what: "m3a-nested-clone-rust's system calls (measured 119..=124 in 40 boots: 120; 119 when a tick let the inner thread finish before the outer's join; +2 per tick in musl's thread-list-lock window of either clone)",
+        min: 127,
+        max: 127,
+        what: "m3a-nested-clone-rust's system calls (127 in all 298 boots since the 2026-10-20 change: each new thread waits for its creator's return from spawn without system calls, and each join comes after a fixed number of yields, so no join and no musl thread-list lock sleeps. Before, 119..=122 and 124 in 769 boots by the tick position)",
     },
     BootLogRange {
         line: "spawn: /bin/linux/m3a-spawn-from-thread-rust ended",
@@ -21318,16 +21318,16 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         before: " slept ",
         after: " time(s)",
         min: 0,
-        max: 3,
-        what: "m3a-nested-clone-rust's futex sleeps (measured 0..=3 in 40 boots: 1 for the outer's join on the inner; 0 when a tick let the inner finish first; +1 per tick in musl's thread-list-lock window of either clone)",
+        max: 0,
+        what: "m3a-nested-clone-rust's futex sleeps (0 in all 298 boots since the 2026-10-20 change: neither join sleeps; the program's doc)",
     },
     BootLogRange {
         line: "futex: /bin/linux/m3a-nested-clone-rust slept",
         before: " woke ",
         after: " waiter(s)",
         min: 0,
-        max: 3,
-        what: "m3a-nested-clone-rust's futex wakes (measured 0..=3 in 40 boots, paired with the sleeps)",
+        max: 0,
+        what: "m3a-nested-clone-rust's futex wakes (0 in all 298 boots since the 2026-10-20 change)",
     },
     BootLogRange {
         line: "futex: /bin/linux/m3a-spawn-from-thread-rust slept",
@@ -21365,9 +21365,9 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         line: "spawn: /bin/linux/m3a-channel-tls-rust ended",
         before: " after ",
         after: " syscall(s)",
-        min: 44,
-        max: 51,
-        what: "m3a-channel-tls-rust's system calls (measured 44..=49 in 33 boots: 44 when neither recv sleeps, +1 or +2 per futex sleep and wake of the worker's recv and the main thread's reply recv; room for musl's thread-list-lock window, +2)",
+        min: 174,
+        max: 174,
+        what: "m3a-channel-tls-rust's system calls (174 in all 298 boots since the 2026-10-20 change: the values are sent before the clone, the main thread waits for the worker's closure to start without system calls (Rust's thread start-up takes musl's malloc lock), the worker yields 64 times first so the main thread's reply recv always sleeps first, and the main thread yields 64 times before the join. Before, 44..=49 and 51 in 763 boots by which recv and join slept)",
     },
     BootLogRange {
         line: "spawn: /bin/linux/m3a-exit-with-waiting-thread-rust ended",
@@ -21381,17 +21381,17 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         line: "futex: /bin/linux/m3a-channel-tls-rust slept",
         before: " slept ",
         after: " time(s)",
-        min: 0,
-        max: 3,
-        what: "m3a-channel-tls-rust's futex sleeps (measured 0..=2 in 33 boots: the worker's recv and the main thread's reply recv sleep when the other side has not sent yet; +1 for musl's thread-list-lock window)",
+        min: 1,
+        max: 1,
+        what: "m3a-channel-tls-rust's futex sleeps (1 in all 298 boots since the 2026-10-20 change: the main thread's reply recv)",
     },
     BootLogRange {
         line: "futex: /bin/linux/m3a-channel-tls-rust slept",
         before: " woke ",
         after: " waiter(s)",
-        min: 0,
-        max: 3,
-        what: "m3a-channel-tls-rust's futex wakes (measured 0..=2 in 33 boots, paired with the sleeps)",
+        min: 1,
+        max: 1,
+        what: "m3a-channel-tls-rust's futex wakes (1 in all 298 boots since the 2026-10-20 change: the worker's reply wakes the main thread)",
     },
     BootLogRange {
         line: "futex: /bin/linux/m3a-exit-with-waiting-thread-rust slept",
@@ -21413,49 +21413,49 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         line: "user-mmap: /bin/linux/m3a-channel-tls-rust had its first mmap",
         before: " would map next at ",
         after: " (every process",
-        min: 0x1000_6000,
+        min: 0x1020_a000,
         max: 0x1020_a000,
-        what: "the next mmap address after m3a-channel-tls-rust (measured 0x10006000 and 0x1020a000: musl's mallocng maps one page right after the clone; when the main thread maps it the worker unmaps it and the top mapping is gone at the end, when the worker maps it nobody returns it; which thread gets there first is a tick, and Linux shows both shapes under strace)",
+        what: "the next mmap address after m3a-channel-tls-rust (0x1020a000 in all 298 boots since the 2026-10-20 change: the mallocng page mapped after the clone is still mapped at the end. Before, 0x10006000 or 0x1020a000 by which thread mapped that page first, a tick; Linux shows both shapes under strace)",
     },
     BootLogRange {
         line: "user-mmap: /bin/linux/m3a-channel-tls-rust had its first mmap",
         before: "another process); ",
         after: " mapping(s) still held",
-        min: 3,
+        min: 4,
         max: 4,
-        what: "the mappings m3a-channel-tls-rust still held at its end (measured 3 and 4: the mallocng page of the next-mmap address above is returned in one order and kept in the other; the same tick)",
+        what: "the mappings m3a-channel-tls-rust still held at its end (4 in all 298 boots since the 2026-10-20 change, with the next-mmap address above. Before, 3 or 4)",
     },
     BootLogRange {
         line: "user-mmap: /bin/linux/m3a-channel-tls-rust had its first mmap",
         before: " mapping(s) still held, ",
         after: " anonymous page(s)",
-        min: 3,
+        min: 4,
         max: 4,
-        what: "the anonymous pages m3a-channel-tls-rust still held at its end (measured 3 and 4, moving with the mapping count above)",
+        what: "the anonymous pages m3a-channel-tls-rust still held at its end (4 in all 298 boots since the 2026-10-20 change, moving with the mapping count above)",
     },
     BootLogRange {
         line: "spawn: /bin/linux/m3a-channel-tls-rust ended (Exited(4))",
         before: "left the allocator; ",
         after: " returned at once",
-        min: 206,
+        min: 207,
         max: 207,
-        what: "the frames m3a-channel-tls-rust's space returned at once (measured 206 and 207 over 176 boots: one more when the worker's mallocng page is still mapped at the end; the same tick as the mapping count)",
+        what: "the frames m3a-channel-tls-rust's space returned at once (207 in all 298 boots since the 2026-10-20 change. Before, 206 or 207 with the mapping count)",
     },
     BootLogRange {
         line: "spawn: /bin/linux/m3a-channel-tls-rust ended (Exited(4))",
         before: "the space took ",
         after: " frame(s) and the destroy collected",
-        min: 206,
+        min: 207,
         max: 207,
-        what: "the frames m3a-channel-tls-rust's space took (measured 206 and 207, moving with the returned count above)",
+        what: "the frames m3a-channel-tls-rust's space took (207 in all 298 boots since the 2026-10-20 change, with the returned count above)",
     },
     BootLogRange {
         line: "spawn: /bin/linux/m3a-channel-tls-rust ended (Exited(4))",
         before: "and the destroy collected ",
         after: " (match=",
-        min: 206,
+        min: 207,
         max: 207,
-        what: "the frames the destroy of m3a-channel-tls-rust collected (measured 206 and 207, moving with the returned count above)",
+        what: "the frames the destroy of m3a-channel-tls-rust collected (207 in all 298 boots since the 2026-10-20 change, with the returned count above)",
     },
     BootLogRange {
         line: "thread: 1 thread(s) of /bin/linux/m3a-exit-while-spinning-rust were still runnable",
@@ -38486,30 +38486,30 @@ mod tests {
     fn boot_log_ranges_name_the_values_outside_and_the_missing_lines() {
         let good = "\
 [INFO] spawn: /bin/linux/m3a-rust ended (Exited(4)) after 106 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
-[INFO] spawn: /bin/linux/m3a-mutex-rust ended (Exited(4)) after 111 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
+[INFO] spawn: /bin/linux/m3a-mutex-rust ended (Exited(4)) after 174 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
 thread: task 6 (tid 2) reaped; it used 3112 of 65536 byte(s) of its kernel stack (4%), over half=false (expected false)
 thread: task 6 (tid 6) reaped; it used 3200 of 65536 byte(s) of its kernel stack (4%), over half=false (expected false)
 [INFO] futex: /bin/linux/m3a-rust slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads)
-[INFO] futex: /bin/linux/m3a-mutex-rust slept 2 time(s) and woke 2 waiter(s) (0 and 0 unless the program has threads)
+[INFO] futex: /bin/linux/m3a-mutex-rust slept 1 time(s) and woke 1 waiter(s) (0 and 0 unless the program has threads)
 [INFO] spawn: /bin/linux/m3a-fault-rust ended (Folded(14)) after 34 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
 [INFO] spawn: /bin/linux/m3a-exit-group-rust ended (Exited(7)) after 38 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
 [INFO] futex: /bin/linux/m3a-fault-rust slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads)
 [INFO] futex: /bin/linux/m3a-exit-group-rust slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads)
 [INFO] spawn: /bin/linux/m3a-exit-group-join-rust ended (Exited(7)) after 38 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
-[INFO] spawn: /bin/linux/m3a-exit-group-waiters-rust ended (Exited(7)) after 58 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
+[INFO] spawn: /bin/linux/m3a-exit-group-waiters-rust ended (Exited(7)) after 56 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
 [INFO] futex: /bin/linux/m3a-exit-group-join-rust slept 1 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 1 sleeper(s)
 [INFO] futex: /bin/linux/m3a-exit-group-waiters-rust slept 2 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 2 sleeper(s)
 [INFO] user-destroy: /bin/linux/m3a-exit-group-waiters-rust returned 1220 frame(s) at once and quarantined 0 (0 wait(s), 0 released meanwhile, 0 leaked) in 8409908 cycle(s)
 [INFO] user-destroy: /bin/linux/m3a-exit-group-thread-spins-rust returned 1219 frame(s) at once and quarantined 0 (0 wait(s), 0 released meanwhile, 0 leaked) in 9672896 cycle(s)
 [INFO] spawn: /bin/linux/m3a-exit-while-spinning-rust ended (Exited(4)) after 55 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
-[INFO] spawn: /bin/linux/m3a-nested-clone-rust ended (Exited(4)) after 120 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
+[INFO] spawn: /bin/linux/m3a-nested-clone-rust ended (Exited(4)) after 127 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
 [INFO] spawn: /bin/linux/m3a-spawn-from-thread-rust ended (Exited(4)) after 47 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
 [INFO] spawn: /bin/linux/m3a-exit-group-spin-rust ended (Exited(7)) after 38 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
 [INFO] futex: /bin/linux/m3a-exit-while-spinning-rust slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
-[INFO] futex: /bin/linux/m3a-nested-clone-rust slept 1 time(s) and woke 1 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
+[INFO] futex: /bin/linux/m3a-nested-clone-rust slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] futex: /bin/linux/m3a-spawn-from-thread-rust slept 1 time(s) and woke 1 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] futex: /bin/linux/m3a-exit-group-spin-rust slept 0 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
-[INFO] spawn: /bin/linux/m3a-channel-tls-rust ended (Exited(4)) after 46 syscall(s) (0 with a number the kernel does not know; the last such number was 0); its kernel entries ran on RSP 0xffffffff80401f50 (inside its own excursion stack 0xffffffff803f2000..0xffffffff80402000 = true); the space was destroyed (0 frame(s) left the allocator; 207 returned at once, 0 still quarantined (0 its own + 0 from what it spawned), match=true leaked=0, idle returned 0 of earlier destroys meanwhile); the space took 207 frame(s) and the destroy collected 207 (match=true); the global difference was checked (checked 35 time(s) so far)
+[INFO] spawn: /bin/linux/m3a-channel-tls-rust ended (Exited(4)) after 174 syscall(s) (0 with a number the kernel does not know; the last such number was 0); its kernel entries ran on RSP 0xffffffff80401f50 (inside its own excursion stack 0xffffffff803f2000..0xffffffff80402000 = true); the space was destroyed (0 frame(s) left the allocator; 207 returned at once, 0 still quarantined (0 its own + 0 from what it spawned), match=true leaked=0, idle returned 0 of earlier destroys meanwhile); the space took 207 frame(s) and the destroy collected 207 (match=true); the global difference was checked (checked 35 time(s) so far)
 [INFO] spawn: /bin/linux/m3a-exit-with-waiting-thread-rust ended (Exited(5)) after 49 syscall(s) (0 with a number the kernel does not know; the last such number was 0)
 [INFO] futex: /bin/linux/m3a-channel-tls-rust slept 1 time(s) and woke 1 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)
 [INFO] futex: /bin/linux/m3a-exit-with-waiting-thread-rust slept 1 time(s) and woke 0 waiter(s) (0 and 0 unless the program has threads); the process end roused 0 sleeper(s)

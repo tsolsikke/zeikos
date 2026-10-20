@@ -7,12 +7,25 @@
 //! 1. 主スレッドが `std::sync::Mutex` を取ったまま、終えるスレッドを先に作り（池の添字 0）、次に待つスレッドを作る（添字 1）。
 //! 2. 待つスレッドは 1 行出し、フラグを立ててから同じ `Mutex` を取ろうとして、必ず futex で眠る（主スレッドが持っている）。
 //! 3. 主スレッドは待つスレッドを `join` して、futex で眠る（待つスレッドは戻らない）。
-//! 4. 終えるスレッドはフラグが立つまで `sched_yield` で待ち、さらに 8 回譲ってから 1 行出し、`std::process::exit(7)`
+//! 4. 終えるスレッドはフラグが立つまでシステムコールを打たずに回り、さらに 8 回譲ってから 1 行出し、`std::process::exit(7)`
 //!    （`exit_group(7)`）を打つ。Linux はプロセス全体を 7 で終える。ZeikOS は、印を立てたスレッドが同じスロットの futex の
 //!    待ちを 2 本とも起こす。**終えるスレッドの次に走るのは待つスレッドである**（池の巡回は添字の順で、主スレッドは
 //!    その後）——起きた待つスレッドは `futex` の戻りで印を見て `Finished` になり、起きた主スレッドは `futex` の戻りで
 //!    印を見て出る。
 //! 5. **主スレッドの `join` の後の行は、どちらの環境でも出ない。**
+//!
+//! # 終えるスレッドは、フラグを待つ間システムコールを打たない（2026-10-20）
+//!
+//! **以前は、フラグが立つまで `sched_yield` で待っていた。** 譲った回数が、ティックの位置で変わった。システムコールの数は
+//! 56〜60 と 63 に散った（残っていた 773 起動）。**今はシステムコールを打たずに回って待つ**（`m3a-exit-group-spin-rust` と
+//! 同じ形）。主スレッドが `join` で眠った後は、次のティックで待つスレッドへ切り替わる。待つスレッドがフラグを立てて
+//! 眠るまでの間にティックが来ても、終えるスレッドの 8 回の譲りで戻る。
+//!
+//! **主スレッドは、終えるスレッドの closure が始まるのを、システムコールを打たずに待ってから、待つスレッドを作る**
+//! （2026-10-20）。Rust のスレッドの立ち上げ（closure の前）は malloc のロック（musl の `__malloc_lock`）を取る。待つ
+//! スレッドを作る主スレッドの malloc の最中にティックが来ると、立ち上げ中の終えるスレッドがそのロックで眠り、主スレッドが
+//! 起こした（約 300 回の起動で 2 回。眠りと起こしが 1 つずつ多い。一時的な計測で、眠ったアドレスが `__malloc_lock` だと
+//! 確かめた）。
 //!
 //! # 出力の順は決まっている
 //!
@@ -34,9 +47,13 @@ fn main() {
     let held = lock.lock().expect("the lock is fresh");
     let printed = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&printed);
+    // 終えるスレッドの closure が始まったことを示すフラグ（モジュールの doc）。
+    let ender_started = Arc::new(AtomicBool::new(false));
+    let ender_started_set = Arc::clone(&ender_started);
     let ender = std::thread::spawn(move || {
+        ender_started_set.store(true, Ordering::SeqCst);
         while !flag.load(Ordering::SeqCst) {
-            std::thread::yield_now();
+            std::hint::spin_loop();
         }
         for _ in 0..8 {
             std::thread::yield_now();
@@ -44,6 +61,9 @@ fn main() {
         println!("m3a-exit-group-waiters-rust: the ender thread calls exit_group(7) now");
         std::process::exit(7);
     });
+    while !ender_started.load(Ordering::SeqCst) {
+        std::hint::spin_loop();
+    }
     let shared = Arc::clone(&lock);
     let flag = Arc::clone(&printed);
     let waiter = std::thread::spawn(move || {
