@@ -27,6 +27,10 @@ pub const SYS_STAT: u64 = 4;
 /// `clock_gettime(clockid, timespec)` の番号（W2-d+。`asm/unistd_64.h` の `__NR_clock_gettime`）。
 pub const SYS_CLOCK_GETTIME: u64 = 228;
 
+/// `clock_settime(clockid, timespec)` の番号（2026-10-20。`asm/unistd_64.h` の `__NR_clock_settime`）。**時計は合わせない**
+/// ——`CLOCK_REALTIME` は `-EPERM`、ほかは `-EINVAL`。
+pub const SYS_CLOCK_SETTIME: u64 = 227;
+
 /// `nanosleep(req, rem)` の番号（W2-d+。`asm/unistd_64.h` の `__NR_nanosleep`）。
 pub const SYS_NANOSLEEP: u64 = 35;
 

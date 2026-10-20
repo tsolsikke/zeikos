@@ -21,6 +21,10 @@ pub const DT_REG: u8 = 8;
 /// **`CLOCK_REALTIME` は `0` である**）。
 pub const CLOCK_MONOTONIC: u64 = 1;
 
+/// `CLOCK_REALTIME`（Linux x86-64 の値。同じ `bits/time.h` が `0` と定義している）。**壁の時計である**（2026-10-20。
+/// 起動時に RTC から読んだ秒に、単調なティックの経過を足す。`crate::machine::pc::rtc`）。
+pub const CLOCK_REALTIME: u64 = 0;
+
 /// `TIOCGWINSZ`——端末の大きさを訊く要求（e-1）。**Linux の値をそのまま使う**
 /// （実測。`/usr/include/asm-generic/ioctls.h` の `0x5413`）。
 pub const TIOCGWINSZ: u64 = 0x5413;

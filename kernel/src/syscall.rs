@@ -40,6 +40,7 @@ use core::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, AtomicUsize, Ordering}
 use common::addr::{DirectMap, PhysAddr};
 
 use crate::abi::linux::x86_64::SYS_CLOCK_NANOSLEEP;
+use crate::abi::linux::x86_64::SYS_CLOCK_SETTIME;
 use crate::abi::linux::x86_64::{
     stat_bytes, ARCH_GET_FS, ARCH_GET_GS, ARCH_SET_FS, ARCH_SET_GS, STAT_LEN, SYS_ACCEPT,
     SYS_ACCEPT4, SYS_ARCH_PRCTL, SYS_BIND, SYS_BRK, SYS_CLOCK_GETTIME, SYS_CLONE, SYS_CLOSE,
@@ -60,10 +61,10 @@ use crate::abi::linux::{
     fb_var_screeninfo_bytes, parse_cmsg_one_fd, parse_drm_clip_rect, parse_iovec, parse_msghdr,
     parse_pollfd, parse_sockaddr_un, parse_timespec, set_pollfd_revents, timespec_bytes,
     winsize_bytes, CmsgOneFd, Dirent64, DrmClipRect, FbBitfield, FbFixScreeninfo, FbVarScreeninfo,
-    Iovec, Msghdr, Stat, Timespec, Winsize, AF_UNIX, CLOCK_MONOTONIC, CMSG_ONE_FD_LEN,
-    DIRENT64_ALIGN, DIRENT64_HEADER_LEN, DRM_CLIP_RECT_LEN, DT_DIR, DT_REG, DT_UNKNOWN,
-    EFD_CLOEXEC, EFD_NONBLOCK, EFD_SEMAPHORE, EPOLL_CLOEXEC, EPOLL_CTL_ADD, EPOLL_CTL_DEL,
-    EPOLL_CTL_MOD, EPOLL_EVENT_LEN, FBIOGET_FSCREENINFO, FBIOGET_VSCREENINFO,
+    Iovec, Msghdr, Stat, Timespec, Winsize, AF_UNIX, CLOCK_MONOTONIC, CLOCK_REALTIME,
+    CMSG_ONE_FD_LEN, DIRENT64_ALIGN, DIRENT64_HEADER_LEN, DRM_CLIP_RECT_LEN, DT_DIR, DT_REG,
+    DT_UNKNOWN, EFD_CLOEXEC, EFD_NONBLOCK, EFD_SEMAPHORE, EPOLL_CLOEXEC, EPOLL_CTL_ADD,
+    EPOLL_CTL_DEL, EPOLL_CTL_MOD, EPOLL_EVENT_LEN, FBIOGET_FSCREENINFO, FBIOGET_VSCREENINFO,
     FB_TYPE_PACKED_PIXELS, FB_VISUAL_TRUECOLOR, FD_CLOEXEC, FIONBIO, INPUT_EVENT_LEN, IOVEC_LEN,
     ITIMERSPEC_LEN, MAP_ANONYMOUS, MAP_FIXED, MAP_FIXED_NOREPLACE, MFD_ALLOW_SEALING, MFD_CLOEXEC,
     MFD_NAME_MAX_LEN, MSGHDR_CONTROLLEN, MSGHDR_LEN, MSG_CMSG_CLOEXEC, MSG_DONTWAIT, MSG_NOSIGNAL,
@@ -954,6 +955,7 @@ unsafe fn dispatch(
             // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
             unsafe { sys_clock_gettime(args[0], args[1], page_table_root, direct_map) }
         }
+        SYS_CLOCK_SETTIME => sys_clock_settime(args[0]),
         SYS_CLOCK_NANOSLEEP => {
             // SAFETY: 同上。
             unsafe {
@@ -1788,10 +1790,15 @@ unsafe fn write_eventfd(
 
 /// [`SYS_TIMERFD_CREATE`] の本体（2026-10-19）。**止まった timerfd を作り、最小の空き fd に置く。**
 ///
-/// 時計は `CLOCK_MONOTONIC` だけを受ける（ほかは `-EINVAL`。`CLOCK_REALTIME` は壁の時計の課題の範囲）。`flags` は
+/// 時計は `CLOCK_MONOTONIC` だけを受ける（ほかは `-EINVAL`。**`CLOCK_REALTIME` は名前のある行を 1 行出して `-EINVAL`**
+/// ——壁の時計は持つが、その絶対の締切は打つものが無いので受けない。2026-10-20。`ADR-0090`）。`flags` は
 /// `TFD_CLOEXEC`（fd の `FD_CLOEXEC` の印に持つ（2026-10-20。`exec` が無いので効き目は無い））と `TFD_NONBLOCK` を受け、ほかのビットは `-EINVAL`。表が尽きれば `-ENOMEM`。
 #[inline(never)]
 fn timerfd_create_from_ring3(clockid: u64, flags: u64) -> u64 {
+    if clockid == CLOCK_REALTIME {
+        refuse_realtime_deadline("timerfd_create");
+        return (-EINVAL) as u64;
+    }
     if clockid != CLOCK_MONOTONIC || flags & !(TFD_CLOEXEC | TFD_NONBLOCK) != 0 {
         return (-EINVAL) as u64;
     }
@@ -6440,13 +6447,39 @@ unsafe fn sys_getdents64(
 /// 1 レコードの作業領域。**名前は ext2 の上限（255）まで。**
 const DIRENT64_MAX_RECORD: usize = (DIRENT64_HEADER_LEN + 255 + 1).next_multiple_of(DIRENT64_ALIGN);
 
-/// `clock_gettime`（W2-d+）。**`CLOCK_MONOTONIC` だけを答える。**
+/// `CLOCK_REALTIME` の絶対の締切を断ったことを、名前のある行で残す（2026-10-20。`ADR-0090`）。**黙って `-EINVAL` に
+/// しない**——壁の時計を持った後なので、受けると思って打つプログラムが出たときに、どこで断られたかを読めるようにする。
+#[inline(never)]
+#[cold]
+fn refuse_realtime_deadline(what: &str) {
+    serial_line(format_args!(
+        "clock: {what} on CLOCK_REALTIME was refused with -EINVAL (absolute deadlines are taken on CLOCK_MONOTONIC \
+         only; ADR-0090)"
+    ));
+}
+
+/// `clock_settime(clockid, timespec)`（2026-10-20）。**時計は合わせない。** `CLOCK_REALTIME` は `-EPERM`（Linux の
+/// 特権の無いプロセスと同じ答え）、ほかの時計は `-EINVAL`（Linux も単調な時計は合わせられない）。
 ///
-/// # `CLOCK_MONOTONIC` だけを実装する
+/// **`timespec` は読まない**——Linux は `CLOCK_REALTIME` で先に `timespec` を読み、読めなければ `-EFAULT`、範囲の外なら
+/// `-EINVAL` を返してから権限を見る。**ZeikOS は権限の答えだけを返す**（読むと新しい `unsafe` が要り、合わせない時計の
+/// ために足すほどの理由が無い）。
+fn sys_clock_settime(clockid: u64) -> u64 {
+    if clockid == CLOCK_REALTIME {
+        (-EPERM) as u64
+    } else {
+        (-EINVAL) as u64
+    }
+}
+
+/// `clock_gettime`（W2-d+）。**`CLOCK_MONOTONIC` と `CLOCK_REALTIME` を答える。**
 ///
-/// **壁時計（`CLOCK_REALTIME` = 0）は持てない**——**ZeikOS に実時刻の出所が無い**
-/// （RTC は未実装。`docs/deferred-decisions.md` の「時刻の欄」）。
-/// **0 を返して黙って答えると嘘の時刻が広がる**ので、`-EINVAL` を返す。
+/// # `CLOCK_REALTIME` は、起動時に RTC が読めたときだけ答える（2026-10-20）
+///
+/// **壁の時計は、起動時に RTC から読んだ秒に、単調なティックの経過を足したものである**
+/// （`crate::machine::pc::boot_wall_clock`、`common::time::wall_clock_from`）。**読めなかったら `-EINVAL` を返す**
+/// ——**0 を返して黙って答えると嘘の時刻が広がる**（以前からの決まり。RTC が無かった間は、いつも `-EINVAL` だった）。
+/// ほかの時計（`_COARSE`・`BOOTTIME` など）は打つものが無いので受けない（`-EINVAL`）。
 ///
 /// # 秒とナノ秒は 1 本のティックから導く
 ///
@@ -6465,17 +6498,26 @@ unsafe fn sys_clock_gettime(
     page_table_root: PhysAddr,
     direct_map: DirectMap,
 ) -> u64 {
-    if clockid != CLOCK_MONOTONIC {
-        return (-EINVAL) as u64;
-    }
     let ticks = crate::arch::x86_64::monotonic_ticks();
-    // 破壊テスト (W2-d+, clock-goes-backwards): 呼ぶたびに減る値を返す。**単調さが壊れる。**
-    // **値はもっともらしいまま進むので、2 回読んで比べる検算でしか検出されない。**
-    #[cfg(feature = "clock-goes-backwards")]
-    let ticks = u64::MAX - ticks;
     let hz = u64::from(crate::machine::pc::timer_frequency_hz());
     // **換算はホストで固定してある**（`common::time`）。
-    let (secs, nsecs) = common::time::timespec_from_ticks(ticks, hz);
+    let (secs, nsecs) = match clockid {
+        CLOCK_MONOTONIC => {
+            // 破壊テスト (W2-d+, clock-goes-backwards): 呼ぶたびに減る値を返す。**単調さが壊れる。**
+            // **値はもっともらしいまま進むので、2 回読んで比べる検算でしか検出されない。**
+            #[cfg(feature = "clock-goes-backwards")]
+            let ticks = u64::MAX - ticks;
+            common::time::timespec_from_ticks(ticks, hz)
+        }
+        CLOCK_REALTIME => {
+            let Some((seconds_at_read, ticks_at_read)) = crate::machine::pc::boot_wall_clock()
+            else {
+                return (-EINVAL) as u64;
+            };
+            common::time::wall_clock_from(seconds_at_read, ticks_at_read, ticks, hz)
+        }
+        _ => return (-EINVAL) as u64,
+    };
 
     // **値はここで決め、`struct timespec` の欄へ書くのは abi の `timespec_bytes` に任せる**（`ADR-0071` の決定 1 の 2 で
     // 分けた。2026-09-30）。**符号つきへ移しても値は変わらない**——秒の数はティックの数を周波数で割った値で、
@@ -8060,8 +8102,6 @@ pub fn spawn_allocator_waits() -> (u64, u64) {
 
 /// `clock_nanosleep` の `flags`——`req` を絶対の時刻として読む（`TIMER_ABSTIME`）。
 const TIMER_ABSTIME: u64 = 1;
-/// `CLOCK_REALTIME`。**このカーネルは壁の時計を持たない**ので、相対の眠りだけを受け、絶対の時刻は `-EINVAL`。
-const CLOCK_REALTIME: u64 = 0;
 
 /// `clock_nanosleep(clockid, flags, req, rem)` の本体（2026-10-07。`ADR-0081` の続き）。**musl の `nanosleep` と Rust の
 /// `std::thread::sleep` は、`nanosleep` ではなくこれを打つ**（Seinas の fbdev の裏側が、絵を出したまま待つのに使う。実測で
@@ -8069,7 +8109,8 @@ const CLOCK_REALTIME: u64 = 0;
 ///
 /// - `flags` が 0: 相対。`nanosleep` と同じ（`CLOCK_REALTIME` でも `CLOCK_MONOTONIC` でも）。
 /// - `flags` に `TIMER_ABSTIME`: `req` は `CLOCK_MONOTONIC` の絶対の時刻（`clock_gettime` と同じ、起動からのティックの時計）。
-///   過ぎていれば眠らずに 0。`CLOCK_REALTIME` の絶対は、壁の時計が無いので `-EINVAL`。
+///   過ぎていれば眠らずに 0。**`CLOCK_REALTIME` の絶対は `-EINVAL` で、名前のある行を 1 行出す**（2026-10-20。壁の時計は
+///   持つが、絶対の締切は打つものが無いので受けない。`ADR-0090`）。
 /// - `rem` は書かない（割り込まれて早く戻る道が無い）。ほかの時計と知らないフラグは `-EINVAL`。
 ///
 /// # Safety
@@ -8092,6 +8133,7 @@ unsafe fn sys_clock_nanosleep(
     }
     let absolute = flags & TIMER_ABSTIME != 0;
     if absolute && clockid == CLOCK_REALTIME {
+        refuse_realtime_deadline("clock_nanosleep with TIMER_ABSTIME");
         return (-EINVAL) as u64;
     }
     // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。

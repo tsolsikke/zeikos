@@ -32,3 +32,4 @@ pub use irq::{
 };
 pub use lapic_timer::switch_to_local_timer;
 pub use pci::{RegisterCell, RegisterWindow, VirtioBlkLocation};
+pub use rtc::boot_wall_clock;
