@@ -1228,12 +1228,27 @@ unsafe fn dispatch(
         }
         // 失敗は -errno（-1..-4095）。**知らない番号は数えて、最後の番号を控える**（2026-10-06。プロセスの終わりの行に
         // 出す。Linux のプログラムが、知らない番号を 1 つも打たずに終わったことを見るため）。
+        //
+        // **プロセスの最初の 1 回は、その場で 1 行出す**（2026-10-21）。終わらないプログラム（Seinas のコンポジタ）は、
+        // 終わりの行が出る前に止められるので、数が読めない。2 回目からは数えるだけである。
         _ => {
-            state().unknown_numbers.fetch_add(1, Ordering::SeqCst);
+            if state().unknown_numbers.fetch_add(1, Ordering::SeqCst) == 0 {
+                report_first_unknown_number(number);
+            }
             state().last_unknown_number.store(number, Ordering::SeqCst);
             (-ENOSYS) as u64
         }
     }
+}
+
+/// プロセスが最初に打った、知らない番号を 1 行出す（2026-10-21）。**別の関数にしてあるのは、入口の枠を広げないため。**
+#[inline(never)]
+#[cold]
+fn report_first_unknown_number(number: u64) {
+    serial_line(format_args!(
+        "syscall: the first system call the kernel does not know in this process was number {number} (-ENOSYS); \
+         later ones are only counted (the count is on the end-of-process line)"
+    ));
 }
 
 /// 破壊テスト `flush-waits-without-device` の締切（TSC サイクル）。**約 0.3 秒**（実測で TSC は約 3.5GHz）。
