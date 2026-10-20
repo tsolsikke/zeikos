@@ -59,5 +59,6 @@ record wl-nonblock-rust
 record wl-epoll-rust
 # 主スレッドが標準入力を読んで眠るイメージ。書き手を開いたままのパイプを渡す（ZeikOS の起動時の確かめと同じ形）。
 record_with_open_stdin wl-exit-group-waits-rust
+record wl-memfd-seals-rust
 record m1-c
 record m3a-c

@@ -1349,3 +1349,10 @@ process-end-wakes-only-futex-test = []
 # 破壊（2026-10-20。ADR-0085 の Addendum）: 待ちの所が終わりの印を見ない。起こされた主スレッドがパイプで眠り直し、起動が止まる。
 # `--critical-test wait-ignores-process-end`。
 wait-ignores-process-end-test = []
+# 破壊（2026-10-20。ADR-0065 の Addendum）: memfd_create が MFD_ALLOW_SEALING を見ず、いつも封を足せる形にする。確かめの
+# イメージ（wl-memfd-seals-rust）の、MFD_ALLOW_SEALING 無しの memfd へ封が足せてしまい、イメージが 93 で終わる。
+# `--critical-test memfd-ignores-allow-sealing`。
+memfd-ignores-allow-sealing-test = []
+# 破壊（2026-10-20。ADR-0065 の Addendum）: 足した封を持たない。F_GET_SEALS が 0 を返し、イメージが 94 で終わる。
+# `--critical-test memfd-seals-not-kept`。
+memfd-seals-not-kept-test = []

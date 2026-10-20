@@ -1,0 +1,20 @@
+wl-memfd-seals-rust: main starts with 4 argument(s)
+wl-memfd-seals-rust: memfd_create with an unknown flag (0x100) gives -22
+wl-memfd-seals-rust: a 249-byte name is taken = true
+wl-memfd-seals-rust: a 250-byte name gives -22
+wl-memfd-seals-rust: a memfd with MFD_ALLOW_SEALING starts with seals 0
+wl-memfd-seals-rust: adding F_SEAL_SHRINK|F_SEAL_GROW gives 0 and the seals become 6
+wl-memfd-seals-rust: adding F_SEAL_SEAL gives 0 and the seals become 7
+wl-memfd-seals-rust: adding F_SEAL_WRITE after F_SEAL_SEAL gives -1
+wl-memfd-seals-rust: adding an unknown seal bit (0x40) gives -22
+wl-memfd-seals-rust: adding F_SEAL_EXEC gives 0 and the seals become 62
+wl-memfd-seals-rust: a memfd without MFD_ALLOW_SEALING starts with seals 1 and adding a seal gives -1
+wl-memfd-seals-rust: sealing an eventfd gives -22 and asking its seals gives -22
+wl-memfd-seals-rust: fstat of an 8192-byte memfd gives mode 100777, size 8192, blksize 4096, blocks 16
+wl-memfd-seals-rust: F_GETFD of fds made with O_CLOEXEC, SOCK_CLOEXEC, EFD_CLOEXEC, TFD_CLOEXEC, EPOLL_CLOEXEC and MFD_CLOEXEC gives 1 1 1 1 1 1
+wl-memfd-seals-rust: F_GETFD of fds made without them gives 0 0 0
+wl-memfd-seals-rust: F_DUPFD_CLOEXEC gives a copy with 1 and F_DUPFD a copy with 0
+wl-memfd-seals-rust: F_SETFD 1 gives 0 and then 1; F_SETFD 0 gives 0 and then 0
+wl-memfd-seals-rust: F_GETFD of a socket from accept4 with SOCK_CLOEXEC gives 1
+wl-memfd-seals-rust: F_GETFD of fds received with MSG_CMSG_CLOEXEC and without it gives 1 0
+exit status: 4

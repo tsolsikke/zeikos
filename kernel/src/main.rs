@@ -6844,6 +6844,14 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
         ));
         // **プロセスの終わりの印が、パイプと epoll の待ちを起こす**（2026-10-20。`ADR-0085` の Addendum）。
         verify_process_end_wakes(logger);
+        // **memfd のフラグと名前・封・fstat・作り方ごとの `FD_CLOEXEC`**（2026-10-20。`ADR-0065` の Addendum）。判定は
+        // `cargo xtask run --linux-socket-test`（Linux の参照と突き合わせる）と、破壊テスト 2 つ（`--critical-test
+        // memfd-ignores-allow-sealing`・`memfd-seals-not-kept`）。
+        verify_linux_program(
+            logger,
+            b"/bin/linux/wl-memfd-seals-rust",
+            b"wl-memfd-seals-rust\0/etc/motd\0a\0b\0",
+        );
     }
 }
 
@@ -14496,6 +14504,17 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "epoll-level-reported-once-test",
         cfg!(feature = "epoll-level-reported-once-test"),
         "epoll がどの項目も一度返したら止める",
+    ),
+    // memfd の封（2026-10-20。`ADR-0065` の Addendum）。
+    (
+        "memfd-ignores-allow-sealing-test",
+        cfg!(feature = "memfd-ignores-allow-sealing-test"),
+        "memfd_create が MFD_ALLOW_SEALING を見ず、いつも封を足せる形にする",
+    ),
+    (
+        "memfd-seals-not-kept-test",
+        cfg!(feature = "memfd-seals-not-kept-test"),
+        "足した封を持たない",
     ),
     // プロセスの終わりの印が、どの待ちも起こす（2026-10-20。`ADR-0085` の Addendum）。
     (

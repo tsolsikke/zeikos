@@ -269,6 +269,7 @@ pub const PATH_RULES: &[PathRule] = &[
             "linux-programs/wl-nonblock-rust.rs",
             "linux-programs/wl-epoll-rust.rs",
             "linux-programs/wl-exit-group-waits-rust.rs",
+            "linux-programs/wl-memfd-seals-rust.rs",
         ],
         reach: Reach::Families(&[Family::Ipc, Family::Interrupts]),
     },

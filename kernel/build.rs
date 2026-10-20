@@ -644,6 +644,9 @@ const LINUX_PROGRAMS: &[&str] = &[
     // **プロセスの終わりの印が、パイプと epoll の待ちを起こす**（2026-10-20。`ADR-0085` の Addendum。`linux-socket-test` の
     // ビルドだけが起動時に起こす）。
     "wl-exit-group-waits-rust",
+    // **memfd のフラグと名前・封・fstat・作り方ごとの FD_CLOEXEC**（2026-10-20。`ADR-0065` の Addendum。`linux-socket-test` の
+    // ビルドだけが起動時に起こす）。
+    "wl-memfd-seals-rust",
     // **ZeikOS と Linux で結果が違うイメージ**（マップ中の memfd を縮める ftruncate。`memfd-shrink-test` のビルドだけが起こす）。
     "m3a-memfd-shrink-rust",
 ];

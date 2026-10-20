@@ -1031,6 +1031,32 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: true,
         min_heartbeats: None,
     },
+    // **memfd の封の破壊テスト 2 件（2026-10-20。`ADR-0065` の Addendum）。** どちらも確かめのイメージ（`wl-memfd-seals-rust`）が
+    // 違いを自分で見つけ、名指しの行を出して引数の数でない状態で終わる。
+    CriticalTest {
+        name: "memfd-ignores-allow-sealing",
+        feature: "linux-socket-test,memfd-ignores-allow-sealing-test",
+        expected_markers: &[
+            "a memfd made without MFD_ALLOW_SEALING took F_SEAL_SHRINK; exiting with 93",
+            "ended Ok(Exited(93)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &["a memfd without MFD_ALLOW_SEALING starts with seals 1", "zash: ready"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    CriticalTest {
+        name: "memfd-seals-not-kept",
+        feature: "linux-socket-test,memfd-seals-not-kept-test",
+        expected_markers: &[
+            "F_GET_SEALS returned 0 after F_SEAL_SHRINK|F_SEAL_GROW were added; exiting with 94",
+            "ended Ok(Exited(94)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &["adding F_SEAL_SHRINK|F_SEAL_GROW gives 0 and the seals become 6", "zash: ready"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
 ];
 
 /// 逆アセンブル（`objdump -d` の AT&T 記法）の中で、棚卸しが「使わない」ことに依っているアドレス指定と
@@ -23777,16 +23803,15 @@ fn cmd_linux_socket_test() -> Result<()> {
     let epoll_ended = format!("spawn: /bin/linux/{epoll} ended");
     let waits = "wl-exit-group-waits-rust";
     let waits_ended = format!("spawn: /bin/linux/{waits} ended");
+    let memfd = "wl-memfd-seals-rust";
+    let memfd_ended = format!("spawn: /bin/linux/{memfd} ended");
     let deadline = Instant::now() + PIPE_TEST_TIMEOUT;
     loop {
         if child.was_cut() {
             break;
         }
         let text = read_lossy(&serial_log);
-        if text.contains("process-end: /bin/linux/wl-exit-group-waits-rust")
-            || text.contains("[ERROR]")
-            || Instant::now() >= deadline
-        {
+        if text.contains(&memfd_ended) || text.contains("[ERROR]") || Instant::now() >= deadline {
             break;
         }
         metrics::sleep_poll(PANIC_TEST_POLL_INTERVAL);
@@ -23918,6 +23943,19 @@ fn cmd_linux_socket_test() -> Result<()> {
         && roused_epoll.is_some_and(|n| n >= 1)
         && left_pipe.is_some_and(|n| n >= 1)
         && (left_epoll.is_some_and(|n| n >= 1) || parked >= 1);
+    // **memfd のフラグと名前・封・fstat・作り方ごとの `FD_CLOEXEC`**（2026-10-20。`ADR-0065` の Addendum）。終わり方と Linux の
+    // 参照で見る（封と `F_GETFD` の値が行に出る）。
+    let memfd_ran = serial.contains(&format!("{memfd_ended} (Exited(4))"));
+    let memfd_matched = linux_program_output_matches(
+        &workspace_root,
+        memfd,
+        &serial,
+        LinuxReferenceEnvironment::ExactCount,
+    )?;
+    let memfd_unknown_free = serial
+        .lines()
+        .find(|line| line.contains(&memfd_ended))
+        .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
     let no_error = !serial.contains("[ERROR]");
     println!("{context}: {name} ended with status 4 = {ran}");
     println!(
@@ -23957,6 +23995,11 @@ fn cmd_linux_socket_test() -> Result<()> {
          (roused pipe {roused_pipe:?}, epoll {roused_epoll:?}; left pipe {left_pipe:?}, epoll {left_epoll:?}; the \
          epoll thread reaped while parked at a wait {parked})"
     );
+    println!("{context}: {memfd} ended with status 4 = {memfd_ran}");
+    println!(
+        "{context}: {memfd} printed what Linux prints (linux-programs/reference/{memfd}.txt) = {memfd_matched}"
+    );
+    println!("{context}: {memfd} hit no number the kernel does not know = {memfd_unknown_free}");
     println!("{context}: no [ERROR] line = {no_error}");
     if ran
         && matched
@@ -23974,6 +24017,9 @@ fn cmd_linux_socket_test() -> Result<()> {
         && waits_matched
         && waits_unknown_free
         && process_end_woke
+        && memfd_ran
+        && memfd_matched
+        && memfd_unknown_free
         && no_error
     {
         println!("{context}: PASS");
@@ -23986,6 +24032,7 @@ fn cmd_linux_socket_test() -> Result<()> {
                 || l.contains(nonblock)
                 || l.contains(epoll)
                 || l.contains(waits)
+                || l.contains(memfd)
                 || l.contains("[ERROR]")
         })
         .take(48)
@@ -35117,7 +35164,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 67,
-    full: 547,
+    full: 549,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` とスクリプトのグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

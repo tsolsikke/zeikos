@@ -182,7 +182,14 @@ pub fn create(allow_sealing: bool) -> Option<u8> {
             shms[index] = Shm::EMPTY;
             shms[index].in_use = true;
             shms[index].refs = 1;
-            shms[index].seals = initial_seals(allow_sealing);
+            // 破壊テスト (2026-10-20, memfd-ignores-allow-sealing-test): `MFD_ALLOW_SEALING` を見ず、いつも封を足せる形にする。
+            // 確かめのイメージ（wl-memfd-seals-rust）の、`MFD_ALLOW_SEALING` 無しの memfd への `F_ADD_SEALS` が 0 で通り、
+            // イメージが名指しの行を出して 93 で終わる。
+            shms[index].seals = if cfg!(feature = "memfd-ignores-allow-sealing-test") {
+                0
+            } else {
+                initial_seals(allow_sealing)
+            };
             CREATED.fetch_add(1, Ordering::Relaxed);
             return Some(index as u8);
         }
@@ -306,7 +313,11 @@ pub fn add_seals(shm: u8, add: u32) -> Option<Result<u32, SealError>> {
     }
     let result = added_seals(shms[index].seals, add);
     if let Ok(seals) = result {
-        shms[index].seals = seals;
+        // 破壊テスト (2026-10-20, memfd-seals-not-kept-test): 足した封を持たない（2026-10-19 までの、受けて 0 を返すだけの形）。
+        // 確かめのイメージの `F_GET_SEALS` が 0 を返し、イメージが名指しの行を出して 94 で終わる。
+        if !cfg!(feature = "memfd-seals-not-kept-test") {
+            shms[index].seals = seals;
+        }
     }
     Some(result)
 }
