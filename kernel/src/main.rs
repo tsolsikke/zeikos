@@ -5456,6 +5456,12 @@ fn start_timer(
     // 割り込みコントローラのレジスタをコピー、起動時のユーザープログラムを走らせ終えた後の表である。
     survey_mappings(logger, "before interrupts are enabled");
 
+    // --- 5.9 壁の時計を読む（2026-10-20。`kernel::machine::pc::rtc`）---
+    //
+    // **割り込みを許す直前に 1 回読む**——単調なティックはこの後の sti から数え始めるので、読んでから最初のティック
+    // までが 10 ms ほどで済む。**値は起動ログに出さない**（参照が時刻で揺れる）。形だけを出す。
+    read_wall_clock(logger, fadt.rtc_century_register);
+
     // --- 6. sti してループへ入る ---
     // SAFETY: 7 項目を検証し、PIT を設定し、IRQ0 のマスクを外した。
     // ベクタ 0x20 のハンドラはティックを数えて EOI を送る。
@@ -5497,6 +5503,33 @@ fn start_timer(
     }
 
     cpu::halt_forever();
+}
+
+/// 壁の時計を RTC から 1 回読み、形だけを起動ログに出す（2026-10-20）。**読めなければ `[WARN]` を 1 行出し、壁の時計を
+/// 持たずに続ける**——`CLOCK_REALTIME` は今までどおり `-EINVAL` を返す（0 や推した値では答えない）。
+fn read_wall_clock(logger: &mut Logger<Serial>, century_register: Option<u8>) {
+    use kernel::machine::pc::rtc;
+    match rtc::read_at_boot(century_register) {
+        Ok((_, raw)) => {
+            let binary = raw.status_b & rtc::STATUS_B_BINARY != 0;
+            let twenty_four = raw.status_b & rtc::STATUS_B_24_HOUR != 0;
+            match century_register {
+                Some(register) => logger.info(format_args!(
+                    "rtc: the wall clock was read at boot (binary={binary}, 24-hour={twenty_four}, century register \
+                     {register:#04x} from the FADT); CLOCK_REALTIME counts from it with the monotonic ticks (the value \
+                     is not logged, so the boot log does not depend on the date)"
+                )),
+                None => logger.info(format_args!(
+                    "rtc: the wall clock was read at boot (binary={binary}, 24-hour={twenty_four}, no century register \
+                     in the FADT, so the century is taken as 20); CLOCK_REALTIME counts from it with the monotonic ticks \
+                     (the value is not logged, so the boot log does not depend on the date)"
+                )),
+            }
+        }
+        Err(error) => logger.warn(format_args!(
+            "rtc: could not read the wall clock at boot ({error:?}); CLOCK_REALTIME stays unavailable (-EINVAL)"
+        )),
+    }
 }
 
 /// i8042 を検証してから IRQ1 を解禁する（M4-e）。**i8042 が無ければ、開けずに `false` を返す**

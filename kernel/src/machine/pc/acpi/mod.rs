@@ -330,6 +330,9 @@ pub struct FadtFacts {
     /// **読めるポートが在るときだけ `Some` である**——**「無い」と「読めない形」は
     /// どちらも `None` で、理由はログに出す。**
     pub pm_timer: Option<crate::machine::pc::pmtimer::PmTimer>,
+    /// RTC の世紀のレジスタ（2026-10-20。壁の時計）。**FADT が「持たない」（0）と言うか、FADT が無ければ `None`**
+    /// ——RTC は世紀を 20 とみなして読む（[`crate::machine::pc::rtc`]）。
+    pub rtc_century_register: Option<u8>,
 }
 
 impl FadtFacts {
@@ -338,6 +341,7 @@ impl FadtFacts {
         Self {
             i8042: I8042Presence::NotStated,
             pm_timer: None,
+            rtc_century_register: None,
         }
     }
 }
@@ -1022,6 +1026,7 @@ fn read_fadt(
     FadtFacts {
         i8042: read_i8042_flag(logger, &table),
         pm_timer: read_pm_timer(logger, &buffer[..length], table.revision),
+        rtc_century_register: table.century_register,
     }
 }
 

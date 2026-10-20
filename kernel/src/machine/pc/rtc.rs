@@ -19,9 +19,26 @@
 //! # 純粋な部分と、ポートを叩く部分を分ける
 //!
 //! この中の関数は、レジスタを 1 つ読む関数を引数で受ける。**ホストのテストは偽の CMOS を渡して、更新中・読む途中の
-//! 秒の繰り上がり・BCD・12 時間・世紀を固定する。**
+//! 秒の繰り上がり・BCD・12 時間・世紀を固定する。** **ポートを叩くのは [`read_register`] の 1 関数だけである**
+//! （`xtask` の直にポートを読み書きする所の許可の表に、この 1 行が載る）。
+//!
+//! # 起動時に 1 回だけ読む
+//!
+//! **BSP が、割り込みを許す直前（`start_timer` の sti の前）に 1 回読み、(秒, そのときの単調なティック) を控える**
+//! （[`read_at_boot`]・[`boot_wall_clock`]）。壁の時計の今は、控えた秒に、そこからのティックの経過を足して求める
+//! （`common::time::wall_clock_from`）。**読み直さない**——ティックの経過で進めるので、RTC の秒の切り捨て（0〜1 秒）
+//! より大きくはずれない。**時計を合わせる道（`clock_settime`）は持たない**ので、壁の時計は飛ばない。
 
+use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+use common::arch::x86_64::port::{inb, outb};
+use common::critical::InterruptGuard;
 use common::time::{unix_seconds, CivilTime};
+
+/// CMOS の番号のポート。**bit 7 は NMI を止めるビットで、立てない**（Linux と同じ）。
+const INDEX_PORT: u16 = 0x70;
+/// CMOS の値のポート。
+const DATA_PORT: u16 = 0x71;
 
 /// 秒のレジスタ。
 pub const REGISTER_SECONDS: u8 = 0x00;
@@ -196,6 +213,65 @@ pub fn read_unix_seconds(
     let raw = read_stable(read, century_register)?;
     let civil = decode(raw)?;
     unix_seconds(civil).map_err(|_| RtcError::OutOfRange { raw })
+}
+
+/// CMOS のレジスタを 1 つ読む。**ポートを叩く唯一の所である。**
+///
+/// **番号を書いて値を読む 2 手は、割り込みに挟まれてはならない**——挟まれた先が別の番号を書くと、違うレジスタを読む。
+/// [`InterruptGuard`] の内側で行う。
+pub fn read_register(register: u8) -> u8 {
+    let _critical = InterruptGuard::enter();
+    // SAFETY: 0x70 と 0x71 は PC の CMOS の番号と値のポートである（ACPI の FADT の `CENTURY` の欄も、この CMOS を前提に
+    // している）。番号は 0〜0x7F に切り詰め、NMI を止める bit 7 は立てない。読むだけで、時計の設定は書かない。
+    // 番号を書いてから値を読むまでは、この CPU では割り込みに挟まれない（上の `_critical`）。ほかの CPU は CMOS に
+    // 触らない（読むのは BSP の起動時の 1 回だけである。[`read_at_boot`]）。
+    unsafe {
+        outb(INDEX_PORT, register & LAST_REGISTER);
+        inb(DATA_PORT)
+    }
+}
+
+/// 起動時の壁の時刻の秒と、読んだときの単調なティック（[`record_boot_wall_clock`] が書く）。
+static BOOT_WALL_CLOCK_SECONDS: AtomicU64 = AtomicU64::new(0);
+static BOOT_WALL_CLOCK_TICKS: AtomicU64 = AtomicU64::new(0);
+/// 上の 2 つが書かれたか。**偽なら壁の時計は無い**（`CLOCK_REALTIME` は `-EINVAL`）。
+static BOOT_WALL_CLOCK_KNOWN: AtomicBool = AtomicBool::new(false);
+
+/// 起動時に RTC を 1 回読む。**読めたら (Unix 秒, 読んだままの値) を返し、控える。**
+///
+/// # 契約（境界の関数。2026-10-20）
+///
+/// - BSP が、起動時に 1 回だけ呼ぶ。ほかの CPU も、ユーザーのプロセスも、まだ壁の時計を読まない時点である。
+/// - `century_register` は FADT の `CENTURY`（[`crate::machine::pc::acpi::FadtFacts`]）。
+/// - 読めなければ何も控えない（[`boot_wall_clock`] は `None` のまま）。
+pub fn read_at_boot(century_register: Option<u8>) -> Result<(u64, RawRtc), RtcError> {
+    let raw = read_stable(read_register, century_register)?;
+    let civil = decode(raw)?;
+    let seconds = unix_seconds(civil).map_err(|_| RtcError::OutOfRange { raw })?;
+    record_boot_wall_clock(seconds, crate::arch::x86_64::monotonic_ticks());
+    Ok((seconds, raw))
+}
+
+fn record_boot_wall_clock(seconds: u64, ticks: u64) {
+    BOOT_WALL_CLOCK_SECONDS.store(seconds, Ordering::Relaxed);
+    BOOT_WALL_CLOCK_TICKS.store(ticks, Ordering::Relaxed);
+    // **値を書いてから、書いたことを公開する。**
+    BOOT_WALL_CLOCK_KNOWN.store(true, Ordering::Release);
+}
+
+/// 起動時の壁の時刻（Unix 秒, 読んだときの単調なティック）。**読めなかったか、まだ読んでいなければ `None`。**
+///
+/// # 契約（境界の関数。2026-10-20）
+///
+/// - どの CPU からも、BKL なしで呼んでよい（アトミックを読むだけ）。
+/// - 一度 `Some` になったら、値は変わらない。
+pub fn boot_wall_clock() -> Option<(u64, u64)> {
+    BOOT_WALL_CLOCK_KNOWN.load(Ordering::Acquire).then(|| {
+        (
+            BOOT_WALL_CLOCK_SECONDS.load(Ordering::Relaxed),
+            BOOT_WALL_CLOCK_TICKS.load(Ordering::Relaxed),
+        )
+    })
 }
 
 #[cfg(test)]

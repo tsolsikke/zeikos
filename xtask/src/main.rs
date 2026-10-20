@@ -25064,6 +25064,13 @@ const DIRECT_PORT_IO_ALLOWLIST: &[DirectPortIoSite] = &[
         item: "write_byte",
         reason: "1 バイトを書く（COM1 の決まったアドレス）",
     },
+    // CMOS の RTC（2026-10-20。壁の時計）。
+    DirectPortIoSite {
+        file: "kernel/src/machine/pc/rtc.rs",
+        item: "read_register",
+        reason: "CMOS のレジスタを 1 つ読む（0x70 に番号を書き、0x71 から読む。読むだけで時計を書かない。呼ぶのは \
+                 起動時の 1 回の読みだけである）",
+    },
     // i8042（キーボードのコントローラ）。
     DirectPortIoSite {
         file: "kernel/src/machine/pc/i8042.rs",
@@ -38337,6 +38344,10 @@ fn qemu_launch_args(opts: &QemuLaunchOptions) -> Vec<OsString> {
         },
         "-no-reboot".into(),
         "-no-shutdown".into(),
+        // **RTC は UTC で、ホストの時刻で進める**（2026-10-20。壁の時計）。QEMU の既定もこの形だが、既定に頼らない
+        // ——カーネルは RTC を UTC として読む（`kernel/src/machine/pc/rtc.rs`）。
+        "-rtc".into(),
+        "base=utc,clock=host".into(),
         // KVM では例外・割り込みの大半が CPU 側で処理され QEMU を経由しない
         // ため、`-d int` の記録はほとんど残らない。デバッグは TCG（既定）、
         // 計測は KVM、という使い分けをすること（troubleshooting.md 参照）。
@@ -39847,6 +39858,12 @@ warning: `kernel` (lib doc) generated 1 warning
 
         assert!(joined.iter().any(|a| a == "-no-reboot"));
         assert!(joined.iter().any(|a| a == "-no-shutdown"));
+        // 壁の時計（2026-10-20）: RTC は UTC で、ホストの時刻で進める。
+        let rtc = joined
+            .iter()
+            .position(|a| a == "-rtc")
+            .expect("-rtc flag missing");
+        assert_eq!(joined[rtc + 1], "base=utc,clock=host");
 
         let d_pos = joined
             .iter()
