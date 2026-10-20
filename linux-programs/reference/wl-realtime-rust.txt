@@ -1,0 +1,6 @@
+wl-realtime-rust: main starts with 4 argument(s)
+wl-realtime-rust: SystemTime::now agrees with CLOCK_REALTIME within 1 s = true
+wl-realtime-rust: CLOCK_REALTIME advanced by at least 1 s over a 1 s sleep = true
+wl-realtime-rust: CLOCK_REALTIME minus CLOCK_MONOTONIC moved by less than 20 ms = true
+wl-realtime-rust: clock_settime(CLOCK_REALTIME) is refused with EPERM = true
+exit status: 4

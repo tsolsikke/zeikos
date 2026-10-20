@@ -236,7 +236,7 @@ Hello, ZeikOS!
 [INFO] virtio-blk: handshake: ACKNOWLEDGE -> DRIVER; capacity=65536 sector(s)
 [INFO] virtio-blk: request limit: 1048576 byte(s) in one data segment (the device declares size_max=None seg_max=Some(254); None means the device does not declare a limit; ours is 1048576)
 [INFO] virtio-blk: queue 0: size 256; ring at phys 0x3c000..0x40000 (4 page(s), 4096-aligned=true); zeroed 16384 byte(s) (0 were nonzero before)
-[INFO] virtio-blk: read sector 2: 512 byte(s) requested, status=0 (OK); checksum=0x0009d01a first bytes=[00, 04, 00, 00, 00, 20, 00, 00]
+[INFO] virtio-blk: read sector 2: 512 byte(s) requested, status=0 (OK); checksum=0x0009fd30 first bytes=[00, 04, 00, 00, 00, 20, 00, 00]
 [INFO] smp: mapped per-CPU stacks for slot 1 at 0xffff81000003a000 (PML4[258], not [257] which a sabotage VA depends on): kernel top 0xffff81000005b000, IST1 top 0xffff810000060000, IST2 top 0xffff810000065000, IST3 top 0xffff81000006a000, IST4 top 0xffff81000006f000, IST5 top 0xffff810000074000; 55 frame(s) consumed (pages plus page tables), guards left unmapped
 [INFO] nx-probe: mapped a probe page at 0xffff828000000000 -> 0x77000 with the execute-disable bit (entry 0x8000000000077001, bit 63 set = true) [read back from the live table]
 [INFO] nx-probe: cpu 0 read the probe page: value=0x4e585f50524f4245 (expected 0x4e585f50524f4245), EFER.NXE=1 (expected 1)
@@ -348,32 +348,32 @@ task: cooperative switch verified
 [INFO] ext2: image 33554432 byte(s) built by "mke2fs 1.47.0 (5-Feb-2023)" and "cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0"
 [INFO] ext2: superblock rev=1 block_size=4096 inode_size=256 inodes=1024 blocks=8192 blocks_per_group=32768 inodes_per_group=1024 first_ino=11 groups=1
 [INFO] ext2: features compat=0x38 incompat=0x2 ro_compat=0x3 (only unknown incompat bits are refused; unknown ro_compat and compat are accepted for reading, as Linux does)
-[INFO] ext2: superblock free counts: blocks=5316 inodes=929
+[INFO] ext2: superblock free counts: blocks=5201 inodes=928
 [INFO] ext2: group 0: block bitmap at 3 inode bitmap at 4 inode table at 5
-[INFO] ext2: group 0 free counts: blocks=5316 inodes=929 dirs=10
+[INFO] ext2: group 0 free counts: blocks=5201 inodes=928 dirs=10
 [INFO] ext2: root inode 2: mode=040755 size=4096 links=9 i_block[0]=69 directory=true
 [INFO] ext2: root directory block 0 of 1: 4096 byte(s) via the direct blocks
 [INFO] ext2: root directory: 9 entr(y/ies): . .. lost+found bin data etc lib root tmp
-[INFO] ext2: resolved /etc/motd to inode 87: 18 byte(s) = "welcome to ZeikOS" (trailing newline trimmed for this line only); matches the seed file byte for byte: true
-[INFO] ext2: /data/direct-max inode=78 size=49152 blocks=12 single indirect=0 last byte=0xce (expected 0xce)
-[INFO] ext2: /data/indirect-first inode=79 size=49153 blocks=13 single indirect=2773 last byte=0xcf (expected 0xcf)
+[INFO] ext2: resolved /etc/motd to inode 88: 18 byte(s) = "welcome to ZeikOS" (trailing newline trimmed for this line only); matches the seed file byte for byte: true
+[INFO] ext2: /data/direct-max inode=79 size=49152 blocks=12 single indirect=0 last byte=0xce (expected 0xce)
+[INFO] ext2: /data/indirect-first inode=80 size=49153 blocks=13 single indirect=2888 last byte=0xcf (expected 0xcf)
 [INFO] fs-image-source: root_filesystem reads from virt 0xffff800001c00000 (phys 0x1c00000)
-[INFO] fs-image-copy: copied 33554432 byte(s) to phys 0x1c00000..0x3c00000 (8192 frame(s), 2MiB-aligned=true), checksum=0x516dfb1e; the checksum covers the first 282624 byte(s) (the superblock through the inode table of group 0); the kernel image is 0x100000..0x452050
+[INFO] fs-image-copy: copied 33554432 byte(s) to phys 0x1c00000..0x3c00000 (8192 frame(s), 2MiB-aligned=true), checksum=0x46325f9e; the checksum covers the first 282624 byte(s) (the superblock through the inode table of group 0); the kernel image is 0x100000..0x452050
 [INFO] fs-sparse: /data/sparse-hole reads block 1 as a full block of zeros = true (the blocks around it have content: head=true tail=true); i_size=12288 i_blocks_512=16
-[INFO] fs-bitmap: allocated one block (number 2876); free counts are now blocks=5315 group0=5315
-[INFO] fs-write: append 1 wrote 200 byte(s) to inode 84; free blocks are now 5315
-[INFO] fs-write: append 2 wrote 4000 byte(s) to inode 84; free blocks are now 5314
-[INFO] fs-truncate: shrank inode 84 to 8192 byte(s); free blocks 5312 -> 5314 (returned 2)
-[INFO] fs-truncate: shrank inode 84 to 4097 byte(s); free blocks 5314 -> 5314 (returned 0)
-[INFO] fs-truncate: shrank inode 84 to 4096 byte(s); free blocks 5314 -> 5315 (returned 1)
-[INFO] fs-truncate: shrank inode 84 to 4000 byte(s); free blocks 5315 -> 5315 (returned 0)
-[INFO] fs-truncate: restored inode 84 to 100 byte(s)
-[INFO] fs-create: created inode 96 under inode 75 and wrote 300 byte(s); free blocks=5314 inodes=928, i_extra_isize=32
-[INFO] fs-create: unlinked inode 96; free blocks=5315 inodes=929
-[INFO] fs-mkdir: created directory inode 96 under inode 75; free blocks=5314 inodes=928 dirs=Ok(11)
+[INFO] fs-bitmap: allocated one block (number 2991); free counts are now blocks=5200 group0=5200
+[INFO] fs-write: append 1 wrote 200 byte(s) to inode 85; free blocks are now 5200
+[INFO] fs-write: append 2 wrote 4000 byte(s) to inode 85; free blocks are now 5199
+[INFO] fs-truncate: shrank inode 85 to 8192 byte(s); free blocks 5197 -> 5199 (returned 2)
+[INFO] fs-truncate: shrank inode 85 to 4097 byte(s); free blocks 5199 -> 5199 (returned 0)
+[INFO] fs-truncate: shrank inode 85 to 4096 byte(s); free blocks 5199 -> 5200 (returned 1)
+[INFO] fs-truncate: shrank inode 85 to 4000 byte(s); free blocks 5200 -> 5200 (returned 0)
+[INFO] fs-truncate: restored inode 85 to 100 byte(s)
+[INFO] fs-create: created inode 97 under inode 76 and wrote 300 byte(s); free blocks=5199 inodes=927, i_extra_isize=32
+[INFO] fs-create: unlinked inode 97; free blocks=5200 inodes=928
+[INFO] fs-mkdir: created directory inode 97 under inode 76; free blocks=5199 inodes=927 dirs=Ok(11)
 [INFO] fs-mkdir: rmdir on a directory that is not empty was refused = true
-[INFO] fs-mkdir: removed directory inode 96; free blocks=5315 inodes=929 dirs=Ok(10)
-[INFO] fs-bitmap: freed block 2876; the image should be back to what was built
+[INFO] fs-mkdir: removed directory inode 97; free blocks=5200 inodes=928 dirs=Ok(10)
+[INFO] fs-bitmap: freed block 2991; the image should be back to what was built
 [INFO] fs-image-flush: wrote 33554432 byte(s) back to the virtio disk
 [INFO] fs-image-ready: the image is in its final state for this run
 [INFO] keymap: the keyboard layout is jis (KEYMAP was not set)
@@ -383,7 +383,7 @@ task: cooperative switch verified
 [INFO] ext2-corrupt: s_rev_level set to 0 (no s_inode_size, no s_first_ino) -> UnsupportedRevision(0)
 [INFO] ext2-corrupt: an unknown INCOMPAT bit set alongside FILETYPE -> UnsupportedIncompatFeatures(64)
 [INFO] ext2-corrupt: s_log_block_size set to 31 (1024 << 31 overflows) -> BadBlockSizeShift(31)
-[INFO] ext2-corrupt: s_blocks_count claiming 65536 blocks (256 MiB) -> ImageTooSmall { needed: 268435456, actual: 11780096 }
+[INFO] ext2-corrupt: s_blocks_count claiming 65536 blocks (256 MiB) -> ImageTooSmall { needed: 268435456, actual: 12251136 }
 [INFO] ext2-corrupt: s_inodes_per_group zeroed (a divisor of zero) -> ZeroPerGroup
 [INFO] ext2-corrupt: group 0's bg_inode_table pointing past the filesystem -> BlockOutOfRange(65535)
 [INFO] ext2-corrupt: the inode table stretched past the end of the image -> InodeTableOutOfRange { inode: 600000, needed: 153620352 }
@@ -398,7 +398,7 @@ task: cooperative switch verified
 [INFO] ext2-corrupt: the single indirect table's first entry pointing past the filesystem -> BlockOutOfRange(65535)
 [INFO] ext2-corrupt: /etc/motd's i_size shrunk to 4 bytes -> read 4 byte(s) that differ from the seed
 [INFO] ext2-corrupt: the first byte of /etc/motd's contents zeroed -> read 18 byte(s) that differ from the seed
-[INFO] ext2-corrupt: all 20 corrupted image(s) were refused with the expected reason, and the kernel continued (the embedded image is untouched; one copy of the 2876 block(s) the image uses, in as many frames borrowed from the frame allocator, is patched for each case and restored, and the untouched control passed again after every case)
+[INFO] ext2-corrupt: all 20 corrupted image(s) were refused with the expected reason, and the kernel continued (the embedded image is untouched; one copy of the 2991 block(s) the image uses, in as many frames borrowed from the frame allocator, is patched for each case and restored, and the untouched control passed again after every case)
 [INFO] user-elf: embedded hello is 8576 byte(s), entry 0x400010, 3 program header(s)
 [INFO] user-elf: PT_LOAD vaddr=0x400000 filesz=0x42 memsz=0x42 flags=0x5 (r=true w=false x=true)
 [INFO] user-elf: PT_LOAD vaddr=0x401000 filesz=0x12 memsz=0x12 flags=0x4 (r=true w=false x=false)
@@ -557,7 +557,7 @@ hello from ring 3
 [INFO] user-heap: /bin/hello had brk take 0 frame(s) and give back 0 (equal means the shrink actually returned them; a program that only grows will not be equal, and that is not a failure)
 [INFO] page-perms: user program /bin/hello: 3 row(s), 0 unnamed, 0 mapped where nothing should be, 0 dropped, digest=d221a4fd198b0ff1
 [INFO] spawn: /bin/hello ended (Exited(0)) after 2 syscall(s) (0 with a number the kernel does not know; the last such number was 0); its kernel entries ran on RSP 0xffffffff80385f50 (inside its own excursion stack 0xffffffff80376000..0xffffffff80386000 = true); the space was destroyed (0 frame(s) left the allocator; 11 returned at once, 0 still quarantined (0 its own + 0 from what it spawned), match=true leaked=0, idle returned 0 of earlier destroys meanwhile); the space took 11 frame(s) and the destroy collected 11 (match=true); the global difference was checked (checked 8 time(s) so far)
-[INFO] spawn: /bin/pie-hello is 8520 byte(s) at inode 57; entering at depth 2 (the parent's excursion stack 0xffffffff80365000..0xffffffff80375000 has 10249 byte(s) used and 55287 left)
+[INFO] spawn: /bin/pie-hello is 8520 byte(s) at inode 58; entering at depth 2 (the parent's excursion stack 0xffffffff80365000..0xffffffff80375000 has 10249 byte(s) used and 55287 left)
 [INFO] user-load: /bin/pie-hello is position-independent; placed at 0x400000 (image 0x400000..0x40202a, entry 0x401010)
 [INFO] user-load: /bin/pie-hello mapped PT_LOAD 0x400000..0x400190 (filesz=0x190 memsz=0x190 w=false) pages 0x400000..0x400000
 [INFO] user-load: /bin/pie-hello mapped PT_LOAD 0x401000..0x401199 (filesz=0x199 memsz=0x199 w=false) pages 0x401000..0x401000
@@ -574,7 +574,7 @@ hello from a position-independent program
 [INFO] user-heap: /bin/pie-hello had brk take 0 frame(s) and give back 0 (equal means the shrink actually returned them; a program that only grows will not be equal, and that is not a failure)
 [INFO] page-perms: user program /bin/pie-hello: 4 row(s), 0 unnamed, 0 mapped where nothing should be, 0 dropped, digest=7d1c99669e45f90d
 [INFO] spawn: /bin/pie-hello ended (Exited(0)) after 2 syscall(s) (0 with a number the kernel does not know; the last such number was 0); its kernel entries ran on RSP 0xffffffff80385f50 (inside its own excursion stack 0xffffffff80376000..0xffffffff80386000 = true); the space was destroyed (0 frame(s) left the allocator; 73 returned at once, 0 still quarantined (0 its own + 0 from what it spawned), match=true leaked=0, idle returned 0 of earlier destroys meanwhile); the space took 73 frame(s) and the destroy collected 73 (match=true); the global difference was checked (checked 9 time(s) so far)
-[INFO] spawn: /bin/spawn-test is 12720 byte(s) at inode 65; entering at depth 2 (the parent's excursion stack 0xffffffff80365000..0xffffffff80375000 has 10249 byte(s) used and 55287 left)
+[INFO] spawn: /bin/spawn-test is 12720 byte(s) at inode 66; entering at depth 2 (the parent's excursion stack 0xffffffff80365000..0xffffffff80375000 has 10249 byte(s) used and 55287 left)
 [INFO] user-load: /bin/spawn-test mapped PT_LOAD 0x400000..0x401002 (filesz=0x1002 memsz=0x1002 w=false) pages 0x400000..0x401000
 [INFO] user-load: /bin/spawn-test mapped PT_LOAD 0x402000..0x40203e (filesz=0x3e memsz=0x3e w=false) pages 0x402000..0x402000
 [INFO] user-load: /bin/spawn-test PT_LOAD segments: declared=2 mapped=2 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
@@ -588,7 +588,7 @@ hello from a position-independent program
 [INFO] user-heap: /bin/spawn-test had brk take 0 frame(s) and give back 0 (equal means the shrink actually returned them; a program that only grows will not be equal, and that is not a failure)
 [INFO] page-perms: user program /bin/spawn-test: 3 row(s), 0 unnamed, 0 mapped where nothing should be, 0 dropped, digest=75314fe1f8bd318e
 [INFO] spawn: /bin/spawn-test ended (Exited(0)) after 2 syscall(s) (0 with a number the kernel does not know; the last such number was 0); its kernel entries ran on RSP 0xffffffff80385f50 (inside its own excursion stack 0xffffffff80376000..0xffffffff80386000 = true); the space was destroyed (0 frame(s) left the allocator; 12 returned at once, 0 still quarantined (0 its own + 0 from what it spawned), match=true leaked=0, idle returned 0 of earlier destroys meanwhile); the space took 12 frame(s) and the destroy collected 12 (match=true); the global difference was checked (checked 10 time(s) so far)
-[INFO] spawn: /bin/ls is 12784 byte(s) at inode 52; entering at depth 2 (the parent's excursion stack 0xffffffff80365000..0xffffffff80375000 has 10249 byte(s) used and 55287 left)
+[INFO] spawn: /bin/ls is 12784 byte(s) at inode 53; entering at depth 2 (the parent's excursion stack 0xffffffff80365000..0xffffffff80375000 has 10249 byte(s) used and 55287 left)
 [INFO] user-load: /bin/ls mapped PT_LOAD 0x400000..0x400eaf (filesz=0xeaf memsz=0xeaf w=false) pages 0x400000..0x400000
 [INFO] user-load: /bin/ls mapped PT_LOAD 0x401000..0x4012e8 (filesz=0x2e8 memsz=0x2e8 w=false) pages 0x401000..0x401000
 [INFO] user-load: /bin/ls mapped PT_LOAD 0x402000..0x402038 (filesz=0x38 memsz=0x38 w=true) pages 0x402000..0x402000
@@ -648,7 +648,7 @@ syscall-test wrote this
 syscall-test wrote this
 syscall-test is writing a line that does not fit the 64-byte record
 syscall-test wrote this
-[INFO] spawn: /bin/mprotect-ro is 4520 byte(s) at inode 56; entering at depth 2 (the parent's excursion stack 0xffffffff80365000..0xffffffff80375000 has 10249 byte(s) used and 55287 left)
+[INFO] spawn: /bin/mprotect-ro is 4520 byte(s) at inode 57; entering at depth 2 (the parent's excursion stack 0xffffffff80365000..0xffffffff80375000 has 10249 byte(s) used and 55287 left)
 [INFO] user-load: /bin/mprotect-ro mapped PT_LOAD 0x400000..0x400080 (filesz=0x80 memsz=0x80 w=false) pages 0x400000..0x400000
 [INFO] user-load: /bin/mprotect-ro PT_LOAD segments: declared=1 mapped=1 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
@@ -662,7 +662,7 @@ syscall-test wrote this
 [INFO] user-mmap: /bin/mprotect-ro had its first mmap at 0x10000000 and would map next at 0x10001000 (every process starts at 0x10000000; a first address above it means the addresses were shared with another process); 1 mapping(s) still held, 1 anonymous page(s)
 [INFO] page-perms: user program /bin/mprotect-ro: 3 row(s), 0 unnamed, 0 mapped where nothing should be, 0 dropped, digest=aab96da506a5d55a
 [INFO] spawn: /bin/mprotect-ro ended (Folded(14)) after 2 syscall(s) (0 with a number the kernel does not know; the last such number was 0); its kernel entries ran on RSP 0xffffffff80385f50 (inside its own excursion stack 0xffffffff80376000..0xffffffff80386000 = true); the space was destroyed (0 frame(s) left the allocator; 12 returned at once, 0 still quarantined (0 its own + 0 from what it spawned), match=true leaked=0, idle returned 0 of earlier destroys meanwhile); the space took 12 frame(s) and the destroy collected 12 (match=true); the global difference was checked (checked 14 time(s) so far)
-[INFO] spawn: /bin/mprotect-nx is 4472 byte(s) at inode 55; entering at depth 2 (the parent's excursion stack 0xffffffff80365000..0xffffffff80375000 has 10249 byte(s) used and 55287 left)
+[INFO] spawn: /bin/mprotect-nx is 4472 byte(s) at inode 56; entering at depth 2 (the parent's excursion stack 0xffffffff80365000..0xffffffff80375000 has 10249 byte(s) used and 55287 left)
 [INFO] user-load: /bin/mprotect-nx mapped PT_LOAD 0x400000..0x400050 (filesz=0x50 memsz=0x50 w=false) pages 0x400000..0x400000
 [INFO] user-load: /bin/mprotect-nx PT_LOAD segments: declared=1 mapped=1 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
@@ -677,7 +677,7 @@ syscall-test wrote this
 [INFO] spawn: /bin/mprotect-nx ended (Folded(14)) after 1 syscall(s) (0 with a number the kernel does not know; the last such number was 0); its kernel entries ran on RSP 0xffffffff80385f50 (inside its own excursion stack 0xffffffff80376000..0xffffffff80386000 = true); the space was destroyed (0 frame(s) left the allocator; 10 returned at once, 0 still quarantined (0 its own + 0 from what it spawned), match=true leaked=0, idle returned 0 of earlier destroys meanwhile); the space took 10 frame(s) and the destroy collected 10 (match=true); the global difference was checked (checked 15 time(s) so far)
 wv-ok
 syscall-test wrote this
-[INFO] spawn: /bin/tkill-self is 4464 byte(s) at inode 70; entering at depth 2 (the parent's excursion stack 0xffffffff80365000..0xffffffff80375000 has 10249 byte(s) used and 55287 left)
+[INFO] spawn: /bin/tkill-self is 4464 byte(s) at inode 71; entering at depth 2 (the parent's excursion stack 0xffffffff80365000..0xffffffff80375000 has 10249 byte(s) used and 55287 left)
 [INFO] user-load: /bin/tkill-self mapped PT_LOAD 0x400000..0x400047 (filesz=0x47 memsz=0x47 w=false) pages 0x400000..0x400000
 [INFO] user-load: /bin/tkill-self PT_LOAD segments: declared=1 mapped=1 (they must match; a gap means a segment was skipped), pages shared with the previous segment=0
 [INFO] user-load: mapped the user stack 0x7fc000..0x800000 (w=true)
@@ -1278,7 +1278,7 @@ thread: task 6 (tid 54) reaped; it used <n> of 65536 byte(s) of its kernel stack
 [INFO] interrupts: closed handler registration before init (sources with a handler: 1, 11)
 [INFO] serial: uart setup writes since the kernel started = 1 (expected 1), calls that gave up waiting for the setup = 0 (expected 0)
 [INFO] init: starting /bin/zash (restart 0 of 3)
-[INFO] spawn: /bin/zash is 29248 byte(s) at inode 73; entering at depth 1 (the parent runs on its task's kernel stack, which has a guard page)
+[INFO] spawn: /bin/zash is 29248 byte(s) at inode 74; entering at depth 1 (the parent runs on its task's kernel stack, which has a guard page)
 [INFO] user-load: /bin/zash mapped PT_LOAD 0x400000..0x404994 (filesz=0x4994 memsz=0x4994 w=false) pages 0x400000..0x404000
 [INFO] user-load: /bin/zash mapped PT_LOAD 0x405000..0x405e78 (filesz=0xe78 memsz=0xe78 w=false) pages 0x405000..0x405000
 [INFO] user-load: /bin/zash mapped PT_LOAD 0x406000..0x406048 (filesz=0x48 memsz=0x48 w=true) pages 0x406000..0x406000

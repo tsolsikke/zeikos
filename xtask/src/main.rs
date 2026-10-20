@@ -1058,6 +1058,21 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
+    // **壁の時計の、読めなかったときの道（2026-10-20。`ADR-0090`）。破壊ではなく構成である**——起動時に RTC が読めなかった
+    // 形にして、`[WARN]` の行と、`CLOCK_REALTIME` が `-EINVAL` のままであることを、確かめのイメージが名指しの行で示す。
+    CriticalTest {
+        name: "rtc-unreadable",
+        feature: "realtime-test,rtc-unreadable-test",
+        expected_markers: &[
+            "rtc: could not read the wall clock at boot (UpdateNeverEnded); CLOCK_REALTIME stays unavailable (-EINVAL)",
+            "wl-realtime-rust: CLOCK_REALTIME failed with errno 22; exiting with 90",
+            "ended Ok(Exited(90)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &["rtc: the wall clock was read at boot", "zash: ready"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
 ];
 
 /// 逆アセンブル（`objdump -d` の AT&T 記法）の中で、棚卸しが「使わない」ことに依っているアドレス指定と
@@ -2935,6 +2950,7 @@ const RUN_FLAGS: &[(&str, RunValue)] = &[
     ("--linux-socket-test", RunValue::None),
     ("--input-test", RunValue::None),
     ("--poll-test", RunValue::None),
+    ("--realtime-test", RunValue::None),
     ("--screen-test", RunValue::None),
     ("--fb-test", RunValue::None),
     ("--seinas-fbdev-test", RunValue::None),
@@ -3007,6 +3023,7 @@ const RUN_FLAG_SCOPES: &[(&str, RunFlagScope)] = &[
             "--pipe-test",
             "--poll-test",
             "--profile-test",
+            "--realtime-test",
             "--screen-test",
             "--serial-test",
             "--shell-script-test",
@@ -3746,6 +3763,25 @@ fn main() -> Result<()> {
                 );
             }
             // **入力とソケットを同時に待つ判定（`ADR-0066` の Y-b）。`sendkey` で本物の打鍵を送る。**
+            // **壁の時計（2026-10-20。`ADR-0090`）。値を、起動の前後のホストの時刻と比べる。**
+            if rest.iter().any(|a| a == "--realtime-test") {
+                let sabotage: Vec<&str> = rest
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, a)| *a == "--sabotage" && rest.get(i + 1).is_some())
+                    .filter_map(|(i, _)| rest.get(i + 1).map(|s| s.as_str()))
+                    .collect();
+                if sabotage.is_empty() {
+                    return cmd_realtime_test(&sabotage, true);
+                }
+                let result = cmd_realtime_test(&sabotage, false);
+                return finish_direct_sabotage(
+                    "realtime test",
+                    &sabotage,
+                    SabotageForm::Inverted,
+                    result,
+                );
+            }
             if rest.iter().any(|a| a == "--poll-test") {
                 let sabotage: Vec<&str> = rest
                     .iter()
@@ -8398,6 +8434,27 @@ const SABOTAGE_JUDGEMENTS: &[NamedJudgement] = &[
         reached: true,
     },
     NamedJudgement {
+        check: "realtime test",
+        key: "rtc-ignores-bcd",
+        signs: &["realtime_is_near_the_host_clock = false"],
+        note: "",
+        reached: true,
+    },
+    NamedJudgement {
+        check: "realtime test",
+        key: "realtime-without-elapsed",
+        signs: &["realtime_moved_with_the_sleep = false"],
+        note: "",
+        reached: true,
+    },
+    NamedJudgement {
+        check: "realtime test",
+        key: "realtime-drifts-from-monotonic",
+        signs: &["realtime_kept_its_offset_from_monotonic = false"],
+        note: "",
+        reached: true,
+    },
+    NamedJudgement {
         check: "poll test",
         key: "poll-never-waits",
         signs: &["the_poll_waited = false"],
@@ -10879,6 +10936,241 @@ const POLL_TEST_SABOTAGES: &[&str] = &[
     "poll-waits-on-one-member",
     "wake-ignores-the-reason",
 ];
+
+/// `--realtime-test` の破壊テスト（2026-10-20。`ADR-0090`）。**どれも狙いの判定 1 つで捕まる**（[`SABOTAGE_JUDGEMENTS`]）。
+///
+/// - `rtc-ignores-bcd` —— `realtime_is_near_the_host_clock`（日付によって、読めずに値が出ないか、別の時刻になる）
+/// - `realtime-without-elapsed` —— `realtime_moved_with_the_sleep`
+/// - `realtime-drifts-from-monotonic` —— `realtime_kept_its_offset_from_monotonic`
+const REALTIME_TEST_SABOTAGES: &[&str] = &[
+    "rtc-ignores-bcd",
+    "realtime-without-elapsed",
+    "realtime-drifts-from-monotonic",
+];
+
+/// `--realtime-test` の上限。**起動から確かめのイメージの終わりまで**（イメージは 1 秒眠る）。
+const REALTIME_TEST_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// 確かめのイメージが標準エラーへ出す値の行の頭（`linux-programs/wl-realtime-rust.rs`）。
+const REALTIME_VALUE_PREFIX: &str = "wl-realtime-rust: realtime ";
+
+/// 確かめのイメージの終わりの行。
+const REALTIME_IMAGE_ENDED: &str = "spawn: /bin/linux/wl-realtime-rust ended";
+
+/// 値が許されるウィンドウの、下の余裕（秒）。**RTC の秒の切り捨て（0〜1 秒）と、ティックの遅れの余裕 1 秒。**
+const REALTIME_EARLY_SECONDS: f64 = 2.0;
+/// 値が許されるウィンドウの、上の余裕（秒）。**ホストの時刻の読みと丸めの余裕。**
+const REALTIME_LATE_SECONDS: f64 = 1.0;
+
+/// 値の行から `CLOCK_REALTIME` の秒を読む（純粋な論理）。**無ければ `None`。**
+fn realtime_value_in(serial: &str) -> Option<f64> {
+    let line = serial
+        .lines()
+        .find(|line| line.contains(REALTIME_VALUE_PREFIX))?;
+    let rest = &line[line.find(REALTIME_VALUE_PREFIX)? + REALTIME_VALUE_PREFIX.len()..];
+    rest.split_whitespace().next()?.parse().ok()
+}
+
+/// 値が、ホストの時刻のウィンドウ [`before` − 2 秒, `seen` + 1 秒] に入るか（純粋な論理）。
+///
+/// - `before` は QEMU を起こす直前のホストの時刻。**QEMU の RTC は起動時にホストの時刻から始まり**（`-rtc base=utc,
+///   clock=host`）、カーネルはその後に読むので、読んだ値は `before` より前にならない。ただし秒を切り捨てて読むので 1 秒、
+///   ティックの遅れの余裕で 1 秒、下を広げる。
+/// - `seen` は値の行を見た時刻。**値は行を出す前に読んだ**ので、`seen` より後にならない。丸めの余裕で 1 秒、上を広げる。
+fn realtime_within_host_window(value: f64, before: f64, seen: f64) -> bool {
+    value >= before - REALTIME_EARLY_SECONDS && value <= seen + REALTIME_LATE_SECONDS
+}
+
+fn unix_seconds_now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_secs_f64())
+        .unwrap_or(0.0)
+}
+
+/// `cargo xtask run --realtime-test [--sabotage <名前>]`（2026-10-20。`ADR-0090`）。**壁の時計の確かめ。**
+///
+/// `realtime-test` のビルドが起動時に `wl-realtime-rust` を起こす。判定は次のとおり。
+///
+/// 1. 起動時に RTC が読めた（`rtc: the wall clock was read at boot` の行）。
+/// 2. イメージが 4 で終わった。
+/// 3. 標準出力の行が Linux の参照と一致した（`SystemTime::now` が動く、1 秒眠って 1 秒以上進む、`CLOCK_REALTIME` と
+///    `CLOCK_MONOTONIC` の差が動かない、`clock_settime` が `EPERM`）。
+/// 4. **値が、起動の前後のホストの時刻のウィンドウに入った**（[`realtime_within_host_window`]）。経過時間ではなく、値そのものを見る。
+/// 5. 1 秒眠って 1 秒以上進んだ（3 の中の 1 行を、名前のある判定として出す）。
+/// 6. `CLOCK_REALTIME − CLOCK_MONOTONIC` が動かなかった（同じく 3 の中の 1 行）。
+/// 7. `CLOCK_REALTIME` の絶対の締切を、カーネルが名前のある行で断った（`clock_nanosleep` と `timerfd_create`）。
+/// 8. `[ERROR]` の行が無い。
+fn cmd_realtime_test(features: &[&str], expect_pass: bool) -> Result<()> {
+    let workspace_root = workspace_root()?;
+    let run = RunDir::create(&workspace_root, "realtime-test")?;
+    let ovmf_vars = prepare_ovmf_vars(&run)?;
+    let bootloader_efi = build_bootloader(&workspace_root, false)?;
+    let mut all_features: Vec<&str> = vec!["realtime-test"];
+    all_features.extend_from_slice(features);
+    let kernel_elf = build_kernel_with_features(&workspace_root, &all_features)?;
+    let esp_dir = stage_esp(&run, &bootloader_efi, &kernel_elf)?;
+    let serial_log = run.serial_log();
+    let _ = fs::remove_file(&serial_log);
+    let debug_log = run.debug_log();
+    let _ = fs::remove_file(&debug_log);
+    let qemu_args = qemu_launch_args(&QemuLaunchOptions {
+        ovmf_code: Path::new(OVMF_CODE_PATH),
+        ovmf_vars: &ovmf_vars,
+        esp_dir: &esp_dir,
+        disk_image: &run.disk_image(),
+        serial: &SerialSink::File(serial_log.clone()),
+        debug_log: &debug_log,
+        display: DisplayMode::None,
+        monitor_socket: None,
+        accelerator: Accelerator::Tcg,
+        debug_events: DebugEvents::IntAndCpuReset,
+    });
+    let context = if features.is_empty() {
+        "realtime-test".to_string()
+    } else {
+        format!("realtime-test {}", features.join("+"))
+    };
+    let context = context.as_str();
+    // **QEMU を起こす直前のホストの時刻**（ウィンドウの下の端）。
+    let before = unix_seconds_now();
+    let outputs = [serial_log.as_path(), debug_log.as_path()];
+    let mut child = launch::spawn(&launch::Spec::new(
+        &qemu_args,
+        &outputs,
+        context,
+        Duration::ZERO,
+        launch::Deadline::Normal,
+    ))?;
+    // **値の行を見た時刻**（ウィンドウの上の端）を控えながら、イメージの終わりまで待つ。上限つき。
+    let mut seen: Option<f64> = None;
+    let deadline = Instant::now() + REALTIME_TEST_TIMEOUT;
+    loop {
+        if child.was_cut() {
+            break;
+        }
+        let text = read_lossy(&serial_log);
+        if seen.is_none() && text.contains(REALTIME_VALUE_PREFIX) {
+            seen = Some(unix_seconds_now());
+        }
+        if text.contains(REALTIME_IMAGE_ENDED)
+            || text.contains("[ERROR]")
+            || text.contains("halting")
+            || Instant::now() >= deadline
+        {
+            break;
+        }
+        metrics::sleep_poll(PANIC_TEST_POLL_INTERVAL);
+    }
+    let qemu_exit = child
+        .try_wait()
+        .ok()
+        .flatten()
+        .map(|status| format!("{status}"));
+    let _ = child.kill();
+    let _ = child.wait();
+
+    let serial = read_lossy(&serial_log);
+    let qemu_debug = read_lossy(&debug_log);
+    if let BootOutcome::DidNotStart { firmware_rip } =
+        classify_boot(&serial, &qemu_debug, KERNEL_STARTED_MARKER)
+    {
+        report_did_not_start(context, firmware_rip, qemu_exit.as_deref())?;
+        bail!("{context}: the kernel did not start");
+    }
+    if !expect_pass {
+        report_sabotage_reach(context, &serial, &["wl-realtime-rust: main starts"]);
+    }
+    let stripped = strip_ansi(&serial);
+    let value = realtime_value_in(&stripped);
+    let near = match (value, seen) {
+        (Some(value), Some(seen)) => realtime_within_host_window(value, before, seen),
+        _ => false,
+    };
+    let matched = linux_program_output_matches(
+        &workspace_root,
+        "wl-realtime-rust",
+        &stripped,
+        LinuxReferenceEnvironment::ExactCount,
+    )?;
+    let judgements: [(&str, bool); 7] = [
+        (
+            "the_wall_clock_was_read_at_boot",
+            stripped.contains("rtc: the wall clock was read at boot"),
+        ),
+        (
+            "the_image_ended_with_4",
+            stripped.contains(&format!("{REALTIME_IMAGE_ENDED} (Exited(4))")),
+        ),
+        ("the_lines_match_linux", matched),
+        ("realtime_is_near_the_host_clock", near),
+        (
+            "realtime_moved_with_the_sleep",
+            stripped.contains(
+                "wl-realtime-rust: CLOCK_REALTIME advanced by at least 1 s over a 1 s sleep = true",
+            ),
+        ),
+        (
+            "realtime_kept_its_offset_from_monotonic",
+            stripped.contains(
+                "wl-realtime-rust: CLOCK_REALTIME minus CLOCK_MONOTONIC moved by less than 20 ms = true",
+            ),
+        ),
+        (
+            "the_realtime_deadlines_were_refused_by_name",
+            stripped.contains("clock: clock_nanosleep with TIMER_ABSTIME on CLOCK_REALTIME was refused")
+                && stripped.contains("clock: timerfd_create on CLOCK_REALTIME was refused"),
+        ),
+    ];
+    let error_lines: Vec<&str> = stripped
+        .lines()
+        .filter(|line| line.contains("[ERROR]"))
+        .take(4)
+        .collect();
+    let no_error = error_lines.is_empty();
+    let failed: Vec<&str> = judgements
+        .iter()
+        .filter(|(_, held)| !held)
+        .map(|(name, _)| *name)
+        .collect();
+    for (name, held) in &judgements {
+        println!("{context}: {name} = {held}");
+    }
+    println!("{context}: no [ERROR] line = {no_error} (the first were {error_lines:?})");
+    match (value, seen) {
+        (Some(value), Some(seen)) => println!(
+            "{context}: (info) realtime {value:.3} against the host window [{:.3}, {:.3}] (the host clock {:.3} before \
+             QEMU started and {seen:.3} when the line was seen): {:+.3} s from the start of the run",
+            before - REALTIME_EARLY_SECONDS,
+            seen + REALTIME_LATE_SECONDS,
+            before,
+            value - before
+        ),
+        _ => println!("{context}: (info) no realtime value line was seen"),
+    }
+    for info in stripped.lines().filter(|line| {
+        line.contains("wl-realtime-rust: ") || line.contains("rtc: ") || line.contains("clock: ")
+    }) {
+        println!("{context}: (info) {}", info.trim());
+    }
+    let passed = failed.is_empty() && no_error;
+    if passed {
+        println!("{context}: PASS");
+        if expect_pass {
+            Ok(())
+        } else {
+            bail!("{context}: the sabotage was NOT caught; every judgement still held")
+        }
+    } else {
+        println!("{context}: FAILED (judgements that fell: {failed:?})");
+        if expect_pass {
+            bail!("{context}: FAILED ({failed:?})")
+        } else {
+            println!("{context}: the sabotage was caught (this run is expected to fail)");
+            Ok(())
+        }
+    }
+}
 
 /// `--poll-test` の 1 段ごとの上限（秒）。**打鍵と相手の返しを待つ。**
 const POLL_TEST_TIMEOUT: Duration = Duration::from_secs(60);
@@ -32283,6 +32575,40 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
         }
         batch.run(&mut failed);
 
+        // **壁の時計（2026-10-20。`ADR-0090`）。** 起動時に RTC を読み、`CLOCK_REALTIME` の値を起動の前後のホストの時刻と比べる。
+        // **破壊テストは 3 つ**（`REALTIME_TEST_SABOTAGES`）。
+        total += 1;
+        begin_item(
+            Family::Ipc,
+            "the wall clock is read at boot and CLOCK_REALTIME is near the host clock",
+        );
+        match cmd_realtime_test(&[], true) {
+            Ok(()) => println!("--- realtime test: OK"),
+            Err(error) => {
+                println!("--- realtime test: FAILED ({error})");
+                failed.push("realtime test".to_string());
+            }
+        }
+        let mut batch = Batch::new("REALTIME_TEST_SABOTAGES");
+        for sabotage in REALTIME_TEST_SABOTAGES {
+            total += 1;
+            batch.add(sabotage, move |failed, _retries| {
+                let label = format!("realtime-test {sabotage}");
+                begin_item(Family::Ipc, &label);
+                match cmd_realtime_test(&[sabotage], false) {
+                    Ok(()) => report_inverted_judgement("realtime test", sabotage, &label, failed),
+                    Err(error) => {
+                        println!(
+                            "--- {label}: FAILED [{}] ({error})",
+                            failure_category(&error)
+                        );
+                        failed.push(label.to_string());
+                    }
+                }
+            });
+        }
+        batch.run(&mut failed);
+
         // **画面へピクセルを出す形（`ADR-0066` の Y-c）。** **`gfxd` がバックバッファを `mmap` して四角を塗り、
         // `present` でコピーする。`screendump` で 2 度読み戻す。** **破壊テストは 3 つ**（`SCREEN_TEST_SABOTAGES`）。
         total += 1;
@@ -34823,6 +35149,7 @@ const ITEM_TABLES: &[(&str, usize)] = &[
     ("SOCKET_TEST_SABOTAGES", SOCKET_TEST_SABOTAGES.len()),
     ("INPUT_TEST_SABOTAGES", INPUT_TEST_SABOTAGES.len()),
     ("POLL_TEST_SABOTAGES", POLL_TEST_SABOTAGES.len()),
+    ("REALTIME_TEST_SABOTAGES", REALTIME_TEST_SABOTAGES.len()),
     ("SCREEN_TEST_SABOTAGES", SCREEN_TEST_SABOTAGES.len()),
     ("FB_TEST_SABOTAGES", FB_TEST_SABOTAGES.len()),
     ("COMPOSE_TEST_SABOTAGES", COMPOSE_TEST_SABOTAGES.len()),
@@ -35178,7 +35505,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 67,
-    full: 549,
+    full: 554,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` とスクリプトのグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。
@@ -36986,6 +37313,11 @@ const NOT_CONCURRENT: &[(&str, &str, &str)] = &[
     ),
     ("LAPIC_TIMER_TESTS", "rate", "ホストの時間と比べる（ティックの速さの比）"),
     (
+        "REALTIME_TEST_SABOTAGES",
+        "*",
+        "ホストの時刻と比べる（CLOCK_REALTIME の値のウィンドウ）",
+    ),
+    (
         "LAPIC_TIMER_TESTS",
         "scaled-calibration",
         "ホストの時間と比べる（ティックの速さの比）",
@@ -37062,6 +37394,7 @@ fn batched_table_rows(table: &str) -> Option<Vec<String>> {
         "SOCKET_TEST_SABOTAGES" => names(SOCKET_TEST_SABOTAGES),
         "INPUT_TEST_SABOTAGES" => names(INPUT_TEST_SABOTAGES),
         "POLL_TEST_SABOTAGES" => names(POLL_TEST_SABOTAGES),
+        "REALTIME_TEST_SABOTAGES" => names(REALTIME_TEST_SABOTAGES),
         "SCREEN_TEST_SABOTAGES" => names(SCREEN_TEST_SABOTAGES),
         "COMPOSE_TEST_SABOTAGES" => names(COMPOSE_TEST_SABOTAGES),
         "MACHINE_VARIANT_CHECKS" => cases(MACHINE_VARIANT_CHECKS, |(name, _)| name),
@@ -39848,6 +40181,29 @@ warning: `kernel` (lib doc) generated 1 warning
             short.starts_with("starts with \"M\", not \"MZ\""),
             "{short}"
         );
+    }
+
+    /// **壁の時計の値は、起動の前後のホストの時刻のウィンドウで見る**（2026-10-20。`ADR-0090`）。下は 2 秒、上は 1 秒の余裕。
+    #[test]
+    fn realtime_is_judged_against_the_host_window() {
+        assert!(realtime_within_host_window(1000.0, 1000.0, 1010.0));
+        assert!(realtime_within_host_window(998.0, 1000.0, 1010.0));
+        assert!(!realtime_within_host_window(997.9, 1000.0, 1010.0));
+        assert!(realtime_within_host_window(1011.0, 1000.0, 1010.0));
+        assert!(!realtime_within_host_window(1011.1, 1000.0, 1010.0));
+        // BCD を 2 進として読むと、年や時が大きくずれる。
+        assert!(!realtime_within_host_window(
+            2_169_000_000.0,
+            1_792_490_000.0,
+            1_792_490_030.0
+        ));
+    }
+
+    #[test]
+    fn the_realtime_value_line_is_read() {
+        let serial = "x\nwl-realtime-rust: realtime 1792493671.970227214\ny\n";
+        assert_eq!(realtime_value_in(serial), Some(1_792_493_671.970_227_2));
+        assert_eq!(realtime_value_in("wl-realtime-rust: main starts\n"), None);
     }
 
     #[test]

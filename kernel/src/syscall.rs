@@ -6514,6 +6514,15 @@ unsafe fn sys_clock_gettime(
             else {
                 return (-EINVAL) as u64;
             };
+            // 破壊テスト (2026-10-20, realtime-without-elapsed): 経過を足さず、起動時の秒だけを返す。
+            // 破壊テスト (2026-10-20, realtime-drifts-from-monotonic): 経過を 2 倍にして進める。
+            let ticks = if cfg!(feature = "realtime-without-elapsed") {
+                ticks_at_read
+            } else if cfg!(feature = "realtime-drifts-from-monotonic") {
+                ticks.saturating_add(ticks.saturating_sub(ticks_at_read))
+            } else {
+                ticks
+            };
             common::time::wall_clock_from(seconds_at_read, ticks_at_read, ticks, hz)
         }
         _ => return (-EINVAL) as u64,

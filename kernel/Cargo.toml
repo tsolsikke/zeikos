@@ -1356,3 +1356,19 @@ memfd-ignores-allow-sealing-test = []
 # 破壊（2026-10-20。ADR-0065 の Addendum）: 足した封を持たない。F_GET_SEALS が 0 を返し、イメージが 94 で終わる。
 # `--critical-test memfd-seals-not-kept`。
 memfd-seals-not-kept-test = []
+# 確かめ（2026-10-20。ADR-0090）: 壁の時計（CLOCK_REALTIME）を読む Linux 向けのイメージ（wl-realtime-rust）を起動時に起こす。
+# 値はイメージが標準エラーへ出し、xtask が起動の前後のホストの時刻と比べる。`cargo xtask run --realtime-test`。
+realtime-test = []
+# 破壊（2026-10-20。ADR-0090）: RTC の値を、状態 B を見ずに 2 進として読む（BCD を取り違える）。日付によって、月や日が
+# 範囲の外になって読めないか、もっともらしい別の時刻になる。どちらでも、値がホストの時刻の近くに無いという判定で落ちる。
+# `cargo xtask run --realtime-test --sabotage rtc-ignores-bcd`。
+rtc-ignores-bcd = ["realtime-test"]
+# 破壊（2026-10-20。ADR-0090）: CLOCK_REALTIME に、起動時の秒だけを返す（ティックの経過を足さない）。1 秒眠っても
+# 進まないという判定で落ちる。`cargo xtask run --realtime-test --sabotage realtime-without-elapsed`。
+realtime-without-elapsed = ["realtime-test"]
+# 破壊（2026-10-20。ADR-0090）: CLOCK_REALTIME だけを、ティックの経過の 2 倍で進める。CLOCK_REALTIME − CLOCK_MONOTONIC が
+# 動くという判定で落ちる。`cargo xtask run --realtime-test --sabotage realtime-drifts-from-monotonic`。
+realtime-drifts-from-monotonic = ["realtime-test"]
+# 構成（2026-10-20。ADR-0090。破壊ではない）: 起動時に RTC が読めなかった形にする（UIP が下りない）。[WARN] の行が出て、
+# イメージが CLOCK_REALTIME の EINVAL を見て名指しの行を出し、90 で終わる。`--critical-test rtc-unreadable`。
+rtc-unreadable-test = ["realtime-test"]

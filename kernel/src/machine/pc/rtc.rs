@@ -118,7 +118,9 @@ pub const fn from_bcd(value: u8) -> Option<u8> {
 
 /// 読んだままの値を、暦の日時へ直す（状態 B に従う）。
 pub fn decode(raw: RawRtc) -> Result<CivilTime, RtcError> {
-    let binary = raw.status_b & STATUS_B_BINARY != 0;
+    // 破壊テスト (2026-10-20, rtc-ignores-bcd): 状態 B を見ずに 2 進として読む。2026-10-20 は月が 0x10 = 16 になって読めず、
+    // 1〜9 月の 1〜9 日なら、もっともらしい別の時刻になる。どちらも、値がホストの時刻の近くに無いという判定で落ちる。
+    let binary = cfg!(feature = "rtc-ignores-bcd") || raw.status_b & STATUS_B_BINARY != 0;
     let as_number = |value: u8, register: u8| -> Result<u8, RtcError> {
         if binary {
             Ok(value)
@@ -245,6 +247,11 @@ static BOOT_WALL_CLOCK_KNOWN: AtomicBool = AtomicBool::new(false);
 /// - `century_register` は FADT の `CENTURY`（[`crate::machine::pc::acpi::FadtFacts`]）。
 /// - 読めなければ何も控えない（[`boot_wall_clock`] は `None` のまま）。
 pub fn read_at_boot(century_register: Option<u8>) -> Result<(u64, RawRtc), RtcError> {
+    // 構成 (2026-10-20, rtc-unreadable-test): 読めなかった形にする（UIP が下りない）。破壊ではなく、読めなかったときの道
+    // （`[WARN]` の行と、`CLOCK_REALTIME` の `-EINVAL`）を生きた形で通すためのものである。
+    if cfg!(feature = "rtc-unreadable-test") {
+        return Err(RtcError::UpdateNeverEnded);
+    }
     let raw = read_stable(read_register, century_register)?;
     let civil = decode(raw)?;
     let seconds = unix_seconds(civil).map_err(|_| RtcError::OutOfRange { raw })?;

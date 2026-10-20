@@ -6886,6 +6886,16 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
             b"wl-memfd-seals-rust\0/etc/motd\0a\0b\0",
         );
     }
+    // **壁の時計**（2026-10-20。`ADR-0090`）。値は起動のたびに変わるので、`realtime-test` のビルドだけが起こす。判定は
+    // `cargo xtask run --realtime-test`（Linux の参照と突き合わせ、値をホストの時刻と比べる）と、破壊テスト 3 つ
+    // （`--sabotage rtc-ignores-bcd`・`realtime-without-elapsed`・`realtime-drifts-from-monotonic`）と、読めないときの構成
+    // （`--critical-test rtc-unreadable`）。
+    #[cfg(feature = "realtime-test")]
+    verify_linux_program(
+        logger,
+        b"/bin/linux/wl-realtime-rust",
+        b"wl-realtime-rust\0/etc/motd\0a\0b\0",
+    );
 }
 
 /// 主スレッドがパイプで、スレッドが epoll で眠っている間に、別のスレッドが `exit_group(3)` で終えるイメージを起こし、
@@ -14479,6 +14489,32 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "shm-ftruncate-shrinks-mapped-test",
         cfg!(feature = "shm-ftruncate-shrinks-mapped-test"),
         "2 回目の ftruncate で、マップ中でも memfd を縮める（末尾のフレームを返す）",
+    ),
+    // 壁の時計（2026-10-20。`ADR-0090`）。
+    (
+        "realtime-test",
+        cfg!(feature = "realtime-test"),
+        "壁の時計を読む Linux 向けのイメージを起動時に起こす（確かめ。破壊ではない）",
+    ),
+    (
+        "rtc-ignores-bcd",
+        cfg!(feature = "rtc-ignores-bcd"),
+        "RTC の値を、状態 B を見ずに 2 進として読む",
+    ),
+    (
+        "realtime-without-elapsed",
+        cfg!(feature = "realtime-without-elapsed"),
+        "CLOCK_REALTIME に、起動時の秒だけを返す",
+    ),
+    (
+        "realtime-drifts-from-monotonic",
+        cfg!(feature = "realtime-drifts-from-monotonic"),
+        "CLOCK_REALTIME だけを、ティックの経過の 2 倍で進める",
+    ),
+    (
+        "rtc-unreadable-test",
+        cfg!(feature = "rtc-unreadable-test"),
+        "起動時に RTC が読めなかった形にする（構成。破壊ではない）",
     ),
     // Seinas の listen のソケットとロックファイルの一連（ADR-0087。2026-10-16）。
     (
