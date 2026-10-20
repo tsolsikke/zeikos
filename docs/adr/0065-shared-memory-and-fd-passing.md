@@ -218,3 +218,14 @@ fd を `SCM_RIGHTS` で送り、`sockd` が同じ物理フレームを `mmap` �
 
 **確かめ。** `linux-programs/m3a-memfd-shrink-rust.rs`（`memfd_create`→2ページの`ftruncate`→`mmap`→2ページ目に書く→1ページへ縮める`ftruncate`→読み戻す）を`memfd-shrink-test`のビルドだけが起動時に起こし、`--critical-test memfd-shrink-refused`が、イメージの行（`returned -22`、`still reads back 0x5a = true`）とカーネルの名指しの行で見る。Linuxと結果が違うので、Linuxの参照とは突き合わせない。破壊は`shm-ftruncate-shrinks-mapped-test`（縮める向きならマップ中でも末尾のフレームを返して縮める）。
 
+## Addendum（2026-10-20、memfdのフラグと名前、封のビット、`FD_CLOEXEC`、memfdの`fstat`）
+
+上の2026-10-04のAddendumの「`memfd_create`は引数を見ない」を閉じた。Linuxのプログラムが打つ形に、答えをそろえる段である。
+
+- **`memfd_create`のフラグと名前。** フラグは`MFD_CLOEXEC`と`MFD_ALLOW_SEALING`だけを受け、ほかのビットは`-EINVAL`。名前はNULまで読んで長さだけを確かめ（NULを除いて249バイトを越えたら`-EINVAL`、読めなければ`-EFAULT`。Linuxと同じ順）、持たない（Linuxは`/proc`の表示に使うだけで、ZeikOSには`/proc`が無い）。ZeikOS向けのプログラム（`userlib`と`syscall-test`）は、名前にNULLを渡していたので、名前を渡す形に直した。
+- **封のビットは持って答えるが、効き目はまだ無い。** 表の欄に封を持ち、`F_ADD_SEALS`と`F_GET_SEALS`はLinuxと同じ答えを返す——知らないビットは`-EINVAL`、`F_SEAL_SEAL`の後は`-EPERM`、`MFD_ALLOW_SEALING`の無いmemfdは最初から`F_SEAL_SEAL`を持つ。`F_SEAL_EXEC`を足すと、書きと伸び縮みの封（`SHRINK`・`GROW`・`WRITE`・`FUTURE_WRITE`）も一緒に立つ（Linux 6.3からの、実行のビットを持つmemfdの形。ZeikOSのmemfdはいつも0777なので、いつもこの形になる。WSLで測った値は62）。**効き目は段階的に入る**——`F_SEAL_SHRINK`・`F_SEAL_GROW`が`ftruncate`を断る形は、2回目の`ftruncate`を受け付ける段で、`F_SEAL_WRITE`を足すときの`-EBUSY`と書けるマッピングを断る形は、マッピングの数を持つ段で入る。**それまでの間は、ビットは持つが効かない**（Linuxとの差）。
+- **`FD_CLOEXEC`は持って答えるが、`exec`が無いので効き目は無い。** fdの表に1ビットの印を持つ。立てるのは`fcntl(F_SETFD)`・`F_DUPFD_CLOEXEC`と、作るときの`*_CLOEXEC`（`open`の`O_CLOEXEC`〔`/dev/fb0`を含む〕、`socket`と`accept4`の`SOCK_CLOEXEC`、`EFD_CLOEXEC`・`TFD_CLOEXEC`・`EPOLL_CLOEXEC`・`MFD_CLOEXEC`、`recvmsg`の`MSG_CMSG_CLOEXEC`で受け取ったfd）で、置く・閉じるときに下ろす。印は置けた番号にだけ立てる関数（`insert_with_cloexec`）で置くので、置いた後に失敗する道は無い。
+- **memfdの`fstat`。** 種類のビットは普通のファイル、許可は0777、`st_blksize`は4096、`st_blocks`は持っているページの数×8（Linuxと同じ。Linuxは書いたページだけを数えるが、ZeikOSは`ftruncate`でページを取るので、書く前から数える）。ほかの種類と`stat`の`st_blksize`は、今までどおり0である。
+- **見つけたこと。** ZeikOSのソケットは、`SCM_RIGHTS`で渡すfdを向きごとに1つまでしか待たせない（`kernel/src/socket.rs`の`queue_fd`）。2つ目は1つ目が受け取られるまで送れない。
+- **確かめ。** `linux-programs/wl-memfd-seals-rust.rs`（`linux-socket-test`のビルド）。フラグと名前の答え、封の答え、memfdの`fstat`、作り方ごとの`F_GETFD`を、WSLで取ったLinuxの参照と全行突き合わせる。破壊テストは2件（`memfd-ignores-allow-sealing`・`memfd-seals-not-kept`）で、どちらもイメージが名指しの行を出して終わる。
+

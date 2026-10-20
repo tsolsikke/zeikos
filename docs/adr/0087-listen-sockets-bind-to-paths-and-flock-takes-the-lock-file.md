@@ -87,7 +87,9 @@ Seinas（wayland-server）は起動時に、ソケットのパスの隣にロッ
   （seedに `/tmp/seinas` が増える。ディスクのチェックサムが変わる）。Linux 向けの確かめのイメージ（musl の Rust）を
   1 本足し、Linux の参照を控える（`flock` と `bind` の一連）。
 - 持ち越し: `SOCK_NONBLOCK`・`O_NONBLOCK` の待たない形（`F_SETFL` は受けて無視している）、`F_ADD_SEALS`（zeyes が
-  memfd に打つ。`sys_fcntl` は `-EINVAL`）、`/tmp` を誰が消すか、`F_DUPFD` のコピーのロックの共有。
+  memfd に打つ。`sys_fcntl` は memfd なら受けて 0 を返し、封をしない。ほかの fd は `-EINVAL`。2026-10-20 に直した——
+  以前は「`-EINVAL`」と書いていたが、この ADR を書いた時点でもコードは memfd に 0 を返していた。2026-10-20 から封を持って
+  答える。`ADR-0065` の 2026-10-20 の Addendum）、`/tmp` を誰が消すか、`F_DUPFD` のコピーのロックの共有。
 - セルフホスティングの条件（`ADR-0086`の「これからの設計で守る条件」）に照らした——`SYS_SPAWN`のfamilyを増やさず、Linuxの番号
   （41・43・49・50・73・288）の形で足す。ソケットの名前の置き場は条件に含まれない。ファイルシステムを替えるときに
   名前をinodeへ移す選択は残す。
