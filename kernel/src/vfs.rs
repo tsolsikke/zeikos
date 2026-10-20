@@ -725,7 +725,14 @@ pub struct FileTable {
     /// 今開いている本数では区別が付かない**（どちらも 0 である）。
     /// **判定行が「表が動いた」を主張するには、累計が要る。**
     opened: usize,
+    /// `FD_CLOEXEC` の印（ビット `fd`。2026-10-20）。**持って答えるだけである**——`exec` が無いので、閉じる場面が無い。立てるのは
+    /// `fcntl(F_SETFD)`・`F_DUPFD_CLOEXEC` と、作るときの `*_CLOEXEC`（`open`・`socket`・`accept4`・eventfd・timerfd・epoll・
+    /// memfd・`recvmsg` で受け取った fd）で、置く・閉じるときに下ろす（`ADR-0065` の 2026-10-20 の Addendum）。
+    cloexec: u16,
 }
+
+// `cloexec` は fd ごとに 1 ビットなので、表の大きさは 16 までである。
+const _: () = assert!(MAX_OPEN_FILES <= u16::BITS as usize);
 
 impl Default for FileTable {
     fn default() -> Self {
@@ -755,24 +762,41 @@ impl FileTable {
         slots[STDOUT_FD] = Some(File::Terminal { errors: false });
         // **2 番だけがエラーの出口である（ADR-0046）。**
         slots[STDERR_FD] = Some(File::Terminal { errors: true });
-        Self { slots, opened: 0 }
+        Self {
+            slots,
+            opened: 0,
+            cloexec: 0,
+        }
     }
 
     /// 最小の空き番号へ置き、その番号を返す。**端末の 3 つは埋まっているので、
-    /// 最初の `open` は 3 を返す**（Linux と同じ）。
+    /// 最初の `open` は 3 を返す**（Linux と同じ）。`FD_CLOEXEC` の印は持たない。
     pub fn insert(&mut self, file: File) -> Result<usize, FileTableError> {
-        for (fd, slot) in self.slots.iter_mut().enumerate() {
-            if slot.is_none() {
-                *slot = Some(file);
-                self.opened = self.opened.saturating_add(1);
-                return Ok(fd);
-            }
-        }
-        Err(FileTableError::NoFreeDescriptor)
+        self.insert_at_or_above_with_cloexec(file, 0, false)
     }
 
-    /// `at` 以上の最小の空き番号へ置き、その番号を返す（`fcntl` の `F_DUPFD`。2026-10-06）。
+    /// 最小の空き番号へ置き、`cloexec` なら `FD_CLOEXEC` の印も立てる（2026-10-20。`O_CLOEXEC`・`SOCK_CLOEXEC` などで作る fd）。
+    /// **印は置けた番号にだけ立てるので、置いた後に失敗する道は無い。**
+    pub fn insert_with_cloexec(
+        &mut self,
+        file: File,
+        cloexec: bool,
+    ) -> Result<usize, FileTableError> {
+        self.insert_at_or_above_with_cloexec(file, 0, cloexec)
+    }
+
+    /// `at` 以上の最小の空き番号へ置き、その番号を返す（`fcntl` の `F_DUPFD`。2026-10-06）。`FD_CLOEXEC` の印は持たない。
     pub fn insert_at_or_above(&mut self, file: File, at: usize) -> Result<usize, FileTableError> {
+        self.insert_at_or_above_with_cloexec(file, at, false)
+    }
+
+    /// `at` 以上の最小の空き番号へ置き、`cloexec` なら `FD_CLOEXEC` の印も立てる（`F_DUPFD_CLOEXEC`。2026-10-20）。
+    pub fn insert_at_or_above_with_cloexec(
+        &mut self,
+        file: File,
+        at: usize,
+        cloexec: bool,
+    ) -> Result<usize, FileTableError> {
         if at >= self.slots.len() {
             return Err(FileTableError::BadDescriptor(at));
         }
@@ -780,6 +804,11 @@ impl FileTable {
             if slot.is_none() {
                 *slot = Some(file);
                 self.opened = self.opened.saturating_add(1);
+                if cloexec {
+                    self.cloexec |= 1 << fd;
+                } else {
+                    self.cloexec &= !(1 << fd);
+                }
                 return Ok(fd);
             }
         }
@@ -788,10 +817,30 @@ impl FileTable {
 
     /// 番号を閉じる。**開いていない番号は拒む。**
     pub fn remove(&mut self, fd: usize) -> Result<File, FileTableError> {
-        self.slots
+        let file = self
+            .slots
             .get_mut(fd)
             .and_then(Option::take)
-            .ok_or(FileTableError::BadDescriptor(fd))
+            .ok_or(FileTableError::BadDescriptor(fd))?;
+        self.cloexec &= !(1 << fd);
+        Ok(file)
+    }
+
+    /// `FD_CLOEXEC` の印を立てるか下ろす（`fcntl(F_SETFD)`。2026-10-20）。**開いていない番号は拒む。**
+    pub fn set_cloexec(&mut self, fd: usize, on: bool) -> Result<(), FileTableError> {
+        self.get(fd)?;
+        if on {
+            self.cloexec |= 1 << fd;
+        } else {
+            self.cloexec &= !(1 << fd);
+        }
+        Ok(())
+    }
+
+    /// `FD_CLOEXEC` の印が立っているか（`fcntl(F_GETFD)`。2026-10-20）。**開いていない番号は拒む。**
+    pub fn cloexec(&self, fd: usize) -> Result<bool, FileTableError> {
+        self.get(fd)?;
+        Ok(self.cloexec & (1 << fd) != 0)
     }
 
     /// 番号を引く。
@@ -818,6 +867,7 @@ impl FileTable {
     pub fn replace(&mut self, fd: usize, file: File) -> Option<File> {
         let slot = self.slots.get_mut(fd)?;
         let previous = slot.replace(file);
+        self.cloexec &= !(1 << fd);
         if let Some(previous) = previous {
             previous.release_end();
         }
@@ -884,6 +934,31 @@ impl FileTable {
 mod tests {
     use super::*;
 
+    /// `FD_CLOEXEC` の印は fd ごとに持ち、置く・閉じるときに下ろす（2026-10-20）。開いていない番号は拒む。
+    #[test]
+    fn the_cloexec_mark_follows_the_descriptor() {
+        let mut table = FileTable::new();
+        let fd = table.insert(File::new(inode(7, 1, REGULAR))).unwrap();
+        assert_eq!(table.cloexec(fd), Ok(false));
+        table.set_cloexec(fd, true).unwrap();
+        assert_eq!(table.cloexec(fd), Ok(true));
+        assert_eq!(
+            table.cloexec(STDIN_FD),
+            Ok(false),
+            "another descriptor keeps its own mark"
+        );
+        table.remove(fd).unwrap();
+        assert!(table.cloexec(fd).is_err());
+        let again = table.insert(File::new(inode(8, 1, REGULAR))).unwrap();
+        assert_eq!(again, fd);
+        assert_eq!(
+            table.cloexec(again),
+            Ok(false),
+            "a reused number starts without the mark"
+        );
+        assert!(table.set_cloexec(MAX_OPEN_FILES - 1, true).is_err());
+    }
+
     /// 試験用の inode。**ext2 のイメージを組み立てずに作る**（表の論理だけを見る）。
     fn inode(number: u32, size: u64, mode: u16) -> Inode {
         Inode::from_ext2(ext2::Inode {
@@ -927,10 +1002,10 @@ mod tests {
         // ——判別子の使っていない値を `None` に使える。**スロット 1 つは 96 バイトのまま
         // である**（S11-10 の前は 88 + 8 = 96 だった）。
         assert_eq!(core::mem::size_of::<Option<File>>(), 96);
-        // 表はスロット 16 個 + 累計のカウンタ 8 バイトである。
+        // 表はスロット 16 個 + 累計のカウンタ 8 バイト + `FD_CLOEXEC` の印（2026-10-20。`u16` が詰め物で 8 バイト）である。
         assert_eq!(
             core::mem::size_of::<FileTable>(),
-            96 * MAX_OPEN_FILES + core::mem::size_of::<usize>()
+            96 * MAX_OPEN_FILES + 2 * core::mem::size_of::<usize>()
         );
         // **4 KiB を超えない。** 超えると `deferred-decisions.md` の
         // 「大きなスタック配列とガード幅」の解禁条件に当たる。

@@ -59,6 +59,9 @@ struct Shm {
     /// 参照は 0 になったが、アロケータが借りられずにフレームをまだ返せていない（2026-10-08）。**使う側からは、在らない
     /// ものとして見える**（[`Shm::live`]）。欄は空かないので、作り直しにも使われない。
     releasing: bool,
+    /// 封のビット（`F_SEAL_*`。2026-10-20）。**持って答えるだけで、まだ効かない**——縮める・伸ばす `ftruncate` と、書ける
+    /// `mmap` を断る効き目は、2 回目の `ftruncate` とマッピングの数を持つ段で入る（`ADR-0065` の 2026-10-20 の Addendum）。
+    seals: u32,
 }
 
 impl Shm {
@@ -69,6 +72,7 @@ impl Shm {
         len: 0,
         refs: 0,
         releasing: false,
+        seals: 0,
     };
 
     /// fd から使える実体か（在って、返す途中でない）。
@@ -120,14 +124,57 @@ pub fn note_mapped_page() {
     MAPPED_PAGES.fetch_add(1, Ordering::Relaxed);
 }
 
-/// 無名の共有メモリを作る。**大きさは 0。** **fd を持つ側が参照 1。**
-pub fn create() -> Option<u8> {
+/// 封のビット（Linux の `F_SEAL_*`）。
+pub const F_SEAL_SEAL: u32 = 0x0001;
+pub const F_SEAL_SHRINK: u32 = 0x0002;
+pub const F_SEAL_GROW: u32 = 0x0004;
+pub const F_SEAL_WRITE: u32 = 0x0008;
+pub const F_SEAL_FUTURE_WRITE: u32 = 0x0010;
+/// `chmod` で実行のビットを変えさせない封（Linux 6.3 から）。ZeikOS の memfd には実行のビットを変える道が無いので、持つだけである。
+pub const F_SEAL_EXEC: u32 = 0x0020;
+/// 知っている封のビットの全部（Linux の `F_ALL_SEALS`）。
+pub const ALL_SEALS: u32 =
+    F_SEAL_SEAL | F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_WRITE | F_SEAL_FUTURE_WRITE | F_SEAL_EXEC;
+
+/// 封を足せなかった理由（`fcntl(F_ADD_SEALS)`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SealError {
+    /// 知らないビットがある（`-EINVAL`）。
+    Unknown,
+    /// 既に `F_SEAL_SEAL` が立っている（`-EPERM`）。
+    Sealed,
+}
+
+/// 封を足した後の値（純粋な論理。Linux の `memfd_add_seals` と同じ順で見る——知らないビットが先、`F_SEAL_SEAL` が後）。
+pub fn added_seals(current: u32, add: u32) -> Result<u32, SealError> {
+    if add & !ALL_SEALS != 0 {
+        return Err(SealError::Unknown);
+    }
+    if current & F_SEAL_SEAL != 0 {
+        return Err(SealError::Sealed);
+    }
+    Ok(current | add)
+}
+
+/// 作ったときの封（純粋な論理）。**`MFD_ALLOW_SEALING` が無ければ、最初から `F_SEAL_SEAL` を持つ**（Linux と同じ。封を足す
+/// 求めは `-EPERM` になる）。
+pub const fn initial_seals(allow_sealing: bool) -> u32 {
+    if allow_sealing {
+        0
+    } else {
+        F_SEAL_SEAL
+    }
+}
+
+/// 無名の共有メモリを作る。**大きさは 0。** **fd を持つ側が参照 1。** 封は [`initial_seals`] で決める（2026-10-20）。
+pub fn create(allow_sealing: bool) -> Option<u8> {
     let mut shms = SHMS.lock();
     for index in 0..MAX_SHM {
         if !shms[index].in_use {
             shms[index] = Shm::EMPTY;
             shms[index].in_use = true;
             shms[index].refs = 1;
+            shms[index].seals = initial_seals(allow_sealing);
             CREATED.fetch_add(1, Ordering::Relaxed);
             return Some(index as u8);
         }
@@ -233,6 +280,27 @@ pub fn set_size(
     }
     SHARED_FRAMES_HELD.fetch_add(want as u64, Ordering::Relaxed);
     TruncateOutcome::Pages(want)
+}
+
+/// 今の封（`fcntl(F_GET_SEALS)`。2026-10-20）。無い共有メモリなら `None`。
+pub fn seals(shm: u8) -> Option<u32> {
+    let index = shm as usize;
+    let shms = SHMS.lock();
+    (index < MAX_SHM && shms[index].live()).then(|| shms[index].seals)
+}
+
+/// 封を足す（`fcntl(F_ADD_SEALS)`。2026-10-20）。**無い共有メモリなら `None`。** 足せたら `Some(Ok(足した後の値))`。
+pub fn add_seals(shm: u8, add: u32) -> Option<Result<u32, SealError>> {
+    let index = shm as usize;
+    let mut shms = SHMS.lock();
+    if index >= MAX_SHM || !shms[index].live() {
+        return None;
+    }
+    let result = added_seals(shms[index].seals, add);
+    if let Ok(seals) = result {
+        shms[index].seals = seals;
+    }
+    Some(result)
 }
 
 /// 据えたページ数と参照の数（2 回目の `ftruncate` を名指しして断る行のため。2026-10-15）。無ければ `None`。
@@ -343,5 +411,31 @@ mod tests {
         assert_eq!(pages_for(PAGE_SIZE as u64), 1);
         assert_eq!(pages_for(PAGE_SIZE as u64 + 1), 2);
         assert_eq!(pages_for(1536), 1);
+    }
+
+    /// 封の足し方は Linux と同じ順である（2026-10-20）——知らないビットは `-EINVAL`、`F_SEAL_SEAL` の後は `-EPERM`、それ以外は
+    /// 重ねて持つ。`MFD_ALLOW_SEALING` が無い memfd は、最初から `F_SEAL_SEAL` を持つ。
+    #[test]
+    fn seals_are_added_the_way_linux_adds_them() {
+        assert_eq!(initial_seals(true), 0);
+        assert_eq!(initial_seals(false), F_SEAL_SEAL);
+        assert_eq!(added_seals(0, F_SEAL_SHRINK), Ok(F_SEAL_SHRINK));
+        assert_eq!(
+            added_seals(F_SEAL_SHRINK, F_SEAL_GROW | F_SEAL_SEAL),
+            Ok(F_SEAL_SHRINK | F_SEAL_GROW | F_SEAL_SEAL)
+        );
+        assert_eq!(
+            added_seals(F_SEAL_SEAL, F_SEAL_SHRINK),
+            Err(SealError::Sealed)
+        );
+        assert_eq!(added_seals(F_SEAL_SEAL, 0), Err(SealError::Sealed));
+        assert_eq!(added_seals(0, 0x40), Err(SealError::Unknown));
+        assert_eq!(
+            added_seals(F_SEAL_SEAL, 0x40),
+            Err(SealError::Unknown),
+            "an unknown bit is -EINVAL before the sealed check"
+        );
+        assert_eq!(added_seals(0, F_SEAL_FUTURE_WRITE), Ok(F_SEAL_FUTURE_WRITE));
+        assert_eq!(added_seals(0, F_SEAL_EXEC), Ok(F_SEAL_EXEC));
     }
 }

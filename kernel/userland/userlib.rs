@@ -1340,10 +1340,12 @@ pub unsafe fn syscall6(number: u64, a: u64, b: u64, c: u64, d: u64, e: u64, f: u
     ret
 }
 
-/// `memfd_create(name, flags)`。**fd か `-errno`。** **名前とフラグはカーネルが見ない。**
+/// `memfd_create(name, flags)`。**fd か `-errno`。** 名前は `"zeikos"`、フラグは 0 で打つ（2026-10-20 からカーネルが名前の長さと
+/// フラグを確かめる。NULL の名前は `-EFAULT`）。
 pub fn memfd_create() -> i64 {
-    // SAFETY: 引数はカーネルが見ない（0 を渡す）。
-    unsafe { syscall3(SYS_MEMFD_CREATE, 0, 0, 0) }
+    const NAME: &[u8] = b"zeikos\0";
+    // SAFETY: 名前は NUL で終わる静的なバイト列で、カーネルは読むだけである。
+    unsafe { syscall3(SYS_MEMFD_CREATE, NAME.as_ptr() as u64, 0, 0) }
 }
 
 /// `ftruncate(fd, size)`。**0 か `-errno`。**

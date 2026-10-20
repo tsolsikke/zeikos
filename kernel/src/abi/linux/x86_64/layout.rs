@@ -43,6 +43,8 @@ pub const STAT_MODE: usize = 24;
 
 pub const STAT_SIZE: usize = 48;
 
+pub const STAT_BLKSIZE: usize = 56;
+
 pub const STAT_BLOCKS: usize = 64;
 
 /// `struct stat` を組む（欄の位置は [`STAT_LEN`] の表）。
@@ -55,6 +57,7 @@ pub fn stat_bytes(stat: &Stat) -> [u8; STAT_LEN] {
     out[STAT_NLINK..STAT_NLINK + 8].copy_from_slice(&stat.nlink.to_le_bytes());
     out[STAT_MODE..STAT_MODE + 4].copy_from_slice(&stat.mode.to_le_bytes());
     out[STAT_SIZE..STAT_SIZE + 8].copy_from_slice(&stat.size.to_le_bytes());
+    out[STAT_BLKSIZE..STAT_BLKSIZE + 8].copy_from_slice(&stat.blksize.to_le_bytes());
     out[STAT_BLOCKS..STAT_BLOCKS + 8].copy_from_slice(&stat.blocks.to_le_bytes());
     out
 }
@@ -88,6 +91,7 @@ mod tests {
             nlink: 0x1112_1314_1516_1718,
             mode: 0x2122_2324,
             size: 0x3132_3334_3536_3738,
+            blksize: 0x5152_5354_5556_5758,
             blocks: 0x4142_4344_4546_4748,
         });
         assert_eq!(out.len(), 144, "sizeof(struct stat)");
@@ -95,9 +99,10 @@ mod tests {
         assert_eq!(u64_at(&out, 16), 0x1112_1314_1516_1718, "st_nlink @16");
         assert_eq!(u32_at(&out, 24), 0x2122_2324, "st_mode @24");
         assert_eq!(u64_at(&out, 48), 0x3132_3334_3536_3738, "st_size @48");
+        assert_eq!(u64_at(&out, 56), 0x5152_5354_5556_5758, "st_blksize @56");
         assert_eq!(u64_at(&out, 64), 0x4142_4344_4546_4748, "st_blocks @64");
         let mut rest = out;
-        for (at, len) in [(8, 8), (16, 8), (24, 4), (48, 8), (64, 8)] {
+        for (at, len) in [(8, 8), (16, 8), (24, 4), (48, 8), (56, 8), (64, 8)] {
             rest[at..at + len].fill(0);
         }
         assert_eq!(rest, [0u8; 144], "the other fields are 0");

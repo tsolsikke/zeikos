@@ -92,6 +92,8 @@ pub struct Stat {
     pub mode: u32,
     /// `st_size`（バイト数）。
     pub size: u64,
+    /// `st_blksize`（読み書きに向く大きさ。2026-10-20 に足した。memfd は 4096、ほかは 0 のまま）。
+    pub blksize: u64,
     /// `st_blocks`（**512 バイト単位の数**）。
     pub blocks: u64,
 }

@@ -79,7 +79,7 @@ pub const SOCK_STREAM: u64 = 1;
 /// `socket` の `type` のうち、種類を表す下位ビット（`SOCK_TYPE_MASK`。残りはフラグ）。
 pub const SOCK_TYPE_MASK: u64 = 0xf;
 
-/// `SOCK_CLOEXEC`（Linux の値。`O_CLOEXEC` と同じ）。`ADR-0087` で、無視して受ける形になった（`exec` が無い）。
+/// `SOCK_CLOEXEC`（Linux の値。`O_CLOEXEC` と同じ）。`ADR-0087` で受ける形になり、fd の `FD_CLOEXEC` の印に持つ（2026-10-20。`exec` が無いので効き目は無い）。
 pub const SOCK_CLOEXEC: u64 = 0o2000000;
 
 /// `SOCK_NONBLOCK`（Linux の値。`O_NONBLOCK` と同じ）。2026-10-19 から受け、fd に待たない印を立てる。
@@ -91,12 +91,22 @@ pub const O_NONBLOCK: u64 = 0o4000;
 
 /// `EFD_SEMAPHORE`（`eventfd2` の `flags`。2026-10-19）。`read` が 1 を返して 1 減らす。
 pub const EFD_SEMAPHORE: u64 = 1;
-/// `EFD_CLOEXEC`（`O_CLOEXEC` と同じ値）。受けて無視する（`exec` が無い）。
+/// `EFD_CLOEXEC`（`O_CLOEXEC` と同じ値）。fd の `FD_CLOEXEC` の印に持つ（2026-10-20。`exec` が無いので効き目は無い）。
 pub const EFD_CLOEXEC: u64 = 0o2000000;
+
+/// `memfd_create` の `flags`（Linux の `uapi/linux/memfd.h`。2026-10-20）。**この 2 つだけを受ける。**
+pub const MFD_CLOEXEC: u64 = 0x0001;
+pub const MFD_ALLOW_SEALING: u64 = 0x0002;
+/// `memfd_create` の名前の長さの上限（NUL を除く。Linux の `MFD_NAME_MAX_LEN` = `NAME_MAX` - `strlen("memfd:")`）。
+pub const MFD_NAME_MAX_LEN: usize = 249;
+/// `fcntl(F_GETFD)`・`F_SETFD` の `FD_CLOEXEC`。
+pub const FD_CLOEXEC: u64 = 1;
+/// `open` の `O_CLOEXEC`（fd の `FD_CLOEXEC` の印を立てる。2026-10-20）。
+pub const O_CLOEXEC: u64 = 0o2000000;
 /// `EFD_NONBLOCK`（`O_NONBLOCK` と同じ値）。fd に待たない印を立てる。
 pub const EFD_NONBLOCK: u64 = 0o4000;
 
-/// `TFD_CLOEXEC`（`timerfd_create` の `flags`。`O_CLOEXEC` と同じ値。2026-10-19）。受けて無視する（`exec` が無い）。
+/// `TFD_CLOEXEC`（`timerfd_create` の `flags`。`O_CLOEXEC` と同じ値。2026-10-19）。fd の `FD_CLOEXEC` の印に持つ（2026-10-20。`exec` が無いので効き目は無い）。
 pub const TFD_CLOEXEC: u64 = 0o2000000;
 /// `TFD_NONBLOCK`（`O_NONBLOCK` と同じ値）。fd に待たない印を立てる。
 pub const TFD_NONBLOCK: u64 = 0o4000;
@@ -105,7 +115,7 @@ pub const TFD_TIMER_ABSTIME: u64 = 1;
 /// `struct itimerspec` の大きさ（`it_interval` と `it_value` の `timespec` が 2 つ）。
 pub const ITIMERSPEC_LEN: usize = 32;
 
-/// `EPOLL_CLOEXEC`（`epoll_create1` の `flags`。`O_CLOEXEC` と同じ値。2026-10-19）。受けて無視する（`exec` が無い）。
+/// `EPOLL_CLOEXEC`（`epoll_create1` の `flags`。`O_CLOEXEC` と同じ値。2026-10-19）。fd の `FD_CLOEXEC` の印に持つ（2026-10-20。`exec` が無いので効き目は無い）。
 pub const EPOLL_CLOEXEC: u64 = 0o2000000;
 /// `epoll_ctl` の `op`（Linux の値）。
 pub const EPOLL_CTL_ADD: u64 = 1;
@@ -147,7 +157,7 @@ pub const MSG_DONTWAIT: u64 = 0x40;
 /// 今までどおり `-EPIPE` を返すだけである（2026-10-19）。
 pub const MSG_NOSIGNAL: u64 = 0x4000;
 
-/// `MSG_CMSG_CLOEXEC`（Linux の値）。受け取った fd に `FD_CLOEXEC` を付ける。**受けて無視する**（`exec` が無い。
+/// `MSG_CMSG_CLOEXEC`（Linux の値）。受け取った fd に `FD_CLOEXEC` を付ける。**印に持つ**（2026-10-20。`exec` が無いので効き目は無い。
 /// 2026-10-19）。
 pub const MSG_CMSG_CLOEXEC: u64 = 0x4000_0000;
 

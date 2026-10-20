@@ -1477,7 +1477,7 @@ core::arch::global_asm!(
     "  int 0x80",
     // 67: memfd_create+ftruncate+mmap した共有メモリへ書いた値が読み戻せる（ADR-0065）。
     "  mov eax, {sys_memfd}",
-    "  xor edi, edi",
+    "  lea rdi, [rip + MEMFD_NAME]", // 名前（2026-10-20 からカーネルが長さを確かめる。NULL は -EFAULT）
     "  xor esi, esi",
     "  xor edx, edx",
     "  int 0x80",
@@ -3183,6 +3183,9 @@ core::arch::global_asm!(
     "  .quad 0",
     "CAT_MISSING_PATH:",
     "  .asciz \"/nope\"",
+    // **`memfd_create` の名前**（2026-10-20。カーネルが NUL までの長さを確かめる）。
+    "MEMFD_NAME:",
+    "  .asciz \"syscall-test\"",
     // **`sockaddr_un`**（`sa_family_t` = AF_UNIX の 2 バイトと、NUL 終端の名前）。
     ".balign 2",
     "SOCKADDR_NOBODY:",

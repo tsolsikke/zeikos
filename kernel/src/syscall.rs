@@ -64,13 +64,14 @@ use crate::abi::linux::{
     DIRENT64_ALIGN, DIRENT64_HEADER_LEN, DRM_CLIP_RECT_LEN, DT_DIR, DT_REG, DT_UNKNOWN,
     EFD_CLOEXEC, EFD_NONBLOCK, EFD_SEMAPHORE, EPOLL_CLOEXEC, EPOLL_CTL_ADD, EPOLL_CTL_DEL,
     EPOLL_CTL_MOD, EPOLL_EVENT_LEN, FBIOGET_FSCREENINFO, FBIOGET_VSCREENINFO,
-    FB_TYPE_PACKED_PIXELS, FB_VISUAL_TRUECOLOR, FIONBIO, INPUT_EVENT_LEN, IOVEC_LEN,
-    ITIMERSPEC_LEN, MAP_ANONYMOUS, MAP_FIXED, MAP_FIXED_NOREPLACE, MSGHDR_CONTROLLEN, MSGHDR_LEN,
-    MSG_CMSG_CLOEXEC, MSG_DONTWAIT, MSG_NOSIGNAL, O_ACCMODE, O_APPEND, O_CREAT, O_NONBLOCK,
-    O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY, POLLFD_LEN, POLLIN, POLLNVAL, PROT_EXEC, PROT_READ,
-    PROT_WRITE, SCM_RIGHTS, SEEK_CUR, SEEK_END, SEEK_SET, SOCKADDR_UN_LEN, SOCK_CLOEXEC,
-    SOCK_NONBLOCK, SOCK_STREAM, SOCK_TYPE_MASK, SOL_SOCKET, TFD_CLOEXEC, TFD_NONBLOCK,
-    TFD_TIMER_ABSTIME, TIMESPEC_LEN, TIOCGWINSZ, WINSIZE_LEN,
+    FB_TYPE_PACKED_PIXELS, FB_VISUAL_TRUECOLOR, FD_CLOEXEC, FIONBIO, INPUT_EVENT_LEN, IOVEC_LEN,
+    ITIMERSPEC_LEN, MAP_ANONYMOUS, MAP_FIXED, MAP_FIXED_NOREPLACE, MFD_ALLOW_SEALING, MFD_CLOEXEC,
+    MFD_NAME_MAX_LEN, MSGHDR_CONTROLLEN, MSGHDR_LEN, MSG_CMSG_CLOEXEC, MSG_DONTWAIT, MSG_NOSIGNAL,
+    O_ACCMODE, O_APPEND, O_CLOEXEC, O_CREAT, O_NONBLOCK, O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY,
+    POLLFD_LEN, POLLIN, POLLNVAL, PROT_EXEC, PROT_READ, PROT_WRITE, SCM_RIGHTS, SEEK_CUR, SEEK_END,
+    SEEK_SET, SOCKADDR_UN_LEN, SOCK_CLOEXEC, SOCK_NONBLOCK, SOCK_STREAM, SOCK_TYPE_MASK,
+    SOL_SOCKET, TFD_CLOEXEC, TFD_NONBLOCK, TFD_TIMER_ABSTIME, TIMESPEC_LEN, TIOCGWINSZ,
+    WINSIZE_LEN,
 };
 use crate::abi::linux::{
     E2BIG, EACCES, EADDRINUSE, EAFNOSUPPORT, EAGAIN, EBADF, EBUSY, ECHILD, ECONNREFUSED, EEXIST,
@@ -1013,7 +1014,7 @@ unsafe fn dispatch(
                 bkl,
             )
         },
-        // **`accept4` は `SOCK_CLOEXEC` を無視し、`SOCK_NONBLOCK` で受けた fd に待たない印を立てる**（`ADR-0087`。
+        // **`accept4` は `SOCK_CLOEXEC` を fd の印に持ち（2026-10-20）、`SOCK_NONBLOCK` で受けた fd に待たない印を立てる**（`ADR-0087`。
         // Rust の std が打つ。印は 2026-10-19 から）。
         // SAFETY: 同上。
         SYS_ACCEPT4 => unsafe {
@@ -1033,7 +1034,10 @@ unsafe fn dispatch(
         },
         // **共有メモリと fd の受け渡し（`ADR-0065`）。** **5 つとも `#[inline(never)]` で、
         // `spawn` の経路には載っていない**——**`mmap` は `brk` と同じ `map_4kib` を使う。**
-        SYS_MEMFD_CREATE => memfd_create_from_ring3(),
+        // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+        SYS_MEMFD_CREATE => unsafe {
+            memfd_create_from_ring3(args[0], args[1], page_table_root, direct_map)
+        },
         SYS_FTRUNCATE => ftruncate_from_ring3(args[0], args[1], bkl),
         SYS_FLOCK => sys_flock(args[0], args[1], bkl),
         // **eventfd**（2026-10-19）。`eventfd` は `flags` の無い古い形である。
@@ -1554,7 +1558,7 @@ fn socket_call_waits(nonblocking: bool, dont_wait: bool) -> bool {
 }
 
 /// `send`・`recv` の系統の `flags` を読む（2026-10-19）。**`MSG_DONTWAIT` が立っていれば真を返す。** `MSG_NOSIGNAL` と
-/// `MSG_CMSG_CLOEXEC` は受けて無視する（シグナルは配送しない。`exec` が無い）。**ほかのビットは、名前のある行を出して
+/// `MSG_CMSG_CLOEXEC` は受け取った fd の `FD_CLOEXEC` の印に持つ（2026-10-20。`exec` が無いので効き目は無い）。**ほかのビットは、名前のある行を出して
 /// `-EINVAL` で断る**（`MSG_PEEK`・`MSG_WAITALL` などを黙って無視すると、待つ・覗くのつもりの呼び手が違う形で進む）。
 fn msg_flags_dont_wait(flags: u64, call: &str, fd: u64) -> Result<bool, u64> {
     let unknown = flags & !(MSG_DONTWAIT | MSG_NOSIGNAL | MSG_CMSG_CLOEXEC);
@@ -1648,7 +1652,7 @@ unsafe fn sendto_recvfrom_from_ring3(
 
 /// [`SYS_EVENTFD2`] と [`SYS_EVENTFD`] の本体（2026-10-19）。**eventfd を作り、最小の空き fd に置く。**
 ///
-/// `flags` は `EFD_SEMAPHORE`・`EFD_CLOEXEC`・`EFD_NONBLOCK` を受ける（`EFD_CLOEXEC` は `exec` が無いので無視する）。ほかの
+/// `flags` は `EFD_SEMAPHORE`・`EFD_CLOEXEC`・`EFD_NONBLOCK` を受ける（`EFD_CLOEXEC` は fd の `FD_CLOEXEC` の印に持つ（2026-10-20。`exec` が無いので効き目は無い））。ほかの
 /// ビットは `-EINVAL`。表が尽きれば `-ENOMEM`。
 #[inline(never)]
 fn eventfd_from_ring3(initial: u64, flags: u64) -> u64 {
@@ -1661,10 +1665,13 @@ fn eventfd_from_ring3(initial: u64, flags: u64) -> u64 {
         return (-ENOMEM) as u64;
     };
     let inserted = crate::vfs::with_current_files(|files| {
-        files.insert(crate::vfs::File::EventFd {
-            id,
-            nonblocking: flags & EFD_NONBLOCK != 0,
-        })
+        files.insert_with_cloexec(
+            crate::vfs::File::EventFd {
+                id,
+                nonblocking: flags & EFD_NONBLOCK != 0,
+            },
+            flags & EFD_CLOEXEC != 0,
+        )
     });
     match inserted {
         Ok(fd) => fd as u64,
@@ -1782,7 +1789,7 @@ unsafe fn write_eventfd(
 /// [`SYS_TIMERFD_CREATE`] の本体（2026-10-19）。**止まった timerfd を作り、最小の空き fd に置く。**
 ///
 /// 時計は `CLOCK_MONOTONIC` だけを受ける（ほかは `-EINVAL`。`CLOCK_REALTIME` は壁の時計の課題の範囲）。`flags` は
-/// `TFD_CLOEXEC`（無視する）と `TFD_NONBLOCK` を受け、ほかのビットは `-EINVAL`。表が尽きれば `-ENOMEM`。
+/// `TFD_CLOEXEC`（fd の `FD_CLOEXEC` の印に持つ（2026-10-20。`exec` が無いので効き目は無い））と `TFD_NONBLOCK` を受け、ほかのビットは `-EINVAL`。表が尽きれば `-ENOMEM`。
 #[inline(never)]
 fn timerfd_create_from_ring3(clockid: u64, flags: u64) -> u64 {
     if clockid != CLOCK_MONOTONIC || flags & !(TFD_CLOEXEC | TFD_NONBLOCK) != 0 {
@@ -1792,10 +1799,13 @@ fn timerfd_create_from_ring3(clockid: u64, flags: u64) -> u64 {
         return (-ENOMEM) as u64;
     };
     let inserted = crate::vfs::with_current_files(|files| {
-        files.insert(crate::vfs::File::TimerFd {
-            id,
-            nonblocking: flags & TFD_NONBLOCK != 0,
-        })
+        files.insert_with_cloexec(
+            crate::vfs::File::TimerFd {
+                id,
+                nonblocking: flags & TFD_NONBLOCK != 0,
+            },
+            flags & TFD_CLOEXEC != 0,
+        )
     });
     match inserted {
         Ok(fd) => fd as u64,
@@ -2001,7 +2011,7 @@ unsafe fn read_timerfd(
 }
 
 /// [`SYS_EPOLL_CREATE1`] の本体（2026-10-19。`ADR-0088`）。**空の epoll を作り、最小の空き fd に置く。** `flags` は
-/// `EPOLL_CLOEXEC`（無視する）だけを受け、ほかのビットは `-EINVAL`。表が尽きれば `-ENOMEM`。
+/// `EPOLL_CLOEXEC`（fd の `FD_CLOEXEC` の印に持つ（2026-10-20。`exec` が無いので効き目は無い））だけを受け、ほかのビットは `-EINVAL`。表が尽きれば `-ENOMEM`。
 #[inline(never)]
 fn epoll_create_from_ring3(flags: u64) -> u64 {
     if flags & !EPOLL_CLOEXEC != 0 {
@@ -2010,7 +2020,9 @@ fn epoll_create_from_ring3(flags: u64) -> u64 {
     let Some(id) = crate::epoll::create() else {
         return (-ENOMEM) as u64;
     };
-    match crate::vfs::with_current_files(|files| files.insert(crate::vfs::File::Epoll { id })) {
+    match crate::vfs::with_current_files(|files| {
+        files.insert_with_cloexec(crate::vfs::File::Epoll { id }, flags & EPOLL_CLOEXEC != 0)
+    }) {
         Ok(fd) => fd as u64,
         Err(error) => {
             crate::epoll::detach(id);
@@ -2325,7 +2337,7 @@ unsafe fn read_socket_name(
 /// ソケットは Linux の形そのものが在る**）。
 ///
 /// **受けるのは `socket(AF_UNIX, SOCK_STREAM, 0)` と、それに `SOCK_CLOEXEC`・`SOCK_NONBLOCK` を付けた形である**
-/// （`ADR-0087`。`SOCK_CLOEXEC` は `exec` が無いので無視する。Rust の std と wayland-server は必ず付ける）。
+/// （`ADR-0087`。`SOCK_CLOEXEC` は fd の `FD_CLOEXEC` の印に持つ（2026-10-20。`exec` が無いので効き目は無い）。Rust の std と wayland-server は必ず付ける）。
 /// **`SOCK_NONBLOCK` は、fd に待たない印を立てる**（2026-10-19。それまでは `-EINVAL` で断っていた）。
 #[inline(never)]
 fn socket_from_ring3(domain: u64, kind: u64, protocol: u64) -> u64 {
@@ -2341,10 +2353,13 @@ fn socket_from_ring3(domain: u64, kind: u64, protocol: u64) -> u64 {
         return (-EPROTONOSUPPORT) as u64;
     }
     let inserted = crate::vfs::with_current_files(|files| {
-        files.insert(crate::vfs::File::Socket {
-            state: crate::vfs::SocketState::Unbound,
-            nonblocking: kind & SOCK_NONBLOCK != 0,
-        })
+        files.insert_with_cloexec(
+            crate::vfs::File::Socket {
+                state: crate::vfs::SocketState::Unbound,
+                nonblocking: kind & SOCK_NONBLOCK != 0,
+            },
+            kind & SOCK_CLOEXEC != 0,
+        )
     });
     match inserted {
         Ok(fd) => fd as u64,
@@ -2478,7 +2493,7 @@ fn open_screen_from_ring3(by: ScreenOpenedBy) -> u64 {
     }
     let entered = match by {
         ScreenOpenedBy::PrivateNumber => crate::console::enter_graphics(),
-        ScreenOpenedBy::DevFb0 => {
+        ScreenOpenedBy::DevFb0 { .. } => {
             crate::console::enter_graphics_via_fb0(crate::arch::x86_64::monotonic_ticks())
         }
     };
@@ -2487,7 +2502,11 @@ fn open_screen_from_ring3(by: ScreenOpenedBy) -> u64 {
         Err(crate::console::GraphicsError::NoConsole) => return (-ENODEV) as u64,
         Err(crate::console::GraphicsError::Busy) => return (-EBUSY) as u64,
     }
-    let inserted = crate::vfs::with_current_files(|files| files.insert(crate::vfs::File::Screen));
+    // **`/dev/fb0` を `O_CLOEXEC` で開いたなら、`FD_CLOEXEC` の印を立てる**（2026-10-20）。
+    let cloexec = matches!(by, ScreenOpenedBy::DevFb0 { cloexec: true });
+    let inserted = crate::vfs::with_current_files(|files| {
+        files.insert_with_cloexec(crate::vfs::File::Screen, cloexec)
+    });
     match inserted {
         Ok(fd) => fd as u64,
         Err(error) => {
@@ -2502,8 +2521,9 @@ fn open_screen_from_ring3(by: ScreenOpenedBy) -> u64 {
 enum ScreenOpenedBy {
     /// `SYS_OPEN_SCREEN`（ZeikOS 独自の番号）。利用者が `FBIOZPRESENT` で矩形をコピーする。
     PrivateNumber,
-    /// `open("/dev/fb0")`（Linux の fbdev の道）。カーネルが間隔ごとに全体をコピーする。
-    DevFb0,
+    /// `open("/dev/fb0")`（Linux の fbdev の道）。カーネルが間隔ごとに全体をコピーする。`cloexec` は `O_CLOEXEC` で開いたか
+    /// （fd の `FD_CLOEXEC` の印。2026-10-20）。
+    DevFb0 { cloexec: bool },
 }
 
 /// Linux の fbdev の装置のパス。
@@ -3003,7 +3023,7 @@ fn listen_from_ring3(fd: u64, _backlog: u64) -> u64 {
 ///
 /// **`addr` が NULL でなければ、相手の名前として `AF_UNIX` の空の名前を書き、`*addrlen` を 2 にする**（Linux が
 /// 名前の無い相手に返す形。`ADR-0087`。それまでは `-EINVAL` だった——`ADR-0064` の限界 3）。**`accept4` の `flags` は
-/// `SOCK_CLOEXEC` と `SOCK_NONBLOCK` を受ける**（前者は無視する）。
+/// `SOCK_CLOEXEC` と `SOCK_NONBLOCK` を受ける**（前者は fd の `FD_CLOEXEC` の印に持つ（2026-10-20。`exec` が無いので効き目は無い））。
 ///
 /// # 待たない印（2026-10-19）
 ///
@@ -3080,14 +3100,17 @@ unsafe fn accept_from_ring3(
                     }
                 }
                 let inserted = crate::vfs::with_current_files(|files| {
-                    files.insert(crate::vfs::File::Socket {
-                        state: crate::vfs::SocketState::Stream {
-                            conn,
-                            side: crate::socket::Side::Server,
+                    files.insert_with_cloexec(
+                        crate::vfs::File::Socket {
+                            state: crate::vfs::SocketState::Stream {
+                                conn,
+                                side: crate::socket::Side::Server,
+                            },
+                            // **listener の印は引き継がない**（Linux と同じ。上の doc）。
+                            nonblocking: flags & SOCK_NONBLOCK != 0,
                         },
-                        // **listener の印は引き継がない**（Linux と同じ。上の doc）。
-                        nonblocking: flags & SOCK_NONBLOCK != 0,
-                    })
+                        flags & SOCK_CLOEXEC != 0,
+                    )
                 });
                 return match inserted {
                     Ok(new_fd) => new_fd as u64,
@@ -3929,14 +3952,40 @@ fn shm_of(fd: u64) -> Result<u8, u64> {
 }
 
 /// [`SYS_MEMFD_CREATE`] の本体。**無名の共有メモリを作り、最小の空き fd に据える。**
-/// **名前とフラグは見ない**（最小のため。Linux は名前をデバッグに使うだけ）。
+///
+/// - `flags` は `MFD_CLOEXEC` と `MFD_ALLOW_SEALING` だけを受ける。ほかのビットは `-EINVAL`（2026-10-20。以前は見なかった）。
+/// - 名前は長さだけを確かめて持たない——NUL を除いて [`MFD_NAME_MAX_LEN`]（249）バイトを越えたら `-EINVAL`、読めなければ
+///   `-EFAULT`（Linux と同じ順。`flags` が先）。Linux は `/proc` の表示に使うだけで、ZeikOS には `/proc` が無い。
+/// - `MFD_ALLOW_SEALING` が無ければ、最初から `F_SEAL_SEAL` を持つ（`crate::shm::initial_seals`）。
+/// - `MFD_CLOEXEC` は fd の `FD_CLOEXEC` の印に持つ（`exec` が無いので効き目は無い。`fcntl(F_GETFD)` が答える）。
+///
+/// # 安全性
+///
+/// 呼び出し元契約により `page_table_root` / `direct_map` は有効。
 #[inline(never)]
-fn memfd_create_from_ring3() -> u64 {
-    let Some(shm) = crate::shm::create() else {
+unsafe fn memfd_create_from_ring3(
+    name: u64,
+    flags: u64,
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+) -> u64 {
+    if flags & !(MFD_CLOEXEC | MFD_ALLOW_SEALING) != 0 {
+        return (-EINVAL) as u64;
+    }
+    // **NUL まで読む。収まらなければ長すぎる**（受け皿は名前の上限と NUL の分）。
+    let mut buf = [0u8; MFD_NAME_MAX_LEN + 1];
+    // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。`copy_user_string` はページごとに確かめてから読む。
+    match unsafe { copy_user_string(&mut buf, name, page_table_root, direct_map) } {
+        Ok(_) => {}
+        Err(E2BIG) => return (-EINVAL) as u64,
+        Err(errno) => return (-errno) as u64,
+    }
+    let Some(shm) = crate::shm::create(flags & MFD_ALLOW_SEALING != 0) else {
         return (-ENOMEM) as u64;
     };
-    let inserted =
-        crate::vfs::with_current_files(|files| files.insert(crate::vfs::File::Shm { shm }));
+    let inserted = crate::vfs::with_current_files(|files| {
+        files.insert_with_cloexec(crate::vfs::File::Shm { shm }, flags & MFD_CLOEXEC != 0)
+    });
     match inserted {
         Ok(fd) => fd as u64,
         Err(error) => {
@@ -4372,8 +4421,10 @@ unsafe fn recvmsg_from_ring3(
     }
     // **渡された fd が在れば、自分の表へ据え、cmsghdr を書き戻す。**
     if let Some(shm) = crate::socket::take_fd(conn, side) {
-        let inserted =
-            crate::vfs::with_current_files(|files| files.insert(crate::vfs::File::Shm { shm }));
+        // **`MSG_CMSG_CLOEXEC` なら、受け取った fd に `FD_CLOEXEC` の印を立てる**（2026-10-20）。
+        let inserted = crate::vfs::with_current_files(|files| {
+            files.insert_with_cloexec(crate::vfs::File::Shm { shm }, flags & MSG_CMSG_CLOEXEC != 0)
+        });
         let new_fd = match inserted {
             Ok(new_fd) => new_fd as u64,
             Err(error) => {
@@ -6154,7 +6205,7 @@ unsafe fn sys_open(path: u64, flags: u64, page_table_root: PhysAddr, direct_map:
     // **`O_RDWR` も、`O_TRUNC` を伴う形だけ受ける**（`ADR-0087` の決定 5。2026-10-16。Seinas のロックファイルは
     // `O_RDWR|O_CREAT|O_TRUNC|O_CLOEXEC` で開く）。書きの部品は追記のままなので、`O_TRUNC` の無い `O_RDWR` は
     // `-EROFS` のまま（位置書きになってしまう形は受けない。ADR の決定 5 を、この 1 点で狭めた）。
-    // **`O_CLOEXEC` は見ない**（`exec` が無い。`F_SETFD` と同じ）——`O_WRITE_INTENT` にも `O_ACCMODE` にも入らない。
+    // **`O_CLOEXEC` は fd の `FD_CLOEXEC` の印に持つだけである**（2026-10-20。`exec` が無いので効き目は無い）——`O_WRITE_INTENT` にも `O_ACCMODE` にも入らない。
     let mut buf = [0u8; PATH_MAX];
     // SAFETY: 呼び出し元契約をそのまま渡す。
     let len = match unsafe { copy_user_path(&mut buf, path, page_table_root, direct_map) } {
@@ -6166,7 +6217,9 @@ unsafe fn sys_open(path: u64, flags: u64, page_table_root: PhysAddr, direct_map:
     // `/proc/self/exe` と同じ形）。開き方（`O_RDWR` でも `O_RDONLY` でも）は見ない。中身は `SYS_OPEN_SCREEN` と同じ画面の fd
     // だが、**書けば映る形**で、利用者は `FBIOZPRESENT` を打たない。ほかの `/dev/…` は、今までどおり ext2 に無いので `-ENOENT`。
     if &buf[..len] == DEV_FB0 {
-        return open_screen_from_ring3(ScreenOpenedBy::DevFb0);
+        return open_screen_from_ring3(ScreenOpenedBy::DevFb0 {
+            cloexec: flags & O_CLOEXEC != 0,
+        });
     }
 
     let create = flags & O_CREAT != 0;
@@ -6228,9 +6281,11 @@ unsafe fn sys_open(path: u64, flags: u64, page_table_root: PhysAddr, direct_map:
     } else {
         crate::vfs::File::new(crate::vfs::Inode::from_ext2(inode))
     };
-    crate::vfs::with_current_files(|files| match files.insert(file) {
-        Ok(fd) => fd as u64,
-        Err(e) => (-errno_for_file_table(e)) as u64,
+    crate::vfs::with_current_files(|files| {
+        match files.insert_with_cloexec(file, flags & O_CLOEXEC != 0) {
+            Ok(fd) => fd as u64,
+            Err(e) => (-errno_for_file_table(e)) as u64,
+        }
     })
 }
 
@@ -7580,21 +7635,37 @@ const F_GET_SEALS: u64 = 1034;
 
 /// `fcntl(fd, cmd, arg)`（2026-10-06）。**fd の表の小物。**
 ///
-/// - `F_GETFD`・`F_SETFD`: `FD_CLOEXEC` は持たない（`exec` が無い）。問い合わせは 0、設定は受けて 0。
+/// - `F_GETFD`・`F_SETFD`: `FD_CLOEXEC` を fd の印に持って答える（2026-10-20。`exec` が無いので効き目は無い）。立つのは
+///   `F_SETFD`・`F_DUPFD_CLOEXEC` と、作るときの `*_CLOEXEC`（`open`・`socket`・`accept4`・eventfd・timerfd・epoll・memfd・
+///   `recvmsg` の `MSG_CMSG_CLOEXEC`）である（`ADR-0065` の 2026-10-20 の Addendum）。
 /// - `F_GETFL`・`F_SETFL`: ソケットは待たない印（`O_NONBLOCK`）を持つ（2026-10-19）。問い合わせは `O_RDWR` に印を
 ///   足した値（Linux のソケットと同じ形）、設定は `O_NONBLOCK` のビットで印を立てるか下ろす。**ソケットの外は開いたときの
 ///   フラグを持たない**——問い合わせは 0、設定は受けて 0 で、`O_NONBLOCK` を立てる求めなら名前のある行を出す
 ///   （`nonblock-ignored:`）。
 /// - `F_DUPFD`・`F_DUPFD_CLOEXEC`: 同じ `File` を、`arg` 以上の最小の空き番号へコピーする。**Regular は位置を共有しない**
 ///   （Linux は共有する。`File` が位置を持つため。`docs/deferred-decisions.md`）。
-/// - `F_ADD_SEALS`・`F_GET_SEALS`: 共有メモリにだけ。印は持たないので、足す求めは受けて 0、問い合わせは 0。
+/// - `F_ADD_SEALS`・`F_GET_SEALS`: 共有メモリにだけ（ほかは `-EINVAL`）。封のビットを持って答える（2026-10-20）——知らない
+///   ビットは `-EINVAL`、`F_SEAL_SEAL` の後は `-EPERM`。**効き目はまだ無い**（縮める・伸ばす `ftruncate` と書ける `mmap` を
+///   断る形は、2 回目の `ftruncate` とマッピングの数を持つ段で入る）。
 /// - 知らない `cmd` は `-EINVAL`。無い fd は `-EBADF`。
 fn sys_fcntl(fd: u64, cmd: u64, arg: u64) -> u64 {
     let fd = fd as usize;
     match cmd {
-        F_GETFD | F_SETFD => crate::vfs::with_current_files(|files| match files.get(fd) {
-            Ok(_) => 0,
+        F_GETFD => crate::vfs::with_current_files(|files| match files.cloexec(fd) {
+            Ok(on) => {
+                if on {
+                    FD_CLOEXEC
+                } else {
+                    0
+                }
+            }
             Err(error) => (-errno_for_file_table(error)) as u64,
+        }),
+        F_SETFD => crate::vfs::with_current_files(|files| {
+            match files.set_cloexec(fd, arg & FD_CLOEXEC != 0) {
+                Ok(()) => 0,
+                Err(error) => (-errno_for_file_table(error)) as u64,
+            }
         }),
         F_GETFL => crate::vfs::with_current_files(|files| match files.get(fd) {
             Ok(file) => match file.nonblocking() {
@@ -7616,7 +7687,9 @@ fn sys_fcntl(fd: u64, cmd: u64, arg: u64) -> u64 {
                 Ok(file) => file.duplicate(),
                 Err(error) => return (-errno_for_file_table(error)) as u64,
             };
-            match files.insert_at_or_above(copy, arg as usize) {
+            // **`F_DUPFD_CLOEXEC` のコピーは印を立てる**（2026-10-20。`F_DUPFD` のコピーは印を持たない。Linux と同じ）。
+            match files.insert_at_or_above_with_cloexec(copy, arg as usize, cmd == F_DUPFD_CLOEXEC)
+            {
                 Ok(new_fd) => new_fd as u64,
                 Err(error) => {
                     // **置けなかったコピーの、足した参照を戻す**（eventfd・timerfd・epoll・入力だけ。ソケットとパイプの端は数えていないので、
@@ -7637,11 +7710,27 @@ fn sys_fcntl(fd: u64, cmd: u64, arg: u64) -> u64 {
                 }
             }
         }),
-        F_ADD_SEALS | F_GET_SEALS => crate::vfs::with_current_files(|files| match files.get(fd) {
-            Ok(crate::vfs::File::Shm { .. }) => 0,
-            Ok(_) => (-EINVAL) as u64,
-            Err(error) => (-errno_for_file_table(error)) as u64,
-        }),
+        F_ADD_SEALS | F_GET_SEALS => {
+            let shm = crate::vfs::with_current_files(|files| match files.get(fd) {
+                Ok(crate::vfs::File::Shm { shm }) => Ok(*shm),
+                Ok(_) => Err((-EINVAL) as u64),
+                Err(error) => Err((-errno_for_file_table(error)) as u64),
+            });
+            let shm = match shm {
+                Ok(shm) => shm,
+                Err(errno) => return errno,
+            };
+            if cmd == F_GET_SEALS {
+                return crate::shm::seals(shm).map_or((-EINVAL) as u64, u64::from);
+            }
+            // Linux は `arg` を `unsigned int` として読む。
+            match crate::shm::add_seals(shm, arg as u32) {
+                None => (-EINVAL) as u64,
+                Some(Ok(_)) => 0,
+                Some(Err(crate::shm::SealError::Unknown)) => (-EINVAL) as u64,
+                Some(Err(crate::shm::SealError::Sealed)) => (-EPERM) as u64,
+            }
+        }
         _ => (-EINVAL) as u64,
     }
 }
@@ -7676,16 +7765,20 @@ unsafe fn sys_fstat(
             nlink: u64::from(inode.links_count()),
             mode: u32::from(inode.mode()),
             size: inode.size(),
+            blksize: 0,
             blocks: u64::from(inode.blocks_512()),
         },
+        // **memfd は Linux と同じく `S_IFREG | 0o777`、`st_blksize` は 4096、`st_blocks` は持っているページの分**（2026-10-20。
+        // 以前は `0o600` で、`st_blocks` はバイト数からの切り上げだった）。
         Ok(crate::vfs::File::Shm { shm }) => {
             let size = crate::shm::size_of(shm).unwrap_or(0);
             Stat {
                 ino: 0,
                 nlink: 1,
-                mode: S_IFREG | 0o600,
+                mode: S_IFREG | 0o777,
                 size,
-                blocks: size.div_ceil(512),
+                blksize: crate::shm::PAGE_SIZE as u64,
+                blocks: crate::shm::pages_for(size) as u64 * (crate::shm::PAGE_SIZE as u64 / 512),
             }
         }
         Ok(crate::vfs::File::Socket { .. }) => Stat {
@@ -7693,6 +7786,7 @@ unsafe fn sys_fstat(
             nlink: 1,
             mode: S_IFSOCK | 0o777,
             size: 0,
+            blksize: 0,
             blocks: 0,
         },
         // **eventfd と timerfd は、種類のビットの無い 0600 で答える**（Linux の無名の inode と同じ形。2026-10-19）。
@@ -7703,6 +7797,7 @@ unsafe fn sys_fstat(
             nlink: 1,
             mode: 0o600,
             size: 0,
+            blksize: 0,
             blocks: 0,
         },
         Ok(crate::vfs::File::PipeRead { .. }) | Ok(crate::vfs::File::PipeWrite { .. }) => Stat {
@@ -7710,6 +7805,7 @@ unsafe fn sys_fstat(
             nlink: 1,
             mode: S_IFIFO | 0o600,
             size: 0,
+            blksize: 0,
             blocks: 0,
         },
         // 端末・入力・画面は、文字装置として答える。
@@ -7718,6 +7814,7 @@ unsafe fn sys_fstat(
             nlink: 1,
             mode: S_IFCHR | 0o620,
             size: 0,
+            blksize: 0,
             blocks: 0,
         },
     };
@@ -8097,6 +8194,7 @@ unsafe fn sys_stat(
         nlink: u64::from(inode.links_count),
         mode: u32::from(inode.mode),
         size: inode.size,
+        blksize: 0,
         blocks,
     });
 
