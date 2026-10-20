@@ -56,6 +56,7 @@ mod check_lock;
 mod family;
 mod font;
 mod full_check;
+mod host_lock;
 mod item_log;
 mod kernel_builds;
 mod launch;

@@ -219,8 +219,8 @@ pub fn parent_pid(stat: &str) -> Option<u32> {
     rest.split_whitespace().nth(1)?.parse().ok()
 }
 
-/// 自分の祖先（親から順に。上限 64 段）。
-fn ancestors() -> Vec<u32> {
+/// 自分の祖先（親から順に。上限 64 段）。**ホストのロック（`host_lock`）も使う。**
+pub(crate) fn ancestors() -> Vec<u32> {
     let mut found = Vec::new();
     let mut stat = fs::read_to_string("/proc/self/stat").unwrap_or_default();
     for _ in 0..64 {
@@ -528,8 +528,20 @@ pub fn hold(mode: Mode, what: &str, content: Option<String>) -> Result<Option<St
     let path = lock_path(&crate::workspace_root()?)?;
     match attempt(&path, mode, content.as_deref())? {
         Attempt::Taken(state) => {
+            // **自分で持ったときだけ、続けてホストのロックを共有で取る**（`host_lock`。2026-10-20）。**持ち主の下で
+            // 走る子は取らない**——持ち主が取っている。**順は、検査のロック → ホストのロック**（輪を作らない順。
+            // `host_lock` の doc）。
+            let held = matches!(state, State::Held { .. });
             if let Ok(mut slot) = STATE.lock() {
                 *slot = Some(state);
+            }
+            if held {
+                if let Some(message) =
+                    crate::host_lock::hold_shared(what, crate::host_lock::limit_for(mode))?
+                {
+                    log_run(what, "refused (host lock)");
+                    return Ok(Some(message));
+                }
             }
             Ok(None)
         }

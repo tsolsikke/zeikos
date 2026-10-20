@@ -1519,6 +1519,10 @@ fn status(root: &Path) -> Result<()> {
     for (pid, mode, command) in &holders {
         println!("check lock: held by pid {pid} ({mode:?}) {command}");
     }
+    // **ホストのロック**（`host_lock`。2026-10-20。別のリポジトリの重い作業と分け合う）。
+    for line in crate::host_lock::status_lines() {
+        println!("{line}");
+    }
     if holders
         .iter()
         .any(|(pid, _, _)| content.starts_with(&format!("pid: {pid}\n")))

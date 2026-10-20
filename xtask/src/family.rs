@@ -435,6 +435,8 @@ pub const PATH_RULES: &[PathRule] = &[
             ".github/**",
             "probes/**",
             "xtask/src/check_lock.rs",
+            // **ホストのロック**（2026-10-20。`ADR-0089`）——**検査のロックと同じく、ホストのテストが覆う。**
+            "xtask/src/host_lock.rs",
             // **手で使う、試験の一覧を並べて回す道具**（案 B の ②）——**全検査の項目は使わない。**
             "xtask/src/run_set.rs",
             "xtask/src/family.rs",

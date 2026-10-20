@@ -901,6 +901,12 @@ xtask::full_check::tests::the_push_gate_passes_recorded_commits_refuses_the_rest
 xtask::full_check::tests::the_rustc_fingerprint_is_read_from_cargo_s_record
 xtask::full_check::tests::the_sectors_written_are_read_from_diskstats
 xtask::full_check::tests::the_selection_names_its_base_and_falls_to_all_when_it_cannot_compare
+xtask::host_lock::tests::a_child_of_a_holder_does_not_wait_for_the_waiting_exclusive
+xtask::host_lock::tests::a_new_shared_taker_lets_a_waiting_exclusive_go_first
+xtask::host_lock::tests::an_exclusive_holder_makes_it_wait
+xtask::host_lock::tests::only_the_lines_of_the_file_count
+xtask::host_lock::tests::the_full_check_waits_longer_than_a_run
+xtask::host_lock::tests::the_waiting_line_is_read_as_waiting
 xtask::item_log::tests::a_block_keeps_both_streams_in_the_order_they_were_written
 xtask::item_log::tests::a_child_output_is_forwarded_into_the_block
 xtask::kernel_builds::tests::a_build_made_ahead_is_handed_over_without_building_again
