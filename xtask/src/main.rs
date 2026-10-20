@@ -21151,7 +21151,7 @@ const BOOT_LOG_RANGES: &[BootLogRange] = &[
         after: " of 65536",
         min: 2900,
         max: 6400,
-        what: "a thread task's kernel stack high water (measured 3010..=5136 over the exit, fault, exit_group and woken-futex paths; room for a tick inside a system call, about 1 KiB; the half line is checked on the line itself)",
+        what: "a thread task's kernel stack high water. The deepest system call the thread made decides it, not a tick: system calls run with interrupts off (IF=0, also while the BKL is let go), so no tick frame lands on one, and a tick that interrupts Ring 3 starts from the top of the stack. The deepest now is mprotect (10) from a pool thread, which musl makes on the guard page of the stack it maps for a thread it creates: m3a-nested-clone-rust's outer thread, 5904 in every boot since 2026-10-19 (5936 before), measured per system call on 2026-10-20 (the entry about 660, mprotect_from_ring3's own frame 2464 in the dev build, change_protection below it). The shallowest is a thread that faults first (m3a-fault-rust, 3026..=3042). The upper end is the deepest path plus about 1/2 KiB for frames that grow with code changes (wl-socket-lock-rust in the linux-socket-test build reached 6328 before 2026-10-19); going past it is a reason to measure the path again, not to widen. The half line is checked on the line itself",
     },
     BootLogRange {
         line: "futex: /bin/linux/m3a-rust slept",
