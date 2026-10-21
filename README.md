@@ -233,7 +233,7 @@ pushの前の関門は、Git自身のhook（`.githooks/pre-push`）にも設け�
 | [GNU Unifont](third_party/unifont/) | コンソールフォント | SIL OFL 1.1 |
 | [stb_truetype](third_party/stb/) | TrueTypeの読み取りとラスタライズ | MIT（パブリックドメインとの選択制） |
 | [DejaVu Sans Mono](third_party/dejavu/) | `stb_truetype`が読むフォント | Bitstream Vera |
-| [Seinas](external/seinas/)（fbdevの裏側`seinas-fbdev`。releaseの成果物を`tools/fetch-seinas.sh`が取り、`seinas-test`の構成のディスクイメージだけに入る） | M2の表示の確かめ | MIT。同梱する第三者（musl、pixman、Rustのクレート）の表示は、releaseの`seinas-fbdev-v0.1.0-third-party.tar.gz`を同じディスクイメージの成果物の隣（`/bin/linux/`）に入れ、原本は`external/seinas/THIRD-PARTY/`に在る |
+| [Seinas](external/seinas/)（fbdevの裏側`seinas-fbdev`〔v0.1.0〕とコンポジタ`seinas-standalone`〔v0.2.0〕。releaseの成果物を`tools/fetch-seinas.sh`が取り、それぞれ`seinas-test`と`seinas-standalone-test`の構成のディスクイメージだけに入る） | M2の表示の確かめと、コンポジタの起動の確かめ | MIT。同梱する第三者（musl、pixman、Rustのクレート）の表示は、releaseの`seinas-fbdev-v0.1.0-third-party.tar.gz`と`seinas-standalone-v0.2.0-third-party.tar.gz`を、同じディスクイメージの成果物の隣（`/bin/linux/`。コンポジタの分は版の無い`seinas-standalone-third-party.tar.gz`の名前）に入れ、原本は`external/seinas/THIRD-PARTY/`に在る |
 
 GNU UnifontのグリフデータはSIL Open Font License 1.1とGNU GPL v2以降（フォント埋め込み例外つき）のデュアルライセンスで、ZeikOSはOFL 1.1の条件で利用している。
 日本語漢字グリフの元になっているjiskan16由来の部分はパブリックドメイン。
