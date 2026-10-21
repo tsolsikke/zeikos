@@ -146,3 +146,7 @@ jobs:
 
       - name: Seinas の fbdev の裏側を走らせる
         run: cargo xtask run --seinas-fbdev-test
+
+      # Seinas のコンポジタ（release の成果物）。成果物が無ければ名指しして飛ぶ（tools/fetch-seinas.sh に版が入るまで）。
+      - name: Seinas のコンポジタを走らせる
+        run: cargo xtask run --seinas-standalone-test

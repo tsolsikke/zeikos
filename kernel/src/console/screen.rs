@@ -913,6 +913,17 @@ impl Console {
     ///
     /// **矩形は画面へ切り詰める**（[`DirtyRegion::mark`] と同じ規則）。**コピーしたバイト数を返す。**
     pub fn present(&mut self, x: u32, y: u32, width: u32, height: u32) -> u64 {
+        // 破壊テスト (2026-10-21, fb0-corrupts-one-pixel): 転送の前に、画面の真ん中の 1 点を違う色で塗る。画面の全部の
+        // ピクセルを数える判定（Seinas のコンポジタの `--seinas-standalone-test`）が、1 点で落ちる。
+        if cfg!(feature = "fb0-corrupts-one-pixel") {
+            let (cx, cy) = (
+                self.back.layout().width() / 2,
+                self.back.layout().height() / 2,
+            );
+            self.back
+                .surface_mut()
+                .fill_rect(cx, cy, 1, 1, Color::rgb(0xff, 0x00, 0xff));
+        }
         let mut region = DirtyRegion::new(self.back.layout().width(), self.back.layout().height());
         region.mark(x, y, width, height);
         let Some(rect) = region.take() else {

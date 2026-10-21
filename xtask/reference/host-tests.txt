@@ -1049,6 +1049,7 @@ xtask::tests::only_prompts_after_a_newline_are_counted
 xtask::tests::only_the_manual_run_keeps_the_disk_by_default
 xtask::tests::opening_a_window_selects_sdl_and_gtk_stays_available
 xtask::tests::panic_markers_present_requires_both_markers
+xtask::tests::pixels_other_than_the_background_are_counted
 xtask::tests::qemu_args_always_include_failure_visibility_flags
 xtask::tests::qemu_args_always_include_the_virtio_disk
 xtask::tests::qemu_args_default_display_is_none

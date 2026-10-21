@@ -2954,6 +2954,7 @@ const RUN_FLAGS: &[(&str, RunValue)] = &[
     ("--screen-test", RunValue::None),
     ("--fb-test", RunValue::None),
     ("--seinas-fbdev-test", RunValue::None),
+    ("--seinas-standalone-test", RunValue::None),
     ("--ending", RunValue::Required),
     ("--compose-test", RunValue::None),
     ("--history-test", RunValue::None),
@@ -3025,6 +3026,7 @@ const RUN_FLAG_SCOPES: &[(&str, RunFlagScope)] = &[
             "--profile-test",
             "--realtime-test",
             "--screen-test",
+            "--seinas-standalone-test",
             "--serial-test",
             "--shell-script-test",
             "--shell-test",
@@ -3803,6 +3805,25 @@ fn main() -> Result<()> {
             // **画面へピクセルを出す判定（`ADR-0066` の Y-c）。`screendump` で画面を読み戻す。**
             if rest.iter().any(|a| a == "--seinas-fbdev-test") {
                 return cmd_seinas_fbdev_test();
+            }
+            // **Seinas のコンポジタ（2026-10-21。C1S4 の Sprint Goal）。** 成果物が無ければ名指しして飛ぶ。
+            if rest.iter().any(|a| a == "--seinas-standalone-test") {
+                let sabotage: Vec<&str> = rest
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, a)| *a == "--sabotage" && rest.get(i + 1).is_some())
+                    .filter_map(|(i, _)| rest.get(i + 1).map(|s| s.as_str()))
+                    .collect();
+                if sabotage.is_empty() {
+                    return cmd_seinas_standalone_test(&sabotage, true);
+                }
+                let result = cmd_seinas_standalone_test(&sabotage, false);
+                return finish_direct_sabotage(
+                    "seinas-standalone test",
+                    &sabotage,
+                    SabotageForm::Inverted,
+                    result,
+                );
             }
             if rest.iter().any(|a| a == "--fb-test") {
                 let sabotage: Vec<&str> = rest
@@ -8434,6 +8455,13 @@ const SABOTAGE_JUDGEMENTS: &[NamedJudgement] = &[
         reached: true,
     },
     NamedJudgement {
+        check: "seinas-standalone test",
+        key: "fb0-corrupts-one-pixel",
+        signs: &["the_whole_screen_is_the_background = false"],
+        note: "",
+        reached: true,
+    },
+    NamedJudgement {
         check: "realtime test",
         key: "rtc-ignores-bcd",
         signs: &["realtime_is_near_the_host_clock = false"],
@@ -11846,6 +11874,271 @@ fn cmd_seinas_fbdev_test() -> Result<()> {
     } else {
         bail!("{context}: FAILED (judgements that fell: {failed:?}, ready = {ready}, typed = {typed}, no [ERROR] = {no_error})")
     }
+}
+
+/// Seinas のコンポジタが「最初の 1 枚を出した」ことを示す行（v0.2.0 から。target は `seinas_standalone` で、1 回だけ出る）。
+/// **文言は Seinas の側と決めた**（`presented the first frame (1280x800)`。探すのは大きさの前まで）。文言が変わるときは、
+/// Seinas の側から知らせが来る。
+const SEINAS_FIRST_PRESENT_LINE: &str = "seinas_standalone: presented the first frame";
+
+/// Seinas のコンポジタが listen する 3 つのソケット（`seinas_standalone: listening on …` の行）。
+const SEINAS_LISTEN_LINES: [&str; 3] = [
+    "seinas_standalone: listening on /tmp/seinas/s.sock",
+    "seinas_standalone: listening on /tmp/seinas/s-shell.sock",
+    "seinas_standalone: listening on /tmp/seinas/s-ime.sock",
+];
+
+/// Seinas のコンポジタの背景の色（`191e28`）。
+const SEINAS_BACKGROUND: (u8, u8, u8) = (0x19, 0x1e, 0x28);
+
+/// `screendump` の中で、`color` でないピクセルの数（純粋な論理）。**ずれを許さない**（全部が同じ色であることを見る）。
+fn pixels_other_than(image: &Option<(u32, u32, Vec<u8>)>, color: (u8, u8, u8)) -> Option<u64> {
+    let (_, _, rgb) = image.as_ref()?;
+    Some(
+        rgb.chunks_exact(3)
+            .filter(|pixel| (pixel[0], pixel[1], pixel[2]) != color)
+            .count() as u64,
+    )
+}
+
+/// Seinas のコンポジタ（release の `seinas-standalone`。musl の静的 PIE）を、ZeikOS の上でそのまま走らせて確かめる
+/// （2026-10-21。C1S4 の Sprint Goal）。
+///
+/// **成果物が無ければ、名指しして飛ばす**（`seinas-fbdev-test` と同じ。`tools/fetch-seinas.sh` が取る）。在れば
+/// `seinas-standalone-test` の構成で起動し、**シェルのプロンプトへ `/bin/linux/seinas-standalone --socket /tmp/seinas/s.sock`
+/// を打つ**。画面を撮ったら QEMU を止める（コンポジタは終わらない。Ctrl+C はまだ届かない）。
+///
+/// **判定は 6 本**——
+///
+/// 1. 3 つのソケットを listen した（`seinas_standalone: listening on …` の 3 行）
+/// 2. 最初の 1 枚を出した（[`SEINAS_FIRST_PRESENT_LINE`]）
+/// 3. 画面の全部のピクセルが背景の色 `191e28`
+/// 4. `panicked` の行が無い
+/// 5. 知らない番号を 1 つも打っていない（カーネルの、プロセスの最初の 1 回の行が無い）
+/// 6. `[ERROR]` が無い
+///
+/// **破壊テストは 1 つ**（[`SEINAS_STANDALONE_TEST_SABOTAGES`]）。
+fn cmd_seinas_standalone_test(features: &[&str], expect_pass: bool) -> Result<()> {
+    let context = if features.is_empty() {
+        "seinas-standalone-test".to_string()
+    } else {
+        format!("seinas-standalone-test {}", features.join("+"))
+    };
+    let context = context.as_str();
+    let workspace_root = workspace_root()?;
+    if let Some(missing) = seinas_standalone_missing(&workspace_root) {
+        println!(
+            "{context}: skipped ({missing} is not at target/linux-programs; fetch it with tools/fetch-seinas.sh)"
+        );
+        note_skipped_item(&format!(
+            "{context} ({missing} is not at target/linux-programs; tools/fetch-seinas.sh)"
+        ));
+        return Ok(());
+    }
+    let run = RunDir::create(&workspace_root, "seinas-standalone-test")?;
+    let ovmf_vars = prepare_ovmf_vars(&run)?;
+    let bootloader_efi = build_bootloader(&workspace_root, false)?;
+    let mut all_features: Vec<&str> = vec!["seinas-standalone-test"];
+    all_features.extend_from_slice(features);
+    let kernel_elf = build_kernel_with_features(&workspace_root, &all_features)?;
+    let esp_dir = stage_esp(&run, &bootloader_efi, &kernel_elf)?;
+
+    let serial_log = run.serial_log();
+    let shown_ppm = run.file("shown.ppm");
+    for stale in [&serial_log, &shown_ppm] {
+        let _ = fs::remove_file(stale);
+    }
+    let debug_log = run.debug_log();
+    let _ = fs::remove_file(&debug_log);
+    let monitor_socket = run.monitor_socket("seinas");
+    let _ = fs::remove_file(&monitor_socket);
+    ensure_socket_path_fits(&monitor_socket)?;
+
+    let qemu_args = qemu_launch_args(&QemuLaunchOptions {
+        ovmf_code: Path::new(OVMF_CODE_PATH),
+        ovmf_vars: &ovmf_vars,
+        esp_dir: &esp_dir,
+        disk_image: &run.disk_image(),
+        serial: &SerialSink::File(serial_log.clone()),
+        debug_log: &debug_log,
+        display: DisplayMode::None,
+        monitor_socket: Some(&monitor_socket),
+        accelerator: Accelerator::Tcg,
+        debug_events: DebugEvents::IntAndCpuReset,
+    });
+    let outputs = [serial_log.as_path(), debug_log.as_path()];
+    let mut child = launch::spawn(&launch::Spec::new(
+        &qemu_args,
+        &outputs,
+        context,
+        Duration::ZERO,
+        launch::Deadline::Normal,
+    ))?;
+
+    let started = Instant::now();
+    let wait_for = |marker: &str, limit: Duration| -> bool {
+        let deadline = Instant::now() + limit;
+        while Instant::now() < deadline && !child.was_cut() {
+            if read_lossy(&serial_log).contains(marker) {
+                return true;
+            }
+            metrics::sleep_poll(PANIC_TEST_POLL_INTERVAL);
+        }
+        false
+    };
+
+    let command = "/bin/linux/seinas-standalone --socket /tmp/seinas/s.sock";
+    let ready = wait_for(SHELL_READY_MARKER, BOOT_READY_TIMEOUT);
+    let mut typed = false;
+    if ready {
+        metrics::sleep_fixed(SHELL_TEST_LINE_INTERVAL);
+        match connect_monitor_with_retry(&monitor_socket) {
+            Ok(mut stream) => {
+                typed = true;
+                for key in monitor_keys_for(command)? {
+                    if writeln!(stream, "sendkey {key}").is_err() {
+                        typed = false;
+                        break;
+                    }
+                    metrics::sleep_fixed(SHELL_TEST_KEY_INTERVAL);
+                }
+            }
+            Err(e) => println!("{context}: could not reach the QEMU monitor: {e}"),
+        }
+    }
+    // **3 つ目の listen の行（最後に出る）と、最初の 1 枚の行を待ってから撮る。** 撮る前に少し間をおく——撮った時に
+    // コンポジタがまだ走っていること（待ちで止まらず、イベントループの中に居ること）も判定で見る。
+    let mut shown = None;
+    if typed
+        && wait_for(SEINAS_LISTEN_LINES[2], SCREEN_TEST_TIMEOUT)
+        && wait_for(SEINAS_FIRST_PRESENT_LINE, SCREEN_TEST_TIMEOUT)
+    {
+        metrics::sleep_fixed(Duration::from_millis(2000));
+        match capture_screendump(&monitor_socket, &shown_ppm) {
+            Ok(()) => shown = read_complete_ppm(&shown_ppm, SCREENDUMP_FILE_TIMEOUT),
+            Err(e) => println!("{context}: the screendump failed: {e}"),
+        }
+    }
+    let waited = started.elapsed();
+
+    // **コンポジタは終わらないので、撮ったら止める**（Ctrl+C はまだ前景の待ちを起こさない）。
+    let qemu_exit = child
+        .try_wait()
+        .ok()
+        .flatten()
+        .map(|status| format!("{status}"));
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = fs::remove_file(&monitor_socket);
+
+    let serial = read_lossy(&serial_log);
+    let qemu_debug = read_lossy(&debug_log);
+    if let BootOutcome::DidNotStart { firmware_rip } =
+        classify_boot(&serial, &qemu_debug, KERNEL_STARTED_MARKER)
+    {
+        report_did_not_start(context, firmware_rip, qemu_exit.as_deref())?;
+        bail!("{context}: the kernel did not start");
+    }
+
+    let stripped = strip_ansi(&serial);
+    // **判定は、コンポジタを起こした後の行だけで見る**（起動時の確かめのプログラムが、知らない番号を打つため）。
+    let after = stripped
+        .find("spawn: /bin/linux/seinas-standalone is")
+        .map_or("", |at| &stripped[at..]);
+    let other_pixels = pixels_other_than(&shown, SEINAS_BACKGROUND);
+    let judgements: [(&str, bool); 6] = [
+        (
+            "seinas_listened_on_three_sockets",
+            SEINAS_LISTEN_LINES.iter().all(|line| after.contains(line)),
+        ),
+        (
+            "seinas_presented_the_first_frame",
+            after.matches(SEINAS_FIRST_PRESENT_LINE).count() == 1,
+        ),
+        (
+            "the_whole_screen_is_the_background",
+            other_pixels == Some(0),
+        ),
+        (
+            // **撮った時にまだ走っていた**（終わりの行が無い）。待ちで止まって行き詰まりの判定に終わらされたり、
+            // 落ちて終わったりしていないこと。
+            "seinas_was_still_running_when_the_screen_was_taken",
+            shown.is_some() && !after.contains("spawn: /bin/linux/seinas-standalone ended"),
+        ),
+        ("seinas_did_not_panic", !after.contains("panicked")),
+        (
+            "seinas_hit_no_unknown_number",
+            !after.contains("syscall: the first system call the kernel does not know"),
+        ),
+    ];
+    let error_lines: Vec<&str> = stripped
+        .lines()
+        .filter(|line| line.contains("[ERROR]"))
+        .take(4)
+        .collect();
+    let no_error = error_lines.is_empty();
+    let failed: Vec<&str> = judgements
+        .iter()
+        .filter(|(_, held)| !held)
+        .map(|(name, _)| *name)
+        .collect();
+    for (name, held) in &judgements {
+        println!("{context}: {name} = {held}");
+    }
+    println!("{context}: no [ERROR] line = {no_error} (the first were {error_lines:?})");
+    println!(
+        "{context}: (info) pixels other than 191e28 = {other_pixels:?} (of {})",
+        shown
+            .as_ref()
+            .map_or(0, |(width, height, _)| u64::from(*width)
+                * u64::from(*height))
+    );
+    for info in after.lines().filter(|line| {
+        line.contains("seinas_standalone:")
+            || line.contains("panicked")
+            || line.contains("syscall: the first system call")
+            || line.contains("fs: ")
+    }) {
+        println!("{context}: (info) {}", info.trim());
+    }
+    println!(
+        "{context}: (info) waited {:.1} s (ready = {ready}, typed = {typed}); the screen is at {}",
+        waited.as_secs_f64(),
+        shown_ppm.display()
+    );
+    let passed = ready && typed && failed.is_empty() && no_error;
+    match (passed, expect_pass) {
+        (true, true) => {
+            println!("{context}: PASS");
+            Ok(())
+        }
+        (true, false) => bail!("{context}: the sabotage was NOT caught; every judgement still held"),
+        (false, true) => bail!(
+            "{context}: FAILED (judgements that fell: {failed:?}, ready = {ready}, typed = {typed}, no [ERROR] = {no_error})"
+        ),
+        (false, false) => {
+            println!("{context}: FAILED (judgements that fell: {failed:?})");
+            println!("{context}: the sabotage was caught (this run is expected to fail)");
+            Ok(())
+        }
+    }
+}
+
+/// `--seinas-standalone-test` の破壊テスト（2026-10-21）。
+///
+/// - `fb0-corrupts-one-pixel` —— `the_whole_screen_is_the_background`（画面の真ん中の 1 点だけが違う色になる）
+const SEINAS_STANDALONE_TEST_SABOTAGES: &[&str] = &["fb0-corrupts-one-pixel"];
+
+/// Seinas のコンポジタの成果物のうち、`target/linux-programs` に無いもの（無ければ `None`）。
+fn seinas_standalone_missing(workspace_root: &Path) -> Option<&'static str> {
+    ["seinas-standalone", "seinas-standalone-third-party.tar.gz"]
+        .into_iter()
+        .find(|name| {
+            !workspace_root
+                .join("target/linux-programs")
+                .join(name)
+                .is_file()
+        })
 }
 
 /// `/dev/fb0` を Linux の fbdev の形で開き、書けば映ることを検査する（2026-10-07。`ADR-0083`。M2 の最初のステップ）。
@@ -32710,6 +33003,50 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
             }
         }
 
+        // **Seinas のコンポジタ（release の成果物）をそのまま走らせる**（2026-10-21。C1S4 の Sprint Goal）。成果物が無ければ
+        // 名指しして飛ばす。
+        total += 1;
+        begin_item(
+            Family::Ipc,
+            "Seinas's compositor runs as shipped, listens and paints the whole screen (skipped without the release artifact)",
+        );
+        match cmd_seinas_standalone_test(&[], true) {
+            Ok(()) => println!("--- seinas-standalone test: OK"),
+            Err(error) => {
+                println!("--- seinas-standalone test: FAILED ({error})");
+                failed.push("seinas-standalone test".to_string());
+            }
+        }
+        // **破壊テストも、成果物が無ければ名指しして飛ぶ**（判定の行が出ないので、反転の報告を通さない）。
+        let mut batch = Batch::new("SEINAS_STANDALONE_TEST_SABOTAGES");
+        let skipped = seinas_standalone_missing(&workspace_root).is_some();
+        for sabotage in SEINAS_STANDALONE_TEST_SABOTAGES {
+            total += 1;
+            batch.add(sabotage, move |failed, _retries| {
+                let label = format!("seinas-standalone-test {sabotage}");
+                begin_item(Family::Ipc, &label);
+                match cmd_seinas_standalone_test(&[sabotage], false) {
+                    Ok(()) if skipped => {
+                        println!("--- {label}: skipped (the release artifact is not there)")
+                    }
+                    Ok(()) => report_inverted_judgement(
+                        "seinas-standalone test",
+                        sabotage,
+                        &label,
+                        failed,
+                    ),
+                    Err(error) => {
+                        println!(
+                            "--- {label}: FAILED [{}] ({error})",
+                            failure_category(&error)
+                        );
+                        failed.push(label.to_string());
+                    }
+                }
+            });
+        }
+        batch.run(&mut failed);
+
         total += 1;
         begin_item(
             Family::Ipc,
@@ -35150,6 +35487,10 @@ const ITEM_TABLES: &[(&str, usize)] = &[
     ("INPUT_TEST_SABOTAGES", INPUT_TEST_SABOTAGES.len()),
     ("POLL_TEST_SABOTAGES", POLL_TEST_SABOTAGES.len()),
     ("REALTIME_TEST_SABOTAGES", REALTIME_TEST_SABOTAGES.len()),
+    (
+        "SEINAS_STANDALONE_TEST_SABOTAGES",
+        SEINAS_STANDALONE_TEST_SABOTAGES.len(),
+    ),
     ("SCREEN_TEST_SABOTAGES", SCREEN_TEST_SABOTAGES.len()),
     ("FB_TEST_SABOTAGES", FB_TEST_SABOTAGES.len()),
     ("COMPOSE_TEST_SABOTAGES", COMPOSE_TEST_SABOTAGES.len()),
@@ -35505,7 +35846,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 67,
-    full: 554,
+    full: 556,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` とスクリプトのグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。
@@ -37395,6 +37736,7 @@ fn batched_table_rows(table: &str) -> Option<Vec<String>> {
         "INPUT_TEST_SABOTAGES" => names(INPUT_TEST_SABOTAGES),
         "POLL_TEST_SABOTAGES" => names(POLL_TEST_SABOTAGES),
         "REALTIME_TEST_SABOTAGES" => names(REALTIME_TEST_SABOTAGES),
+        "SEINAS_STANDALONE_TEST_SABOTAGES" => names(SEINAS_STANDALONE_TEST_SABOTAGES),
         "SCREEN_TEST_SABOTAGES" => names(SCREEN_TEST_SABOTAGES),
         "COMPOSE_TEST_SABOTAGES" => names(COMPOSE_TEST_SABOTAGES),
         "MACHINE_VARIANT_CHECKS" => cases(MACHINE_VARIANT_CHECKS, |(name, _)| name),
@@ -40181,6 +40523,22 @@ warning: `kernel` (lib doc) generated 1 warning
             short.starts_with("starts with \"M\", not \"MZ\""),
             "{short}"
         );
+    }
+
+    /// **Seinas のコンポジタの画面は、全部のピクセルが背景の色であることを見る**（2026-10-21）。1 点でも違えば数に出る。
+    #[test]
+    fn pixels_other_than_the_background_are_counted() {
+        let mut rgb = [0x19u8, 0x1e, 0x28].repeat(4);
+        assert_eq!(
+            pixels_other_than(&Some((2, 2, rgb.clone())), SEINAS_BACKGROUND),
+            Some(0)
+        );
+        rgb[3] = 0x1a;
+        assert_eq!(
+            pixels_other_than(&Some((2, 2, rgb)), SEINAS_BACKGROUND),
+            Some(1)
+        );
+        assert_eq!(pixels_other_than(&None, SEINAS_BACKGROUND), None);
     }
 
     /// **壁の時計の値は、起動の前後のホストの時刻のウィンドウで見る**（2026-10-20。`ADR-0090`）。下は 2 秒、上は 1 秒の余裕。

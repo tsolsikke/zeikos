@@ -13620,6 +13620,16 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "補助ベクタの AT_PHDR に、ずらす前のアドレスを渡す",
     ),
     (
+        "seinas-standalone-test",
+        cfg!(feature = "seinas-standalone-test"),
+        "Seinas のコンポジタをイメージの /bin/linux に入れる（確かめ。破壊ではない）",
+    ),
+    (
+        "fb0-corrupts-one-pixel",
+        cfg!(feature = "fb0-corrupts-one-pixel"),
+        "図形モードの転送の前に、画面の真ん中の 1 点を違う色で塗る",
+    ),
+    (
         "seinas-test",
         cfg!(feature = "seinas-test"),
         "Seinas の fbdev の裏側をイメージの /bin/linux に入れる（M2 の確かめ）",

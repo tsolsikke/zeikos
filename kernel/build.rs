@@ -1463,6 +1463,22 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
             panic!("seinas-test needs {notices} (fetch it with tools/fetch-seinas.sh): {e}")
         });
     }
+    // **Seinas のコンポジタは、`seinas-standalone-test` のビルドだけが入れる**（2026-10-21。C1S4）。fbdev の裏側と同じく、
+    // release の成果物を `tools/fetch-seinas.sh` が SHA-256 を固定して取ったものである。**置き場の名前に版を入れない**
+    // ——版と SHA-256 は `tools/fetch-seinas.sh` の 1 か所だけが持ち、ここは決まった名前を読む。第三者のライセンスの表示も
+    // 隣に入れる。無ければ名指しして止まる。
+    if std::env::var("CARGO_FEATURE_SEINAS_STANDALONE_TEST").is_ok() {
+        let fetched = format!("{manifest_dir}/../target/linux-programs");
+        for name in ["seinas-standalone", "seinas-standalone-third-party.tar.gz"] {
+            let source = format!("{fetched}/{name}");
+            println!("cargo:rerun-if-changed={source}");
+            std::fs::copy(&source, format!("{staging}/bin/linux/{name}")).unwrap_or_else(|e| {
+                panic!(
+                    "seinas-standalone-test needs {source} (fetch it with tools/fetch-seinas.sh): {e}"
+                )
+            });
+        }
+    }
     // **C の Linux 向けのプログラムは、`linux-c-test` のビルドだけが入れる**（2026-10-06）。`musl-gcc` で手で作った
     // もの（`tools/build-linux-programs.sh`）で、版が配布物に依るので既定のイメージには入れない。無ければ名指しして止まる。
     if std::env::var("CARGO_FEATURE_LINUX_C_TEST").is_ok() {
