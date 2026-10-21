@@ -1431,17 +1431,20 @@ unsafe fn read_from_pipe(
         return 0;
     }
     let want = count.min(crate::pipe::PIPE_RING as u64);
-    // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
-    let Some(slice) =
-        (unsafe { validate_user_range_for_write(page_table_root, direct_map, buf, want) })
-    else {
-        return (-EFAULT) as u64;
-    };
     let mut kbuf = [0u8; crate::pipe::PIPE_RING];
     loop {
+        // **書き先は、取り出す直前に、毎回確かめる**（2026-10-22。`read_eventfd` と同じ形）。待つ前に確かめた範囲は、
+        // 眠っている間（BKL を放している間）に同じプロセスの別のスレッドが `munmap`・`mprotect` しうる。**確かめ・
+        // 取り出し・書きの間は BKL を放さない**ので、この 3 つの間に範囲は変わらない。書けなければ、取らずに `-EFAULT`。
+        // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+        let Some(slice) =
+            (unsafe { validate_user_range_for_write(page_table_root, direct_map, buf, want) })
+        else {
+            return (-EFAULT) as u64;
+        };
         match crate::pipe::read_into(pipe, &mut kbuf[..want as usize]) {
             crate::pipe::ReadOutcome::Bytes(got) => {
-                // SAFETY: `slice` は検証済みで、`got` はその長さを越えない。
+                // SAFETY: `slice` はいま確かめた範囲で、確かめてから BKL を放していない。`got` はその長さを越えない。
                 let written = unsafe { copy_to_user(&slice, 0, &kbuf[..got]) };
                 return written as u64;
             }
@@ -2454,18 +2457,20 @@ unsafe fn read_input_events(
     let want = count.min(INPUT_READ_MAX as u64);
     // **イベントの整数倍に切り下げる。**
     let cap = (want as usize / INPUT_EVENT_LEN) * INPUT_EVENT_LEN;
-    // **踏み込む前に検証する。**
-    // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
-    let Some(slice) =
-        (unsafe { validate_user_range_for_write(page_table_root, direct_map, buf, cap as u64) })
-    else {
-        return (-EFAULT) as u64;
-    };
     let mut kbuf = [0u8; INPUT_READ_MAX];
-    let got = loop {
+    let (slice, got) = loop {
+        // **書き先は、取り出す直前に、毎回確かめる**（2026-10-22。`read_eventfd` と同じ形）。待つ前に確かめた範囲は、
+        // 眠っている間（BKL を放している間）に同じプロセスの別のスレッドが `munmap`・`mprotect` しうる。**確かめ・
+        // 取り出し・書きの間は BKL を放さない**ので、この 3 つの間に範囲は変わらない。書けなければ、取らずに `-EFAULT`。
+        // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+        let Some(slice) = (unsafe {
+            validate_user_range_for_write(page_table_root, direct_map, buf, cap as u64)
+        }) else {
+            return (-EFAULT) as u64;
+        };
         let got = crate::input::read_events(&mut kbuf[..cap]);
         if got != 0 {
-            break got;
+            break (slice, got);
         }
         // **待つ条件は端末と同じ**（`sys_read` の端末分岐の doc）。**据えられていない・スクリプトが
         // 駆動している間は待たない**——**起動シーケンスとスクリプトのグループが止まらないように。**
@@ -2489,7 +2494,7 @@ unsafe fn read_input_events(
             }
         }
     };
-    // SAFETY: slice は検証済みで、got は cap を越えない。
+    // SAFETY: `slice` は取り出す直前に確かめた範囲で、確かめてから BKL を放していない。`got` は `cap` を越えない。
     let written = unsafe { copy_to_user(&slice, 0, &kbuf[..got]) };
     written as u64
 }
@@ -2874,6 +2879,8 @@ unsafe fn poll_from_ring3(
     }
     // **欄を割るのは abi の `parse_pollfd` で、受けるかどうかを決めて待つ理由へ対応づけるのはここである**
     // （`ADR-0071` の決定 1 の 2 で分けた。2026-09-30）。
+    // 書き戻すときに確かめ直すので、ユーザーのアドレスを取っておく（下の `fds` が名前を隠す）。
+    let fds_at = fds;
     let (fds, _) = raw.as_chunks::<POLLFD_LEN>();
     let mut reasons = [None; MAX_POLL_FDS];
     let mut invalid = [false; MAX_POLL_FDS];
@@ -2933,7 +2940,15 @@ unsafe fn poll_from_ring3(
             for (index, revent) in revents.iter().enumerate().take(count) {
                 set_pollfd_revents(&mut fds[index], *revent);
             }
-            // SAFETY: `slice` は検証済みで、書く長さは検証した `bytes` を越えない。
+            // **`revents` を組んでから、書き戻す先を確かめ直す**（2026-10-22）。上で確かめた範囲は、眠っている間（BKL を
+            // 放している間）に同じプロセスの別のスレッドが `munmap`・`mprotect` しうる。確かめと書きの間は BKL を放さない。
+            // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+            let Some(slice) = (unsafe {
+                validate_user_range_for_write(page_table_root, direct_map, fds_at, bytes)
+            }) else {
+                return (-EFAULT) as u64;
+            };
+            // SAFETY: `slice` はいま確かめた範囲で、確かめてから BKL を放していない。書く長さは `bytes` を越えない。
             unsafe { copy_to_user(&slice, 0, &raw[..count * POLLFD_LEN]) };
             return ready as u64;
         }
@@ -3244,17 +3259,20 @@ unsafe fn read_from_socket(
         return 0;
     }
     let want = count.min(crate::socket::SOCKET_RING as u64);
-    // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
-    let Some(slice) =
-        (unsafe { validate_user_range_for_write(page_table_root, direct_map, buf, want) })
-    else {
-        return (-EFAULT) as u64;
-    };
     let mut kbuf = [0u8; crate::socket::SOCKET_RING];
     loop {
+        // **書き先は、取り出す直前に、毎回確かめる**（2026-10-22。`read_eventfd` と同じ形）。待つ前に確かめた範囲は、
+        // 眠っている間（BKL を放している間）に同じプロセスの別のスレッドが `munmap`・`mprotect` しうる。**確かめ・
+        // 取り出し・書きの間は BKL を放さない**ので、この 3 つの間に範囲は変わらない。書けなければ、取らずに `-EFAULT`。
+        // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+        let Some(slice) =
+            (unsafe { validate_user_range_for_write(page_table_root, direct_map, buf, want) })
+        else {
+            return (-EFAULT) as u64;
+        };
         match crate::socket::read_into(conn, side, &mut kbuf[..want as usize]) {
             crate::socket::ReadOutcome::Bytes(got) => {
-                // SAFETY: `slice` は検証済みで、`got` はその長さを越えない。
+                // SAFETY: `slice` はいま確かめた範囲で、確かめてから BKL を放していない。`got` はその長さを越えない。
                 let written = unsafe { copy_to_user(&slice, 0, &kbuf[..got]) };
                 return written as u64;
             }
@@ -5488,14 +5506,7 @@ unsafe fn sys_read(
             if count == 0 {
                 return 0;
             }
-            // **踏み込む前に検証する。**
             let want = count.min(TERMINAL_READ_MAX as u64);
-            // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
-            let Some(slice) =
-                (unsafe { validate_user_range_for_write(page_table_root, direct_map, buf, want) })
-            else {
-                return (-EFAULT) as u64;
-            };
             let mut kbuf = [0u8; TERMINAL_READ_MAX];
             // **溜まっていなければ待つ（W2-c-2。`ADR-0061`）。**
             //
@@ -5522,10 +5533,19 @@ unsafe fn sys_read(
             // 破壊テスト `read-never-waits` では待たないので、書き換わらない。
             #[cfg_attr(feature = "read-never-waits", allow(unused_mut))]
             let mut waited_once = false;
-            let got = loop {
+            let (slice, got) = loop {
+                // **書き先は、取り出す直前に、毎回確かめる**（2026-10-22。`read_eventfd` と同じ形）。待つ前に確かめた範囲は、
+                // 眠っている間（BKL を放している間）に同じプロセスの別のスレッドが `munmap`・`mprotect` しうる。**確かめ・
+                // 取り出し・書きの間は BKL を放さない**ので、この 3 つの間に範囲は変わらない。書けなければ、取らずに `-EFAULT`。
+                // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+                let Some(slice) = (unsafe {
+                    validate_user_range_for_write(page_table_root, direct_map, buf, want)
+                }) else {
+                    return (-EFAULT) as u64;
+                };
                 let got = crate::input::read_bytes(&mut kbuf[..want as usize]);
                 if got != 0 {
-                    break got;
+                    break (slice, got);
                 }
                 // **起こされたのに読めなかった回数（W2-c-2 の判定 5）。**
                 //
@@ -5580,7 +5600,7 @@ unsafe fn sys_read(
                     }
                 }
             };
-            // SAFETY: slice は検証済みで、`got` は `want` を越えない。
+            // SAFETY: `slice` は取り出す直前に確かめた範囲で、確かめてから BKL を放していない。`got` は `want` を越えない。
             let written = unsafe { copy_to_user(&slice, 0, &kbuf[..got]) };
             return written as u64;
         }
