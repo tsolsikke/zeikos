@@ -143,3 +143,12 @@ DOCUMENTATION_URL="https://github.com/tsolsikke/zeikos/tree/main/docs"
 ## 参照（2026-10-15）
 
 シグナル（M3b）は、セルフホスティングの各段の設計で確かめる条件の1つである（`ADR-0086`）。
+
+## Addendum（2026-10-22。`getrandom`の`flags`の確かめをLinuxの順にそろえる）
+
+Seinasのコンポジタは、識別子を作るときに、Rustの`rand`を通して`getrandom`を`flags` 0で呼ぶ（長さ0の問い合わせと、32バイト）。**「ZeikOSは`GRND_INSECURE`の形だけを受ける」という報告は、受ける`flags`の話としては当たっていない**——`flags` 0は前から受けていた（`syscall-test`の86番）。当たっているのは、返す値の質が`GRND_INSECURE`相当だという点である。
+
+- **どの`flags`でも待たない。** Linuxの`flags` 0と`GRND_RANDOM`は、CRNGが種を得る（`crng_ready`）まで待ち、それから暗号に使える値を返す。ZeikOSの出所はエントロピーをためる所を持たず、`RDRAND`かTSCからその場で値を作るので、待たずに出せる。**言えるのは「待たずに出せる」ことだけで、`crng_ready`が約束する暗号の強さは無い**（`docs/deferred-decisions.md`の「`AT_RANDOM`の16バイトが、暗号に使える乱数ではない」の行）。今の利用者（Seinasの識別子）に要るのは、待たずに値が出ることである。暗号に使える乱数（`RDRAND`を持つCPUだけを準備ができたとする形や、CRNGと種の集め方を作る形）は、別の課題の候補にする。
+- **確かめの順をLinux（v6.18の`drivers/char/random.c`）にそろえた。** `flags`は`unsigned int`として読み（上の32ビットは見ない）、知らないビットは`-EINVAL`、`GRND_INSECURE | GRND_RANDOM`も`-EINVAL`、準備を待つ段は無く、書き先を確かめてから書く。長さ0は0を返す。以前は、`GRND_INSECURE | GRND_RANDOM`を受け、上の32ビットのどれかが立っていれば`-EINVAL`を返していた。
+- **Linuxとの差（直さない）。** 書き先の途中から書けないとき、Linuxは書けたバイト数を返し（後ろ16バイトがマップされていない32バイトで16）、ZeikOSは先に全体を確かめて`-EFAULT`を返す。`syscall-test`は、この形で`-EFAULT`を確かめ、差を控える1行を出す。1回に256バイトまでしか書かない件（上のDecision）は、今回は触らない。
+- **確かめ。** `syscall-test`の129番が、`flags` 0・`GRND_NONBLOCK`・`GRND_RANDOM`・`GRND_INSECURE`・`GRND_NONBLOCK|GRND_INSECURE`・上の32ビットだけを立てた値で16を、`GRND_INSECURE|GRND_RANDOM`と知らないビット（0x8）で`-EINVAL`を、NULLと長さ0で0を、後ろ半分がマップされていない32バイトで`-EFAULT`を見る。期待の値は、同じ組み合わせをWSL（6.18）のLinuxで生の`syscall`として打って取った（最後の形だけはLinuxが16を返す）。
