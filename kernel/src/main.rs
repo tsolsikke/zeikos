@@ -6879,6 +6879,9 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
         verify_process_end_wakes(logger);
         // **眠っている間に書き先を外された `read` と `poll` が `-EFAULT` で戻る**（2026-10-22。`ADR-0063` の Addendum）。
         verify_fault_after_wait(logger);
+        // **`F_DUPFD` の複製が、パイプとソケットの端・listener・memfd を数えること**（2026-10-22。`ADR-0064` の Addendum）。
+        // パイプは同時に 1 本なので、3 つ目の引数を変えて 2 回起こす（`b` は書き端、`c` は読み端の終わり方を見る）。
+        verify_dup_ends(logger);
         // **memfd のフラグと名前・封・fstat・作り方ごとの `FD_CLOEXEC`**（2026-10-20。`ADR-0065` の Addendum）。判定は
         // `cargo xtask run --linux-socket-test`（Linux の参照と突き合わせる）と、破壊テスト 2 つ（`--critical-test
         // memfd-ignores-allow-sealing`・`memfd-seals-not-kept`）。
@@ -6957,27 +6960,59 @@ fn verify_process_end_wakes(logger: &mut Logger<Serial>) {
 #[cfg(feature = "linux-socket-test")]
 #[inline(never)]
 fn verify_fault_after_wait(logger: &mut Logger<Serial>) {
+    verify_linux_program_with_one_pipe(
+        logger,
+        b"/bin/linux/wl-fault-after-wait-rust",
+        b"wl-fault-after-wait-rust\0/etc/motd\0a\0b\0",
+    );
+}
+
+/// `F_DUPFD` で複製したパイプの端・ソケットの端・listener・memfd が、元を閉じた後も使え、最後の 1 つを閉じたときだけ相手が
+/// EOF・`EPIPE` を見るイメージを、2 回起こす（2026-10-22。`ADR-0064` の Addendum）。**`b` の回の前後で、共有メモリの
+/// フレームを持つ数を 1 行出す**——複製と `SCM_RIGHTS` で渡した memfd のフレームが、全部の fd を閉じた後に返ったことを、
+/// xtask が前後の数が同じことで見る。判定は `cargo xtask run --linux-socket-test`。
+#[cfg(feature = "linux-socket-test")]
+#[inline(never)]
+fn verify_dup_ends(logger: &mut Logger<Serial>) {
+    let before = kernel::shm::frames_held();
+    verify_linux_program_with_one_pipe(
+        logger,
+        b"/bin/linux/wl-dup-ends-rust",
+        b"wl-dup-ends-rust\0/etc/motd\0a\0b\0",
+    );
+    let after = kernel::shm::frames_held();
+    logger.info(format_args!(
+        "dup-ends: /bin/linux/wl-dup-ends-rust (shape b) left the shared memory holding {before} frame(s) before it ran \
+         and {after} after it ended"
+    ));
+    verify_linux_program_with_one_pipe(
+        logger,
+        b"/bin/linux/wl-dup-ends-rust",
+        b"wl-dup-ends-rust\0/etc/motd\0a\0c\0",
+    );
+}
+
+/// fd 0 と fd 1 に同じパイプの読み端と書き端を据えて、Linux 向けのイメージを起こす（2026-10-22）。**端はイメージの表へ
+/// 渡す**（作った時の書き手の数と、予約から変えた読み手の数がそのまま移る）。取られなかった端（読み込みの前に失敗した）は、
+/// 起こした後に閉じる。
+#[cfg(feature = "linux-socket-test")]
+fn verify_linux_program_with_one_pipe(logger: &mut Logger<Serial>, path: &[u8], argv: &[u8]) {
+    let name = core::str::from_utf8(path).unwrap_or("<not utf-8>");
     let Some(pipe) = kernel::pipe::create(true) else {
         logger.error(format_args!(
-            "fault-after-wait: no pipe was free for /bin/linux/wl-fault-after-wait-rust. halting"
+            "one-pipe: no pipe was free for {name}. halting"
         ));
         cpu::halt_forever();
     };
     if !kernel::pipe::claim_reserved_reader(pipe) {
         logger.error(format_args!(
-            "fault-after-wait: the reserved reader of pipe {pipe} could not be claimed. halting"
+            "one-pipe: the reserved reader of pipe {pipe} could not be claimed for {name}. halting"
         ));
         cpu::halt_forever();
     }
-    // **書き端はイメージの表へ渡す**（作った時の書き手の数がそのまま移る）。読み端も同じ。
     kernel::userland::set_inherit_stdin(0, pipe);
     kernel::userland::set_inherit_stdout(0, pipe);
-    verify_linux_program(
-        logger,
-        b"/bin/linux/wl-fault-after-wait-rust",
-        b"wl-fault-after-wait-rust\0/etc/motd\0a\0b\0",
-    );
-    // **取られなかった端（読み込みの前に失敗した）は、ここで閉じる。**
+    verify_linux_program(logger, path, argv);
     if let Some(unused) = kernel::userland::take_inherit_stdin(0) {
         kernel::pipe::close_read_end(unused);
     }

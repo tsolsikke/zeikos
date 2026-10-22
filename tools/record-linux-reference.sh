@@ -56,6 +56,30 @@ record_with_one_pipe() {
     echo "recorded: $ref/$name.txt (exit status $status)"
 }
 
+# fd 0 を読むだけの読み端、fd 1 を書き端にして、3 つ目の引数を b と c に変えて 2 回起こす（ZeikOS の起動時の確かめと同じ形）。
+# 読み端を読み書きで開くと、それも書き手に数えられて EOF が来ない。fd 3 で一時的に両側を持ってから exec で入れ替えるので、
+# ほかのプロセスは端を持たない。行は標準エラーへ出すので、そちらを 2 回分続けて控える。
+record_dup_ends() {
+    name=$1
+    if [ ! -x "$bin/$name" ]; then
+        echo "skipped: $name (not built at $bin/$name)"
+        return
+    fi
+    : > "$ref/$name.txt"
+    for shape in b c; do
+        fifo=$(mktemp -u)
+        mkfifo "$fifo"
+        set +e
+        sh -c 'exec 3<>"$1" && exec env -i "$2" "$3" a "$4" 0<"$1" 1>"$1" 3<&-' sh "$fifo" "$bin/$name" \
+            "$root/kernel/fsimage/seed/etc/motd" "$shape" 2>> "$ref/$name.txt"
+        status=$?
+        set -e
+        rm -f "$fifo"
+    done
+    printf 'exit status: %d\n' "$status" >> "$ref/$name.txt"
+    echo "recorded: $ref/$name.txt (exit status $status)"
+}
+
 record m1-rust
 record m3a-rust
 record m3a-mutex-rust
@@ -81,5 +105,6 @@ record wl-memfd-seals-rust
 record wl-realtime-rust
 # fd 0 と fd 1 に同じパイプの両端を渡すイメージ（ZeikOS の起動時の確かめと同じ形）。行は標準エラーへ出すので、そちらを控える。
 record_with_one_pipe wl-fault-after-wait-rust
+record_dup_ends wl-dup-ends-rust
 record m1-c
 record m3a-c

@@ -1,0 +1,17 @@
+wl-dup-ends-rust: main starts with 4 argument(s), shape b
+wl-dup-ends-rust: copies of both pipe ends work after the originals were closed, and a copy moved to a thread wrote = true
+wl-dup-ends-rust: the dup of the write end into a full table failed with EMFILE = true
+wl-dup-ends-rust: after the refused dup, closing the last write end gave the reader EOF = true
+wl-dup-ends-rust: a copy of the listener accepts after the original was closed = true
+wl-dup-ends-rust: a copy of the client end moved to a thread wrote after the original was closed = true
+wl-dup-ends-rust: closing the last client end gave the server EOF = true
+wl-dup-ends-rust: and the server's write after that failed with EPIPE = true
+wl-dup-ends-rust: a copy of a memfd maps and reads back after the original was closed = true
+wl-dup-ends-rust: after the sender closed its memfd, the receiver mapped the received fd, read what the sender wrote, and its write showed through = true
+wl-dup-ends-rust: shape b is done
+wl-dup-ends-rust: main starts with 4 argument(s), shape c
+wl-dup-ends-rust: copies of both pipe ends work after the originals were closed, and a copy moved to a thread wrote = true
+wl-dup-ends-rust: the dup of the read end into a full table failed with EMFILE = true
+wl-dup-ends-rust: after the refused dup, closing the last read end gave the writer EPIPE = true
+wl-dup-ends-rust: shape c is done
+exit status: 4

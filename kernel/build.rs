@@ -650,6 +650,9 @@ const LINUX_PROGRAMS: &[&str] = &[
     // **眠っている間に書き先を外された read と poll**（2026-10-22。`ADR-0063` の Addendum。`linux-socket-test` のビルドだけが
     // 起動時に起こす）。
     "wl-fault-after-wait-rust",
+    // **F_DUPFD の複製が、パイプとソケットの端・listener・memfd を数えること**（2026-10-22。`ADR-0064` の Addendum。
+    // `linux-socket-test` のビルドだけが起動時に 2 回起こす）。
+    "wl-dup-ends-rust",
     // **壁の時計**（2026-10-20。`ADR-0090`。`realtime-test` のビルドだけが起動時に起こす）。
     "wl-realtime-rust",
     // **ZeikOS と Linux で結果が違うイメージ**（マップ中の memfd を縮める ftruncate。`memfd-shrink-test` のビルドだけが起こす）。

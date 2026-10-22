@@ -24393,6 +24393,8 @@ fn cmd_linux_socket_test() -> Result<()> {
     let memfd_ended = format!("spawn: /bin/linux/{memfd} ended");
     let fault = "wl-fault-after-wait-rust";
     let fault_ended = format!("spawn: /bin/linux/{fault} ended");
+    let dup_ends = "wl-dup-ends-rust";
+    let dup_ends_ended = format!("spawn: /bin/linux/{dup_ends} ended");
     let deadline = Instant::now() + PIPE_TEST_TIMEOUT;
     loop {
         if child.was_cut() {
@@ -24545,6 +24547,36 @@ fn cmd_linux_socket_test() -> Result<()> {
         .lines()
         .find(|line| line.contains(&fault_ended))
         .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
+    // **`F_DUPFD` の複製が端を数えること**（2026-10-22。`ADR-0064` の Addendum）。2 回（形 `b` と `c`）とも引数の数で終わったこと、
+    // Linux の参照（2 回分の行）と同じ行を出したこと、知らない番号を打っていないことと、形 `b` の前後で共有メモリのフレームを
+    // 持つ数が同じこと（複製と `SCM_RIGHTS` で渡した memfd のフレームが、全部の fd を閉じた後に返った）を見る。
+    let dup_ends_ran = serial
+        .matches(&format!("{dup_ends_ended} (Exited(4))"))
+        .count()
+        == 2;
+    let dup_ends_matched = linux_program_output_matches(
+        &workspace_root,
+        dup_ends,
+        &serial,
+        LinuxReferenceEnvironment::ExactCount,
+    )?;
+    let dup_ends_unknown_free = serial
+        .lines()
+        .filter(|line| line.contains(&dup_ends_ended))
+        .filter(|line| line.contains("(0 with a number the kernel does not know"))
+        .count()
+        == 2;
+    let frames_line = serial
+        .lines()
+        .find(|line| line.contains("dup-ends: /bin/linux/wl-dup-ends-rust (shape b)"))
+        .unwrap_or("");
+    let frames_held = |key: &str| -> Option<u64> {
+        let rest = &frames_line[frames_line.find(key)? + key.len()..];
+        rest.split_whitespace().next()?.parse().ok()
+    };
+    let frames_before = frames_held("holding ");
+    let frames_after = frames_held("and ");
+    let dup_ends_frames_returned = frames_before.is_some() && frames_before == frames_after;
     // **memfd のフラグと名前・封・fstat・作り方ごとの `FD_CLOEXEC`**（2026-10-20。`ADR-0065` の Addendum）。終わり方と Linux の
     // 参照で見る（封と `F_GETFD` の値が行に出る）。
     let memfd_ran = serial.contains(&format!("{memfd_ended} (Exited(4))"));
@@ -24602,6 +24634,17 @@ fn cmd_linux_socket_test() -> Result<()> {
         "{context}: {fault} printed what Linux prints (linux-programs/reference/{fault}.txt) = {fault_matched}"
     );
     println!("{context}: {fault} hit no number the kernel does not know = {fault_unknown_free}");
+    println!("{context}: {dup_ends} ended with status 4 in both shapes = {dup_ends_ran}");
+    println!(
+        "{context}: {dup_ends} printed what Linux prints (linux-programs/reference/{dup_ends}.txt) = {dup_ends_matched}"
+    );
+    println!(
+        "{context}: {dup_ends} hit no number the kernel does not know in either shape = {dup_ends_unknown_free}"
+    );
+    println!(
+        "{context}: the shared memory frames of {dup_ends} came back after every fd was closed = \
+         {dup_ends_frames_returned} (held {frames_before:?} before, {frames_after:?} after)"
+    );
     println!("{context}: {memfd} ended with status 4 = {memfd_ran}");
     println!(
         "{context}: {memfd} printed what Linux prints (linux-programs/reference/{memfd}.txt) = {memfd_matched}"
@@ -24627,6 +24670,10 @@ fn cmd_linux_socket_test() -> Result<()> {
         && fault_ran
         && fault_matched
         && fault_unknown_free
+        && dup_ends_ran
+        && dup_ends_matched
+        && dup_ends_unknown_free
+        && dup_ends_frames_returned
         && memfd_ran
         && memfd_matched
         && memfd_unknown_free
@@ -24643,6 +24690,7 @@ fn cmd_linux_socket_test() -> Result<()> {
                 || l.contains(epoll)
                 || l.contains(waits)
                 || l.contains(fault)
+                || l.contains(dup_ends)
                 || l.contains(memfd)
                 || l.contains("[ERROR]")
         })
