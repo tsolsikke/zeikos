@@ -199,6 +199,24 @@ pub fn with_current_files<R>(body: impl FnOnce(&mut FileTable) -> R) -> R {
 /// 別に確保する形である**——「まず固定配列」は Linux の形でもある。
 pub const MAX_OPEN_FILES: usize = 16;
 
+/// パイプの端・ソケットの端・listener の 1 つを、同時に指せるものの数の上限（2026-10-22）。**数は `u8` で持つ**
+/// （`crate::pipe`・`crate::socket`）ので、この値が 255 を越えないことを下の `assert!` がコンパイルの時に確かめる。
+///
+/// fd の表は、スロットごとに遠征の深さの数までしか同時に在らない（`crate::process_state` の表と同じ形）。1 つの表は
+/// [`MAX_OPEN_FILES`] まで持つ。ほかに、次の `spawn` へ渡すために側道へ置いた端（スロットごとに読み端と書き端の 2 つ）と、
+/// 起動時の確かめがカーネルの側で持つ端（1 つ）がある。`SCM_RIGHTS` は共有メモリの fd だけを運ぶので、渡す途中で端を
+/// 持つものは無い。**fd の上限やプロセスの数を上げてこの値が 255 を越えたら、数の型を広げること。**
+pub const MAX_END_HOLDERS: usize = crate::arch::x86_64::USER_TASK_SLOTS
+    * crate::arch::x86_64::MAX_EXCURSION_DEPTH
+    * MAX_OPEN_FILES
+    + 2 * crate::arch::x86_64::USER_TASK_SLOTS
+    + 1;
+
+const _: () = assert!(
+    MAX_END_HOLDERS <= u8::MAX as usize,
+    "the u8 counts of pipe ends, socket ends and listeners could overflow; widen them"
+);
+
 /// 標準入力の fd（Linux と同じ 0）。
 pub const STDIN_FD: usize = 0;
 /// 標準出力の fd（Linux と同じ 1）。
@@ -331,10 +349,11 @@ pub enum File {
     /// 立てるのは `socket(SOCK_NONBLOCK)`・`accept4(SOCK_NONBLOCK)`・`fcntl(F_SETFL, O_NONBLOCK)`・`ioctl(FIONBIO)` で、
     /// **`accept` で受けた fd は listener の印を引き継がない**（Linux と同じ）。
     ///
-    /// **`F_DUPFD` のコピーは、端を数えない**（既知の不具合。別の課題で直す）。コピーは `File` を値でコピーするだけなので、
-    /// **どちらか 1 つを閉じると [`File::release_end`] が端そのものを閉じ、残ったほうも相手から見て閉じた形になる**
-    /// （2026-10-19 に、確かめのイメージのスレッドへ `try_clone` で渡して踏んだ）。パイプの端も同じ形である。印もコピーごとに
-    /// 別に持つので、コピーの後にどちらかで変えると、もう一方には効かない（Linux は open file description を共有する）。
+    /// **`F_DUPFD` のコピーは、端を数える**（2026-10-22。以前は数えず、どちらか 1 つを閉じると [`File::release_end`] が端そのものを
+    /// 閉じ、残ったほうも相手から見て閉じた形になった。2026-10-19 に、確かめのイメージのスレッドへ `try_clone` で渡して踏んだ）。
+    /// パイプの端・listener・共有メモリも同じく数える。**印と状態はコピーごとに別に持つ**ので、コピーの後にどちらかで変えると、
+    /// もう一方には効かない（Linux は open file description を共有する）。`bind` 前のソケットを複製してから片方で `bind`・
+    /// `connect` すると、もう片方は `bind` 前のままである。
     Socket {
         state: SocketState,
         nonblocking: bool,
@@ -473,12 +492,26 @@ impl File {
         }
     }
 
-    /// コピーを作る（`F_DUPFD`）。**参照を数える種類は、数を 1 つ足す**（2026-10-19。eventfd・timerfd・epoll・入力）。`flock` のロックは
-    /// コピーに渡さない（`ADR-0087`。コピーは別の持ち主）。
+    /// コピーを作る（`F_DUPFD`）。**参照を数える種類は、数を 1 つ足す**（2026-10-19。eventfd・timerfd・epoll・入力。2026-10-22 に
+    /// パイプの両端・ソケットの接続と listener・共有メモリを足した）。`flock` のロックはコピーに渡さない（`ADR-0087`。コピーは
+    /// 別の持ち主）。**足した数は [`File::release_end`] が 1 つずつ引き、最後の 1 つで端を閉じる・フレームを返す。**
     pub fn duplicate(&self) -> Self {
         let mut copy = *self;
         match &mut copy {
             Self::Regular { lock, .. } => *lock = 0,
+            Self::PipeRead { pipe } => crate::pipe::attach_read_end(*pipe),
+            Self::PipeWrite { pipe } => crate::pipe::attach_write_end(*pipe),
+            Self::Socket {
+                state: SocketState::Stream { conn, side },
+                ..
+            } => crate::socket::attach_end(*conn, *side),
+            Self::Socket {
+                state: SocketState::Listener { listener },
+                ..
+            } => crate::socket::attach_listener(*listener),
+            Self::Shm { shm } => {
+                crate::shm::attach(*shm);
+            }
             Self::EventFd { id, .. } => crate::eventfd::attach(*id),
             Self::TimerFd { id, .. } => crate::timerfd::attach(*id),
             Self::Epoll { id } => crate::epoll::attach(*id),
@@ -486,6 +519,32 @@ impl File {
             _ => {}
         }
         copy
+    }
+
+    /// [`File::duplicate`] で足した数を戻す（置けなかったコピー。2026-10-22）。**数を足した種類だけ**を [`File::release_end`] で
+    /// 1 つ引く——元の fd が持ったままなので、最後の 1 つにはならず、端は閉じない・起こさない・フレームは返らない。
+    /// 数を持たない種類（画面など）は何もしない（`release_end` を呼ぶと、画面なら図形モードから抜けてしまう）。
+    pub fn undo_duplicate(&self) {
+        match self {
+            Self::PipeRead { .. }
+            | Self::PipeWrite { .. }
+            | Self::Socket {
+                state: SocketState::Stream { .. } | SocketState::Listener { .. },
+                ..
+            }
+            | Self::Shm { .. }
+            | Self::EventFd { .. }
+            | Self::TimerFd { .. }
+            | Self::Epoll { .. }
+            | Self::Input { .. } => self.release_end(),
+            Self::Regular { .. }
+            | Self::Terminal { .. }
+            | Self::Screen
+            | Self::Socket {
+                state: SocketState::Unbound,
+                ..
+            } => {}
+        }
     }
 
     /// 種類の名前（判定行と、受けて無視した求めの行に出す）。
@@ -509,34 +568,38 @@ impl File {
     /// 集める**——**`close` からも、表の `Drop`（プロセスの終わり）からも来る。**
     pub fn release_end(&self) {
         match self {
-            // **手放す端を指す epoll の項目は外す**（2026-10-19。`crate::epoll` の「項目が指すもの」）。端は参照を数えて
-            // いないので、コピーのどれかを閉じたときに外れる（`ADR-0064` の 2026-10-19 の Addendum の既知の不具合の範囲）。
+            // **手放す端を指す epoll の項目は、最後の 1 つを閉じたときだけ外す**（2026-10-19。`crate::epoll` の「項目が指すもの」。
+            // 2026-10-22 に端を数える形にしてから、コピーの 1 つを閉じても外れない）。
             Self::PipeRead { pipe } => {
-                crate::pipe::close_read_end(*pipe);
-                crate::epoll::forget(crate::epoll::Source::PipeRead { pipe: *pipe });
+                if crate::pipe::close_read_end(*pipe) {
+                    crate::epoll::forget(crate::epoll::Source::PipeRead { pipe: *pipe });
+                }
             }
             Self::PipeWrite { pipe } => {
-                crate::pipe::close_write_end(*pipe);
-                crate::epoll::forget(crate::epoll::Source::PipeWrite { pipe: *pipe });
+                if crate::pipe::close_write_end(*pipe) {
+                    crate::epoll::forget(crate::epoll::Source::PipeWrite { pipe: *pipe });
+                }
             }
             Self::Socket {
                 state: SocketState::Stream { conn, side },
                 ..
             } => {
-                crate::socket::close_end(*conn, *side);
-                crate::epoll::forget(crate::epoll::Source::Stream {
-                    conn: *conn,
-                    side: *side as u8,
-                });
+                if crate::socket::close_end(*conn, *side) {
+                    crate::epoll::forget(crate::epoll::Source::Stream {
+                        conn: *conn,
+                        side: *side as u8,
+                    });
+                }
             }
             Self::Socket {
                 state: SocketState::Listener { listener },
                 ..
             } => {
-                crate::socket::close_listener(*listener);
-                crate::epoll::forget(crate::epoll::Source::Listener {
-                    listener: *listener,
-                });
+                if crate::socket::close_listener(*listener) {
+                    crate::epoll::forget(crate::epoll::Source::Listener {
+                        listener: *listener,
+                    });
+                }
             }
             Self::Shm { shm } => crate::shm::detach(*shm),
             // **画面の fd を手放したら図形モードから抜ける（`ADR-0066` の Y-c）。** **プロセスが

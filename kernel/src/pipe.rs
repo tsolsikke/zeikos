@@ -312,10 +312,35 @@ pub fn write_from(pipe: u8, src: &[u8]) -> WriteOutcome {
     outcome
 }
 
-/// 読み端を 1 つ閉じる。**最後の読み手なら書き手を起こす**（`-EPIPE` を見に行かせる）。
-pub fn close_read_end(pipe: u8) {
+/// 読み端を指すものを 1 つ足す（2026-10-22。`F_DUPFD` のコピー）。開いていないパイプには足さない。
+pub fn attach_read_end(pipe: u8) {
     let Some(slot) = PIPES.get(pipe as usize) else {
         return;
+    };
+    let mut state = slot.lock();
+    if state.in_use && state.readers > 0 {
+        // `u8` は上に当たらない（`crate::vfs::MAX_END_HOLDERS` がコンパイルの時に確かめる）。
+        state.readers = state.readers.saturating_add(1);
+    }
+}
+
+/// 書き端を指すものを 1 つ足す（2026-10-22。`F_DUPFD` のコピー）。開いていないパイプには足さない。
+pub fn attach_write_end(pipe: u8) {
+    let Some(slot) = PIPES.get(pipe as usize) else {
+        return;
+    };
+    let mut state = slot.lock();
+    if state.in_use && state.writers > 0 {
+        // `u8` は上に当たらない（`crate::vfs::MAX_END_HOLDERS` がコンパイルの時に確かめる）。
+        state.writers = state.writers.saturating_add(1);
+    }
+}
+
+/// 読み端を 1 つ閉じる。**最後の読み手なら書き手を起こす**（`-EPIPE` を見に行かせる）。**最後の読み手だったら真**を返す
+/// （呼び手は、そのときだけ端を指す epoll の項目を外す）。
+pub fn close_read_end(pipe: u8) -> bool {
+    let Some(slot) = PIPES.get(pipe as usize) else {
+        return false;
     };
     let last = {
         let mut state = slot.lock();
@@ -331,15 +356,18 @@ pub fn close_read_end(pipe: u8) {
     if last {
         wake_and_notify_epoll(crate::task::Wait::PipeWritable { pipe });
     }
+    last
 }
 
 /// 書き端を 1 つ閉じる。**最後の書き手なら読み手を起こす**（EOF を見に行かせる）。
 ///
 /// 破壊テスト (`ADR-0063` の (b3), pipe-close-keeps-writer-count): 数を減らさない。
 /// **EOF が来ず、読み手が永久に待つ。**
-pub fn close_write_end(pipe: u8) {
+///
+/// **最後の書き手だったら真**を返す（呼び手は、そのときだけ端を指す epoll の項目を外す）。
+pub fn close_write_end(pipe: u8) -> bool {
     let Some(slot) = PIPES.get(pipe as usize) else {
-        return;
+        return false;
     };
     let last = {
         let mut state = slot.lock();
@@ -358,6 +386,7 @@ pub fn close_write_end(pipe: u8) {
     if last {
         wake_and_notify_epoll(crate::task::Wait::PipeReadable { pipe });
     }
+    last
 }
 
 #[cfg(test)]

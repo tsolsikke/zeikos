@@ -7834,20 +7834,8 @@ fn sys_fcntl(fd: u64, cmd: u64, arg: u64) -> u64 {
             {
                 Ok(new_fd) => new_fd as u64,
                 Err(error) => {
-                    // **置けなかったコピーの、足した参照を戻す**（eventfd・timerfd・epoll・入力だけ。ソケットとパイプの端は数えていないので、
-                    // `release_end` を呼ぶと端そのものを閉じてしまう）。
-                    if let Some((id, _)) = copy.eventfd_parts() {
-                        crate::eventfd::detach(id);
-                    }
-                    if let Some((id, _)) = copy.timerfd_parts() {
-                        crate::timerfd::detach(id);
-                    }
-                    if let Some(id) = copy.epoll_id() {
-                        crate::epoll::detach(id);
-                    }
-                    if let crate::vfs::File::Input { open } = copy {
-                        crate::input::detach_handle(open);
-                    }
+                    // **置けなかったコピーの、足した数を戻す**（2026-10-22 からパイプとソケットの端・listener・共有メモリも数える）。
+                    copy.undo_duplicate();
                     (-errno_for_file_table(error)) as u64
                 }
             }

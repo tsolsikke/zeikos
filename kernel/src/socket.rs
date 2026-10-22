@@ -72,6 +72,9 @@ impl Side {
 /// 名前を持つ待ち受け。
 struct Listener {
     in_use: bool,
+    /// この listener を指す fd の数（2026-10-22）。`bind` で 1、`F_DUPFD` のコピーで 1 つ足し（[`attach_listener`]）、
+    /// [`close_listener`] で 1 つ引く。**0 になったときだけ名前を返す。**
+    refs: u8,
     /// `listen` 済みか。**`bind` だけでは繋げない**（Linux と同じ）。
     listening: bool,
     name: [u8; NAME_MAX],
@@ -81,6 +84,7 @@ struct Listener {
 impl Listener {
     const EMPTY: Self = Self {
         in_use: false,
+        refs: 0,
         listening: false,
         name: [0; NAME_MAX],
         name_len: 0,
@@ -98,8 +102,10 @@ struct Connection {
     listener: u8,
     /// `accept` で server 側が fd になったか。**なる前は listener が server 側を持つ。**
     accepted: bool,
-    /// 各側の端が開いているか（`[client, server]`）。
-    open: [bool; 2],
+    /// 各側の端を指すものの数（`[client, server]`。2026-10-22 までは開いているかの印だった）。**0 でない間は開いている。**
+    /// `connect` で両側が 1（server 側は `accept` までは listener が持つ）、`F_DUPFD` のコピーで 1 つ足し（[`attach_end`]）、
+    /// [`close_end`] で 1 つ引く。
+    open: [u8; 2],
     /// 各側へ流れる輪（`[client へ, server へ]`）。
     rings: [Ring<SOCKET_RING>; 2],
     /// 各側へ渡す途中の fd（`SCM_RIGHTS`。`[client が受ける, server が受ける]`。`ADR-0065`）。
@@ -114,13 +120,13 @@ impl Connection {
         in_use: false,
         listener: 0,
         accepted: false,
-        open: [false, false],
+        open: [0, 0],
         rings: [Ring::EMPTY, Ring::EMPTY],
         pending_fd: [None, None],
     };
 
     fn is_open(&self, side: Side) -> bool {
-        self.open[side as usize]
+        self.open[side as usize] != 0
     }
 }
 
@@ -238,6 +244,7 @@ pub fn bind(name: &[u8]) -> Result<u8, BindError> {
         }
         *listener = Listener::EMPTY;
         listener.in_use = true;
+        listener.refs = 1;
         listener.name[..name.len()].copy_from_slice(name);
         listener.name_len = name.len() as u8;
         BOUND.fetch_add(1, Ordering::Relaxed);
@@ -294,7 +301,7 @@ pub fn connect(name: &[u8]) -> Result<u8, ConnectError> {
         *connection = Connection::EMPTY;
         connection.in_use = true;
         connection.listener = listener as u8;
-        connection.open = [true, true];
+        connection.open = [1, 1];
         created = Some(index as u8);
         break;
     }
@@ -566,21 +573,27 @@ pub fn write_from(conn: u8, side: Side, src: &[u8]) -> WriteOutcome {
 ///
 /// 破壊テスト (`ADR-0064`, socket-release-keeps-slot): 両端が閉じてもスロットを返さない。**3 つ目の
 /// 接続が `-EAGAIN` になる。**
-pub fn close_end(conn: u8, side: Side) {
+///
+/// **端を指すものが残っていれば、数を 1 つ引くだけで閉じない**（2026-10-22。`F_DUPFD` のコピー）。**閉じたら真**を返す
+/// （呼び手は、そのときだけ端を指す epoll の項目を外す）。
+pub fn close_end(conn: u8, side: Side) -> bool {
     let Some(slot) = CONNECTIONS.get(conn as usize) else {
-        return;
+        return false;
     };
     let closed = {
         let mut state = slot.lock();
         if !state.in_use || !state.is_open(side) {
             false
+        } else if state.open[side as usize] > 1 {
+            state.open[side as usize] -= 1;
+            false
         } else {
             #[cfg(not(feature = "socket-close-keeps-peer-open"))]
             {
-                state.open[side as usize] = false;
+                state.open[side as usize] = 0;
             }
             #[cfg(not(feature = "socket-release-keeps-slot"))]
-            if !state.open[0] && !state.open[1] {
+            if state.open == [0, 0] {
                 *state = Connection::EMPTY;
                 CONNECTIONS_RELEASED.fetch_add(1, Ordering::Relaxed);
             }
@@ -597,17 +610,47 @@ pub fn close_end(conn: u8, side: Side) {
             side: side.peer(),
         });
     }
+    closed
+}
+
+/// 端を指すものを 1 つ足す（2026-10-22。`F_DUPFD` のコピー）。開いていない端には足さない。
+pub fn attach_end(conn: u8, side: Side) {
+    let Some(slot) = CONNECTIONS.get(conn as usize) else {
+        return;
+    };
+    let mut state = slot.lock();
+    if state.in_use && state.is_open(side) {
+        // `u8` は上に当たらない（`crate::vfs::MAX_END_HOLDERS` がコンパイルの時に確かめる）。
+        state.open[side as usize] = state.open[side as usize].saturating_add(1);
+    }
+}
+
+/// listener を指すものを 1 つ足す（2026-10-22。`F_DUPFD` のコピー）。
+pub fn attach_listener(listener: u8) {
+    let Some(slot) = LISTENERS.get(listener as usize) else {
+        return;
+    };
+    let mut state = slot.lock();
+    if state.in_use {
+        // `u8` は上に当たらない（`crate::vfs::MAX_END_HOLDERS` がコンパイルの時に確かめる）。
+        state.refs = state.refs.saturating_add(1);
+    }
 }
 
 /// listener を閉じる。**名前を返し、accept 前の接続の server 側を閉じる**（client 側は
 /// EOF と `-EPIPE` を見る）。
-pub fn close_listener(listener: u8) {
+///
+/// **listener を指すものが残っていれば、数を 1 つ引くだけで閉じない**（2026-10-22。`F_DUPFD` のコピー）。**閉じたら真。**
+pub fn close_listener(listener: u8) -> bool {
     let Some(slot) = LISTENERS.get(listener as usize) else {
-        return;
+        return false;
     };
     let released = {
         let mut state = slot.lock();
         if !state.in_use {
+            false
+        } else if state.refs > 1 {
+            state.refs -= 1;
             false
         } else {
             *state = Listener::EMPTY;
@@ -615,7 +658,7 @@ pub fn close_listener(listener: u8) {
         }
     };
     if !released {
-        return;
+        return false;
     }
     LISTENERS_RELEASED.fetch_add(1, Ordering::Relaxed);
     let pending: [bool; MAX_CONNECTIONS] = core::array::from_fn(|index| {
@@ -627,6 +670,7 @@ pub fn close_listener(listener: u8) {
             close_end(index as u8, Side::Server);
         }
     }
+    true
 }
 
 /// `SCM_RIGHTS` で渡す fd（共有メモリの添字）を相手側の待ち行列へ置く（`ADR-0065`）。
@@ -684,7 +728,7 @@ mod tests {
         let mut connection = Connection::EMPTY;
         assert!(!connection.in_use);
         connection.in_use = true;
-        connection.open = [true, true];
+        connection.open = [1, 1];
         assert!(connection.is_open(Side::Client) && connection.is_open(Side::Server));
         assert!(!connection.accepted);
         assert!(connection.rings[0].is_empty() && connection.rings[1].is_empty());
