@@ -39,6 +39,23 @@ record_with_open_stdin() {
     echo "recorded: $ref/$name.txt (exit status $status)"
 }
 
+record_with_one_pipe() {
+    name=$1
+    if [ ! -x "$bin/$name" ]; then
+        echo "skipped: $name (not built at $bin/$name)"
+        return
+    fi
+    fifo=$(mktemp -u)
+    mkfifo "$fifo"
+    set +e
+    env -i "$bin/$name" "$root/kernel/fsimage/seed/etc/motd" a b 0<>"$fifo" 1>"$fifo" 2> "$ref/$name.txt"
+    status=$?
+    set -e
+    rm -f "$fifo"
+    printf 'exit status: %d\n' "$status" >> "$ref/$name.txt"
+    echo "recorded: $ref/$name.txt (exit status $status)"
+}
+
 record m1-rust
 record m3a-rust
 record m3a-mutex-rust
@@ -62,5 +79,7 @@ record_with_open_stdin wl-exit-group-waits-rust
 record wl-memfd-seals-rust
 # 壁の時計（2026-10-20）。値の行は標準エラーへ出すので、参照には入らない。
 record wl-realtime-rust
+# fd 0 と fd 1 に同じパイプの両端を渡すイメージ（ZeikOS の起動時の確かめと同じ形）。行は標準エラーへ出すので、そちらを控える。
+record_with_one_pipe wl-fault-after-wait-rust
 record m1-c
 record m3a-c

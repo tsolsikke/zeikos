@@ -2935,11 +2935,13 @@ pub fn take_inherit_stdin(slot: usize) -> Option<u8> {
     INHERITED_ENDS[slot].lock().stdin.take()
 }
 
-fn set_inherit_stdout(slot: usize, pipe: u8) {
+/// 次の入れ子の `spawn` の fd 1 に据える書き端を置く。
+pub fn set_inherit_stdout(slot: usize, pipe: u8) {
     INHERITED_ENDS[slot].lock().stdout = Some(pipe);
 }
 
-fn take_inherit_stdout(slot: usize) -> Option<u8> {
+/// 置いてあった書き端を取る（無ければ `None`）。
+pub fn take_inherit_stdout(slot: usize) -> Option<u8> {
     INHERITED_ENDS[slot].lock().stdout.take()
 }
 

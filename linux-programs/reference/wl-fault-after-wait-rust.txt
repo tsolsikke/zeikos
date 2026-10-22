@@ -1,0 +1,15 @@
+wl-fault-after-wait-rust: main starts with 4 argument(s)
+wl-fault-after-wait-rust: the main thread slept in a pipe read before its buffer was unmapped = true
+wl-fault-after-wait-rust: the pipe read into the unmapped buffer failed with EFAULT = true
+wl-fault-after-wait-rust: the byte stayed in the pipe and a later read took it = true
+wl-fault-after-wait-rust: the main thread slept in a pipe read before its buffer was made read-only = true
+wl-fault-after-wait-rust: the pipe read into the read-only buffer failed with EFAULT = true
+wl-fault-after-wait-rust: the byte stayed in the pipe and a later read took it = true
+wl-fault-after-wait-rust: the main thread slept in poll before its pollfd array was unmapped = true
+wl-fault-after-wait-rust: poll with the unmapped pollfd array failed with EFAULT = true
+wl-fault-after-wait-rust: the byte stayed in the socket and a later read took it = true
+wl-fault-after-wait-rust: the main thread slept in poll before its pollfd array was made read-only = true
+wl-fault-after-wait-rust: poll with the read-only pollfd array failed with EFAULT = true
+wl-fault-after-wait-rust: the byte stayed in the socket and a later read took it = true
+wl-fault-after-wait-rust: all four shapes are done
+exit status: 4

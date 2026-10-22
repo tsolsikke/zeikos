@@ -271,6 +271,7 @@ pub const PATH_RULES: &[PathRule] = &[
             "linux-programs/wl-exit-group-waits-rust.rs",
             "linux-programs/wl-memfd-seals-rust.rs",
             "linux-programs/wl-realtime-rust.rs",
+            "linux-programs/wl-fault-after-wait-rust.rs",
         ],
         reach: Reach::Families(&[Family::Ipc, Family::Interrupts]),
     },

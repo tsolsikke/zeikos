@@ -6877,6 +6877,8 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
         ));
         // **プロセスの終わりの印が、パイプと epoll の待ちを起こす**（2026-10-20。`ADR-0085` の Addendum）。
         verify_process_end_wakes(logger);
+        // **眠っている間に書き先を外された `read` と `poll` が `-EFAULT` で戻る**（2026-10-22。`ADR-0063` の Addendum）。
+        verify_fault_after_wait(logger);
         // **memfd のフラグと名前・封・fstat・作り方ごとの `FD_CLOEXEC`**（2026-10-20。`ADR-0065` の Addendum）。判定は
         // `cargo xtask run --linux-socket-test`（Linux の参照と突き合わせる）と、破壊テスト 2 つ（`--critical-test
         // memfd-ignores-allow-sealing`・`memfd-seals-not-kept`）。
@@ -6946,6 +6948,42 @@ fn verify_process_end_wakes(logger: &mut Logger<Serial>) {
         left.iter().sum::<u64>(),
         WaitKindCounts(&left),
     ));
+}
+
+/// 主スレッドがパイプの `read` と `poll` で眠っている間に、別のスレッドが書き先を外すイメージを起こす（2026-10-22。
+/// `ADR-0063` の Addendum）。**fd 0 と fd 1 に、同じパイプの読み端と書き端を据える**——イメージのスレッドが fd 1 へ
+/// 書いて主スレッドを起こす。カーネルが起きた後に古い範囲へ書くと、Ring 0 のページフォルトで止まる。判定は
+/// `cargo xtask run --linux-socket-test`（Linux の参照と突き合わせる。行は標準エラーへ出る）。
+#[cfg(feature = "linux-socket-test")]
+#[inline(never)]
+fn verify_fault_after_wait(logger: &mut Logger<Serial>) {
+    let Some(pipe) = kernel::pipe::create(true) else {
+        logger.error(format_args!(
+            "fault-after-wait: no pipe was free for /bin/linux/wl-fault-after-wait-rust. halting"
+        ));
+        cpu::halt_forever();
+    };
+    if !kernel::pipe::claim_reserved_reader(pipe) {
+        logger.error(format_args!(
+            "fault-after-wait: the reserved reader of pipe {pipe} could not be claimed. halting"
+        ));
+        cpu::halt_forever();
+    }
+    // **書き端はイメージの表へ渡す**（作った時の書き手の数がそのまま移る）。読み端も同じ。
+    kernel::userland::set_inherit_stdin(0, pipe);
+    kernel::userland::set_inherit_stdout(0, pipe);
+    verify_linux_program(
+        logger,
+        b"/bin/linux/wl-fault-after-wait-rust",
+        b"wl-fault-after-wait-rust\0/etc/motd\0a\0b\0",
+    );
+    // **取られなかった端（読み込みの前に失敗した）は、ここで閉じる。**
+    if let Some(unused) = kernel::userland::take_inherit_stdin(0) {
+        kernel::pipe::close_read_end(unused);
+    }
+    if let Some(unused) = kernel::userland::take_inherit_stdout(0) {
+        kernel::pipe::close_write_end(unused);
+    }
 }
 
 /// 種類ごとの数を、全部の種類について `pipe 1, socket 0, …` の形で並べる（`process-end:` の行。xtask が名前で数を拾う）。

@@ -146,6 +146,15 @@ pub const SYS_OPEN_INPUT: u64 = ZEIKOS_PRIVATE_BASE + 8;
 /// [`FBIOGET_FSCREENINFO`](crate::abi::linux::FBIOGET_FSCREENINFO)、ピクセルは `mmap`。**
 pub const SYS_OPEN_SCREEN: u64 = ZEIKOS_PRIVATE_BASE + 9;
 
+/// その fd が読めるのを待って眠っているタスクが居るか（2026-10-22。`ADR-0063` の Addendum）。**確かめ用で、
+/// `linux-socket-test` のビルドだけが持つ。**
+///
+/// **引数は fd。** **戻り値は、居れば 1、居なければ 0、パイプの読み端でもソケットの接続でもなければ `-EBADF`。**
+/// 確かめのイメージ（`wl-fault-after-wait-rust`）のスレッドが、主スレッドが待ちの中で眠ったことを確かめてから、待ちの
+/// 書き先を外すために使う。Linux では `/proc/self/task/<tid>/stat` で見るが、ZeikOS には `/proc` が無い。
+#[cfg(feature = "linux-socket-test")]
+pub const SYS_SLEEPS_READING: u64 = ZEIKOS_PRIVATE_BASE + 10;
+
 /// **永久に実装しない番号**（S9-b-3-2a）。`-ENOSYS` の的である。
 ///
 /// # なぜ「空いている番号」で済ませないか

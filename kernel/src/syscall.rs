@@ -80,6 +80,8 @@ use crate::abi::linux::{
     ENODEV, ENOENT, ENOEXEC, ENOLCK, ENOMEM, ENOSPC, ENOSYS, ENOTCONN, ENOTDIR, ENOTEMPTY,
     ENOTSOCK, ENOTTY, EPERM, EPIPE, EPROTONOSUPPORT, EROFS, ESPIPE, ESRCH,
 };
+#[cfg(feature = "linux-socket-test")]
+use crate::abi::private::SYS_SLEEPS_READING;
 use crate::abi::private::{
     zdiag_text_len, DETACHED_STDOUT_TO_PIPE, FBIOZPRESENT, PROBE_NUMBER, SPAWN_FOLDED_FLAG,
     SPAWN_INTERRUPTED_FLAG, SYS_CHECKSUM, SYS_CHECK_PTR, SYS_OPEN_INPUT, SYS_OPEN_SCREEN,
@@ -992,6 +994,8 @@ unsafe fn dispatch(
         // **`spawn` の経路には載っていないので、`syscall-test` の高水位は動かない見込みである。**
         SYS_OPEN_INPUT => open_input_from_ring3(),
         SYS_OPEN_SCREEN => open_screen_from_ring3(ScreenOpenedBy::PrivateNumber),
+        #[cfg(feature = "linux-socket-test")]
+        SYS_SLEEPS_READING => sleeps_reading_from_ring3(args[0]),
         // **多重待ち（`ADR-0066` の Y-b）。** **`#[inline(never)]` で、コピーは `dispatch` の
         // 枠に乗らない。**
         // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
@@ -2787,6 +2791,29 @@ fn poll_reason_of(fd: u64) -> Option<crate::task::Wait> {
             _ => None,
         }
     })
+}
+
+/// [`SYS_SLEEPS_READING`] の本体（2026-10-22。`ADR-0063` の Addendum）。**その fd が読めるのを待って眠っているタスクが
+/// 居れば 1、居なければ 0。** パイプの読み端か、ソケットの接続の fd だけを受ける（それ以外は `-EBADF`）。`poll` で眠る
+/// タスクも、理由の集合にその fd の理由が在れば数える。
+#[cfg(feature = "linux-socket-test")]
+fn sleeps_reading_from_ring3(fd: u64) -> u64 {
+    let reason = crate::vfs::with_current_files(|files| {
+        let file = files.get(fd as usize).ok()?;
+        if let Some(pipe) = file.pipe_read_end() {
+            return Some(crate::task::Wait::PipeReadable { pipe });
+        }
+        match file.socket_state() {
+            Some(crate::vfs::SocketState::Stream { conn, side }) => {
+                Some(crate::task::Wait::SocketReadable { conn, side })
+            }
+            _ => None,
+        }
+    });
+    match reason {
+        Some(on) => u64::from(crate::task::someone_waits_on(on)),
+        None => (-EBADF) as u64,
+    }
 }
 
 /// その理由が今すぐ満たされているか（`ADR-0066` の Y-b）。**覗くだけで、取らない。**

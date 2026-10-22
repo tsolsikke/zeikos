@@ -24391,6 +24391,8 @@ fn cmd_linux_socket_test() -> Result<()> {
     let waits_ended = format!("spawn: /bin/linux/{waits} ended");
     let memfd = "wl-memfd-seals-rust";
     let memfd_ended = format!("spawn: /bin/linux/{memfd} ended");
+    let fault = "wl-fault-after-wait-rust";
+    let fault_ended = format!("spawn: /bin/linux/{fault} ended");
     let deadline = Instant::now() + PIPE_TEST_TIMEOUT;
     loop {
         if child.was_cut() {
@@ -24529,6 +24531,20 @@ fn cmd_linux_socket_test() -> Result<()> {
         && roused_epoll.is_some_and(|n| n >= 1)
         && left_pipe.is_some_and(|n| n >= 1)
         && (left_epoll.is_some_and(|n| n >= 1) || parked >= 1);
+    // **眠っている間に書き先を外された `read` と `poll`**（2026-10-22。`ADR-0063` の Addendum）。終わり方と Linux の参照で見る
+    // （眠ったことを確かめてから外したこと、`EFAULT` で戻ったこと、書いた 1 バイトが残ったことが行に出る）。直す前の形では、
+    // カーネルが Ring 0 のページフォルトで止まり、終わりの行が出ない。
+    let fault_ran = serial.contains(&format!("{fault_ended} (Exited(4))"));
+    let fault_matched = linux_program_output_matches(
+        &workspace_root,
+        fault,
+        &serial,
+        LinuxReferenceEnvironment::ExactCount,
+    )?;
+    let fault_unknown_free = serial
+        .lines()
+        .find(|line| line.contains(&fault_ended))
+        .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
     // **memfd のフラグと名前・封・fstat・作り方ごとの `FD_CLOEXEC`**（2026-10-20。`ADR-0065` の Addendum）。終わり方と Linux の
     // 参照で見る（封と `F_GETFD` の値が行に出る）。
     let memfd_ran = serial.contains(&format!("{memfd_ended} (Exited(4))"));
@@ -24581,6 +24597,11 @@ fn cmd_linux_socket_test() -> Result<()> {
          (roused pipe {roused_pipe:?}, epoll {roused_epoll:?}; left pipe {left_pipe:?}, epoll {left_epoll:?}; the \
          epoll thread reaped while parked at a wait {parked})"
     );
+    println!("{context}: {fault} ended with status 4 = {fault_ran}");
+    println!(
+        "{context}: {fault} printed what Linux prints (linux-programs/reference/{fault}.txt) = {fault_matched}"
+    );
+    println!("{context}: {fault} hit no number the kernel does not know = {fault_unknown_free}");
     println!("{context}: {memfd} ended with status 4 = {memfd_ran}");
     println!(
         "{context}: {memfd} printed what Linux prints (linux-programs/reference/{memfd}.txt) = {memfd_matched}"
@@ -24603,6 +24624,9 @@ fn cmd_linux_socket_test() -> Result<()> {
         && waits_matched
         && waits_unknown_free
         && process_end_woke
+        && fault_ran
+        && fault_matched
+        && fault_unknown_free
         && memfd_ran
         && memfd_matched
         && memfd_unknown_free
@@ -24618,6 +24642,7 @@ fn cmd_linux_socket_test() -> Result<()> {
                 || l.contains(nonblock)
                 || l.contains(epoll)
                 || l.contains(waits)
+                || l.contains(fault)
                 || l.contains(memfd)
                 || l.contains("[ERROR]")
         })

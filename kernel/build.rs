@@ -647,6 +647,9 @@ const LINUX_PROGRAMS: &[&str] = &[
     // **memfd のフラグと名前・封・fstat・作り方ごとの FD_CLOEXEC**（2026-10-20。`ADR-0065` の Addendum。`linux-socket-test` の
     // ビルドだけが起動時に起こす）。
     "wl-memfd-seals-rust",
+    // **眠っている間に書き先を外された read と poll**（2026-10-22。`ADR-0063` の Addendum。`linux-socket-test` のビルドだけが
+    // 起動時に起こす）。
+    "wl-fault-after-wait-rust",
     // **壁の時計**（2026-10-20。`ADR-0090`。`realtime-test` のビルドだけが起動時に起こす）。
     "wl-realtime-rust",
     // **ZeikOS と Linux で結果が違うイメージ**（マップ中の memfd を縮める ftruncate。`memfd-shrink-test` のビルドだけが起こす）。
