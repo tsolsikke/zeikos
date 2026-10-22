@@ -128,6 +128,9 @@
 //! - `84` `sigaltstack` で据えた後の問い合わせが、同じ `ss_sp`・`ss_size` を返さなかった
 //! - `85` `prlimit64(RLIMIT_STACK)` が 0 と `rlim_cur = 8 MiB` を返さなかった
 //! - `86` `getrandom(16)` が 16 を返さなかったか、16 バイトが全部 0 だった
+//! - `129` `getrandom` が、`flags` 0・`GRND_NONBLOCK`・`GRND_RANDOM`・`GRND_INSECURE`・`GRND_NONBLOCK|GRND_INSECURE`・上の 32 ビット
+//!   だけを立てた値で 16 を、`GRND_INSECURE|GRND_RANDOM` と知らないビットで `-EINVAL` を、NULL と長さ 0 で 0 を、後ろ半分が
+//!   マップされていない 32 バイトで `-EFAULT` を返さなかった（2026-10-22。Linux は最後の形で書けた 16 を返す）
 //! - `87` `futex(FUTEX_WAKE)` が 0 を返さなかった
 //! - `88` 値の違う `futex(FUTEX_WAIT)` が `-EAGAIN` を返さなかった
 //! - `89` `uname` が 0 を返さなかったか、`sysname` が `Linux` でなかった
@@ -481,6 +484,8 @@ const MINUS_ENOMEM: i32 = -12;
 const MINUS_E2BIG: i32 = -7;
 /// `-EAGAIN`（今は無い）。**端末に打鍵が溜まっていないときの答えである。**
 const MINUS_EAGAIN: i32 = -11;
+/// getrandom の Linux との差を控える 1 行の長さ（129 番）。
+const GETRANDOM_NOTE_LEN: u32 = 113;
 /// 64 バイトを越える 1 本の長さ。**記録用の緩衝より長いことが主張である。**
 const LONG_MESSAGE_LEN: u32 = 68;
 
@@ -2813,6 +2818,134 @@ core::arch::global_asm!(
     "  mov edi, 128",
     "  test rax, rax",
     "  jne 7f",
+    // 129: getrandom の flags（2026-10-22。Linux の drivers/char/random.c と同じ順。期待の値は WSL の Linux で打って取った）。
+    //      0・NONBLOCK・RANDOM・INSECURE・NONBLOCK|INSECURE・上の 32 ビットだけ（flags は unsigned int）は 16。
+    //      INSECURE|RANDOM と知らないビット 0x8 は -EINVAL。NULL と長さ 0 は 0。書き先の後ろ 16 バイトがマップされていない
+    //      32 バイトは -EFAULT（Linux は書けた 16 を返す。差として 1 行出す。ADR-0081 の Addendum）。
+    // flags 0
+    "  mov eax, {sys_getrandom}",
+    "  lea rdi, [rsp + 80]",
+    "  mov esi, 16",
+    "  xor edx, edx",
+    "  int 0x80",
+    "  mov edi, 129",
+    "  cmp rax, 16",
+    "  jne 7f",
+    // GRND_NONBLOCK
+    "  mov eax, {sys_getrandom}",
+    "  lea rdi, [rsp + 80]",
+    "  mov esi, 16",
+    "  mov edx, 1",
+    "  int 0x80",
+    "  mov edi, 129",
+    "  cmp rax, 16",
+    "  jne 7f",
+    // GRND_RANDOM
+    "  mov eax, {sys_getrandom}",
+    "  lea rdi, [rsp + 80]",
+    "  mov esi, 16",
+    "  mov edx, 2",
+    "  int 0x80",
+    "  mov edi, 129",
+    "  cmp rax, 16",
+    "  jne 7f",
+    // GRND_INSECURE
+    "  mov eax, {sys_getrandom}",
+    "  lea rdi, [rsp + 80]",
+    "  mov esi, 16",
+    "  mov edx, 4",
+    "  int 0x80",
+    "  mov edi, 129",
+    "  cmp rax, 16",
+    "  jne 7f",
+    // GRND_NONBLOCK|GRND_INSECURE
+    "  mov eax, {sys_getrandom}",
+    "  lea rdi, [rsp + 80]",
+    "  mov esi, 16",
+    "  mov edx, 5",
+    "  int 0x80",
+    "  mov edi, 129",
+    "  cmp rax, 16",
+    "  jne 7f",
+    // GRND_INSECURE|GRND_RANDOM
+    "  mov eax, {sys_getrandom}",
+    "  lea rdi, [rsp + 80]",
+    "  mov esi, 16",
+    "  mov edx, 6",
+    "  int 0x80",
+    "  mov edi, 129",
+    "  cmp rax, {minus_einval}",
+    "  jne 7f",
+    // 知らないビット
+    "  mov eax, {sys_getrandom}",
+    "  lea rdi, [rsp + 80]",
+    "  mov esi, 16",
+    "  mov edx, 8",
+    "  int 0x80",
+    "  mov edi, 129",
+    "  cmp rax, {minus_einval}",
+    "  jne 7f",
+    // 上の 32 ビットだけ
+    "  mov eax, {sys_getrandom}",
+    "  lea rdi, [rsp + 80]",
+    "  mov esi, 16",
+    "  mov rdx, 0x100000000",
+    "  int 0x80",
+    "  mov edi, 129",
+    "  cmp rax, 16",
+    "  jne 7f",
+    // NULL と長さ 0
+    "  mov eax, {sys_getrandom}",
+    "  xor edi, edi",
+    "  xor esi, esi",
+    "  xor edx, edx",
+    "  int 0x80",
+    "  mov edi, 129",
+    "  test rax, rax",
+    "  jne 7f",
+    // 2 ページを取り、後ろの 1 ページを外す。前のページの末尾 16 バイトから 32 バイトを頼む。
+    "  mov eax, {sys_mmap}",
+    "  xor edi, edi",
+    "  mov esi, 8192",
+    "  mov edx, 3",
+    "  mov r10d, 0x22",
+    "  mov r8, -1",
+    "  xor r9d, r9d",
+    "  int 0x80",
+    "  mov edi, 129",
+    "  test rax, rax",
+    "  js 7f",
+    "  mov r12, rax",
+    "  mov eax, {sys_munmap}",
+    "  lea rdi, [r12 + 4096]",
+    "  mov esi, 4096",
+    "  int 0x80",
+    "  mov edi, 129",
+    "  test rax, rax",
+    "  jne 7f",
+    "  mov eax, {sys_getrandom}",
+    "  lea rdi, [r12 + 4080]",
+    "  mov esi, 32",
+    "  xor edx, edx",
+    "  int 0x80",
+    "  mov edi, 129",
+    "  cmp rax, {minus_efault}",
+    "  jne 7f",
+    "  mov eax, {sys_munmap}",
+    "  mov rdi, r12",
+    "  mov esi, 4096",
+    "  int 0x80",
+    "  mov edi, 129",
+    "  test rax, rax",
+    "  jne 7f",
+    "  mov eax, {sys_write}",
+    "  mov edi, 1",
+    "  lea rsi, [rip + GETRANDOM_NOTE]",
+    "  mov edx, {getrandom_note_len}",
+    "  int 0x80",
+    "  mov edi, 129",
+    "  cmp rax, {getrandom_note_len}",
+    "  jne 7f",
     // **もう一度 MESSAGE を送る。** カーネル側の判定行が突き合わせるのは最後の `write`（`writev` も通る）なので、
     // "ok\n" で上書きしたままにしない。
     "  mov eax, {sys_write}",
@@ -3213,6 +3346,9 @@ core::arch::global_asm!(
     "ARGV1_TEXT:",
     "  .asciz \"alpha\"",
     // **64 バイトを越える 1 本。** 記録用の緩衝より長いことが主張である。
+    // **getrandom の Linux との差を控える 1 行**（129 番）。
+    "GETRANDOM_NOTE:",
+    "  .ascii \"syscall-test: getrandom into 32 bytes whose last 16 are unmapped returned -EFAULT; Linux returns the 16 it wrote\n\"",
     "LONG_MESSAGE:",
     "  .ascii \"syscall-test is writing a line that does not fit the 64-byte record\\n\"",
 
@@ -3309,6 +3445,7 @@ core::arch::global_asm!(
     minus_e2big = const MINUS_E2BIG,
     minus_eagain = const MINUS_EAGAIN,
     long_len = const LONG_MESSAGE_LEN,
+    getrandom_note_len = const GETRANDOM_NOTE_LEN,
     sys_memfd = const SYS_MEMFD_CREATE,
     sys_ftruncate = const SYS_FTRUNCATE,
     sys_mmap = const SYS_MMAP,

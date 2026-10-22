@@ -9852,6 +9852,8 @@ const SYSCALL_TEST_STATUS: &[(u64, &str)] = &[
     (84, "sigaltstack: setting a stack then querying did not return the same sp and size"),
     (85, "prlimit64(RLIMIT_STACK) did not return 0 with rlim_cur = 8 MiB"),
     (86, "getrandom(16 bytes) did not return 16, or the bytes were all zero"),
+    // 129: getrandom の flags（2026-10-22。ADR-0081 の Addendum）。
+    (129, "getrandom did not return 16 for flags 0, GRND_NONBLOCK, GRND_RANDOM, GRND_INSECURE, GRND_NONBLOCK|GRND_INSECURE and a value with only bit 32 set, -EINVAL for GRND_INSECURE|GRND_RANDOM and an unknown bit, 0 for NULL with length 0, or -EFAULT for 32 bytes whose last 16 are unmapped"),
     (87, "futex(FUTEX_WAKE) did not return 0"),
     (88, "futex(FUTEX_WAIT) with a different value did not return -EAGAIN"),
     (89, "uname did not return 0 with sysname = Linux"),

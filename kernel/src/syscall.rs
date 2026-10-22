@@ -65,14 +65,14 @@ use crate::abi::linux::{
     CMSG_ONE_FD_LEN, DIRENT64_ALIGN, DIRENT64_HEADER_LEN, DRM_CLIP_RECT_LEN, DT_DIR, DT_REG,
     DT_UNKNOWN, EFD_CLOEXEC, EFD_NONBLOCK, EFD_SEMAPHORE, EPOLL_CLOEXEC, EPOLL_CTL_ADD,
     EPOLL_CTL_DEL, EPOLL_CTL_MOD, EPOLL_EVENT_LEN, FBIOGET_FSCREENINFO, FBIOGET_VSCREENINFO,
-    FB_TYPE_PACKED_PIXELS, FB_VISUAL_TRUECOLOR, FD_CLOEXEC, FIONBIO, INPUT_EVENT_LEN, IOVEC_LEN,
-    ITIMERSPEC_LEN, MAP_ANONYMOUS, MAP_FIXED, MAP_FIXED_NOREPLACE, MFD_ALLOW_SEALING, MFD_CLOEXEC,
-    MFD_NAME_MAX_LEN, MSGHDR_CONTROLLEN, MSGHDR_LEN, MSG_CMSG_CLOEXEC, MSG_DONTWAIT, MSG_NOSIGNAL,
-    O_ACCMODE, O_APPEND, O_CLOEXEC, O_CREAT, O_NONBLOCK, O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY,
-    POLLFD_LEN, POLLIN, POLLNVAL, PROT_EXEC, PROT_READ, PROT_WRITE, SCM_RIGHTS, SEEK_CUR, SEEK_END,
-    SEEK_SET, SOCKADDR_UN_LEN, SOCK_CLOEXEC, SOCK_NONBLOCK, SOCK_STREAM, SOCK_TYPE_MASK,
-    SOL_SOCKET, TFD_CLOEXEC, TFD_NONBLOCK, TFD_TIMER_ABSTIME, TIMESPEC_LEN, TIOCGWINSZ,
-    WINSIZE_LEN,
+    FB_TYPE_PACKED_PIXELS, FB_VISUAL_TRUECOLOR, FD_CLOEXEC, FIONBIO, GRND_INSECURE, GRND_NONBLOCK,
+    GRND_RANDOM, INPUT_EVENT_LEN, IOVEC_LEN, ITIMERSPEC_LEN, MAP_ANONYMOUS, MAP_FIXED,
+    MAP_FIXED_NOREPLACE, MFD_ALLOW_SEALING, MFD_CLOEXEC, MFD_NAME_MAX_LEN, MSGHDR_CONTROLLEN,
+    MSGHDR_LEN, MSG_CMSG_CLOEXEC, MSG_DONTWAIT, MSG_NOSIGNAL, O_ACCMODE, O_APPEND, O_CLOEXEC,
+    O_CREAT, O_NONBLOCK, O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY, POLLFD_LEN, POLLIN, POLLNVAL,
+    PROT_EXEC, PROT_READ, PROT_WRITE, SCM_RIGHTS, SEEK_CUR, SEEK_END, SEEK_SET, SOCKADDR_UN_LEN,
+    SOCK_CLOEXEC, SOCK_NONBLOCK, SOCK_STREAM, SOCK_TYPE_MASK, SOL_SOCKET, TFD_CLOEXEC,
+    TFD_NONBLOCK, TFD_TIMER_ABSTIME, TIMESPEC_LEN, TIOCGWINSZ, WINSIZE_LEN,
 };
 use crate::abi::linux::{
     E2BIG, EACCES, EADDRINUSE, EAFNOSUPPORT, EAGAIN, EBADF, EBUSY, ECHILD, ECONNREFUSED, EEXIST,
@@ -7624,13 +7624,27 @@ unsafe fn sys_prlimit64(
     0
 }
 
-/// `getrandom` の `flags`（`GRND_NONBLOCK`・`GRND_RANDOM`・`GRND_INSECURE`）。どれも見ない——出所は 1 つで、待たない。
-const GRND_KNOWN_FLAGS: u64 = 0b111;
 /// 1 回の `getrandom` で書く長さの上限。Linux は長い要求を途中で切って返してよい（呼ぶ側は足りない分を呼び直す）。
 const GETRANDOM_MAX: u64 = 256;
 
-/// `getrandom(buf, len, flags)`（2026-10-06）。**`AT_RANDOM` と同じ出所の 16 バイトを並べて書く。暗号に使える値ではない**
-/// （`crate::arch::x86_64::random` の doc。`docs/deferred-decisions.md`）。
+/// `getrandom(buf, len, flags)`（2026-10-06。`flags` の確かめは 2026-10-22 に Linux にそろえた。`ADR-0081` の Addendum）。
+/// **`AT_RANDOM` と同じ出所の 16 バイトを並べて書く。暗号に使える値ではない**（`crate::arch::x86_64::random` の doc）。
+///
+/// # `flags` が 0 でも待たない
+///
+/// Linux の `flags` 0 と `GRND_RANDOM` は、CRNG が種を得る（`crng_ready`）まで待ち、それから暗号に使える値を返す。ZeikOS の出所は
+/// エントロピーをためる所を持たず、`RDRAND` か TSC からその場で値を作るので、いつでも待たずに出せる。**言えるのは「待たずに出せる」
+/// ことだけで、`crng_ready` が約束する暗号の強さは無い**（`docs/deferred-decisions.md` の「`AT_RANDOM`の16バイトが、暗号に使える
+/// 乱数ではない」の行）。だから、どの `flags` でも待たず、`GRND_NONBLOCK` でも `-EAGAIN` を返さない。
+///
+/// # 確かめの順（Linux の `drivers/char/random.c` の `getrandom` と同じ）
+///
+/// 1. `flags` は `unsigned int` として読む（上の 32 ビットは見ない）。知らないビットは `-EINVAL`。
+/// 2. `GRND_INSECURE | GRND_RANDOM` は `-EINVAL`（暗号の強さが要らない形と、待つ形を同時に頼んでいる）。
+/// 3. 準備を待つ段は無い（上の節）。
+/// 4. 書き先を確かめる（だめなら `-EFAULT`）。長さ 0 は、どのアドレスでも 0 を返す。
+/// 5. 書く。**Linux との差**: 書き先の途中から書けないとき、Linux は書けたバイト数を返し、ZeikOS は先に全体を確かめて `-EFAULT`
+///    を返す。
 ///
 /// # Safety
 ///
@@ -7643,7 +7657,11 @@ unsafe fn sys_getrandom(
     page_table_root: PhysAddr,
     direct_map: DirectMap,
 ) -> u64 {
-    if flags & !GRND_KNOWN_FLAGS != 0 {
+    let flags = flags as u32;
+    if flags & !(GRND_NONBLOCK | GRND_RANDOM | GRND_INSECURE) != 0 {
+        return (-EINVAL) as u64;
+    }
+    if flags & (GRND_INSECURE | GRND_RANDOM) == (GRND_INSECURE | GRND_RANDOM) {
         return (-EINVAL) as u64;
     }
     let len = len.min(GETRANDOM_MAX);

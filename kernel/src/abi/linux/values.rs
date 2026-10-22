@@ -98,6 +98,11 @@ pub const EFD_SEMAPHORE: u64 = 1;
 /// `EFD_CLOEXEC`（`O_CLOEXEC` と同じ値）。fd の `FD_CLOEXEC` の印に持つ（2026-10-20。`exec` が無いので効き目は無い）。
 pub const EFD_CLOEXEC: u64 = 0o2000000;
 
+/// `getrandom` の `flags`（Linux の `uapi/linux/random.h`。2026-10-22）。**`flags` は `unsigned int` なので `u32` で持つ。**
+pub const GRND_NONBLOCK: u32 = 0x0001;
+pub const GRND_RANDOM: u32 = 0x0002;
+pub const GRND_INSECURE: u32 = 0x0004;
+
 /// `memfd_create` の `flags`（Linux の `uapi/linux/memfd.h`。2026-10-20）。**この 2 つだけを受ける。**
 pub const MFD_CLOEXEC: u64 = 0x0001;
 pub const MFD_ALLOW_SEALING: u64 = 0x0002;
