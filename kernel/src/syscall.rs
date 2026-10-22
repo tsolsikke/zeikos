@@ -2956,11 +2956,22 @@ unsafe fn poll_from_ring3(
         if timeout == 0 {
             return 0;
         }
-        // **待つ条件は端末の `read(0)` と同じである**（`sys_read` の端末分岐の doc）。
+        // **キーボードを待つ集合は、待つ条件が端末の `read(0)` と同じである**（`sys_read` の端末分岐の doc）。
         // **対話の口が据えられていない間と、スクリプトが入力を駆動している間は待たない**
         // ——**起動シーケンスとスクリプトのグループが止まらないようにするためである。**
         // **呼ぶ側は `-EAGAIN` を回して待つ**（`polld` と `inputd` の形）。
-        if !crate::console::foreground_installed() || crate::input::script_drives_input() {
+        //
+        // **キーボードを含まない集合（ソケットと listener だけ）は、この条件に関係なく待つ**（2026-10-22。`ADR-0063` の
+        // Addendum）。ソケットの `read` が前景に関係なく待つのと同じで、Linux の `poll(timeout = -1)` も `-EAGAIN` を返さない。
+        // 待つ理由が 1 つも無い集合（負の fd と開いているかの問い合わせだけ）は、これまでどおり待たない。
+        let waits_on_keyboard = reasons
+            .iter()
+            .take(count)
+            .any(|slot| matches!(slot, Some(crate::task::Wait::Keyboard)));
+        let nothing_to_wait_on = reasons.iter().take(count).all(Option::is_none);
+        if (waits_on_keyboard || nothing_to_wait_on)
+            && (!crate::console::foreground_installed() || crate::input::script_drives_input())
+        {
             return (-EAGAIN) as u64;
         }
         // **理由の集合を組む。**
