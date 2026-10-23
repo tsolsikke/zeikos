@@ -106,5 +106,7 @@ record wl-realtime-rust
 # fd 0 と fd 1 に同じパイプの両端を渡すイメージ（ZeikOS の起動時の確かめと同じ形）。行は標準エラーへ出すので、そちらを控える。
 record_with_one_pipe wl-fault-after-wait-rust
 record_dup_ends wl-dup-ends-rust
+# fd の上限（2026-10-22）。RLIMIT_NOFILE を ZeikOS の表の大きさまで下げてから埋める。
+record wl-fd-limit-rust
 record m1-c
 record m3a-c

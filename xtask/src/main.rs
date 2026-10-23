@@ -24395,6 +24395,8 @@ fn cmd_linux_socket_test() -> Result<()> {
     let fault_ended = format!("spawn: /bin/linux/{fault} ended");
     let dup_ends = "wl-dup-ends-rust";
     let dup_ends_ended = format!("spawn: /bin/linux/{dup_ends} ended");
+    let fd_limit = "wl-fd-limit-rust";
+    let fd_limit_ended = format!("spawn: /bin/linux/{fd_limit} ended");
     let deadline = Instant::now() + PIPE_TEST_TIMEOUT;
     loop {
         if child.was_cut() {
@@ -24577,6 +24579,19 @@ fn cmd_linux_socket_test() -> Result<()> {
     let frames_before = frames_held("holding ");
     let frames_after = frames_held("and ");
     let dup_ends_frames_returned = frames_before.is_some() && frames_before == frames_after;
+    // **fd の上限**（2026-10-22。`ADR-0091`）。終わり方と Linux の参照で見る（上限の答えと、`F_DUPFD`・`accept`・`recvmsg` の
+    // それぞれで最後の空きに置けて次が断られることが行に出る）。
+    let fd_limit_ran = serial.contains(&format!("{fd_limit_ended} (Exited(4))"));
+    let fd_limit_matched = linux_program_output_matches(
+        &workspace_root,
+        fd_limit,
+        &serial,
+        LinuxReferenceEnvironment::ExactCount,
+    )?;
+    let fd_limit_unknown_free = serial
+        .lines()
+        .find(|line| line.contains(&fd_limit_ended))
+        .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
     // **memfd のフラグと名前・封・fstat・作り方ごとの `FD_CLOEXEC`**（2026-10-20。`ADR-0065` の Addendum）。終わり方と Linux の
     // 参照で見る（封と `F_GETFD` の値が行に出る）。
     let memfd_ran = serial.contains(&format!("{memfd_ended} (Exited(4))"));
@@ -24645,6 +24660,13 @@ fn cmd_linux_socket_test() -> Result<()> {
         "{context}: the shared memory frames of {dup_ends} came back after every fd was closed = \
          {dup_ends_frames_returned} (held {frames_before:?} before, {frames_after:?} after)"
     );
+    println!("{context}: {fd_limit} ended with status 4 = {fd_limit_ran}");
+    println!(
+        "{context}: {fd_limit} printed what Linux prints (linux-programs/reference/{fd_limit}.txt) = {fd_limit_matched}"
+    );
+    println!(
+        "{context}: {fd_limit} hit no number the kernel does not know = {fd_limit_unknown_free}"
+    );
     println!("{context}: {memfd} ended with status 4 = {memfd_ran}");
     println!(
         "{context}: {memfd} printed what Linux prints (linux-programs/reference/{memfd}.txt) = {memfd_matched}"
@@ -24674,6 +24696,9 @@ fn cmd_linux_socket_test() -> Result<()> {
         && dup_ends_matched
         && dup_ends_unknown_free
         && dup_ends_frames_returned
+        && fd_limit_ran
+        && fd_limit_matched
+        && fd_limit_unknown_free
         && memfd_ran
         && memfd_matched
         && memfd_unknown_free
@@ -24691,6 +24716,7 @@ fn cmd_linux_socket_test() -> Result<()> {
                 || l.contains(waits)
                 || l.contains(fault)
                 || l.contains(dup_ends)
+                || l.contains(fd_limit)
                 || l.contains(memfd)
                 || l.contains("[ERROR]")
         })

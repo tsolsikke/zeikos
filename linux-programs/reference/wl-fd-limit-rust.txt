@@ -1,0 +1,9 @@
+wl-fd-limit-rust: main starts with 4 argument(s)
+wl-fd-limit-rust: RLIMIT_NOFILE answers 32 for the soft limit and 32 for the hard limit
+wl-fd-limit-rust: the table filled up with exactly as many open fds as the limit = true
+wl-fd-limit-rust: a dup into the last free slot succeeded and the next one failed with EMFILE = true
+wl-fd-limit-rust: an accept into the last free slot succeeded and the next one failed with EMFILE = true
+wl-fd-limit-rust: recvmsg put a passed memfd into the last free slot = true
+wl-fd-limit-rust: recvmsg into a full table handed over no fd = true
+wl-fd-limit-rust: done
+exit status: 4

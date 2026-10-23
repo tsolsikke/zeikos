@@ -173,9 +173,24 @@ pub fn with_current_files<R>(body: impl FnOnce(&mut FileTable) -> R) -> R {
     body(&mut CURRENT_FILES[crate::arch::x86_64::current_excursion_slot()].lock())
 }
 
-/// 1 つのプロセスが同時に開けるファイルの数（S10-b）。
+/// 1 つのプロセスが同時に開けるファイルの数（S10-b。2026-10-23 に 16 から 32 へ上げた。`ADR-0091`）。**fd の上限はここ 1 か所で
+/// 決める**——`prlimit64(RLIMIT_NOFILE)` の答えも、`FD_CLOEXEC` の印の幅の確かめも、[`MAX_END_HOLDERS`] も、この値から求める。
 ///
-/// # なぜ 16 か
+/// # なぜ 32 か（2026-10-23）
+///
+/// **Seinas のコンポジタは、クライアントが無くても 15 本、タスクバーが 1 つ繋がると 17 本の fd を持ち、16 を越えた**（Seinas の
+/// 側の数え方）。クライアント 1 つにつき、接続のソケットと、`SCM_RIGHTS` で受ける共有メモリの fd が増える。32 なら、
+/// 17 本の形からあと 15 本の余裕がある（クライアント 1 つにつき 2 本なら 7 つ）。
+///
+/// **表はプロセスの構造に値で入り、カーネルのスタックに載る。** `spawn` の道に残るのは構造の中の本体 1 つで、上限を 1 つ
+/// 上げるごとにスタックが 96 バイト増える（2026-10-23 に、値で渡すコピーを除いた後。それまでは約 10 個載り、1 つごとに約
+/// 960 バイト増えた。`ADR-0060` の 2026-10-23 の Addendum）。32 で、どのスタックもしきい値まで 6 KiB 以上残る（`ADR-0091`）。
+/// **これより上げるときは、先に表をスロットと深さごとの `static` に置く形を考える。**
+///
+/// 表の大きさは下のテスト（`the_table_is_small_enough_to_live_inside_a_process`）の「4 KiB を越えない」でも縛られる——1 つの欄が
+/// 96 バイトなので、越えないのは 42 までである。32 なら表は 3,088 バイトで、`FD_CLOEXEC` の印は `u32` にちょうど収まる。
+///
+/// # 以前の 16 の理由（S10-b）
 ///
 /// **見込みの最大は 3 である。** この先で開く場面は
 /// **`cat /etc/motd`（ファイル 1 本）**と**`ls`（ディレクトリ 1 本）**、
@@ -199,7 +214,7 @@ pub fn with_current_files<R>(body: impl FnOnce(&mut FileTable) -> R) -> R {
 /// 「カーネルヒープの拡張」。条件は「S10-b で固定配列では足りないと分かったとき」）。
 /// **Linux も `files_struct` に `fd_array[64]` を埋め込み、超えたときだけ
 /// 別に確保する形である**——「まず固定配列」は Linux の形でもある。
-pub const MAX_OPEN_FILES: usize = 16;
+pub const MAX_OPEN_FILES: usize = 32;
 
 /// パイプの端・ソケットの端・listener の 1 つを、同時に指せるものの数の上限（2026-10-22）。**数は `u8` で持つ**
 /// （`crate::pipe`・`crate::socket`）ので、この値が 255 を越えないことを下の `assert!` がコンパイルの時に確かめる。
@@ -208,6 +223,7 @@ pub const MAX_OPEN_FILES: usize = 16;
 /// [`MAX_OPEN_FILES`] まで持つ。ほかに、次の `spawn` へ渡すために側道へ置いた端（スロットごとに読み端と書き端の 2 つ）と、
 /// 起動時の確かめがカーネルの側で持つ端（1 つ）がある。`SCM_RIGHTS` は共有メモリの fd だけを運ぶので、渡す途中で端を
 /// 持つものは無い。**fd の上限やプロセスの数を上げてこの値が 255 を越えたら、数の型を広げること。**
+/// 今のスロットの数と深さなら、`u8` のままで fd の上限 62 まで持つ。
 pub const MAX_END_HOLDERS: usize = crate::arch::x86_64::USER_TASK_SLOTS
     * crate::arch::x86_64::MAX_EXCURSION_DEPTH
     * MAX_OPEN_FILES
@@ -793,11 +809,11 @@ pub struct FileTable {
     /// `FD_CLOEXEC` の印（ビット `fd`。2026-10-20）。**持って答えるだけである**——`exec` が無いので、閉じる場面が無い。立てるのは
     /// `fcntl(F_SETFD)`・`F_DUPFD_CLOEXEC` と、作るときの `*_CLOEXEC`（`open`・`socket`・`accept4`・eventfd・timerfd・epoll・
     /// memfd・`recvmsg` で受け取った fd）で、置く・閉じるときに下ろす（`ADR-0065` の 2026-10-20 の Addendum）。
-    cloexec: u16,
+    cloexec: u32,
 }
 
-// `cloexec` は fd ごとに 1 ビットなので、表の大きさは 16 までである。
-const _: () = assert!(MAX_OPEN_FILES <= u16::BITS as usize);
+// `cloexec` は fd ごとに 1 ビットなので、表の大きさは 32 までである（2026-10-23 に `u16` から広げた）。
+const _: () = assert!(MAX_OPEN_FILES <= u32::BITS as usize);
 
 impl Default for FileTable {
     fn default() -> Self {
@@ -1089,7 +1105,8 @@ mod tests {
         // ——判別子の使っていない値を `None` に使える。**スロット 1 つは 96 バイトのまま
         // である**（S11-10 の前は 88 + 8 = 96 だった）。
         assert_eq!(core::mem::size_of::<Option<File>>(), 96);
-        // 表はスロット 16 個 + 累計のカウンタ 8 バイト + `FD_CLOEXEC` の印（2026-10-20。`u16` が詰め物で 8 バイト）である。
+        // 表はスロット [`MAX_OPEN_FILES`] 個 + 累計のカウンタ 8 バイト + `FD_CLOEXEC` の印（2026-10-20。2026-10-23 から `u32` で、
+        // 詰め物で 8 バイト）である。
         assert_eq!(
             core::mem::size_of::<FileTable>(),
             96 * MAX_OPEN_FILES + 2 * core::mem::size_of::<usize>()

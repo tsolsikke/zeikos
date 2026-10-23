@@ -6882,6 +6882,13 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
         // **`F_DUPFD` の複製が、パイプとソケットの端・listener・memfd を数えること**（2026-10-22。`ADR-0064` の Addendum）。
         // パイプは同時に 1 本なので、3 つ目の引数を変えて 2 回起こす（`b` は書き端、`c` は読み端の終わり方を見る）。
         verify_dup_ends(logger);
+        // **fd の上限ちょうどまで開けて、1 つ越えると断られること**（2026-10-22。`ADR-0091`）。`F_DUPFD`・`accept`・`recvmsg` の
+        // `SCM_RIGHTS` のそれぞれで見る。判定は `cargo xtask run --linux-socket-test`（Linux の参照と突き合わせる）。
+        verify_linux_program(
+            logger,
+            b"/bin/linux/wl-fd-limit-rust",
+            b"wl-fd-limit-rust\0/etc/motd\0a\0b\0",
+        );
         // **memfd のフラグと名前・封・fstat・作り方ごとの `FD_CLOEXEC`**（2026-10-20。`ADR-0065` の Addendum）。判定は
         // `cargo xtask run --linux-socket-test`（Linux の参照と突き合わせる）と、破壊テスト 2 つ（`--critical-test
         // memfd-ignores-allow-sealing`・`memfd-seals-not-kept`）。
