@@ -1352,20 +1352,23 @@ pub fn load_user_program_with(
         kind: common::elf::ElfKind::Executable,
         ran_on: 0,
         name,
-        files: {
-            // **次の `spawn` へ渡す端を据える（`ADR-0063` の (b3)）。** **`a | b` の右は
-            // fd 0 が読み端、左は fd 1 が書き端になる。** **端末の欄を差し替える。**
-            let mut files = crate::vfs::FileTable::new();
-            let slot = crate::arch::x86_64::current_excursion_slot();
-            if let Some(pipe) = take_inherit_stdin(slot) {
-                files.replace(crate::vfs::STDIN_FD, crate::vfs::File::PipeRead { pipe });
-            }
-            if let Some(pipe) = take_inherit_stdout(slot) {
-                files.replace(crate::vfs::STDOUT_FD, crate::vfs::File::PipeWrite { pipe });
-            }
-            files
-        },
+        // **表はその場で組み立てる**（2026-10-23）。ブロックの中で組んでから移したり、`new` の戻り値を受けたりすると、
+        // デバッグのビルドでは表のコピーがこの関数の枠に余分に載る（`crate::vfs::FileTable::INITIAL` の doc）。
+        files: crate::vfs::FileTable::INITIAL,
     };
+    // **次の `spawn` へ渡す端を据える（`ADR-0063` の (b3)）。** **`a | b` の右は
+    // fd 0 が読み端、左は fd 1 が書き端になる。** **端末の欄を差し替える。**
+    let slot = crate::arch::x86_64::current_excursion_slot();
+    if let Some(pipe) = take_inherit_stdin(slot) {
+        process
+            .files
+            .replace(crate::vfs::STDIN_FD, crate::vfs::File::PipeRead { pipe });
+    }
+    if let Some(pipe) = take_inherit_stdout(slot) {
+        process
+            .files
+            .replace(crate::vfs::STDOUT_FD, crate::vfs::File::PipeWrite { pipe });
+    }
 
     // **マッピングまではアロケータが要る。遠征では要らない。**
     let mapped = load_user_program_into(logger, allocator, image, &mut process, argv, envp);
@@ -2617,7 +2620,8 @@ unsafe fn run_loaded_program(
     // **このプロセスの fd の表を据える（S10-b）。** `dispatch` はプロセスを
     // 知らないので、遠征の間だけ `crate::vfs` が持つ
     // （`syscall::set_user_window` と同じ形。据えるのは Ring 3 へ落ちる側である）。
-    let previous_files = crate::vfs::swap_current_files(core::mem::take(&mut process.files));
+    // **入れ替えるので、遠征の間は `process.files` が前の表を持つ。** 戻ったら、もう 1 度入れ替えて引き取る。
+    crate::vfs::swap_current_files(&mut process.files);
     // **ヒープも据える（H-a）。** **据える側が戻す**（`files` と同じ形）。
     let previous_heap = swap_current_heap(process.heap);
     // **プロセスごとの小さな状態（シグナルの登録など）を初めの形に戻し、名前を控える**（2026-10-06）。スロットと
@@ -2714,7 +2718,7 @@ unsafe fn run_loaded_program(
     if claimed_foreground {
         crate::input::release_foreground();
     }
-    process.files = crate::vfs::swap_current_files(previous_files);
+    crate::vfs::swap_current_files(&mut process.files);
     process.heap = swap_current_heap(previous_heap);
     // **止めたときは、前景の持ち主と止めた相手を両方出す（S12 前の対策、C）。**
     //

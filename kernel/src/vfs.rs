@@ -156,14 +156,16 @@ pub fn with_root_image_mut<R>(f: impl FnOnce(&mut [u8]) -> R) -> Option<R> {
 static CURRENT_FILES: [Locked<FileTable>; crate::arch::x86_64::USER_TASK_SLOTS] =
     [const { Locked::new(FileTable::new()) }; crate::arch::x86_64::USER_TASK_SLOTS];
 
-/// 表を据え、**据える前の表を返す**。
+/// 表を据え、**据える前の表を `table` へ入れる**（入れ替える）。
 ///
-/// **戻すのは呼び出し側の責任である**（`CURRENT_FILES` の doc）。
-pub fn swap_current_files(table: FileTable) -> FileTable {
-    core::mem::replace(
-        &mut *CURRENT_FILES[crate::arch::x86_64::current_excursion_slot()].lock(),
-        table,
-    )
+/// **戻すのは呼び出し側の責任である**（`CURRENT_FILES` の doc）。もう 1 度呼べば元に戻る。
+///
+/// **表を値で受け渡さない**（2026-10-23）。デバッグのビルドでは、値で渡すたびに表のコピーが呼び出し側のカーネルのスタックに
+/// 載る。値で受けて値で返す形では、`spawn` の道に表のコピーが 4 つ載っていた。
+pub fn swap_current_files(table: &mut FileTable) {
+    CURRENT_FILES[crate::arch::x86_64::current_excursion_slot()]
+        .lock()
+        .swap_with(table);
 }
 
 /// 今の表へ触る。**`dispatch` が `open` と `close` で使う。**
@@ -804,6 +806,10 @@ impl Default for FileTable {
 }
 
 impl FileTable {
+    /// [`Self::new`] の表を、コンパイルの時に組んだもの（2026-10-23）。**実行の時に表を作る所は、これを使う**——`new` を呼ぶと、
+    /// デバッグのビルドでは、組みかけの表と戻り値の表がカーネルのスタックに載る。定数なら、置き先へ直にコピーされる。
+    pub const INITIAL: Self = Self::new();
+
     /// 0 / 1 / 2 が端末で、それ以外は空の表（S11-10）。
     ///
     /// # 予約する形へ変えた
@@ -830,6 +836,24 @@ impl FileTable {
             opened: 0,
             cloexec: 0,
         }
+    }
+
+    /// `other` と中身を入れ替える（2026-10-23）。**欄ごとに入れ替える**——`core::mem::swap` で表ごと入れ替えると、デバッグの
+    /// ビルドでは表 1 つ分の一時がカーネルのスタックに載る。**分解して書いてあるので、欄を足すとここがコンパイルで止まる。**
+    pub fn swap_with(&mut self, other: &mut Self) {
+        let Self {
+            slots,
+            opened,
+            cloexec,
+        } = self;
+        let Self {
+            slots: other_slots,
+            opened: other_opened,
+            cloexec: other_cloexec,
+        } = other;
+        slots.swap_with_slice(other_slots);
+        core::mem::swap(opened, other_opened);
+        core::mem::swap(cloexec, other_cloexec);
     }
 
     /// 最小の空き番号へ置き、その番号を返す。**端末の 3 つは埋まっているので、
@@ -1102,6 +1126,30 @@ mod tests {
         assert!(!table.get(STDOUT_FD).unwrap().is_error_terminal());
         assert!(table.get(STDERR_FD).unwrap().is_error_terminal());
         assert_eq!(table.get(3), Err(FileTableError::BadDescriptor(3)));
+    }
+
+    /// **入れ替えると、欄・累計・`FD_CLOEXEC` の印がそろって入れ替わり、もう 1 度入れ替えると元に戻る**（2026-10-23）。
+    #[test]
+    fn swapping_twice_puts_both_tables_back() {
+        let mut process = FileTable::INITIAL;
+        let fd = process
+            .insert_with_cloexec(File::new(inode(21, 1, REGULAR)), true)
+            .unwrap();
+        let mut current = FileTable::new();
+
+        process.swap_with(&mut current);
+        assert_eq!(process.open_count(), 0);
+        assert_eq!(process.opened_total(), 0);
+        assert_eq!(process.get(fd), Err(FileTableError::BadDescriptor(fd)));
+        assert_eq!(current.open_count(), 1);
+        assert_eq!(current.opened_total(), 1);
+        assert_eq!(current.cloexec(fd), Ok(true));
+
+        process.swap_with(&mut current);
+        assert_eq!(process.open_count(), 1);
+        assert_eq!(process.cloexec(fd), Ok(true));
+        assert_eq!(current.open_count(), 0);
+        assert_eq!(current.get(fd), Err(FileTableError::BadDescriptor(fd)));
     }
 
     /// **最小の空き番号を返す**（POSIX と同じ）。**端末の 3 つは埋まっている。**

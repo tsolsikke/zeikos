@@ -849,6 +849,7 @@ kernel::userland::tests::the_executable_layout_has_a_four_page_stack_above_a_gua
 kernel::userland::tests::the_position_independent_layout_keeps_its_regions_apart
 kernel::vfs::tests::a_new_table_holds_the_three_terminals_and_no_files
 kernel::vfs::tests::descriptors_are_handed_out_lowest_first
+kernel::vfs::tests::swapping_twice_puts_both_tables_back
 kernel::vfs::tests::the_cloexec_mark_follows_the_descriptor
 kernel::vfs::tests::the_first_open_takes_descriptor_three
 kernel::vfs::tests::the_kind_comes_straight_from_the_ext2_inode
