@@ -1,0 +1,6 @@
+wl-listener-reopen-rust: main starts with 4 argument(s)
+wl-listener-reopen-rust: the new listener did not look readable after the old one closed with a waiting connection = true
+wl-listener-reopen-rust: accept on the new listener found nothing (EAGAIN) = true
+wl-listener-reopen-rust: accept then returned the new client's connection (its byte came through) = true
+wl-listener-reopen-rust: done
+exit status: 4

@@ -128,6 +128,13 @@ impl Connection {
     fn is_open(&self, side: Side) -> bool {
         self.open[side as usize] != 0
     }
+
+    /// `listener` の待ち行列に居て、まだ `accept` されていないか。**server 側が開いている間だけである**（2026-10-23）——
+    /// listener を閉じると、受け付ける前の接続は server 側が閉じられる（[`close_listener`]）。接続の欄は client 側が閉じるまで
+    /// 残り、listener の添字も古いままなので、server 側を見ないと、同じ欄を取り直した別の listener がその接続を受け付けていた。
+    fn waits_for_accept(&self, listener: u8) -> bool {
+        self.in_use && self.listener == listener && !self.accepted && self.is_open(Side::Server)
+    }
 }
 
 static LISTENERS: [Locked<Listener>; MAX_LISTENERS] =
@@ -342,7 +349,7 @@ pub fn accept(listener: u8) -> AcceptOutcome {
     }
     for (index, slot) in CONNECTIONS.iter().enumerate() {
         let mut connection = slot.lock();
-        if connection.in_use && connection.listener == listener && !connection.accepted {
+        if connection.waits_for_accept(listener) {
             connection.accepted = true;
             return AcceptOutcome::Connection(index as u8);
         }
@@ -367,7 +374,7 @@ pub fn acceptable(listener: u8) -> bool {
     }
     CONNECTIONS.iter().any(|slot| {
         let connection = slot.lock();
-        connection.in_use && connection.listener == listener && !connection.accepted
+        connection.waits_for_accept(listener)
     })
 }
 
@@ -663,7 +670,7 @@ pub fn close_listener(listener: u8) -> bool {
     LISTENERS_RELEASED.fetch_add(1, Ordering::Relaxed);
     let pending: [bool; MAX_CONNECTIONS] = core::array::from_fn(|index| {
         let connection = CONNECTIONS[index].lock();
-        connection.in_use && connection.listener == listener && !connection.accepted
+        connection.waits_for_accept(listener)
     });
     for (index, is_pending) in pending.iter().enumerate() {
         if *is_pending {
@@ -732,6 +739,24 @@ mod tests {
         assert!(connection.is_open(Side::Client) && connection.is_open(Side::Server));
         assert!(!connection.accepted);
         assert!(connection.rings[0].is_empty() && connection.rings[1].is_empty());
+    }
+
+    /// **listener が閉じて server 側が閉じられた接続は、同じ添字の listener にも待ちとして見えない**（2026-10-23）。
+    #[test]
+    fn a_connection_whose_server_side_was_closed_no_longer_waits_for_accept() {
+        let mut connection = Connection::EMPTY;
+        connection.in_use = true;
+        connection.listener = 3;
+        connection.open = [1, 1];
+        assert!(connection.waits_for_accept(3));
+        assert!(!connection.waits_for_accept(4));
+        // `close_listener` が受け付ける前の接続の server 側を閉じた後。client 側が開いているので欄は残る。
+        connection.open = [1, 0];
+        assert!(!connection.waits_for_accept(3));
+        // `accept` した接続も見えない。
+        connection.open = [1, 1];
+        connection.accepted = true;
+        assert!(!connection.waits_for_accept(3));
     }
 
     #[test]

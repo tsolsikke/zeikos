@@ -24397,6 +24397,8 @@ fn cmd_linux_socket_test() -> Result<()> {
     let dup_ends_ended = format!("spawn: /bin/linux/{dup_ends} ended");
     let fd_limit = "wl-fd-limit-rust";
     let fd_limit_ended = format!("spawn: /bin/linux/{fd_limit} ended");
+    let reopen = "wl-listener-reopen-rust";
+    let reopen_ended = format!("spawn: /bin/linux/{reopen} ended");
     let deadline = Instant::now() + PIPE_TEST_TIMEOUT;
     loop {
         if child.was_cut() {
@@ -24592,6 +24594,19 @@ fn cmd_linux_socket_test() -> Result<()> {
         .lines()
         .find(|line| line.contains(&fd_limit_ended))
         .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
+    // **閉じた listener に残った接続が、後から作った listener に見えないこと**（2026-10-23。`ADR-0064` の Addendum）。終わり方と
+    // Linux の参照で見る（`poll` と `accept` が何も見ないこと、新しいクライアントの接続が返ることが行に出る）。
+    let reopen_ran = serial.contains(&format!("{reopen_ended} (Exited(4))"));
+    let reopen_matched = linux_program_output_matches(
+        &workspace_root,
+        reopen,
+        &serial,
+        LinuxReferenceEnvironment::ExactCount,
+    )?;
+    let reopen_unknown_free = serial
+        .lines()
+        .find(|line| line.contains(&reopen_ended))
+        .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
     // **memfd のフラグと名前・封・fstat・作り方ごとの `FD_CLOEXEC`**（2026-10-20。`ADR-0065` の Addendum）。終わり方と Linux の
     // 参照で見る（封と `F_GETFD` の値が行に出る）。
     let memfd_ran = serial.contains(&format!("{memfd_ended} (Exited(4))"));
@@ -24667,6 +24682,11 @@ fn cmd_linux_socket_test() -> Result<()> {
     println!(
         "{context}: {fd_limit} hit no number the kernel does not know = {fd_limit_unknown_free}"
     );
+    println!("{context}: {reopen} ended with status 4 = {reopen_ran}");
+    println!(
+        "{context}: {reopen} printed what Linux prints (linux-programs/reference/{reopen}.txt) = {reopen_matched}"
+    );
+    println!("{context}: {reopen} hit no number the kernel does not know = {reopen_unknown_free}");
     println!("{context}: {memfd} ended with status 4 = {memfd_ran}");
     println!(
         "{context}: {memfd} printed what Linux prints (linux-programs/reference/{memfd}.txt) = {memfd_matched}"
@@ -24699,6 +24719,9 @@ fn cmd_linux_socket_test() -> Result<()> {
         && fd_limit_ran
         && fd_limit_matched
         && fd_limit_unknown_free
+        && reopen_ran
+        && reopen_matched
+        && reopen_unknown_free
         && memfd_ran
         && memfd_matched
         && memfd_unknown_free
@@ -24717,6 +24740,7 @@ fn cmd_linux_socket_test() -> Result<()> {
                 || l.contains(fault)
                 || l.contains(dup_ends)
                 || l.contains(fd_limit)
+                || l.contains(reopen)
                 || l.contains(memfd)
                 || l.contains("[ERROR]")
         })
