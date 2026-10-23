@@ -259,7 +259,7 @@ user program /bin/linux/m3a-exit-group-main-spins-rust | mapped by request | 4K 
 user program /bin/linux/m3a-exit-group-main-spins-rust | stack | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=64
 
 user program /bin/linux/m3a-exit-group-thread-spins-rust | segment 0 | 4K | w=0 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=5
-user program /bin/linux/m3a-exit-group-thread-spins-rust | segment 1 | 4K | w=0 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=86
+user program /bin/linux/m3a-exit-group-thread-spins-rust | segment 1 | 4K | w=0 u=1 x=1 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=87
 user program /bin/linux/m3a-exit-group-thread-spins-rust | segment 2 | 4K | w=0 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=21
 user program /bin/linux/m3a-exit-group-thread-spins-rust | segment 3 | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=6
 user program /bin/linux/m3a-exit-group-thread-spins-rust | heap | 4K | w=1 u=1 x=0 cache=0 g=0 shared=0 tables(w=1 u=1 x=1) | pages=1

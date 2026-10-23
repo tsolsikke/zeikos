@@ -3,8 +3,8 @@
 //!
 //! # 何をするか
 //!
-//! 1. 主スレッドが 1 行出し、スレッド A、スレッド B の順に作る。B を作って spawn から戻ったら、そのことを示すフラグを立てて、
-//!    B を `join` する（futex で眠る）。
+//! 1. 主スレッドが 1 行出し、スレッド A を作り、A の closure が始まるのを待ってからスレッド B を作る。B を作って spawn から
+//!    戻ったら、そのことを示すフラグを立てて、B を `join` する（futex で眠る）。
 //! 2. B は 1 行出してから、回り始めたことを示すフラグを立て、**その後はずっと回る**（`spin_loop`。システムコールを打たない）。
 //!    B の起動の後始末（シグナルの代わりのスタックなど）のシステムコールは、フラグより前に済んでいる。
 //! 3. A は、主スレッドのフラグと B のフラグの両方を待ってから、1 行出して `std::process::exit(7)`（`exit_group(7)`）を打つ。
@@ -13,6 +13,14 @@
 //!    futex の待ちを起こした後、システムコールの戻りで印を見て出る。プロセスは `Exited(7)`。
 //!
 //! 行の順（主・B・A）は、フラグで決まる。Linux の参照と突き合わせられるのはそのためである。
+//!
+//! # 主スレッドは、A の closure が始まってから B を作る（2026-10-23）
+//!
+//! **以前は、A を作ってすぐ B を作っていた。** Rust のスレッドの立ち上げ（closure の前）は malloc のロック（musl の
+//! `__malloc_lock`）を取る。主スレッドが B の `spawn` の中で malloc している間にティックが来ると、立ち上げ中の A がそのロックで
+//! 眠り、主スレッドが起こした（`futex:` の行が「眠り 2・起こし 1」になる。約 36 回の起動で 2 回）。`m3a-channel-tls-rust` などで
+//! 直したのと同じ形である。今は、A が closure の頭で「始まった」フラグを立て、主スレッドはシステムコールを打たずにそれを
+//! 待ってから B を作る。眠るのは主スレッドの `join` の 1 回だけになる。
 //!
 //! # crate ではない
 //!
@@ -30,14 +38,21 @@ fn main() {
     // 主スレッドが B の spawn から戻ったことを示すフラグと、B が回り始めたことを示すフラグ。
     let returned = Arc::new(AtomicBool::new(false));
     let spinning = Arc::new(AtomicBool::new(false));
-    let (returned_seen, spinning_seen) = (Arc::clone(&returned), Arc::clone(&spinning));
+    // A の closure が始まったことを示すフラグ（モジュールの doc の「主スレッドは、A の closure が始まってから B を作る」）。
+    let started = Arc::new(AtomicBool::new(false));
+    let (returned_seen, spinning_seen, started_set) =
+        (Arc::clone(&returned), Arc::clone(&spinning), Arc::clone(&started));
     let _ender = std::thread::spawn(move || {
+        started_set.store(true, Ordering::SeqCst);
         while !(returned_seen.load(Ordering::SeqCst) && spinning_seen.load(Ordering::SeqCst)) {
             std::hint::spin_loop();
         }
         println!("m3a-exit-group-thread-spins-rust: thread A calls exit_group(7) now");
         std::process::exit(7);
     });
+    while !started.load(Ordering::SeqCst) {
+        std::hint::spin_loop();
+    }
     let spinning_set = Arc::clone(&spinning);
     let spinner = std::thread::spawn(move || {
         println!("m3a-exit-group-thread-spins-rust: thread B spins forever from now on");
