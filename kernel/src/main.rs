@@ -6896,6 +6896,14 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
             b"/bin/linux/wl-listener-reopen-rust",
             b"wl-listener-reopen-rust\0/etc/motd\0a\0b\0",
         );
+        // **パイプの `readv`・`writev` で眠る間に、同じプロセスの別のスレッドが `writev` しても、iovec がすり替わらないこと**
+        // （2026-10-23。`ADR-0085` の Addendum）。fd 0 と fd 1 に同じパイプの両端を据える。判定は
+        // `cargo xtask run --linux-socket-test`（Linux の参照と突き合わせる。行は標準エラーへ出る）。
+        verify_linux_program_with_one_pipe(
+            logger,
+            b"/bin/linux/wl-iovec-threads-rust",
+            b"wl-iovec-threads-rust\0/etc/motd\0a\0b\0",
+        );
         // **memfd のフラグと名前・封・fstat・作り方ごとの `FD_CLOEXEC`**（2026-10-20。`ADR-0065` の Addendum）。判定は
         // `cargo xtask run --linux-socket-test`（Linux の参照と突き合わせる）と、破壊テスト 2 つ（`--critical-test
         // memfd-ignores-allow-sealing`・`memfd-seals-not-kept`）。

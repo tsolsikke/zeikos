@@ -585,12 +585,14 @@ pub unsafe fn validate_user_range(
 ///
 /// # 確かめた後、書くまでの間
 ///
-/// **確かめてから待つ入口がある**（パイプ・ソケット・端末・入力の `read` は、確かめた後に BKL を解いて
-/// 待ち、起きてから書く）。**その間にこの範囲のマッピングが変わらないことは、プロセスの形が保証している**——
-/// プロセスは 1 本の流れで、自分のマッピングを変えるのは自分のシステムコール（`brk`・`mmap`）だけであり、
-/// 待っている間はほかのシステムコールへ入れない。空間の破棄はプロセスの終わりにしか起きない。
-/// **1 つの空間を 2 本以上の流れが使う形（スレッド）や、ほかの空間のマッピングを変える入口を足すときは、
-/// この前提を見直すこと。**
+/// **確かめてから書くまでの間に BKL を解いてはいけない。** プロセスはスレッドを持つ（M3a）ので、ある流れが BKL を解いて
+/// 待っている間に、同じプロセスの別のスレッドが `munmap`・`mprotect`・`brk` でこの範囲のマッピングを変えられる。マッピングを
+/// 変える入口も BKL を持って走るので、BKL を持ったまま確かめて書く間は変わらない。
+///
+/// **待つ入口は、起きた後、書く直前に確かめ直す**（パイプ・ソケット・端末・入力の `read`、`poll` の `revents` の書き戻し、
+/// eventfd・timerfd の `read`。2026-10-22。`ADR-0063` の Addendum）。待つ前に確かめた結果を、起きた後の書きに使わない。
+/// 待つ間に握っておく値（`readv`・`writev` の iovec のコピーなど）も、別のスレッドが上書きできる場所に置かない
+/// （`IOV_COPIES` は流れごと。2026-10-23）。空間の破棄はプロセスの終わりにしか起きない。
 ///
 /// # Safety
 ///
@@ -704,12 +706,11 @@ pub unsafe fn user_range_accessible(
 /// direct_map は要らない）。読んだバイト数を返す。
 ///
 /// **TOCTOU について。** 検証と読みが実質アトミックなのは、syscall_entry が IF=0 で入りプリエンプトが来ないこと
-/// （`int 0x80` は割り込みゲートが、`syscall` 命令は SFMASK が IF を落とす。`crate::arch::x86_64::system_call_entry`）、
-/// **BKL を保持したままユーザーメモリへ触ること**（`spawn` は途中で BKL を解くが、パスと `argv` をコピーする区間は
-/// 解く前に置いてある）、
-/// ユーザーページをアンマップする経路が syscall 中に走らないこと、の構造条件に依存する。将来 IF を立てる
-/// syscall（長時間ブロッキング等）を入れると、この前提が崩れ TOCTOU（検証後・読み前に
-/// アンマップ/再マップ）が現実化するため再検証が要る（verification-coverage の申し送り）。
+/// （`int 0x80` は割り込みゲートが、`syscall` 命令は SFMASK が IF を落とす。`crate::arch::x86_64::system_call_entry`）と、
+/// **検証から読みまで BKL を保持したままユーザーメモリへ触ること**（`spawn` は途中で BKL を解くが、パスと `argv` を
+/// コピーする区間は解く前に置いてある）、の構造条件に依存する。同じプロセスの別のスレッドもマッピングを変えられるが
+/// （`munmap`・`mprotect`・`brk`）、それも BKL を持って走るので、BKL を持ち続ける間は変わらない。**BKL を解いて待つ入口は、
+/// 起きた後に検証し直してから読む**（[`validate_user_range_for_write`] の「確かめた後、書くまでの間」と同じ決まり）。
 ///
 /// # Safety
 ///
@@ -6886,15 +6887,29 @@ const UIO_MAXIOV: u64 = 1024;
 /// 分は、Linux と同じに切り詰める（`-EINVAL` にはしない）。
 const MAX_RW_COUNT: u64 = 0x7fff_f000;
 
-/// `readv`・`writev` が、I/O の前に取り込んだ `struct iovec` のコピーし（`iov_base`・`iov_len`。2026-10-09）。**スロットごとに
-/// 1 つ**——1 つのスロットで同時に走る `readv`・`writev` は 1 本だけである（入れ子の `spawn` の親は `spawn` の中で待つ）。
-/// 遠征スタックに置かないのは、1,024 本で 16 KiB になり、ガードページ 1 枚の前提（スタック上の 1 つの物は 4,096 バイト
-/// 以下）を越えるためである。
+/// [`IOV_COPIES`] の置き場の数。スロットごとの主スレッドと、スレッドの池のタスク（どのスロットのスレッドにもなる）の数を
+/// 足したもの。
+const IOV_COPY_OWNERS: usize = crate::arch::x86_64::USER_TASK_SLOTS + crate::task::THREAD_TASKS;
+
+/// `readv`・`writev` が、I/O の前に取り込んだ `struct iovec` のコピー（`iov_base`・`iov_len`。2026-10-09）。**走っている流れ
+/// （スロットの主スレッドか、池のタスク）ごとに 1 つ**（2026-10-23。[`iov_copy_owner`]）——1 本の `read`・`write` はパイプや
+/// ソケットで眠るので、その間に同じプロセスの別のスレッドが `readv`・`writev` を呼べる。以前はスロットごとに 1 つで、
+/// 起きた側が次の本を、別のスレッドが上書きした `(base, len)` で動かしていた。1 つの流れの中で同時に走るのは 1 本だけである
+/// （入れ子の `spawn` の親は `spawn` の中で待つ）。
+///
+/// 1 つが 1,024 本で 16 KiB なので、全体は 16 KiB × [`IOV_COPY_OWNERS`]（今は 6 つで 96 KiB）の `.bss` になる。遠征スタックに
+/// 置かないのは、ガードページ 1 枚の前提（スタック上の 1 つの物は 4,096 バイト以下）を越えるためである。
 /// `Locked` は割り込みを禁止するので、ユーザーのアドレスを読む間は持たない（1 本ずつ取って置く）。
-static IOV_COPIES: [common::critical::Locked<[(u64, u64); UIO_MAXIOV as usize]>;
-    crate::arch::x86_64::USER_TASK_SLOTS] =
-    [const { common::critical::Locked::new([(0, 0); UIO_MAXIOV as usize]) };
-        crate::arch::x86_64::USER_TASK_SLOTS];
+static IOV_COPIES: [common::critical::Locked<[(u64, u64); UIO_MAXIOV as usize]>; IOV_COPY_OWNERS] =
+    [const { common::critical::Locked::new([(0, 0); UIO_MAXIOV as usize]) }; IOV_COPY_OWNERS];
+
+/// 今走っている流れの [`IOV_COPIES`] の番号。池のタスクなら `USER_TASK_SLOTS` から先、主スレッドならスロットの番号。
+fn iov_copy_owner() -> usize {
+    match crate::task::current_thread_index() {
+        Some(index) => crate::arch::x86_64::USER_TASK_SLOTS + index,
+        None => crate::arch::x86_64::current_excursion_slot(),
+    }
+}
 
 /// `readv(fd, iov, iovcnt)`・`writev(fd, iov, iovcnt)` の本体（2026-10-06。musl の stdio が打つ）。
 ///
@@ -6930,7 +6945,7 @@ unsafe fn vectored_from_ring3(
         return (-EINVAL) as u64;
     }
     let count = iovcnt as usize;
-    let copies = &IOV_COPIES[crate::arch::x86_64::current_excursion_slot()];
+    let copies = &IOV_COPIES[iov_copy_owner()];
     // 1. 取り込む。読めなければ `-EFAULT`、負の長さは `-EINVAL`（前から順に、最初に当たったもの）。
     for index in 0..count {
         let Some(address) = iov.checked_add(index as u64 * 16) else {

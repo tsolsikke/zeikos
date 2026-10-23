@@ -1,0 +1,8 @@
+wl-iovec-threads-rust: main starts with 4 argument(s)
+wl-iovec-threads-rust: another thread wrote this line with writev again
+wl-iovec-threads-rust: the reader slept in readv before another thread called writev = true
+wl-iovec-threads-rust: the readv filled its own two buffers (cccc and dddd) and left the main thread's alone = true
+wl-iovec-threads-rust: another thread wrote this line with writev
+wl-iovec-threads-rust: the writev on a full pipe sent its own two iovecs (aaaabbbb, 8 bytes) = true
+wl-iovec-threads-rust: both shapes are done
+exit status: 4

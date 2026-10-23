@@ -24399,6 +24399,8 @@ fn cmd_linux_socket_test() -> Result<()> {
     let fd_limit_ended = format!("spawn: /bin/linux/{fd_limit} ended");
     let reopen = "wl-listener-reopen-rust";
     let reopen_ended = format!("spawn: /bin/linux/{reopen} ended");
+    let iovecs = "wl-iovec-threads-rust";
+    let iovecs_ended = format!("spawn: /bin/linux/{iovecs} ended");
     let deadline = Instant::now() + PIPE_TEST_TIMEOUT;
     loop {
         if child.was_cut() {
@@ -24607,6 +24609,19 @@ fn cmd_linux_socket_test() -> Result<()> {
         .lines()
         .find(|line| line.contains(&reopen_ended))
         .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
+    // **パイプの `readv`・`writev` で眠る間に別のスレッドが `writev` しても、iovec がすり替わらないこと**（2026-10-23。`ADR-0085`
+    // の Addendum）。終わり方と Linux の参照で見る（眠ったこと、自分の 2 本を書いた・読んだことが行に出る）。
+    let iovecs_ran = serial.contains(&format!("{iovecs_ended} (Exited(4))"));
+    let iovecs_matched = linux_program_output_matches(
+        &workspace_root,
+        iovecs,
+        &serial,
+        LinuxReferenceEnvironment::ExactCount,
+    )?;
+    let iovecs_unknown_free = serial
+        .lines()
+        .find(|line| line.contains(&iovecs_ended))
+        .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
     // **memfd のフラグと名前・封・fstat・作り方ごとの `FD_CLOEXEC`**（2026-10-20。`ADR-0065` の Addendum）。終わり方と Linux の
     // 参照で見る（封と `F_GETFD` の値が行に出る）。
     let memfd_ran = serial.contains(&format!("{memfd_ended} (Exited(4))"));
@@ -24687,6 +24702,11 @@ fn cmd_linux_socket_test() -> Result<()> {
         "{context}: {reopen} printed what Linux prints (linux-programs/reference/{reopen}.txt) = {reopen_matched}"
     );
     println!("{context}: {reopen} hit no number the kernel does not know = {reopen_unknown_free}");
+    println!("{context}: {iovecs} ended with status 4 = {iovecs_ran}");
+    println!(
+        "{context}: {iovecs} printed what Linux prints (linux-programs/reference/{iovecs}.txt) = {iovecs_matched}"
+    );
+    println!("{context}: {iovecs} hit no number the kernel does not know = {iovecs_unknown_free}");
     println!("{context}: {memfd} ended with status 4 = {memfd_ran}");
     println!(
         "{context}: {memfd} printed what Linux prints (linux-programs/reference/{memfd}.txt) = {memfd_matched}"
@@ -24722,6 +24742,9 @@ fn cmd_linux_socket_test() -> Result<()> {
         && reopen_ran
         && reopen_matched
         && reopen_unknown_free
+        && iovecs_ran
+        && iovecs_matched
+        && iovecs_unknown_free
         && memfd_ran
         && memfd_matched
         && memfd_unknown_free
@@ -24741,6 +24764,7 @@ fn cmd_linux_socket_test() -> Result<()> {
                 || l.contains(dup_ends)
                 || l.contains(fd_limit)
                 || l.contains(reopen)
+                || l.contains(iovecs)
                 || l.contains(memfd)
                 || l.contains("[ERROR]")
         })

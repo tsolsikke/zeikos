@@ -110,5 +110,7 @@ record_dup_ends wl-dup-ends-rust
 record wl-fd-limit-rust
 # 受け付ける前の接続を残して閉じた listener の後に作った listener（2026-10-23）。
 record wl-listener-reopen-rust
+# パイプの readv・writev で眠る間に別のスレッドが writev する形（2026-10-23）。fd 0 と 1 に同じパイプを渡す。
+record_with_one_pipe wl-iovec-threads-rust
 record m1-c
 record m3a-c

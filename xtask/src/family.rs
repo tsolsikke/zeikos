@@ -275,6 +275,7 @@ pub const PATH_RULES: &[PathRule] = &[
             "linux-programs/wl-dup-ends-rust.rs",
             "linux-programs/wl-fd-limit-rust.rs",
             "linux-programs/wl-listener-reopen-rust.rs",
+            "linux-programs/wl-iovec-threads-rust.rs",
         ],
         reach: Reach::Families(&[Family::Ipc, Family::Interrupts]),
     },

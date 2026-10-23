@@ -658,6 +658,9 @@ const LINUX_PROGRAMS: &[&str] = &[
     // **受け付ける前の接続を残して閉じた listener の後に作った listener に、古い接続が見えないこと**（2026-10-23。`ADR-0064`
     // の Addendum。`linux-socket-test` のビルドだけが起動時に起こす）。
     "wl-listener-reopen-rust",
+    // **パイプの readv・writev で眠る間に、同じプロセスの別のスレッドが writev しても、iovec がすり替わらないこと**
+    // （2026-10-23。`ADR-0085` の Addendum。`linux-socket-test` のビルドだけが起動時に起こす）。
+    "wl-iovec-threads-rust",
     // **壁の時計**（2026-10-20。`ADR-0090`。`realtime-test` のビルドだけが起動時に起こす）。
     "wl-realtime-rust",
     // **ZeikOS と Linux で結果が違うイメージ**（マップ中の memfd を縮める ftruncate。`memfd-shrink-test` のビルドだけが起こす）。
