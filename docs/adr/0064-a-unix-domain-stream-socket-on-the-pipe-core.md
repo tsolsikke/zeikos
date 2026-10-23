@@ -194,3 +194,11 @@ Seinas（wayland-server・wayland-backend・calloop）は、listener と接続�
   - `dup`・`dup2`・`dup3`の番号はまだ無い。**足すときは**、`dup2(fd, fd)`は何もせずに`fd`を返し（Linuxと同じ）、コピー先に前のfdがあるときは、コピー元の数を足してからコピー先を閉じる順にする（同じ端を指すfdへコピーするとき、先に閉じると端そのものが閉じてしまう）。
 - **確かめ。** `linux-programs/wl-dup-ends-rust.rs`（`linux-socket-test`のビルド）。パイプは同時に1本なので、起動時の確かめがfd 0とfd 1に同じパイプの読み端と書き端を据えて2回起こす。両方の回で、読み端と書き端を複製して元を閉じ、書き端の複製をスレッドへ渡して書けることを見る。1回目は、fdの表を`EMFILE`まで埋めて書き端の複製を断らせ、最後の書き端を閉じると読み手がEOFを見ること（数が戻っていなければ読み手が眠り、見張り役のスレッドが名指しの行を出して93で終わる）、listenerの複製が元を閉じた後も`accept`できること、クライアントの端の複製をスレッドへ渡して書け、最後の端を閉じるとサーバーがEOFと`EPIPE`を見ること、memfdの複製と`SCM_RIGHTS`で送ったmemfdが、元や送り手を閉じた後もマップして読み書きできることを見る。2回目は、読み端の複製を断らせ、最後の読み端を閉じると書き手が`EPIPE`を見ることを見る。WSL（6.18）で取ったLinuxの参照と全行突き合わせ、1回目の前後で共有メモリのフレームを持つ数が同じことも見る。Linuxの参照は、読み端を読むだけで開いた名前付きパイプで取る（読み書きで開くと、それも書き手に数えられてEOFが来ない）。
 - **直す前の形で落ちることも確かめた**（2026-10-22。破壊テストは置かない）。数える直しを一時的に戻すと、1回目の最初の行（複製が元を閉じた後も使える）がfalseになり、listenerの複製で`accept`できずに94で終わって、起動が`[ERROR] linux-check: … expected Exited(4)`で止まった。置けなかったコピーの戻しだけを前の形（eventfd・timerfd・epoll・入力だけを戻す）にすると、1回目は「書き端を全部閉じたのに読み手が眠った」の行を出して93で終わり、2回目だけを走らせた回は「`EPIPE` = false」の行を出し、漏れた読み手の数のせいで次のパイプが作れずに`[ERROR] one-pipe: no pipe was free`で止まった。
+
+## Addendum（2026-10-23。閉じたlistenerに残った接続を、後から作ったlistenerに見せない）
+
+- **起きていたこと。** `accept`の前の接続を残してlistenerを閉じると、`close_listener`はその接続のserver側を閉じる。clientが開いていれば接続の欄は残り、`accepted`は偽のまま、listenerの添字も古いままだった。`bind`は最初の空いた欄を取るので、別の名前で作り直したlistenerが同じ欄を取ると、`accept`と`poll`（`acceptable`）がその古い接続を「待っている接続」として見た（実測。新しいlistenerの`accept`が古い接続を返した）。Linuxは何も返さない（`EAGAIN`）。
+- **直し方。** 「`accept`を待っている」の条件（`Connection::waits_for_accept`）に、server側が開いていることを足した。`accept`・`acceptable`・`close_listener`の3か所が同じ条件を使う。listenerを閉じた後の接続は、server側が閉じているので、どのlistenerにも見えない。
+- **残る差。** 古いclientは、Linuxでは`ECONNRESET`を、ZeikOSではEOF（`read`が0、`write`が`-EPIPE`）を見る。確かめでは比べていない。
+- **確かめ。** `linux-programs/wl-listener-reopen-rust.rs`（`linux-socket-test`のビルド）。古いlistenerに待ちの接続を残して閉じ、別の名前でlistenerを作り直す。`poll`（timeout 0）が読めると言わないこと、`accept`が`EAGAIN`で何も返さないこと、新しいclientの接続が返ることを行に出し、Linuxの参照と突き合わせる。
+- **直す前の形で落ちることも確かめた**（2026-10-23。破壊テストは置かない）。直す前のカーネルでは、`poll`と`accept`の2行が`false`になり、`linux-socket-test`は「`wl-listener-reopen-rust printed what Linux prints … = false`」で落ちた。
