@@ -11,6 +11,10 @@ pub const ENOSYS: i64 = 38;
 /// `-EFAULT`（不正なアドレス）の errno。ユーザーポインタ検証に落ちたとき返す。
 pub const EFAULT: i64 = 14;
 
+/// `-EFBIG`（ファイルが大きすぎる）の errno（2026-10-26）。**共有メモリを 1 つの上限を越えて伸ばす `ftruncate` が返す**——
+/// Linux の `inode_newsize_ok` が、ファイルの大きさの上限（`s_maxbytes`・`RLIMIT_FSIZE`）を越えるときに返すものである。
+pub const EFBIG: i64 = 27;
+
 /// `-ESRCH`（そのプロセスは居ない）の errno。`prlimit64` が、自分以外の `pid` に返す（2026-10-06）。
 pub const ESRCH: i64 = 3;
 

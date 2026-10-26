@@ -11,7 +11,7 @@ root=$(cd "$(dirname "$0")/.." && pwd)
 out=${1:-"$root/target/linux-programs"}
 mkdir -p "$out"
 
-for name in m1-rust m3a-rust m3a-mutex-rust m3a-fault-rust m3a-exit-group-rust m3a-exit-group-join-rust m3a-exit-group-waiters-rust m3a-exit-while-spinning-rust m3a-nested-clone-rust m3a-spawn-from-thread-rust m3a-exit-group-spin-rust m3a-exit-group-main-spins-rust m3a-exit-group-thread-spins-rust m3a-channel-tls-rust m3a-exit-with-waiting-thread-rust wl-socket-lock-rust wl-nonblock-rust wl-epoll-rust wl-exit-group-waits-rust wl-memfd-seals-rust wl-fault-after-wait-rust wl-dup-ends-rust wl-fd-limit-rust wl-listener-reopen-rust wl-iovec-threads-rust wl-ppoll-rust m3a-memfd-shrink-rust; do
+for name in m1-rust m3a-rust m3a-mutex-rust m3a-fault-rust m3a-exit-group-rust m3a-exit-group-join-rust m3a-exit-group-waiters-rust m3a-exit-while-spinning-rust m3a-nested-clone-rust m3a-spawn-from-thread-rust m3a-exit-group-spin-rust m3a-exit-group-main-spins-rust m3a-exit-group-thread-spins-rust m3a-channel-tls-rust m3a-exit-with-waiting-thread-rust wl-socket-lock-rust wl-nonblock-rust wl-epoll-rust wl-exit-group-waits-rust wl-memfd-seals-rust wl-fault-after-wait-rust wl-dup-ends-rust wl-fd-limit-rust wl-listener-reopen-rust wl-iovec-threads-rust wl-ppoll-rust wl-memfd-grow-rust m3a-memfd-shrink-rust; do
     rustc --edition 2021 --target x86_64-unknown-linux-musl \
         -C target-feature=+crt-static -C opt-level=2 -C strip=symbols \
         --remap-path-prefix="$root/linux-programs=linux-programs" \

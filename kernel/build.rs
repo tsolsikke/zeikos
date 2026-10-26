@@ -664,6 +664,9 @@ const LINUX_PROGRAMS: &[&str] = &[
     // **ppoll の待つ長さ・シグナルのマスク・確かめの順・残りの長さの書き戻し**（2026-10-24。`ADR-0066` の Addendum。
     // `linux-socket-test` のビルドだけが起動時に起こす）。
     "wl-ppoll-rust",
+    // **memfd を伸ばす 2 回目の ftruncate**（2026-10-26。`ADR-0065` の Addendum。`linux-socket-test` のビルドだけが起動時に
+    // 起こす）。
+    "wl-memfd-grow-rust",
     // **壁の時計**（2026-10-20。`ADR-0090`。`realtime-test` のビルドだけが起動時に起こす）。
     "wl-realtime-rust",
     // **ZeikOS と Linux で結果が違うイメージ**（マップ中の memfd を縮める ftruncate。`memfd-shrink-test` のビルドだけが起こす）。

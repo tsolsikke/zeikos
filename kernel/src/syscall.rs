@@ -77,8 +77,8 @@ use crate::abi::linux::{
 };
 use crate::abi::linux::{
     E2BIG, EACCES, EADDRINUSE, EAFNOSUPPORT, EAGAIN, EBADF, EBUSY, ECHILD, ECONNREFUSED, EEXIST,
-    EFAULT, EINTR, EINVAL, EIO, EISCONN, EISDIR, ELOOP, EMFILE, EMSGSIZE, ENAMETOOLONG, ENOBUFS,
-    ENODEV, ENOENT, ENOEXEC, ENOLCK, ENOMEM, ENOSPC, ENOSYS, ENOTCONN, ENOTDIR, ENOTEMPTY,
+    EFAULT, EFBIG, EINTR, EINVAL, EIO, EISCONN, EISDIR, ELOOP, EMFILE, EMSGSIZE, ENAMETOOLONG,
+    ENOBUFS, ENODEV, ENOENT, ENOEXEC, ENOLCK, ENOMEM, ENOSPC, ENOSYS, ENOTCONN, ENOTDIR, ENOTEMPTY,
     ENOTSOCK, ENOTTY, EPERM, EPIPE, EPROTONOSUPPORT, EROFS, ESPIPE, ESRCH,
 };
 #[cfg(feature = "linux-socket-test")]
@@ -4239,7 +4239,8 @@ unsafe fn memfd_create_from_ring3(
     }
 }
 
-/// [`SYS_FTRUNCATE`] の本体。**共有メモリの大きさを据える（ページを取る）。**
+/// [`SYS_FTRUNCATE`] の本体。**共有メモリの大きさを据える（足りないページを取る）。** 向きごとの扱いは
+/// [`crate::shm::set_size`] の doc（2026-10-26。伸ばす向きを受けた。`ADR-0065` の Addendum）。
 #[inline(never)]
 fn ftruncate_from_ring3(fd: u64, size: u64, bkl: &mut Option<crate::bkl::BklGuard>) -> u64 {
     // **fd の表を読む前に借りる**（2026-10-08。[`borrow_allocator`]。借りられるまで待つ。引数だけの確かめは無い）。
@@ -4252,30 +4253,25 @@ fn ftruncate_from_ring3(fd: u64, size: u64, bkl: &mut Option<crate::bkl::BklGuar
     };
     match crate::shm::set_size(shm, size, &mut allocator) {
         crate::shm::TruncateOutcome::Pages(_) => 0,
-        crate::shm::TruncateOutcome::TooLarge | crate::shm::TruncateOutcome::NoRoom => {
-            (-ENOMEM) as u64
-        }
-        crate::shm::TruncateOutcome::AlreadySet => report_second_ftruncate_refused(shm, size),
+        crate::shm::TruncateOutcome::TooLarge => (-EFBIG) as u64,
+        crate::shm::TruncateOutcome::Sealed => (-EPERM) as u64,
+        crate::shm::TruncateOutcome::NoRoom => (-ENOMEM) as u64,
+        crate::shm::TruncateOutcome::Shrink => report_shrink_refused(shm, size),
         crate::shm::TruncateOutcome::NoShm => (-EBADF) as u64,
     }
 }
 
-/// 2 回目の `ftruncate` を名指しして断る（2026-10-15。`ADR-0065` の Addendum）。**向きにかかわらず `-EINVAL`**——表は
-/// マップの数を持たないので、マップ中かどうかで分けられない。縮める向きを断ることで「マップ中の memfd を縮めない」は
-/// 守られ、大きくする向きと、マップしていない memfd を縮めることは、2 回目の `ftruncate` を受け付ける課題の後である。
+/// 縮める `ftruncate` を名指しして断る（2026-10-15。`ADR-0065` の Addendum。2026-10-26 から縮める向きだけ）。**`-EINVAL`**——
+/// 表はマップの数を持たないので、マップ中かどうかで分けられない。断ることで「マップ中の memfd を縮めない」が守られる。
+/// マップしていない memfd を縮めることは、マッピングの数を持つ課題の後である。
 #[inline(never)]
 #[cold]
-fn report_second_ftruncate_refused(shm: u8, size: u64) -> u64 {
+fn report_shrink_refused(shm: u8, size: u64) -> u64 {
     let (pages, refs) = crate::shm::size_and_refs(shm).unwrap_or((0, 0));
-    let direction = if crate::shm::pages_for(size) < pages {
-        "shrink"
-    } else {
-        "grow"
-    };
     serial_line(format_args!(
-        "shm: ftruncate refused: shm {shm} already has {pages} page(s) ({refs} reference(s)); the {direction} to {size} \
-         byte(s) is -EINVAL, as every second ftruncate is, so a mapped memfd is never shrunk (growing, and shrinking an \
-         unmapped memfd, come with the work that accepts a second ftruncate)"
+        "shm: ftruncate refused: shm {shm} already has {pages} page(s) ({refs} reference(s)); the shrink to {size} \
+         byte(s) is -EINVAL, so a mapped memfd is never shrunk (shrinking an unmapped memfd comes with the work that \
+         counts the mappings)"
     ));
     (-EINVAL) as u64
 }
@@ -4348,8 +4344,8 @@ unsafe fn mmap_from_ring3(
         Ok(shm) => shm,
         Err(errno) => return errno,
     };
-    let mut frames = [common::addr::PhysAddr::new_const(0); crate::shm::MAX_SHM_PAGES];
-    let Some((pages, shm_len)) = crate::shm::frames_of(shm, &mut frames) else {
+    // **フレームは 1 ページずつ引く**（2026-10-26。並びを丸ごとスタックへコピーすると、4,096 本で 32 KiB になる）。
+    let Some((pages, shm_len)) = crate::shm::mapping_size(shm) else {
         return (-EINVAL) as u64;
     };
     // **要求は据えた大きさを越えない。**
@@ -4383,9 +4379,14 @@ unsafe fn mmap_from_ring3(
     let free_before_map = allocator.free_frame_count();
     let mut outcome = base;
     let mut mapped = 0u64;
-    for (page, frame) in frames.iter().enumerate().take(want_pages) {
+    for page in 0..want_pages {
         let Some(virt) = common::addr::VirtAddr::new(base + (page * crate::shm::PAGE_SIZE) as u64)
         else {
+            outcome = (-EINVAL) as u64;
+            break;
+        };
+        // 上で見たページ数の内側なので、引けないことは無い（BKL を放していない）。
+        let Some(frame) = crate::shm::frame_at(shm, page) else {
             outcome = (-EINVAL) as u64;
             break;
         };
@@ -4393,7 +4394,7 @@ unsafe fn mmap_from_ring3(
         #[cfg(not(feature = "shm-mmap-maps-nothing"))]
         {
             // SAFETY: 稼働中のページテーブルへ、ユーザーの範囲を、共有メモリの物理ページでマップする。
-            if unsafe { table.map_4kib(virt, *frame, attributes, allocator) }.is_err() {
+            if unsafe { table.map_4kib(virt, frame, attributes, allocator) }.is_err() {
                 outcome = (-ENOMEM) as u64;
                 break;
             }
@@ -4402,7 +4403,7 @@ unsafe fn mmap_from_ring3(
         }
         #[cfg(feature = "shm-mmap-maps-nothing")]
         {
-            let _ = (&mut table, *frame, attributes, virt);
+            let _ = (&mut table, frame, attributes, virt);
         }
     }
     if outcome != base {

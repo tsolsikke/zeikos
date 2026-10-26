@@ -41,7 +41,8 @@ const PEER_PATH: &[u8] = b"/bin/compc\0";
 const PEER_ARG0: &[u8] = b"compc\0";
 /// 見出しのバイト数（`u32` × 4）。
 const HEADER_LEN: usize = 16;
-/// 受けるプールの上限（`MAX_SHM_PAGES` = 8 ページ。`ADR-0065`）。
+/// 受けるプールの上限（8 ページ。この確かめの相手 `compc` が作る大きさに合わせた。カーネルの上限 `MAX_SHM_PAGES` は
+/// 2026-10-26 に 4,096 ページへ上げた。`ADR-0065`）。
 const POOL_MAX: u32 = 8 * 4096;
 /// `-EAGAIN`。
 const MINUS_EAGAIN: i64 = -11;

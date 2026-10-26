@@ -1,0 +1,11 @@
+wl-memfd-grow-rust: main starts with 4 argument(s)
+wl-memfd-grow-rust: ftruncate to 256000 bytes returned 0
+wl-memfd-grow-rust: ftruncate to the same size returned 0
+wl-memfd-grow-rust: ftruncate to 512000 bytes returned 0
+wl-memfd-grow-rust: the new mapping kept the first 256000 bytes = true, read zeros past them = true, and the old mapping still reads the same bytes = true
+wl-memfd-grow-rust: the last byte of the grown part can be written = true
+wl-memfd-grow-rust: with F_SEAL_SHRINK only, growing returned 0 (ftruncate 0, seal 0)
+wl-memfd-grow-rust: with F_SEAL_GROW, growing failed with EPERM = true (seal 0)
+wl-memfd-grow-rust: ftruncate to 16 MiB returned 0
+wl-memfd-grow-rust: done
+exit status: 4

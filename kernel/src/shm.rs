@@ -37,15 +37,19 @@ use common::critical::Locked;
 /// ページの大きさ。
 pub const PAGE_SIZE: usize = 4096;
 
-/// 同時に在れる共有メモリの数。
-pub const MAX_SHM: usize = 2;
+/// 同時に在れる共有メモリの数（2026-10-26 に 2 から 16 へ上げた。`ADR-0065` の Addendum）。クライアント 1 つにつき pool が
+/// 1〜2 個と、カーソルなどで使う。
+pub const MAX_SHM: usize = 16;
 
-/// 1 つの共有メモリのページ数の上限（32 KiB）。**Wayland の初手に足る見込み。**
-/// **FHD の枚（8 MiB）は入らない**（`ADR-0065` の限界。見直すきっかけは画面と入力の受け渡しの段階）。
-pub const MAX_SHM_PAGES: usize = 8;
+/// 1 つの共有メモリのページ数の上限（16 MiB。2026-10-26 に 8 ページから上げた）。FHD の 2 枚（約 16.6 MB）まで入る。越える
+/// `ftruncate` は `-EFBIG` である（Linux の `inode_newsize_ok` が、ファイルの大きさの上限を越えるときに返すもの）。
+pub const MAX_SHM_PAGES: usize = 4096;
 
-/// 共有メモリ 1 つ。
-#[derive(Clone, Copy)]
+/// 全部の共有メモリを合わせたページ数の上限（64 MiB。2026-10-26）。越える `ftruncate` は `-ENOMEM` である。
+pub const MAX_SHM_TOTAL_PAGES: usize = 16_384;
+
+/// 共有メモリ 1 つ。**`Copy` を持たない**（2026-10-26）——フレームの並びが 32 KiB あるので、うっかり値でコピーすると
+/// カーネルのスタックに載る。コピーが要る所は、コンパイラが止める。
 struct Shm {
     in_use: bool,
     /// アロケータから取ったフレーム（`pages` 枚が有効）。
@@ -65,6 +69,7 @@ struct Shm {
 }
 
 impl Shm {
+    /// 空の欄（静的な表の初期値にだけ使う。欄を空けるときは [`Shm::clear`] を使い、32 KiB の値を作らない）。
     const EMPTY: Self = Self {
         in_use: false,
         frames: [PhysAddr::new_const(0); MAX_SHM_PAGES],
@@ -79,9 +84,21 @@ impl Shm {
     fn live(&self) -> bool {
         self.in_use && !self.releasing
     }
+
+    /// 欄を空ける（その場で書き換える）。フレームの並びは使っていた分だけ消す。
+    fn clear(&mut self) {
+        let pages = self.pages;
+        self.frames[..pages].fill(PhysAddr::new_const(0));
+        self.in_use = false;
+        self.pages = 0;
+        self.len = 0;
+        self.refs = 0;
+        self.releasing = false;
+        self.seals = 0;
+    }
 }
 
-static SHMS: Locked<[Shm; MAX_SHM]> = Locked::new([Shm::EMPTY; MAX_SHM]);
+static SHMS: Locked<[Shm; MAX_SHM]> = Locked::new([const { Shm::EMPTY }; MAX_SHM]);
 
 static CREATED: AtomicU64 = AtomicU64::new(0);
 static RELEASED: AtomicU64 = AtomicU64::new(0);
@@ -179,7 +196,7 @@ pub fn create(allow_sealing: bool) -> Option<u8> {
     let mut shms = SHMS.lock();
     for index in 0..MAX_SHM {
         if !shms[index].in_use {
-            shms[index] = Shm::EMPTY;
+            shms[index].clear();
             shms[index].in_use = true;
             shms[index].refs = 1;
             // 破壊テスト (2026-10-20, memfd-ignores-allow-sealing-test): `MFD_ALLOW_SEALING` を見ず、いつも封を足せる形にする。
@@ -199,9 +216,15 @@ pub fn create(allow_sealing: bool) -> Option<u8> {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TruncateOutcome {
+    /// 据えた後のページ数。
     Pages(usize),
+    /// 1 つの上限（[`MAX_SHM_PAGES`]）を越える（`-EFBIG`）。
     TooLarge,
-    AlreadySet,
+    /// 縮める向き（`-EINVAL`。マッピングの数を持つまで受けない。`ADR-0065` の 2026-10-15 の Addendum）。
+    Shrink,
+    /// `F_SEAL_GROW` が立っているのに伸ばす（`-EPERM`）。
+    Sealed,
+    /// 全体の上限（[`MAX_SHM_TOTAL_PAGES`]）を越えるか、フレームが足りない（`-ENOMEM`）。
     NoRoom,
     NoShm,
 }
@@ -218,9 +241,59 @@ pub fn size_of(shm: u8) -> Option<u64> {
     (index < MAX_SHM && shms[index].live()).then(|| shms[index].len)
 }
 
-/// 大きさを据え、アロケータからフレームを取る。**中身は 0 にする。**
+/// `ftruncate` の判断（2026-10-26。**純粋。ホストで検査する**）。[`set_size`] の doc の「向きごとの扱い」の順で決める。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TruncatePlan {
+    /// 同じ大きさ。何もしない（今のページ数）。
+    Same(usize),
+    /// 伸ばす。`want` ページにし、`more` ページを新しく取る（ページ数が変わらない伸ばしなら 0）。
+    Grow { want: usize, more: usize },
+    /// 断る。
+    Refuse(TruncateOutcome),
+}
+
+/// 今の大きさ `len`（バイト）・ページ数 `pages`・封 `seals`・全体で取っているページ数 `held` から、`size` への `ftruncate` の
+/// 判断を返す。
+pub fn truncate_plan(len: u64, pages: usize, seals: u32, held: usize, size: u64) -> TruncatePlan {
+    if size == len {
+        return TruncatePlan::Same(pages);
+    }
+    if size < len {
+        return TruncatePlan::Refuse(TruncateOutcome::Shrink);
+    }
+    let want = pages_for(size);
+    if want > MAX_SHM_PAGES {
+        return TruncatePlan::Refuse(TruncateOutcome::TooLarge);
+    }
+    if seals & F_SEAL_GROW != 0 {
+        return TruncatePlan::Refuse(TruncateOutcome::Sealed);
+    }
+    let more = want.saturating_sub(pages);
+    if held.saturating_add(more) > MAX_SHM_TOTAL_PAGES {
+        return TruncatePlan::Refuse(TruncateOutcome::NoRoom);
+    }
+    TruncatePlan::Grow { want, more }
+}
+
+/// 大きさを据え、足りないページのフレームをアロケータから取る。**取ったページの中身は 0 にする。**
 ///
 /// **アロケータは呼び手が借りて渡す**（2026-10-08。`ftruncate` は、借りられるまで待ってから呼ぶ。以前は自分で借りていた）。
+///
+/// # 向きごとの扱い（2026-10-26。`ADR-0065` の Addendum）
+///
+/// - **同じ大きさ**は何もしない。
+/// - **伸ばす**（初めての `ftruncate` も、大きさ 0 からの伸ばしである）。確かめる順は Linux と同じである——1 つの上限を越えれば
+///   [`TruncateOutcome::TooLarge`]（`inode_newsize_ok` の `-EFBIG`）、`F_SEAL_GROW` が立っていれば [`TruncateOutcome::Sealed`]
+///   （`shmem_setattr` の `-EPERM`）。その後に全体の上限とフレームを見る（[`TruncateOutcome::NoRoom`]）。**既にあるマッピングは
+///   触らない**——伸ばした分は、後から `mmap` すれば見える（Linux と同じ）。
+/// - **縮める**は [`TruncateOutcome::Shrink`] で断る。マッピングの数を持つまでは、マップ中かどうかを分けられない
+///   （`ADR-0065` の 2026-10-15 の Addendum、`ADR-0085` の決定 6）。
+///
+/// **ページは `ftruncate` の時点で取り、0 で埋める**（Linux は書いた時点で取る。`ADR-0065` の Addendum の「合わせなかったもの」）。
+/// システムコールの中なので、埋める間は BKL を持ち、割り込みも止まっている。
+///
+/// **共有メモリの表（`SHMS`）のロックは、フレームを 1 つ取るたびに放して取り直す。** その間に同じ欄を別のタスクが触らないのは、呼び手が BKL を
+/// 持ち続けているからである。BKL を細かいロックに分けるときは、ここを見直す。
 ///
 /// 破壊テスト (`ADR-0065`, shm-ftruncate-ignores-size): 何ページ要っても 1 ページしか取らない。
 /// **模様の後ろが欠け、往復のバイト比べが落ちる。**
@@ -230,44 +303,51 @@ pub fn set_size(
     allocator: &mut crate::frame_allocator::FrameAllocator,
 ) -> TruncateOutcome {
     let index = shm as usize;
-    let already = {
+    let (already, len, seals) = {
         let shms = SHMS.lock();
         if index >= MAX_SHM || !shms[index].live() {
             return TruncateOutcome::NoShm;
         }
-        shms[index].pages
+        (shms[index].pages, shms[index].len, shms[index].seals)
     };
-    if already != 0 {
+    let held = SHARED_FRAMES_HELD.load(Ordering::Relaxed) as usize;
+    let (want, more) = match truncate_plan(len, already, seals, held, size) {
+        TruncatePlan::Same(pages) => return TruncateOutcome::Pages(pages),
+        TruncatePlan::Grow { want, more } => (want, more),
+        #[cfg(not(feature = "shm-ftruncate-shrinks-mapped-test"))]
+        TruncatePlan::Refuse(outcome) => return outcome,
+        #[cfg(feature = "shm-ftruncate-shrinks-mapped-test")]
+        TruncatePlan::Refuse(outcome) if outcome != TruncateOutcome::Shrink => return outcome,
         // 破壊テスト (2026-10-15, shm-ftruncate-shrinks-mapped-test): 縮める向きなら、マップ中でも末尾のフレームを
         // アロケータへ返して縮める。マップしたままのページがアロケータに戻る（直す前に無かった形を、わざと作る）。
         #[cfg(feature = "shm-ftruncate-shrinks-mapped-test")]
-        {
+        TruncatePlan::Refuse(_) => {
             let want = pages_for(size);
-            if want < already {
-                let mut shms = SHMS.lock();
-                for frame in &shms[index].frames[want..already] {
-                    let _ = allocator.deallocate_frame(*frame);
-                }
-                shms[index].pages = want;
-                shms[index].len = size;
-                SHARED_FRAMES_HELD.fetch_sub((already - want) as u64, Ordering::Relaxed);
-                return TruncateOutcome::Pages(want);
+            let mut shms = SHMS.lock();
+            for frame in &shms[index].frames[want..already] {
+                let _ = allocator.deallocate_frame(*frame);
             }
+            shms[index].pages = want;
+            shms[index].len = size;
+            SHARED_FRAMES_HELD.fetch_sub((already - want) as u64, Ordering::Relaxed);
+            return TruncateOutcome::Pages(want);
         }
-        return TruncateOutcome::AlreadySet;
-    }
-    let want = pages_for(size);
-    if want > MAX_SHM_PAGES {
-        return TruncateOutcome::TooLarge;
-    }
+    };
     #[cfg(feature = "shm-ftruncate-ignores-size")]
-    let want = want.min(1);
+    let (want, more) = {
+        let want = want.min(already.max(1));
+        (want, want.saturating_sub(already))
+    };
     let direct_map = common::addr::direct_map();
-    let mut taken = [PhysAddr::new_const(0); MAX_SHM_PAGES];
-    let mut got = 0usize;
-    while got < want {
+    for got in 0..more {
         let Some(frame) = allocator.allocate_frame() else {
-            break;
+            // **足りなければ、取った分を返して、大きさを変えない。**
+            let mut shms = SHMS.lock();
+            for frame in &shms[index].frames[already..already + got] {
+                let _ = allocator.deallocate_frame(*frame);
+            }
+            shms[index].frames[already..already + got].fill(PhysAddr::new_const(0));
+            return TruncateOutcome::NoRoom;
         };
         // **中身を 0 にする。** **前の住人の中身を共有しない。**
         // SAFETY: いま取ったフレームで、direct map が覆っている。
@@ -278,22 +358,15 @@ pub fn set_size(
                 PAGE_SIZE,
             )
         };
-        taken[got] = frame;
-        got += 1;
-    }
-    if got < want {
-        for frame in taken.iter().take(got) {
-            let _ = allocator.deallocate_frame(*frame);
-        }
-        return TruncateOutcome::NoRoom;
+        // 取るたびに欄へ置く（32 KiB の並びをスタックに作らない）。`pages` はまだ変えないので、置いた分は使う側から見えない。
+        SHMS.lock()[index].frames[already + got] = frame;
     }
     {
         let mut shms = SHMS.lock();
-        shms[index].frames[..want].copy_from_slice(&taken[..want]);
         shms[index].pages = want;
         shms[index].len = size;
     }
-    SHARED_FRAMES_HELD.fetch_add(want as u64, Ordering::Relaxed);
+    SHARED_FRAMES_HELD.fetch_add(more as u64, Ordering::Relaxed);
     TruncateOutcome::Pages(want)
 }
 
@@ -332,16 +405,25 @@ pub fn size_and_refs(shm: u8) -> Option<(usize, u32)> {
     Some((shms[index].pages, shms[index].refs))
 }
 
-/// `mmap` のために、フレームの物理アドレスと大きさをコピーして返す。**マップするのは呼び出し側。**
-pub fn frames_of(shm: u8, out: &mut [PhysAddr; MAX_SHM_PAGES]) -> Option<(usize, u64)> {
+/// `mmap` のために、据えたページ数と大きさを返す。**大きさが 0 の共有メモリと、無い共有メモリなら `None`。** フレームは
+/// [`frame_at`] で 1 ページずつ引く（2026-10-26。並びを丸ごとコピーすると、4,096 本で 32 KiB になる）。
+pub fn mapping_size(shm: u8) -> Option<(usize, u64)> {
     let index = shm as usize;
     let shms = SHMS.lock();
     if index >= MAX_SHM || !shms[index].live() || shms[index].pages == 0 {
         return None;
     }
-    let pages = shms[index].pages;
-    out[..pages].copy_from_slice(&shms[index].frames[..pages]);
-    Some((pages, shms[index].len))
+    Some((shms[index].pages, shms[index].len))
+}
+
+/// `page` 枚目のフレーム（2026-10-26。`mmap` が 1 ページずつ引く）。**据えたページの外か、無い共有メモリなら `None`。**
+pub fn frame_at(shm: u8, page: usize) -> Option<PhysAddr> {
+    let index = shm as usize;
+    let shms = SHMS.lock();
+    if index >= MAX_SHM || !shms[index].live() || page >= shms[index].pages {
+        return None;
+    }
+    Some(shms[index].frames[page])
 }
 
 /// 参照を 1 つ増やす。**`sendmsg` の `SCM_RIGHTS` が呼ぶ。**
@@ -383,7 +465,7 @@ pub fn detach(shm: u8) {
         };
         free_frames(&mut shms[index], &mut allocator);
     } else {
-        shms[index] = Shm::EMPTY;
+        shms[index].clear();
         RELEASED.fetch_add(1, Ordering::Relaxed);
     }
 }
@@ -394,7 +476,7 @@ fn free_frames(slot: &mut Shm, allocator: &mut crate::frame_allocator::FrameAllo
         let _ = allocator.deallocate_frame(*frame);
     }
     SHARED_FRAMES_HELD.fetch_sub(slot.pages as u64, Ordering::Relaxed);
-    *slot = Shm::EMPTY;
+    slot.clear();
     RELEASED.fetch_add(1, Ordering::Relaxed);
 }
 
@@ -422,6 +504,70 @@ pub fn release_pending() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn truncate_plan_follows_the_linux_order() {
+        const PAGE: u64 = PAGE_SIZE as u64;
+        // 同じ大きさは何もしない。
+        assert_eq!(
+            truncate_plan(256_000, 63, 0, 63, 256_000),
+            TruncatePlan::Same(63)
+        );
+        // 初めての ftruncate は 0 からの伸ばし。タスクバーの pool が 2 枚目のバッファで伸びる形も。
+        assert_eq!(
+            truncate_plan(0, 0, 0, 0, 256_000),
+            TruncatePlan::Grow { want: 63, more: 63 }
+        );
+        assert_eq!(
+            truncate_plan(256_000, 63, 0, 63, 512_000),
+            TruncatePlan::Grow {
+                want: 125,
+                more: 62
+            }
+        );
+        // ページ数の変わらない伸ばし。
+        assert_eq!(
+            truncate_plan(100, 1, 0, 1, 200),
+            TruncatePlan::Grow { want: 1, more: 0 }
+        );
+        // 縮める向きは、ページ数が同じでも断る。
+        assert_eq!(
+            truncate_plan(200, 1, 0, 1, 100),
+            TruncatePlan::Refuse(TruncateOutcome::Shrink)
+        );
+        // 1 つの上限ちょうどは通り、1 バイト越えると -EFBIG。封より先に見る（Linux の setattr_prepare の後に封）。
+        let max = MAX_SHM_PAGES as u64 * PAGE;
+        assert_eq!(
+            truncate_plan(0, 0, 0, 0, max),
+            TruncatePlan::Grow {
+                want: MAX_SHM_PAGES,
+                more: MAX_SHM_PAGES
+            }
+        );
+        assert_eq!(
+            truncate_plan(0, 0, F_SEAL_GROW, 0, max + 1),
+            TruncatePlan::Refuse(TruncateOutcome::TooLarge)
+        );
+        // F_SEAL_GROW なら伸ばせない。F_SEAL_SHRINK だけなら伸ばせる。
+        assert_eq!(
+            truncate_plan(PAGE, 1, F_SEAL_GROW, 1, 2 * PAGE),
+            TruncatePlan::Refuse(TruncateOutcome::Sealed)
+        );
+        assert_eq!(
+            truncate_plan(PAGE, 1, F_SEAL_SHRINK, 1, 2 * PAGE),
+            TruncatePlan::Grow { want: 2, more: 1 }
+        );
+        // 全体の上限ちょうどは通り、1 ページ越えると -ENOMEM。
+        let held = MAX_SHM_TOTAL_PAGES - 1;
+        assert_eq!(
+            truncate_plan(0, 0, 0, held, PAGE),
+            TruncatePlan::Grow { want: 1, more: 1 }
+        );
+        assert_eq!(
+            truncate_plan(0, 0, 0, held, 2 * PAGE),
+            TruncatePlan::Refuse(TruncateOutcome::NoRoom)
+        );
+    }
 
     #[test]
     fn pages_round_up() {

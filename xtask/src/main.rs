@@ -24403,6 +24403,8 @@ fn cmd_linux_socket_test() -> Result<()> {
     let iovecs_ended = format!("spawn: /bin/linux/{iovecs} ended");
     let ppoll = "wl-ppoll-rust";
     let ppoll_ended = format!("spawn: /bin/linux/{ppoll} ended");
+    let grow = "wl-memfd-grow-rust";
+    let grow_ended = format!("spawn: /bin/linux/{grow} ended");
     let deadline = Instant::now() + PIPE_TEST_TIMEOUT;
     loop {
         if child.was_cut() {
@@ -24637,6 +24639,19 @@ fn cmd_linux_socket_test() -> Result<()> {
         .lines()
         .find(|line| line.contains(&ppoll_ended))
         .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
+    // **memfd を伸ばす 2 回目の `ftruncate`**（2026-10-26。`ADR-0065` の Addendum）。終わり方と Linux の参照で見る（伸ばした後の
+    // 新しいマッピングに前のバイトが残り、伸ばした分が 0 であること、封の `EPERM` が行に出る）。
+    let grow_ran = serial.contains(&format!("{grow_ended} (Exited(4))"));
+    let grow_matched = linux_program_output_matches(
+        &workspace_root,
+        grow,
+        &serial,
+        LinuxReferenceEnvironment::ExactCount,
+    )?;
+    let grow_unknown_free = serial
+        .lines()
+        .find(|line| line.contains(&grow_ended))
+        .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
     // **memfd のフラグと名前・封・fstat・作り方ごとの `FD_CLOEXEC`**（2026-10-20。`ADR-0065` の Addendum）。終わり方と Linux の
     // 参照で見る（封と `F_GETFD` の値が行に出る）。
     let memfd_ran = serial.contains(&format!("{memfd_ended} (Exited(4))"));
@@ -24727,6 +24742,11 @@ fn cmd_linux_socket_test() -> Result<()> {
         "{context}: {ppoll} printed what Linux prints (linux-programs/reference/{ppoll}.txt) = {ppoll_matched}"
     );
     println!("{context}: {ppoll} hit no number the kernel does not know = {ppoll_unknown_free}");
+    println!("{context}: {grow} ended with status 4 = {grow_ran}");
+    println!(
+        "{context}: {grow} printed what Linux prints (linux-programs/reference/{grow}.txt) = {grow_matched}"
+    );
+    println!("{context}: {grow} hit no number the kernel does not know = {grow_unknown_free}");
     println!("{context}: {memfd} ended with status 4 = {memfd_ran}");
     println!(
         "{context}: {memfd} printed what Linux prints (linux-programs/reference/{memfd}.txt) = {memfd_matched}"
@@ -24768,6 +24788,9 @@ fn cmd_linux_socket_test() -> Result<()> {
         && ppoll_ran
         && ppoll_matched
         && ppoll_unknown_free
+        && grow_ran
+        && grow_matched
+        && grow_unknown_free
         && memfd_ran
         && memfd_matched
         && memfd_unknown_free
@@ -24789,6 +24812,7 @@ fn cmd_linux_socket_test() -> Result<()> {
                 || l.contains(reopen)
                 || l.contains(iovecs)
                 || l.contains(ppoll)
+                || l.contains(grow)
                 || l.contains(memfd)
                 || l.contains("[ERROR]")
         })

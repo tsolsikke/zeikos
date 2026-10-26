@@ -114,5 +114,7 @@ record wl-listener-reopen-rust
 record_with_one_pipe wl-iovec-threads-rust
 # ppoll の待つ長さ・シグナルのマスク・確かめの順（2026-10-24）。
 record wl-ppoll-rust
+# memfd を伸ばす 2 回目の ftruncate（2026-10-26）。
+record wl-memfd-grow-rust
 record m1-c
 record m3a-c

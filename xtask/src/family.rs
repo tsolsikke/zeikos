@@ -277,6 +277,7 @@ pub const PATH_RULES: &[PathRule] = &[
             "linux-programs/wl-listener-reopen-rust.rs",
             "linux-programs/wl-iovec-threads-rust.rs",
             "linux-programs/wl-ppoll-rust.rs",
+            "linux-programs/wl-memfd-grow-rust.rs",
         ],
         reach: Reach::Families(&[Family::Ipc, Family::Interrupts]),
     },
