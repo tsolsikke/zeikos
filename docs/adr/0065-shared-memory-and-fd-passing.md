@@ -229,3 +229,29 @@ fd を `SCM_RIGHTS` で送り、`sockd` が同じ物理フレームを `mmap` �
 - **見つけたこと。** ZeikOSのソケットは、`SCM_RIGHTS`で渡すfdを向きごとに1つまでしか待たせない（`kernel/src/socket.rs`の`queue_fd`）。2つ目は1つ目が受け取られるまで送れない。
 - **確かめ。** `linux-programs/wl-memfd-seals-rust.rs`（`linux-socket-test`のビルド）。フラグと名前の答え、封の答え、memfdの`fstat`、作り方ごとの`F_GETFD`を、WSLで取ったLinuxの参照と全行突き合わせる。破壊テストは2件（`memfd-ignores-allow-sealing`・`memfd-seals-not-kept`）で、どちらもイメージが名指しの行を出して終わる。
 
+
+## Addendum（2026-10-26、共有メモリの上限を上げ、伸ばす`ftruncate`を受ける）
+
+Seinasのタスクバーのpoolは`ftruncate(fd, 256000)`で始まり、1280の幅では2枚目のバッファで伸びて、2回目の`ftruncate(512000)`になる。今までの上限（2個、1個あたり8ページ）と、2回目の`ftruncate`を向きにかかわらず断る形では、どちらも通らなかった。
+
+### 決めたこと
+
+- **上限。** 個数は16（`MAX_SHM`）、1個あたり4,096ページ = 16 MiB（`MAX_SHM_PAGES`。FHDの2枚、約16.6 MBまで入る）、全体で16,384ページ = 64 MiB（`MAX_SHM_TOTAL_PAGES`）。
+- **フレームの持ち方。** 共有メモリごとの固定の並びを広げた（`[PhysAddr; 4096]`×16で512 KiBの`.bss`）。確保の失敗の道を増やさない。`Shm`は`Copy`を外し、32 KiBの値を作ってスタックに載せる形をコンパイラが止める。欄を空けるときは、その場で書き換える（`Shm::clear`）。`mmap`は、並びを丸ごとスタックへコピーする形をやめ、ロックを取って1ページずつ引く（`frame_at`）。
+- **伸ばす`ftruncate`。** 足りないページのフレームを取って0で埋め、並びの後ろへ足す。既にあるマッピングは触らない（ページテーブルは変えない）。伸ばした分は、後から`mmap`すれば見える（Linuxと同じ）。同じ大きさへの`ftruncate`は何もせずに0を返す。
+- **確かめる順とerrnoはLinuxにそろえた**（`fs/open.c`の`do_ftruncate`、`fs/attr.c`の`inode_newsize_ok`、`mm/shmem.c`の`shmem_setattr`）。1個の上限を越えれば`-EFBIG`（ファイルの大きさの上限を越えるときの値）、その後に封を見て`F_SEAL_GROW`なら`-EPERM`。全体の上限を越えるときと、フレームが足りないときは`-ENOMEM`。判断は`kernel/src/shm.rs`の`truncate_plan`にまとめ、ホストのテストで順を固定した。
+- **縮める`ftruncate`。** 今までどおり`-EINVAL`で断り、名指しの行を出す（`shm: ftruncate refused: … the shrink to …`）。マップ中かどうかを分けられるのは、マッピングの数を持つ課題の後である（マッピングが無いときの縮小は、そこで受ける）。
+
+### Linuxとの差
+
+合わせなかったもの:
+
+- **ページは`ftruncate`の時点で取り、0で埋める。** Linuxのmemfdは`NORESERVE`で、書いた時点で取る（`ftruncate`ではメモリを数えない）。そのため、ZeikOSでは`ftruncate`がフレームの不足を`-ENOMEM`で返し、Linuxは通す（書いたときに足りなければ`SIGBUS`）。0で埋める間は、システムコールの中なのでBKLを持ち、割り込みも止まっている。測った時間（QEMU。2026-10-26）は、256,000バイト（63ページ）で約0.2ミリ秒、16 MiB（4,096ページ）で約12〜20ミリ秒（1〜2ティック）だった。大きいときに割り込みを止めたまま埋める形は、別に直す。
+- **長さが負の`ftruncate`は`-EFBIG`になる。** 長さを符号の無い値として読むので、1個の上限を越える大きさとして断る。Linuxは`-EINVAL`を返す（`ksys_ftruncate`）。別に直す。
+- **1個16 MiB・全体64 MiBの上限。** Linuxのmemfdには、この大きさの上限は無い（`RLIMIT_FSIZE`と`s_maxbytes`だけ）。
+- **共有のマッピングの`munmap`は、今も`-EINVAL`で断る**（マッピングの数を持つ課題の後で受ける）。Seinasの伸ばし方では、タスクバーは「`ftruncate(512000)` → `mmap(512000)` → 前の256,000の`munmap`」、コンポジタは「前の256,000の`munmap` → `mmap(512000)`」の順で（Seinasの側のLinuxでのstrace。どちらも`mremap`は使わない）、`munmap`が断られる。呼ぶ側は、どちらも`munmap`の失敗を見ずに進む——タスクバーのmemmap2は`Drop`で答えを捨て（`memmap2`の`unix.rs`の`impl Drop for MmapInner`）、コンポジタのSmithayは`remap`で`let _ =`で捨ててから新しい大きさで`mmap`する（Smithay の shm の pool の`MemMap::remap`）。そのため、古いマッピングは仮想アドレスごと残る。ZeikOSの上で確かめるのは、タスクバーをつなぐ結合の課題である。
+
+### 確かめ
+
+- `linux-programs/wl-memfd-grow-rust.rs`（`linux-socket-test`のビルド）。256,000バイトの`ftruncate`→`mmap`→模様、同じ大きさの`ftruncate`、512,000バイトへ伸ばして全体を新しく`mmap`し、前のバイトが残り・伸ばした分が0で・前のマッピングからも同じバイトが読めること、`F_SEAL_SHRINK`だけなら伸ばせて`F_SEAL_GROW`なら`EPERM`、16 MiBへの`ftruncate`を、Linuxの参照と突き合わせる。古いマッピングの`munmap`は打たない。
+- `-EFBIG`と全体の上限の`-ENOMEM`はLinuxでは通るので、`kernel/src/shm.rs`のホストのテスト（`truncate_plan_follows_the_linux_order`）で固定した。
