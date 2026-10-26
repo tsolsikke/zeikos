@@ -1,0 +1,18 @@
+wl-ppoll-rust: main starts with 4 argument(s)
+wl-ppoll-rust: ppoll with POLLIN|POLLERR and no timeout on a readable socket returned 1 with POLLIN = true
+wl-ppoll-rust: ppoll with a zero timeout on an empty socket returned 0 at once = true
+wl-ppoll-rust: ppoll with 30 ms on an empty socket returned 0 and wrote back 0 s 0 ns = true
+wl-ppoll-rust: that ppoll took at least 30 ms and less than 1 s = true
+wl-ppoll-rust: ppoll with 5 s on a readable socket returned 1 and left at most 5 s = true
+wl-ppoll-rust: ppoll with no timeout returned 1 after another thread wrote = true
+wl-ppoll-rust: a timeout with 1e9 nanoseconds or a negative second failed with EINVAL = true
+wl-ppoll-rust: an unreadable timeout failed with EFAULT, before a bad sigsetsize was looked at = true
+wl-ppoll-rust: a sigmask with sigsetsize 8 was taken, 4 failed with EINVAL, and a null sigmask ignored the size = true
+wl-ppoll-rust: an unreadable sigmask failed with EFAULT = true
+wl-ppoll-rust: poll with -1 on a readable socket returned 1 with POLLIN = true
+wl-ppoll-rust: poll with 0 on an empty socket returned 0 at once = true
+wl-ppoll-rust: poll with 30 ms on an empty socket returned 0 after at least 30 ms and less than 1 s = true
+wl-ppoll-rust: poll with POLLIN|POLLERR and 5000 ms returned 1 before 5 s after another thread wrote = true
+wl-ppoll-rust: poll with POLLIN|POLLERR and -5 (a negative timeout waits on) returned 1 before 5 s after another thread wrote = true
+wl-ppoll-rust: done
+exit status: 4

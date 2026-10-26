@@ -54,7 +54,8 @@ use crate::abi::linux::x86_64::{
 };
 use crate::abi::linux::x86_64::{
     SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_PWAIT, SYS_EPOLL_WAIT,
-    SYS_EVENTFD, SYS_EVENTFD2, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME, SYS_TIMERFD_SETTIME,
+    SYS_EVENTFD, SYS_EVENTFD2, SYS_PPOLL, SYS_TIMERFD_CREATE, SYS_TIMERFD_GETTIME,
+    SYS_TIMERFD_SETTIME,
 };
 use crate::abi::linux::{
     cmsg_one_fd_bytes, dirent64_record, dirent64_record_len, fb_fix_screeninfo_bytes,
@@ -69,10 +70,10 @@ use crate::abi::linux::{
     GRND_RANDOM, INPUT_EVENT_LEN, IOVEC_LEN, ITIMERSPEC_LEN, MAP_ANONYMOUS, MAP_FIXED,
     MAP_FIXED_NOREPLACE, MFD_ALLOW_SEALING, MFD_CLOEXEC, MFD_NAME_MAX_LEN, MSGHDR_CONTROLLEN,
     MSGHDR_LEN, MSG_CMSG_CLOEXEC, MSG_DONTWAIT, MSG_NOSIGNAL, O_ACCMODE, O_APPEND, O_CLOEXEC,
-    O_CREAT, O_NONBLOCK, O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY, POLLFD_LEN, POLLIN, POLLNVAL,
-    PROT_EXEC, PROT_READ, PROT_WRITE, SCM_RIGHTS, SEEK_CUR, SEEK_END, SEEK_SET, SOCKADDR_UN_LEN,
-    SOCK_CLOEXEC, SOCK_NONBLOCK, SOCK_STREAM, SOCK_TYPE_MASK, SOL_SOCKET, TFD_CLOEXEC,
-    TFD_NONBLOCK, TFD_TIMER_ABSTIME, TIMESPEC_LEN, TIOCGWINSZ, WINSIZE_LEN,
+    O_CREAT, O_NONBLOCK, O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY, POLLERR, POLLFD_LEN, POLLHUP, POLLIN,
+    POLLNVAL, PROT_EXEC, PROT_READ, PROT_WRITE, SCM_RIGHTS, SEEK_CUR, SEEK_END, SEEK_SET,
+    SOCKADDR_UN_LEN, SOCK_CLOEXEC, SOCK_NONBLOCK, SOCK_STREAM, SOCK_TYPE_MASK, SOL_SOCKET,
+    TFD_CLOEXEC, TFD_NONBLOCK, TFD_TIMER_ABSTIME, TIMESPEC_LEN, TIOCGWINSZ, WINSIZE_LEN,
 };
 use crate::abi::linux::{
     E2BIG, EACCES, EADDRINUSE, EAFNOSUPPORT, EAGAIN, EBADF, EBUSY, ECHILD, ECONNREFUSED, EEXIST,
@@ -1003,6 +1004,8 @@ unsafe fn dispatch(
         SYS_POLL => unsafe {
             poll_from_ring3(args[0], args[1], args[2], page_table_root, direct_map, bkl)
         },
+        // SAFETY: 同上。`bkl` はいま保持しているガードである。
+        SYS_PPOLL => unsafe { ppoll_from_ring3(args, page_table_root, direct_map, bkl) },
         SYS_SOCKET => socket_from_ring3(args[0], args[1], args[2]),
         // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
         SYS_BIND => unsafe {
@@ -2840,8 +2843,8 @@ fn poll_is_ready(reason: crate::task::Wait) -> bool {
 /// は使わない**。`ADR-0066` の「番号」）。
 ///
 /// **`ADR-0066` の Q3 は「一般の `poll` は作らない」と決めた。** **作らないのは意味の側である**
-/// ——**v1 が見るのは [`POLLIN`] だけで、`timeout` は -1（無限）と 0（待たない）だけを受ける。**
-/// **それ以外は `-EINVAL` である**（下の限界）。
+/// ——**v1 が見るのは [`POLLIN`] だけである。** **それ以外は `-EINVAL` である**（下の限界）。`timeout` は、負（無限）・0（待たない）・
+/// 正（ミリ秒。切り上げたティックの締切まで待ち、過ぎたら 0）を受ける（2026-10-24。`ADR-0066` の Addendum）。
 ///
 /// # 待つ形は W2-c からのものである
 ///
@@ -2863,10 +2866,11 @@ fn poll_is_ready(reason: crate::task::Wait) -> bool {
 ///
 /// # v1 の限界（見直すきっかけつき）
 ///
-/// - **`events` は [`POLLIN`] だけを受ける**（`POLLOUT` などは `-EINVAL`）。**黙って無視すると、
+/// - **`events` は [`POLLIN`] だけを受ける**（`POLLOUT` などは `-EINVAL`。[`POLLERR`] と [`POLLHUP`] は立っていても受ける。
+///   Linux が `events` に関係なく返す印なので、2026-10-24 に受けた）。**黙って無視すると、
 ///   書ける待ちを頼んだ側が読める待ちで眠る。** **見直すきっかけ：書ける待ちが要るとき。**
-/// - **`timeout` は -1 と 0 だけを受ける。** **見直すきっかけ：締切つきの待ちが要るとき**
-///   （**集合に [`crate::task::Wait::Timer`] を入れれば足りる**）。
+/// - **締切つきの頼みは、fd を [`MAX_POLL_FDS`] より 1 つ少なく受ける**（2026-10-24。集合の 1 つを締切の
+///   [`crate::task::Wait::Timer`] に使う）。**見直すきっかけ：締切つきで 4 本を見張る利用者が出たとき。**
 /// - **開いていない fd は `-EBADF` である**（Linux は `revents` に `POLLNVAL` を立てて
 ///   その 1 件だけを失敗にする）。**見直すきっかけ：混ざった集合を渡す利用者が出たとき。**
 ///
@@ -2882,12 +2886,57 @@ unsafe fn poll_from_ring3(
     direct_map: DirectMap,
     bkl: &mut Option<crate::bkl::BklGuard>,
 ) -> u64 {
-    // **`timeout` は `int` である**（Linux の署名）。**下位 32 ビットを符号つきで読む。**
-    let timeout = timeout as u32 as i32;
-    if nfds == 0 || nfds > MAX_POLL_FDS as u64 {
-        return (-EINVAL) as u64;
-    }
-    if timeout != -1 && timeout != 0 {
+    // **`timeout` は `int` のミリ秒である**（Linux の署名）。**下位 32 ビットを符号つきで読む。** 負はどれも待ち続け、0 は待たず、
+    // 正はその長さまで待つ（Linux の `poll` と同じ。2026-10-24 に正の長さを受けた。それまでは -1 と 0 だけだった）。
+    let timeout = match timeout as u32 as i32 {
+        ms if ms < 0 => PollTimeout::Forever,
+        0 => PollTimeout::Now,
+        ms => {
+            let hz = u64::from(crate::machine::pc::timer_frequency_hz());
+            let ms = i64::from(ms);
+            // 範囲の内なので失敗しない（秒は正、ナノ秒は 10 億未満）。
+            let ticks = common::time::ticks_for_duration(ms / 1000, (ms % 1000) * 1_000_000, hz)
+                .unwrap_or(0);
+            PollTimeout::Until(crate::arch::x86_64::monotonic_ticks().saturating_add(ticks))
+        }
+    };
+    // SAFETY: 呼び出し元契約をそのまま渡す。`bkl` はいま保持しているガードである。
+    unsafe { poll_with_timeout(fds, nfds, timeout, page_table_root, direct_map, bkl) }
+}
+
+/// `poll`・`ppoll` が待つ長さ（2026-10-24）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PollTimeout {
+    /// 読めるまで待つ（`poll` の -1、`ppoll` の NULL）。
+    Forever,
+    /// 待たない（`poll` の 0、`ppoll` の 0 秒 0 ナノ秒）。
+    Now,
+    /// 単調なティックがこの値に届くまで待つ（`poll` と `ppoll` の正の長さ）。**待ちの集合の 1 つを締切（[`crate::task::Wait::Timer`]）に
+    /// 使うので、見られる fd は [`MAX_POLL_FDS`] より 1 つ少ない。**
+    Until(u64),
+}
+
+/// `poll`・`ppoll` の共通の本体（2026-10-24 に [`poll_from_ring3`] から分けた）。確かめと待ち方は [`poll_from_ring3`] の doc の
+/// とおりで、待つ長さだけを `timeout` で受ける。
+///
+/// # Safety
+///
+/// `page_table_root` / `direct_map` が [`validate_user_range`] の契約を満たすこと。
+#[inline(never)]
+unsafe fn poll_with_timeout(
+    fds: u64,
+    nfds: u64,
+    timeout: PollTimeout,
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+    bkl: &mut Option<crate::bkl::BklGuard>,
+) -> u64 {
+    // 締切つきなら、集合の 1 つを締切に使う。
+    let fd_limit = match timeout {
+        PollTimeout::Until(_) => MAX_POLL_FDS - 1,
+        _ => MAX_POLL_FDS,
+    };
+    if nfds == 0 || nfds > fd_limit as u64 {
         return (-EINVAL) as u64;
     }
     let count = nfds as usize;
@@ -2928,7 +2977,9 @@ unsafe fn poll_from_ring3(
             }
             continue;
         }
-        if request.events != POLLIN {
+        // **`POLLERR` と `POLLHUP` は、`events` に立っていても受ける**（2026-10-24）。Linux はこの 2 つを `events` に関係なく
+        // 返すので、頼んでも意味は変わらない。wayland-client は `POLLIN | POLLERR` で待つ。
+        if request.events & !(POLLERR | POLLHUP) != POLLIN {
             return (-EINVAL) as u64;
         }
         let Some(reason) = poll_reason_of(request.fd as u64) else {
@@ -2980,9 +3031,13 @@ unsafe fn poll_from_ring3(
             unsafe { copy_to_user(&slice, 0, &raw[..count * POLLFD_LEN]) };
             return ready as u64;
         }
-        // **待たない頼み（`timeout` = 0）は、ここで 0 を返す。**
-        if timeout == 0 {
-            return 0;
+        // **待たない頼み（`timeout` = 0）と、締切を過ぎた待ちは、ここで 0 を返す。**
+        match timeout {
+            PollTimeout::Now => return 0,
+            PollTimeout::Until(deadline) if crate::arch::x86_64::monotonic_ticks() >= deadline => {
+                return 0
+            }
+            _ => {}
         }
         // **キーボードを待つ集合は、待つ条件が端末の `read(0)` と同じである**（`sys_read` の端末分岐の doc）。
         // **対話の口が据えられていない間と、スクリプトが入力を駆動している間は待たない**
@@ -2996,7 +3051,9 @@ unsafe fn poll_from_ring3(
             .iter()
             .take(count)
             .any(|slot| matches!(slot, Some(crate::task::Wait::Keyboard)));
-        let nothing_to_wait_on = reasons.iter().take(count).all(Option::is_none);
+        // 締切つきなら、fd に待つ理由が無くても締切まで待つ（Linux の `ppoll` と同じ）。
+        let nothing_to_wait_on = reasons.iter().take(count).all(Option::is_none)
+            && !matches!(timeout, PollTimeout::Until(_));
         if (waits_on_keyboard || nothing_to_wait_on)
             && (!crate::console::foreground_installed() || crate::input::script_drives_input())
         {
@@ -3019,6 +3076,13 @@ unsafe fn poll_from_ring3(
                 return (-EINVAL) as u64;
             }
         }
+        // **締切を集合へ入れる**（2026-10-24。ティックの `wake_expired_timers` が起こす。`epoll_wait` と同じ形）。締切つきの
+        // 頼みは fd を 1 つ少なく受けているので、入らないことは無い。
+        if let PollTimeout::Until(deadline) = timeout {
+            if !set.push(crate::task::Wait::Timer { deadline }) {
+                return (-EINVAL) as u64;
+            }
+        }
         // 破壊テスト (Y-b, poll-never-waits): 待たずに 0 を返す。**呼ぶ側が回して待つ形へ戻る**
         // ——**判定「`poll` が待った」だけが落ちる。** **`cfg!` で書くのは、`#[cfg]` の早い
         // 戻りにすると「回らない回し」になって `clippy` が止めるためである。**
@@ -3030,6 +3094,107 @@ unsafe fn poll_from_ring3(
             return (-EINTR) as u64;
         }
     }
+}
+
+/// `ppoll` の `sigsetsize` に受ける値（Linux の `sizeof(sigset_t)`。x86_64 では 8 バイト）。
+const PPOLL_SIGSET_LEN: u64 = 8;
+
+/// [`SYS_PPOLL`] の本体（2026-10-24）。`ppoll(fds, nfds, tsp, sigmask, sigsetsize)`。**読める fd の数か `-errno` を返す。**
+///
+/// # 確かめる順は Linux と同じ（`fs/select.c` の `ppoll`）
+///
+/// 1. `tsp` が NULL でなければ `struct timespec` を読む。読めなければ `-EFAULT`、秒が負かナノ秒が 0 未満か 10 億以上なら
+///    `-EINVAL`。0 秒 0 ナノ秒なら待たない。NULL なら読めるまで待つ。
+/// 2. `sigmask` が NULL でなければ、`sigsetsize` が 8 でなければ `-EINVAL`、8 バイトが読めなければ `-EFAULT`。NULL なら
+///    `sigsetsize` を見ない。
+/// 3. `fds` と `nfds` を `poll` と同じに見て、待つ（[`poll_with_timeout`]。fd の種類の受け方・キーボードを含む集合の扱いも
+///    `poll` と同じ）。
+/// 4. `tsp` が NULL でなく、長さが 0 でなければ、残りの長さを `tsp` へ書き戻す（Linux と同じ）。書く直前に確かめ、書けなければ
+///    書かずに 3 の答えを返す（Linux も、書き戻しの失敗では答えを変えない）。
+///
+/// # Linux との差（`ADR-0066` の 2026-10-24 の Addendum）
+///
+/// - **`sigmask` は確かめるだけで、待つ間のマスクにしない。** ZeikOS は、待っている間にシグナルを届けない。マスクを
+///   入れ替えても見える違いが無いので、入れ替えない。
+/// - **締切つきの頼みは、fd を [`MAX_POLL_FDS`] より 1 つ少なく受ける**（集合の 1 つを締切に使う）。`nfds` が 0 の頼みは、
+///   `poll` と同じく `-EINVAL` である（Linux は締切まで眠る）。
+/// - 残りの長さは、ティック（10 ミリ秒）の単位である。
+///
+/// # Safety
+///
+/// `page_table_root` / `direct_map` が [`validate_user_range`] の契約を満たすこと。
+#[inline(never)]
+unsafe fn ppoll_from_ring3(
+    args: &[u64; 6],
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+    bkl: &mut Option<crate::bkl::BklGuard>,
+) -> u64 {
+    let [fds, nfds, tsp, sigmask, sigsetsize, _] = *args;
+    let hz = u64::from(crate::machine::pc::timer_frequency_hz());
+    // 1. 待つ長さ。
+    let timeout = if tsp == 0 {
+        PollTimeout::Forever
+    } else {
+        // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+        let Some(slice) =
+            (unsafe { validate_user_range(page_table_root, direct_map, tsp, TIMESPEC_LEN as u64) })
+        else {
+            return (-EFAULT) as u64;
+        };
+        let mut raw = [0u8; TIMESPEC_LEN];
+        // SAFETY: slice は検証済みで、長さは TIMESPEC_LEN ちょうどである。
+        if unsafe { copy_from_user(&mut raw, &slice) } != TIMESPEC_LEN {
+            return (-EFAULT) as u64;
+        }
+        let request = parse_timespec(&raw);
+        let Ok(ticks) = common::time::ticks_for_duration(request.sec, request.nsec, hz) else {
+            return (-EINVAL) as u64;
+        };
+        if request.sec == 0 && request.nsec == 0 {
+            PollTimeout::Now
+        } else {
+            PollTimeout::Until(crate::arch::x86_64::monotonic_ticks().saturating_add(ticks))
+        }
+    };
+    // 2. シグナルのマスク（確かめるだけ。doc の「Linux との差」）。
+    if sigmask != 0 {
+        if sigsetsize != PPOLL_SIGSET_LEN {
+            return (-EINVAL) as u64;
+        }
+        // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+        let Some(slice) = (unsafe {
+            validate_user_range(page_table_root, direct_map, sigmask, PPOLL_SIGSET_LEN)
+        }) else {
+            return (-EFAULT) as u64;
+        };
+        let mut raw = [0u8; PPOLL_SIGSET_LEN as usize];
+        // SAFETY: slice は検証済みで、長さは 8 バイトちょうどである。
+        if unsafe { copy_from_user(&mut raw, &slice) } != raw.len() {
+            return (-EFAULT) as u64;
+        }
+    }
+    // 3. 待つ。
+    // SAFETY: 呼び出し元契約をそのまま渡す。`bkl` はいま保持しているガードである。
+    let answer = unsafe { poll_with_timeout(fds, nfds, timeout, page_table_root, direct_map, bkl) };
+    // 4. 残りの長さを書き戻す。**書く直前に確かめる**——待つ間に別のスレッドが `tsp` の範囲を外しうる。
+    if let PollTimeout::Until(deadline) = timeout {
+        let left = deadline.saturating_sub(crate::arch::x86_64::monotonic_ticks());
+        let (sec, nsec) = common::time::timespec_from_ticks(left, hz);
+        let bytes = timespec_bytes(&Timespec {
+            sec: sec as i64,
+            nsec: nsec as i64,
+        });
+        // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
+        if let Some(slice) = unsafe {
+            validate_user_range_for_write(page_table_root, direct_map, tsp, TIMESPEC_LEN as u64)
+        } {
+            // 書いた長さ（返り値）は、わざと見ない。書き戻しの成否で答えを変えないのは Linux と同じである（`poll_select_finish`）。
+            // SAFETY: `slice` はいま確かめた範囲で、確かめてから BKL を放していない。書く長さは TIMESPEC_LEN ちょうどである。
+            unsafe { copy_to_user(&slice, 0, &bytes) };
+        }
+    }
+    answer
 }
 
 /// [`SYS_BIND`] の本体。**名前を取り、fd を listener にする**（`listen` はまだ）。

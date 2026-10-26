@@ -139,6 +139,11 @@ pub const FIONBIO: u64 = 0x5421;
 
 /// `POLLIN`（読めるようになった）。**v1 が見る唯一のビットである。**
 pub const POLLIN: u16 = 0x001;
+/// `POLLERR`（誤りが起きた）。Linux は `events` に関係なく `revents` に立てるので、`events` に立っていても意味は変わらない
+/// （2026-10-24。wayland-client は `POLLIN | POLLERR` で待つ）。
+pub const POLLERR: u16 = 0x008;
+/// `POLLHUP`（相手が閉じた）。`POLLERR` と同じく、`events` に立っていても意味は変わらない（2026-10-24）。
+pub const POLLHUP: u16 = 0x010;
 /// `POLLNVAL`（開いていない fd。`revents` にだけ立つ。2026-10-06）。
 pub const POLLNVAL: u16 = 0x020;
 

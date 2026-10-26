@@ -182,5 +182,8 @@ pub const SYS_EPOLL_CTL: u64 = 233;
 /// `epoll_pwait(epfd, events, maxevents, timeout, sigmask, sigsetsize)` の番号（2026-10-19。`__NR_epoll_pwait`。rustix は
 /// これを打つ）。
 pub const SYS_EPOLL_PWAIT: u64 = 281;
+/// `ppoll(fds, nfds, tsp, sigmask, sigsetsize)` の番号（2026-10-24。`__NR_ppoll`。Seinas のタスクバーが、コンポジタへ
+/// 繋いだ直後の往復で打つ）。
+pub const SYS_PPOLL: u64 = 271;
 /// `epoll_create1(flags)` の番号（2026-10-19。`__NR_epoll_create1`）。
 pub const SYS_EPOLL_CREATE1: u64 = 291;

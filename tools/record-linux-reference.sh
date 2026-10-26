@@ -112,5 +112,7 @@ record wl-fd-limit-rust
 record wl-listener-reopen-rust
 # パイプの readv・writev で眠る間に別のスレッドが writev する形（2026-10-23）。fd 0 と 1 に同じパイプを渡す。
 record_with_one_pipe wl-iovec-threads-rust
+# ppoll の待つ長さ・シグナルのマスク・確かめの順（2026-10-24）。
+record wl-ppoll-rust
 record m1-c
 record m3a-c
