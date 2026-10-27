@@ -255,3 +255,32 @@ Seinasのタスクバーのpoolは`ftruncate(fd, 256000)`で始まり、1280の�
 
 - `linux-programs/wl-memfd-grow-rust.rs`（`linux-socket-test`のビルド）。256,000バイトの`ftruncate`→`mmap`→模様、同じ大きさの`ftruncate`、512,000バイトへ伸ばして全体を新しく`mmap`し、前のバイトが残り・伸ばした分が0で・前のマッピングからも同じバイトが読めること、`F_SEAL_SHRINK`だけなら伸ばせて`F_SEAL_GROW`なら`EPERM`、16 MiBへの`ftruncate`を、Linuxの参照と突き合わせる。古いマッピングの`munmap`は打たない。
 - `-EFBIG`と全体の上限の`-ENOMEM`はLinuxでは通るので、`kernel/src/shm.rs`のホストのテスト（`truncate_plan_follows_the_linux_order`）で固定した。
+
+## Addendum（2026-10-27、`recvmsg`の`msg_name`と書き戻し、閉じた接続に残ったfd）
+
+Seinasのタスクバーとコンポジタは、wayland-backend（rustix）を通して`recvmsg`を打つ。rustixは`msg_name`に置き場を必ず渡し、戻った`msg_controllen`の長さを制御のデータとして読む。今までの`recvmsg`は`msg_name`がNULLでないと`-EINVAL`で断り、`msg_controllen`と`msg_flags`を書き戻さなかったので、タスクバーは最初の往復で止まっていた。
+
+### 決めたこと
+
+- **`recvmsg`は`msg_name`の置き場を受ける。** 冒頭の表の「`msg_name`はNULL」は、`sendmsg`だけの決まりになった。置き場があって`msg_namelen`が負なら、読む前に`-EINVAL`を返す（`net/socket.c`の`__copy_msghdr`）。置き場がNULLなら、長さは見ない。
+- **読めたら、Linuxの`____sys_recvmsg`と同じ順で書き戻す。** `msg_namelen`と名前、`msg_flags`、`msg_controllen`の順である。読めなければ（`-EAGAIN`も）、どの欄も書かない。
+  - **名前は、送ってきた側のソケットの名前である**（`net/unix/af_unix.c`の`unix_copy_addr`）。受け付けた側は、listenerの名前を受け継ぐ（`unix_stream_connect`）。ZeikOSは`connect`の時に、listenerの名前を接続へコピーする。繋いだ側は名前を持たないので、受け付けた側（コンポジタ）が受けると`msg_namelen`は0で、置き場は書かない。繋いだ側（タスクバー）が受けると、`msg_namelen`は2＋名前＋NULの1で、名前は置き場の長さまで書く（長さは切り詰める前の値）。
+  - **`msg_flags`は、渡した`MSG_CMSG_CLOEXEC`と、fdを捨てたときの`MSG_CTRUNC`である。** 渡した値は残さない。
+  - **`msg_controllen`は、補助データに使った長さである。** fdを1つ受ければ24（`CMSG_SPACE(4)`。置き場が20〜23バイトなら、その長さ）、受けなければ0。
+- **fdを渡せないときは、fdを捨てて`MSG_CTRUNC`を立て、受けたバイトは返す**（`net/core/scm.c`の`scm_detach_fds`）。補助データの置き場がNULLか、20バイトに足りないか、書けないとき、それにfdの表が埋まっているときである。今までは、置き場が足りないと`-EMSGSIZE`を返して、据えたfdが表に残っていた。表が埋まっていると`-EMFILE`を返して、バイトはソケットに残っていた（`ADR-0091`の「Linuxとの差」の2つ目）。
+- **閉じた端へ向けて置かれたまま受け取られなかったfdは、閉じたときに手放す**（`unix_release_sock`が受信の待ち行列を捨てるのと同じ）。両端が閉じたら、もう一方へ向けて置かれたfdも手放す（閉じた相手へ送ったfd）。今までは接続の欄を上書きするだけで、共有メモリの参照が減らず、上限の16個で`memfd_create`が断られた。
+
+### Linuxとの差
+
+合わせなかったもの:
+
+- **バイトの読みが失敗したときも、fdは表に残る。** fdを表へ据えてからバイトを読むので、iovが書けずに読みが失敗すると、fdは表に残り、番号は伝わらない。Linuxは、データをコピーできなかったfdを待ち行列に残す。Waylandの経路では、iovに書けない形は起きないので、今回は直さなかった。
+- **`sendmsg`の`msg_name`は、今までどおりNULLだけを受ける。** Linuxは長さ0なら受け、正なら`-EISCONN`を返す。
+- **閉じた相手への`sendmsg`は、fdを相手の待ち行列へ置いてから`-EPIPE`を返す。** Linuxは置かない。置いたfdは、送った側が閉じたときに手放す（上の決めたことの4つ目）。
+
+### 確かめ
+
+- `linux-programs/wl-recvmsg-name-rust.rs`（`linux-socket-test`のビルド）。`recvmsg`を`syscall`で直に打ち、両方の向きの`msg_namelen`と名前、短い置き場、長さ0と負、置き場がNULLで長さが負、`-EAGAIN`のときに書かないこと、補助データの置き場が64・64と`MSG_CMSG_CLOEXEC`・20・NULL・16・19バイトのときの`msg_flags`と`msg_controllen`と、fdが残らないことを、Linuxの参照と突き合わせる。
+- `linux-programs/wl-close-queued-fd-rust.rs`（同じ）。受け取られないfdを載せたまま接続を閉じることを、閉じる順の3つの形で20回ずつくり返し、`memfd_create`が共有メモリの上限を越えて通ることを見る。
+- `linux-programs/wl-fd-limit-rust.rs`に、表が埋まったときの`recvmsg`の戻り値・`msg_flags`・`msg_controllen`の行を足した。
+- 直す前の形では、どれも名前のある判定（`printed what Linux prints = false`）で落ちることを確かめた（2026-10-26と10-27）。

@@ -49,7 +49,7 @@ Seinas のコンポジタは、クライアントが無くても 15 本、タス
 表が埋まったときの答え方に、差が 2 つある。確かめのイメージは、両方で同じになる所（最後の空きには置ける、次は断られる・fd が渡らない）だけを判定にしている。
 
 - **`accept`**: Linux は先に fd の空きを見て `EMFILE` を返し、接続は待ち行列に残る（1 つ空ければ、次の `accept` で受けられる。WSL で測った）。ZeikOS は待ち行列から接続を取ってから、表に置けずにその端を閉じる。接続は失われ、相手は EOF を見る。直すときは、`accept` の入口で表の空きを先に見る。
-- **`recvmsg` の `SCM_RIGHTS`**: Linux は受けたバイトを返して fd を捨て、`msg_controllen` を 0 にし、`msg_flags` に `MSG_CTRUNC` を立てる。ZeikOS は渡された fd を手放して（`shm::detach`）`-EMFILE` を返す。fd は失われ、バイトは読まずにソケットに残る。`recvmsg` の書き戻しを直すときに、一緒に直す。
+- **`recvmsg` の `SCM_RIGHTS`**: Linux は受けたバイトを返して fd を捨て、`msg_controllen` を 0 にし、`msg_flags` に `MSG_CTRUNC` を立てる。ZeikOS は渡された fd を手放して（`shm::detach`）`-EMFILE` を返す。fd は失われ、バイトは読まずにソケットに残る。`recvmsg` の書き戻しを直すときに、一緒に直す。**2026-10-27 に Linux の形へ直した**（`ADR-0065` の 2026-10-27 の Addendum）。
 
 ## Alternatives Considered
 
