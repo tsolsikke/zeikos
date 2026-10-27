@@ -24407,6 +24407,8 @@ fn cmd_linux_socket_test() -> Result<()> {
     let grow_ended = format!("spawn: /bin/linux/{grow} ended");
     let recvmsg_name = "wl-recvmsg-name-rust";
     let recvmsg_name_ended = format!("spawn: /bin/linux/{recvmsg_name} ended");
+    let queued = "wl-close-queued-fd-rust";
+    let queued_ended = format!("spawn: /bin/linux/{queued} ended");
     let deadline = Instant::now() + PIPE_TEST_TIMEOUT;
     loop {
         if child.was_cut() {
@@ -24667,6 +24669,19 @@ fn cmd_linux_socket_test() -> Result<()> {
         .lines()
         .find(|line| line.contains(&recvmsg_name_ended))
         .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
+    // **受け取られないまま閉じた接続の `SCM_RIGHTS` の fd を手放す**（2026-10-27。`ADR-0065` の Addendum）。終わり方と Linux の
+    // 参照で見る（閉じる順の 3 つの形で、共有メモリの上限より多く memfd を作れたことが行に出る）。
+    let queued_ran = serial.contains(&format!("{queued_ended} (Exited(4))"));
+    let queued_matched = linux_program_output_matches(
+        &workspace_root,
+        queued,
+        &serial,
+        LinuxReferenceEnvironment::ExactCount,
+    )?;
+    let queued_unknown_free = serial
+        .lines()
+        .find(|line| line.contains(&queued_ended))
+        .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
     // **memfd のフラグと名前・封・fstat・作り方ごとの `FD_CLOEXEC`**（2026-10-20。`ADR-0065` の Addendum）。終わり方と Linux の
     // 参照で見る（封と `F_GETFD` の値が行に出る）。
     let memfd_ran = serial.contains(&format!("{memfd_ended} (Exited(4))"));
@@ -24769,6 +24784,11 @@ fn cmd_linux_socket_test() -> Result<()> {
     println!(
         "{context}: {recvmsg_name} hit no number the kernel does not know = {recvmsg_name_unknown_free}"
     );
+    println!("{context}: {queued} ended with status 4 = {queued_ran}");
+    println!(
+        "{context}: {queued} printed what Linux prints (linux-programs/reference/{queued}.txt) = {queued_matched}"
+    );
+    println!("{context}: {queued} hit no number the kernel does not know = {queued_unknown_free}");
     println!("{context}: {memfd} ended with status 4 = {memfd_ran}");
     println!(
         "{context}: {memfd} printed what Linux prints (linux-programs/reference/{memfd}.txt) = {memfd_matched}"
@@ -24816,6 +24836,9 @@ fn cmd_linux_socket_test() -> Result<()> {
         && recvmsg_name_ran
         && recvmsg_name_matched
         && recvmsg_name_unknown_free
+        && queued_ran
+        && queued_matched
+        && queued_unknown_free
         && memfd_ran
         && memfd_matched
         && memfd_unknown_free
@@ -24839,6 +24862,7 @@ fn cmd_linux_socket_test() -> Result<()> {
                 || l.contains(ppoll)
                 || l.contains(grow)
                 || l.contains(recvmsg_name)
+                || l.contains(queued)
                 || l.contains(memfd)
                 || l.contains("[ERROR]")
         })

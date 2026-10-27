@@ -118,5 +118,7 @@ record wl-ppoll-rust
 record wl-memfd-grow-rust
 # recvmsg が msghdr へ書き戻す欄（2026-10-26）。
 record wl-recvmsg-name-rust
+# 受け取られないまま閉じた接続の SCM_RIGHTS の fd（2026-10-27）。
+record wl-close-queued-fd-rust
 record m1-c
 record m3a-c

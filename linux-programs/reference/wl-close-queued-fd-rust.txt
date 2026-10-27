@@ -1,0 +1,6 @@
+wl-close-queued-fd-rust: main starts with 4 argument(s)
+wl-close-queued-fd-rust: the receiver closed first: made 20 of 20 memfds, and sendmsg returned 1 in 20 of them
+wl-close-queued-fd-rust: the sender closed first: made 20 of 20 memfds, and sendmsg returned 1 in 20 of them
+wl-close-queued-fd-rust: sent after the receiver closed: made 20 of 20 memfds, and sendmsg returned EPIPE in 20 of them
+wl-close-queued-fd-rust: done
+exit status: 4

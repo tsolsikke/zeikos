@@ -4680,8 +4680,8 @@ unsafe fn recvmsg_from_ring3(
     // **渡された fd が在れば、自分の表へ据え、cmsghdr を書く。**
     //
     // **補助データの置き場が足りなければ、fd を捨てて `MSG_CTRUNC` を立て、バイトは返す**（2026-10-26。Linux の
-    // `scm_detach_fds`。置き場が NULL か、20 バイトに足りないか、書けないとき）。2026-10-25 までは `-EMSGSIZE` を返し、
-    // 据えた fd は表に残っていた。
+    // `scm_detach_fds`。置き場が NULL か、20 バイトに足りないか、書けないとき。fd の表が埋まっているときも同じで、下で見る）。
+    // 2026-10-25 までは `-EMSGSIZE` を返し、据えた fd は表に残っていた。
     let mut truncated = false;
     let mut controllen_used = 0;
     if let Some(shm) = crate::socket::take_fd(conn, side) {
@@ -4706,23 +4706,27 @@ unsafe fn recvmsg_from_ring3(
                     flags & MSG_CMSG_CLOEXEC != 0,
                 )
             });
-            let new_fd = match inserted {
-                Ok(new_fd) => new_fd as u64,
-                Err(error) => {
-                    crate::shm::detach(shm);
-                    return (-errno_for_file_table(error)) as u64;
+            // **表が埋まっていれば、fd を捨てて `MSG_CTRUNC` を立て、バイトは返す**（2026-10-27。Linux の `scm_detach_fds` は、
+            // fd を据えられなければ `cmsghdr` を書かずに `MSG_CTRUNC` を立てる）。2026-10-26 までは `-EMFILE` を返し、バイトは
+            // ソケットに残っていた。
+            match inserted {
+                Ok(new_fd) => {
+                    // **cmsghdr（cmsg_len=20, level=SOL_SOCKET, type=SCM_RIGHTS）＋ fd を書く。**
+                    let cbuf = cmsg_one_fd_bytes(&CmsgOneFd {
+                        level: SOL_SOCKET,
+                        kind: SCM_RIGHTS,
+                        fd: new_fd as u32,
+                    });
+                    // SAFETY: 検証済み 20 バイト。
+                    unsafe { copy_to_user(&cslice, 0, &cbuf) };
+                    controllen_used = used;
+                    crate::shm::note_fd_received();
                 }
-            };
-            // **cmsghdr（cmsg_len=20, level=SOL_SOCKET, type=SCM_RIGHTS）＋ fd を書く。**
-            let cbuf = cmsg_one_fd_bytes(&CmsgOneFd {
-                level: SOL_SOCKET,
-                kind: SCM_RIGHTS,
-                fd: new_fd as u32,
-            });
-            // SAFETY: 検証済み 20 バイト。
-            unsafe { copy_to_user(&cslice, 0, &cbuf) };
-            controllen_used = used;
-            crate::shm::note_fd_received();
+                Err(_) => {
+                    crate::shm::detach(shm);
+                    truncated = true;
+                }
+            }
         } else {
             crate::shm::detach(shm);
             truncated = true;

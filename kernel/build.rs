@@ -670,6 +670,9 @@ const LINUX_PROGRAMS: &[&str] = &[
     // **`recvmsg` が `msghdr` へ書き戻す欄**（2026-10-26。`ADR-0065` の Addendum。`linux-socket-test` のビルドだけが起動時に
     // 起こす）。
     "wl-recvmsg-name-rust",
+    // **受け取られないまま閉じた接続の `SCM_RIGHTS` の fd を手放す**（2026-10-27。`ADR-0065` の Addendum。`linux-socket-test` の
+    // ビルドだけが起動時に起こす）。
+    "wl-close-queued-fd-rust",
     // **壁の時計**（2026-10-20。`ADR-0090`。`realtime-test` のビルドだけが起動時に起こす）。
     "wl-realtime-rust",
     // **ZeikOS と Linux で結果が違うイメージ**（マップ中の memfd を縮める ftruncate。`memfd-shrink-test` のビルドだけが起こす）。

@@ -597,6 +597,11 @@ pub fn write_from(conn: u8, side: Side, src: &[u8]) -> WriteOutcome {
 /// 端を 1 つ閉じる。**相手側の読み手（EOF を見に行かせる）と書き手（`-EPIPE` を見に行かせる）を
 /// 起こす。** **両端が閉じたらスロットを返す。**
 ///
+/// **閉じた端へ向けて置かれたまま受け取られなかった fd（`SCM_RIGHTS`）は、ここで手放す**（2026-10-27）。Linux も、閉じた
+/// ソケットの受信の待ち行列を捨て、載っていた fd を閉じる（`unix_release_sock`）。**両端が閉じたら、もう一方へ向けて
+/// 置かれた fd も手放す**（閉じた相手へ送った fd が残っていた場合）。2026-10-26 までは、スロットを空けるときに
+/// `Connection::EMPTY` で上書きするだけで、共有メモリの参照が減らず、フレームが返らなかった。
+///
 /// 破壊テスト (`ADR-0064`, socket-close-keeps-peer-open): 端を閉じたことにしない。**相手側に
 /// EOF が来ず、サーバーが永久に待つ。**
 ///
@@ -609,6 +614,8 @@ pub fn close_end(conn: u8, side: Side) -> bool {
     let Some(slot) = CONNECTIONS.get(conn as usize) else {
         return false;
     };
+    // 手放す fd は、ロックを放した後で `crate::shm::detach` へ渡す（共有メモリのロックを、接続のロックの内側で取らない）。
+    let mut released = [None, None];
     let closed = {
         let mut state = slot.lock();
         if !state.in_use || !state.is_open(side) {
@@ -621,14 +628,19 @@ pub fn close_end(conn: u8, side: Side) -> bool {
             {
                 state.open[side as usize] = 0;
             }
+            released[side as usize] = state.pending_fd[side as usize].take();
             #[cfg(not(feature = "socket-release-keeps-slot"))]
             if state.open == [0, 0] {
+                released[side.peer() as usize] = state.pending_fd[side.peer() as usize].take();
                 *state = Connection::EMPTY;
                 CONNECTIONS_RELEASED.fetch_add(1, Ordering::Relaxed);
             }
             true
         }
     };
+    for shm in released.into_iter().flatten() {
+        crate::shm::detach(shm);
+    }
     if closed {
         wake_and_notify_epoll(Wait::SocketReadable {
             conn,

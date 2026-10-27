@@ -9,17 +9,18 @@
 //! 3. 1 つ空けて `F_DUPFD` が最後の空きに置け、次の `F_DUPFD` が `EMFILE` で断られることを見る。
 //! 4. 1 つ空けて `accept` が最後の空きに置け、次の `accept` が `EMFILE` で断られることを見る。
 //! 5. 1 つ空けて、クライアントから `SCM_RIGHTS` で送った memfd を `recvmsg` が最後の空きに置け、表が埋まった後にもう 1 度送った
-//!    memfd は渡らないことを見る。
+//!    memfd は渡らないことを見る。**このときも `recvmsg` は受けたバイトを返し、`msg_flags` は `MSG_CTRUNC`、`msg_controllen` は 0
+//!    である**（2026-10-27 に行へ足した。Linux の形）。
 //!
 //! # Linux との差（`ADR-0091`）
 //!
 //! 行は、両方で同じになる所（最後の空きには置ける、次は断られる・fd が渡らない）だけを言う。表が埋まったときの答え方には、
-//! 差が 2 つある。
+//! 差が 1 つある。
 //!
 //! - **`accept`**: Linux は先に fd の空きを見て `EMFILE` を返し、接続は待ち行列に残る（1 つ空ければ次の `accept` で受けられる）。
 //!   ZeikOS は待ち行列から接続を取ってから置けずに閉じるので、接続は失われ、相手は EOF を見る。
-//! - **`recvmsg` の `SCM_RIGHTS`**: Linux は受けたバイトを返して fd を捨て、`msg_controllen` を 0 にし、`MSG_CTRUNC` を立てる。
-//!   ZeikOS は渡された fd を手放して `-EMFILE` を返す。バイトは読まずにソケットに残る。
+//!
+//! `recvmsg` の `SCM_RIGHTS` の差（ZeikOS は `-EMFILE` を返し、バイトはソケットに残っていた）は、2026-10-27 に Linux の形へ直した。
 //!
 //! 終了ステータスは引数の数（4）。Linux でも同じ行を出す（`linux-programs/reference/wl-fd-limit-rust.txt`）。
 //!
@@ -136,8 +137,18 @@ fn send_with_fd(socket: i32, fd: i32) -> isize {
     unsafe { sendmsg(socket, &msg, 0) }
 }
 
-/// `recvmsg` で 1 バイトと fd を受ける。届いた fd（無ければ -1）。
-fn recv_fd(socket: i32) -> i32 {
+/// 1 回の `recvmsg` で戻ったもの。
+struct Received {
+    /// 戻り値（受けたバイト数か -1）。
+    got: isize,
+    /// 届いた fd（無ければ -1）。
+    fd: i32,
+    flags: i32,
+    controllen: u32,
+}
+
+/// `recvmsg` で 1 バイトと fd を受ける。
+fn recv_fd(socket: i32) -> Received {
     let mut byte = [0u8; 1];
     let mut iov = IoVec { base: byte.as_mut_ptr(), len: 1 };
     let mut cmsg = CmsgOneFd { len: 0, pad: 0, level: 0, kind: 0, fd: -1, tail: 0 };
@@ -154,11 +165,12 @@ fn recv_fd(socket: i32) -> i32 {
     };
     // SAFETY: 渡すポインタは、どれもこの関数の中で生きている。
     let got = unsafe { recvmsg(socket, &mut msg, 0) };
-    if got == 1 && msg.controllen >= 20 && cmsg.level == SOL_SOCKET && cmsg.kind == SCM_RIGHTS {
+    let fd = if got == 1 && msg.controllen >= 20 && cmsg.level == SOL_SOCKET && cmsg.kind == SCM_RIGHTS {
         cmsg.fd
     } else {
         -1
-    }
+    };
+    Received { got, fd, flags: msg.flags, controllen: msg.controllen }
 }
 
 fn main() {
@@ -223,14 +235,18 @@ fn main() {
     // recvmsg の SCM_RIGHTS
     close_fd(fillers.pop().unwrap_or_else(|| fail("nothing was filled", 91)));
     let sent = send_with_fd(first.as_raw_fd(), memfd) == 1;
-    let received = recv_fd(accepted);
+    let received = recv_fd(accepted).fd;
     println!(
         "{NAME}: recvmsg put a passed memfd into the last free slot = {}",
         sent && received >= 0
     );
     let sent_again = send_with_fd(first.as_raw_fd(), memfd) == 1;
-    let not_handed = recv_fd(accepted) == -1;
-    println!("{NAME}: recvmsg into a full table handed over no fd = {}", sent_again && not_handed);
+    let full = recv_fd(accepted);
+    println!("{NAME}: recvmsg into a full table handed over no fd = {}", sent_again && full.fd == -1);
+    println!(
+        "{NAME}: recvmsg into a full table returned {} (the byte), msg_flags {:#x}, msg_controllen {}",
+        full.got, full.flags, full.controllen
+    );
 
     for fd in fillers {
         close_fd(fd);
