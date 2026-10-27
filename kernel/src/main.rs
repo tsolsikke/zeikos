@@ -13750,6 +13750,11 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "Seinas のコンポジタをイメージの /bin/linux に入れる（確かめ。破壊ではない）",
     ),
     (
+        "seinas-taskbar-test",
+        cfg!(feature = "seinas-taskbar-test"),
+        "Seinas のタスクバーを、コンポジタと一緒にイメージの /bin/linux に入れる（確かめ。破壊ではない）",
+    ),
+    (
         "fb0-corrupts-one-pixel",
         cfg!(feature = "fb0-corrupts-one-pixel"),
         "図形モードの転送の前に、画面の真ん中の 1 点を違う色で塗る",

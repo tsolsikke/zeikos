@@ -150,3 +150,7 @@ jobs:
       # Seinas のコンポジタ（release の成果物）。成果物が無ければ名指しして飛ぶ（tools/fetch-seinas.sh に版が入るまで）。
       - name: Seinas のコンポジタを走らせる
         run: cargo xtask run --seinas-standalone-test
+
+      # Seinas のタスクバー（同じ release のコンポジタと一緒に。2026-10-27）。成果物が無ければ名指しして飛ぶ。
+      - name: Seinas のタスクバーを走らせる
+        run: cargo xtask run --seinas-taskbar-test

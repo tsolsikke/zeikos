@@ -2955,6 +2955,7 @@ const RUN_FLAGS: &[(&str, RunValue)] = &[
     ("--fb-test", RunValue::None),
     ("--seinas-fbdev-test", RunValue::None),
     ("--seinas-standalone-test", RunValue::None),
+    ("--seinas-taskbar-test", RunValue::None),
     ("--ending", RunValue::Required),
     ("--compose-test", RunValue::None),
     ("--history-test", RunValue::None),
@@ -3824,6 +3825,10 @@ fn main() -> Result<()> {
                     SabotageForm::Inverted,
                     result,
                 );
+            }
+            // **Seinas のタスクバー（2026-10-27。C2S1 の Sprint Goal）。** 成果物が無ければ名指しして飛ぶ。
+            if rest.iter().any(|a| a == "--seinas-taskbar-test") {
+                return cmd_seinas_taskbar_test();
             }
             if rest.iter().any(|a| a == "--fb-test") {
                 let sabotage: Vec<&str> = rest
@@ -11625,6 +11630,12 @@ fn monitor_keys_for(line: &str) -> Result<Vec<&'static str>> {
         "a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r",
         "s", "t", "u", "v", "w", "x", "y", "z",
     ];
+    const SHIFTED_LETTERS: [&str; 26] = [
+        "shift-a", "shift-b", "shift-c", "shift-d", "shift-e", "shift-f", "shift-g", "shift-h",
+        "shift-i", "shift-j", "shift-k", "shift-l", "shift-m", "shift-n", "shift-o", "shift-p",
+        "shift-q", "shift-r", "shift-s", "shift-t", "shift-u", "shift-v", "shift-w", "shift-x",
+        "shift-y", "shift-z",
+    ];
     const DIGITS: [&str; 10] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
     let mut keys = Vec::new();
     for c in line.chars() {
@@ -11635,6 +11646,12 @@ fn monitor_keys_for(line: &str) -> Result<Vec<&'static str>> {
             '-' => "minus",
             ' ' => "spc",
             '.' => "dot",
+            // **大文字と JIS の記号**（2026-10-27。Seinas のタスクバーの試し。配列は JIS で、`kernel/src/keyboard/decode.rs`
+            // の表と同じ。`common/src/shell_script.rs` の「JIS の刻印」）。
+            'A'..='Z' => SHIFTED_LETTERS[(c as u8 - b'A') as usize],
+            '|' => "shift-yen",
+            '=' => "shift-minus",
+            '_' => "shift-ro",
             other => bail!("no monitor key for {other:?} in {line:?}"),
         });
     }
@@ -12139,6 +12156,297 @@ fn seinas_standalone_missing(workspace_root: &Path) -> Option<&'static str> {
                 .join(name)
                 .is_file()
         })
+}
+
+/// Seinas のタスクバーとコンポジタの成果物のうち、`target/linux-programs` に無いもの（無ければ `None`）。
+fn seinas_taskbar_missing(workspace_root: &Path) -> Option<&'static str> {
+    seinas_standalone_missing(workspace_root).or_else(|| {
+        ["seinas-taskbar", "seinas-taskbar-third-party.tar.gz"]
+            .into_iter()
+            .find(|name| {
+                !workspace_root
+                    .join("target/linux-programs")
+                    .join(name)
+                    .is_file()
+            })
+    })
+}
+
+/// Seinas のタスクバーが「コンポジタが最初の往復に答えた」ことを示す行（v0.3.0。タスクバーの標準エラー）。
+const SEINAS_TASKBAR_ANSWERED_LINE: &str =
+    "seinas-taskbar: the compositor answered the first round trip";
+
+/// Seinas のタスクバーがコンポジタへ繋いだことを示す行（v0.3.0。`connected to the compositor after N tries`）。
+const SEINAS_TASKBAR_CONNECTED_LINE: &str = "seinas-taskbar: connected to the compositor";
+
+/// Seinas のコンポジタが、タスクバーの分を除いた使える領域を決めた行（v0.3.0。時間を測るだけで、判定には使わない）。
+const SEINAS_USABLE_AREA_LINE: &str = "seinas_frontend: usable area:";
+
+/// `screendump` の `row` 行目で、`color` のピクセルの数（純粋な論理）。行が無ければ `None`。
+fn row_pixels_of(
+    image: &Option<(u32, u32, Vec<u8>)>,
+    row: u32,
+    color: (u8, u8, u8),
+) -> Option<u64> {
+    let (width, height, rgb) = image.as_ref()?;
+    if row >= *height {
+        return None;
+    }
+    let stride = *width as usize * 3;
+    let line = rgb.get(row as usize * stride..(row as usize + 1) * stride)?;
+    Some(
+        line.chunks_exact(3)
+            .filter(|pixel| (pixel[0], pixel[1], pixel[2]) == color)
+            .count() as u64,
+    )
+}
+
+/// Seinas のタスクバー（release の `seinas-taskbar`）を、同じ release のコンポジタと一緒に ZeikOS の上でそのまま走らせて確かめる
+/// （2026-10-27。C2S1 の Sprint Goal）。
+///
+/// **成果物が無ければ、名指しして飛ばす**（`seinas-standalone-test` と同じ。`tools/fetch-seinas.sh` が取る）。在れば
+/// `seinas-taskbar-test` の構成で起動し、シェルのプロンプトへ 2 行を打つ。
+///
+/// 1. `export WAYLAND_DISPLAY=/tmp/seinas/s-shell.sock`（タスクバーが繋ぐ、シェルの部品のためのソケット）
+/// 2. `/bin/linux/seinas-taskbar | /bin/linux/seinas-standalone --socket /tmp/seinas/s.sock --no-ime-socket`（パイプで 2 つを
+///    同時に起こす。シェルはジョブ制御を持たないので、パイプの右を前景にして 2 つを走らせる。タスクバーは、コンポジタが listen
+///    するまで 100 ms ごとに繋ぎ直す）
+///
+/// 2 つの名前のある行を待ってから、画面を撮って QEMU を止める（どちらも終わらない）。
+///
+/// **判定は 8 本**——
+///
+/// 1. コンポジタが最初の 1 枚を出した（[`SEINAS_FIRST_PRESENT_LINE`] が 1 回）
+/// 2. タスクバーが繋いだ（[`SEINAS_TASKBAR_CONNECTED_LINE`]）
+/// 3. タスクバーの最初の往復に、コンポジタが答えた（[`SEINAS_TASKBAR_ANSWERED_LINE`]）
+/// 4. 画面の下の端の行に、背景の色 `191e28` のピクセルが 1 つも無い（タスクバーが描かれた）
+/// 5. 画面の上の端の行は、全部が背景の色（コンポジタが背景を描き、タスクバーは下に居る）
+/// 6. 撮った時に、2 つともまだ走っていた（終わりの行が無い）
+/// 7. `panicked` の行が無い
+/// 8. 知らない番号を 1 つも打っていない
+///
+/// と、`[ERROR]` が無いこと。**2 行目の Enter から、タスクバーの最初の往復の行と、使える領域の行までの時間を測って出す**
+/// （判定ではない。`(info)` の行）。
+fn cmd_seinas_taskbar_test() -> Result<()> {
+    let context = "seinas-taskbar-test";
+    let workspace_root = workspace_root()?;
+    if let Some(missing) = seinas_taskbar_missing(&workspace_root) {
+        println!(
+            "{context}: skipped ({missing} is not at target/linux-programs; fetch it with tools/fetch-seinas.sh)"
+        );
+        note_skipped_item(&format!(
+            "{context} ({missing} is not at target/linux-programs; tools/fetch-seinas.sh)"
+        ));
+        return Ok(());
+    }
+    let run = RunDir::create(&workspace_root, context)?;
+    let ovmf_vars = prepare_ovmf_vars(&run)?;
+    let bootloader_efi = build_bootloader(&workspace_root, false)?;
+    let kernel_elf = build_kernel_with_features(&workspace_root, &["seinas-taskbar-test"])?;
+    let esp_dir = stage_esp(&run, &bootloader_efi, &kernel_elf)?;
+
+    let serial_log = run.serial_log();
+    let shown_ppm = run.file("shown.ppm");
+    for stale in [&serial_log, &shown_ppm] {
+        let _ = fs::remove_file(stale);
+    }
+    let debug_log = run.debug_log();
+    let _ = fs::remove_file(&debug_log);
+    let monitor_socket = run.monitor_socket("taskbar");
+    let _ = fs::remove_file(&monitor_socket);
+    ensure_socket_path_fits(&monitor_socket)?;
+
+    let qemu_args = qemu_launch_args(&QemuLaunchOptions {
+        ovmf_code: Path::new(OVMF_CODE_PATH),
+        ovmf_vars: &ovmf_vars,
+        esp_dir: &esp_dir,
+        disk_image: &run.disk_image(),
+        serial: &SerialSink::File(serial_log.clone()),
+        debug_log: &debug_log,
+        display: DisplayMode::None,
+        monitor_socket: Some(&monitor_socket),
+        accelerator: Accelerator::Tcg,
+        debug_events: DebugEvents::IntAndCpuReset,
+    });
+    let outputs = [serial_log.as_path(), debug_log.as_path()];
+    let mut child = launch::spawn(&launch::Spec::new(
+        &qemu_args,
+        &outputs,
+        context,
+        Duration::ZERO,
+        launch::Deadline::Normal,
+    ))?;
+
+    let started = Instant::now();
+    let wait_for = |marker: &str, limit: Duration| -> bool {
+        let deadline = Instant::now() + limit;
+        while Instant::now() < deadline && !child.was_cut() {
+            if read_lossy(&serial_log).contains(marker) {
+                return true;
+            }
+            metrics::sleep_poll(PANIC_TEST_POLL_INTERVAL);
+        }
+        false
+    };
+
+    let commands = [
+        "export WAYLAND_DISPLAY=/tmp/seinas/s-shell.sock",
+        "/bin/linux/seinas-taskbar | /bin/linux/seinas-standalone --socket /tmp/seinas/s.sock --no-ime-socket",
+    ];
+    let ready = wait_for(SHELL_READY_MARKER, BOOT_READY_TIMEOUT);
+    let mut typed = false;
+    // 2 行目の Enter を送った時刻（そこから測る）。
+    let mut entered = None;
+    if ready {
+        metrics::sleep_fixed(SHELL_TEST_LINE_INTERVAL);
+        match connect_monitor_with_retry(&monitor_socket) {
+            Ok(mut stream) => {
+                typed = true;
+                'lines: for (index, command) in commands.iter().enumerate() {
+                    if index > 0 {
+                        metrics::sleep_fixed(SHELL_TEST_LINE_INTERVAL);
+                    }
+                    for key in monitor_keys_for(command)? {
+                        if writeln!(stream, "sendkey {key}").is_err() {
+                            typed = false;
+                            break 'lines;
+                        }
+                        metrics::sleep_fixed(SHELL_TEST_KEY_INTERVAL);
+                    }
+                }
+                entered = Some(Instant::now());
+            }
+            Err(e) => println!("{context}: could not reach the QEMU monitor: {e}"),
+        }
+    }
+    // **タスクバーの最初の往復の行と、最初の 1 枚の行を待ってから撮る。** 使える領域の行は時間を測るためだけに待つ（出なくても
+    // 判定は落とさない）。撮る前に少し間をおく——撮った時に 2 つがまだ走っていることも判定で見る。
+    let mut answered_after = None;
+    let mut usable_area_after = None;
+    let mut shown = None;
+    if typed
+        && wait_for(SEINAS_TASKBAR_ANSWERED_LINE, SCREEN_TEST_TIMEOUT)
+        && wait_for(SEINAS_FIRST_PRESENT_LINE, SCREEN_TEST_TIMEOUT)
+    {
+        answered_after = entered.map(|at| at.elapsed());
+        if wait_for(SEINAS_USABLE_AREA_LINE, Duration::from_secs(10)) {
+            usable_area_after = entered.map(|at| at.elapsed());
+        }
+        metrics::sleep_fixed(Duration::from_millis(2000));
+        match capture_screendump(&monitor_socket, &shown_ppm) {
+            Ok(()) => shown = read_complete_ppm(&shown_ppm, SCREENDUMP_FILE_TIMEOUT),
+            Err(e) => println!("{context}: the screendump failed: {e}"),
+        }
+    }
+    let waited = started.elapsed();
+
+    // **2 つとも終わらないので、撮ったら止める。**
+    let qemu_exit = child
+        .try_wait()
+        .ok()
+        .flatten()
+        .map(|status| format!("{status}"));
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = fs::remove_file(&monitor_socket);
+
+    let serial = read_lossy(&serial_log);
+    let qemu_debug = read_lossy(&debug_log);
+    if let BootOutcome::DidNotStart { firmware_rip } =
+        classify_boot(&serial, &qemu_debug, KERNEL_STARTED_MARKER)
+    {
+        report_did_not_start(context, firmware_rip, qemu_exit.as_deref())?;
+        bail!("{context}: the kernel did not start");
+    }
+
+    let stripped = strip_ansi(&serial);
+    // **判定は、タスクバーを起こした後の行だけで見る**（パイプの左が先に起きる。起動時の確かめのプログラムが、知らない番号を
+    // 打つため）。
+    let after = stripped
+        .find("spawn: /bin/linux/seinas-taskbar is")
+        .map_or("", |at| &stripped[at..]);
+    let bottom_row = shown
+        .as_ref()
+        .map_or(0, |(_, height, _)| height.saturating_sub(1));
+    let bottom_background = row_pixels_of(&shown, bottom_row, SEINAS_BACKGROUND);
+    let top_background = row_pixels_of(&shown, 0, SEINAS_BACKGROUND);
+    let width = shown.as_ref().map_or(0, |(width, _, _)| u64::from(*width));
+    let judgements: [(&str, bool); 8] = [
+        (
+            "seinas_presented_the_first_frame",
+            after.matches(SEINAS_FIRST_PRESENT_LINE).count() == 1,
+        ),
+        (
+            "the_taskbar_connected",
+            after.contains(SEINAS_TASKBAR_CONNECTED_LINE),
+        ),
+        (
+            "the_compositor_answered_the_taskbar",
+            after.contains(SEINAS_TASKBAR_ANSWERED_LINE),
+        ),
+        (
+            "the_bottom_row_is_not_the_background",
+            bottom_background == Some(0),
+        ),
+        (
+            "the_top_row_is_the_background",
+            width > 0 && top_background == Some(width),
+        ),
+        (
+            "both_were_still_running_when_the_screen_was_taken",
+            shown.is_some()
+                && !after.contains("spawn: /bin/linux/seinas-standalone ended")
+                && !after.contains("spawn: /bin/linux/seinas-taskbar ended"),
+        ),
+        ("nothing_panicked", !after.contains("panicked")),
+        (
+            "no_unknown_number",
+            !after.contains("syscall: the first system call the kernel does not know"),
+        ),
+    ];
+    let error_lines: Vec<&str> = stripped
+        .lines()
+        .filter(|line| line.contains("[ERROR]"))
+        .take(4)
+        .collect();
+    let no_error = error_lines.is_empty();
+    let failed: Vec<&str> = judgements
+        .iter()
+        .filter(|(_, held)| !held)
+        .map(|(name, _)| *name)
+        .collect();
+    for (name, held) in &judgements {
+        println!("{context}: {name} = {held}");
+    }
+    println!("{context}: no [ERROR] line = {no_error} (the first were {error_lines:?})");
+    println!(
+        "{context}: (info) background pixels in the bottom row = {bottom_background:?}, in the top row = {top_background:?} (of {width})"
+    );
+    println!(
+        "{context}: (info) from the Enter of the second line: the taskbar's first round trip after {}, the usable area after {}",
+        answered_after.map_or("-".to_string(), |at| format!("{:.2} s", at.as_secs_f64())),
+        usable_area_after.map_or("-".to_string(), |at| format!("{:.2} s", at.as_secs_f64()))
+    );
+    for info in after.lines().filter(|line| {
+        line.contains("seinas_standalone:")
+            || line.contains("seinas-taskbar:")
+            || line.contains(SEINAS_USABLE_AREA_LINE)
+            || line.contains("panicked")
+            || line.contains("syscall: the first system call")
+    }) {
+        println!("{context}: (info) {}", info.trim());
+    }
+    println!(
+        "{context}: (info) waited {:.1} s (ready = {ready}, typed = {typed}); the screen is at {}",
+        waited.as_secs_f64(),
+        shown_ppm.display()
+    );
+    if ready && typed && failed.is_empty() && no_error {
+        println!("{context}: PASS");
+        Ok(())
+    } else {
+        bail!("{context}: FAILED (judgements that fell: {failed:?}, ready = {ready}, typed = {typed}, no [ERROR] = {no_error})")
+    }
 }
 
 /// `/dev/fb0` を Linux の fbdev の形で開き、書けば映ることを検査する（2026-10-07。`ADR-0083`。M2 の最初のステップ）。
@@ -33292,6 +33600,21 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
         }
         batch.run(&mut failed);
 
+        // **Seinas のタスクバー（release の成果物）を、同じ release のコンポジタと一緒にそのまま走らせる**（2026-10-27。C2S1 の
+        // Sprint Goal）。成果物が無ければ名指しして飛ばす。
+        total += 1;
+        begin_item(
+            Family::Ipc,
+            "Seinas's taskbar runs as shipped next to its compositor and is drawn at the bottom of the screen (skipped without the release artifact)",
+        );
+        match cmd_seinas_taskbar_test() {
+            Ok(()) => println!("--- seinas-taskbar test: OK"),
+            Err(error) => {
+                println!("--- seinas-taskbar test: FAILED ({error})");
+                failed.push("seinas-taskbar test".to_string());
+            }
+        }
+
         total += 1;
         begin_item(
             Family::Ipc,
@@ -36091,7 +36414,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 67,
-    full: 556,
+    full: 557,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` とスクリプトのグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

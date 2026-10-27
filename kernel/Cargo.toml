@@ -705,6 +705,10 @@ seinas-test = []
 # （2026-10-21。C1S4。破壊テストではない）。成果物は tools/fetch-seinas.sh が target/linux-programs/ に取る（SHA-256 を固定）。
 # 既定のイメージには入れない——バイトが release に依るため。`cargo xtask run --seinas-standalone-test`。
 seinas-standalone-test = []
+# Seinas のタスクバー（release の seinas-taskbar）を、コンポジタと一緒にイメージの /bin/linux に入れる手元と CI の確かめ
+# （2026-10-27。C2S1 の Sprint Goal。破壊テストではない）。成果物は tools/fetch-seinas.sh が取る（SHA-256 を固定）。
+# `cargo xtask run --seinas-taskbar-test`。
+seinas-taskbar-test = ["seinas-standalone-test"]
 # 破壊（2026-10-21）: 図形モードの転送の前に、バックバッファの画面の真ん中の 1 点を違う色（ff00ff）で塗る。Seinas の
 # コンポジタの画面の全部が背景の色という判定が、1 点で落ちる。`cargo xtask run --seinas-standalone-test --sabotage
 # fb0-corrupts-one-pixel`。

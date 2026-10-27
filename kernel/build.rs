@@ -1505,6 +1505,20 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
             });
         }
     }
+    // **Seinas のタスクバーは、`seinas-taskbar-test` のビルドだけが入れる**（2026-10-27。C2S1）。コンポジタと同じ release の
+    // 成果物で（`seinas-taskbar-test` は `seinas-standalone-test` を含むので、コンポジタも入る）、置き場の名前に版を入れない。
+    if std::env::var("CARGO_FEATURE_SEINAS_TASKBAR_TEST").is_ok() {
+        let fetched = format!("{manifest_dir}/../target/linux-programs");
+        for name in ["seinas-taskbar", "seinas-taskbar-third-party.tar.gz"] {
+            let source = format!("{fetched}/{name}");
+            println!("cargo:rerun-if-changed={source}");
+            std::fs::copy(&source, format!("{staging}/bin/linux/{name}")).unwrap_or_else(|e| {
+                panic!(
+                    "seinas-taskbar-test needs {source} (fetch it with tools/fetch-seinas.sh): {e}"
+                )
+            });
+        }
+    }
     // **C の Linux 向けのプログラムは、`linux-c-test` のビルドだけが入れる**（2026-10-06）。`musl-gcc` で手で作った
     // もの（`tools/build-linux-programs.sh`）で、版が配布物に依るので既定のイメージには入れない。無ければ名指しして止まる。
     if std::env::var("CARGO_FEATURE_LINUX_C_TEST").is_ok() {
