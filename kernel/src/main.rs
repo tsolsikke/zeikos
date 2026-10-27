@@ -6918,6 +6918,13 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
             b"/bin/linux/wl-memfd-grow-rust",
             b"wl-memfd-grow-rust\0/etc/motd\0a\0b\0",
         );
+        // **`recvmsg` が `msghdr` へ書き戻す欄**（2026-10-26。`ADR-0065` の Addendum）。判定は `cargo xtask run --linux-socket-test`
+        // （Linux の参照と突き合わせる）。
+        verify_linux_program(
+            logger,
+            b"/bin/linux/wl-recvmsg-name-rust",
+            b"wl-recvmsg-name-rust\0/etc/motd\0a\0b\0",
+        );
         // **memfd のフラグと名前・封・fstat・作り方ごとの `FD_CLOEXEC`**（2026-10-20。`ADR-0065` の Addendum）。判定は
         // `cargo xtask run --linux-socket-test`（Linux の参照と突き合わせる）と、破壊テスト 2 つ（`--critical-test
         // memfd-ignores-allow-sealing`・`memfd-seals-not-kept`）。

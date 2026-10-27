@@ -276,10 +276,13 @@ kernel::abi::linux::layout::tests::a_control_message_with_one_fd_follows_the_lin
 kernel::abi::linux::layout::tests::a_dirent64_record_follows_the_linux_layout
 kernel::abi::linux::layout::tests::a_drm_clip_rect_is_read_as_four_u16s
 kernel::abi::linux::layout::tests::a_msghdr_is_read_from_the_linux_positions
+kernel::abi::linux::layout::tests::a_sockaddr_un_is_built_with_the_nul_counted
 kernel::abi::linux::layout::tests::a_sockaddr_un_is_read_up_to_the_first_nul
 kernel::abi::linux::layout::tests::an_input_event_follows_the_linux_layout
 kernel::abi::linux::layout::tests::an_iovec_is_read_from_the_linux_positions
+kernel::abi::linux::layout::tests::one_fd_fits_only_when_the_control_holds_a_header_and_an_int
 kernel::abi::linux::layout::tests::the_fixed_screen_info_follows_the_linux_layout
+kernel::abi::linux::layout::tests::the_msghdr_fields_recvmsg_writes_back_follow_the_linux_layout
 kernel::abi::linux::layout::tests::the_pollfd_fields_follow_the_linux_layout
 kernel::abi::linux::layout::tests::the_timespec_bytes_follow_the_linux_layout
 kernel::abi::linux::layout::tests::the_variable_screen_info_follows_the_linux_layout
@@ -782,6 +785,7 @@ kernel::shm::tests::seals_are_added_the_way_linux_adds_them
 kernel::shm::tests::truncate_plan_follows_the_linux_order
 kernel::socket::tests::a_connection_starts_open_on_both_sides_and_is_not_accepted
 kernel::socket::tests::a_connection_whose_server_side_was_closed_no_longer_waits_for_accept
+kernel::socket::tests::only_the_client_side_hears_a_sender_name
 kernel::socket::tests::the_listener_name_is_the_recorded_length
 kernel::socket::tests::the_side_and_its_peer_index_the_two_rings
 kernel::syscall::tests::a_clip_rect_is_half_open_and_refuses_empty_ones

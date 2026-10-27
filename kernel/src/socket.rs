@@ -113,6 +113,10 @@ struct Connection {
     /// **1 つだけ**——**`wl_shm.create_pool` は fd を 1 つ運ぶ。** **中身は共有メモリの添字
     /// （`crate::shm`）で、`sendmsg` が置き、`recvmsg` が取る。**
     pending_fd: [Option<u8>; 2],
+    /// server 側の名前（繋いだ listener の名前。2026-10-26）。**`connect` の時にコピーする**——Linux は、受け付けた側に
+    /// listener の名前を受け継がせる（`unix_stream_connect`）。listener を閉じても、受け付けた側の名前は残る。
+    server_name: [u8; NAME_MAX],
+    server_name_len: u8,
 }
 
 impl Connection {
@@ -123,7 +127,18 @@ impl Connection {
         open: [0, 0],
         rings: [Ring::EMPTY, Ring::EMPTY],
         pending_fd: [None, None],
+        server_name: [0; NAME_MAX],
+        server_name_len: 0,
     };
+
+    /// `side` へ送ってくる側の名前（`recvmsg` の `msg_name`）。**繋いだ側（client）は名前を持たないので、server 側が受けると
+    /// `None` である**（ZeikOS は `connect` する前の `bind` を持たない）。
+    fn sender_name(&self, side: Side) -> Option<&[u8]> {
+        match side {
+            Side::Client => Some(&self.server_name[..self.server_name_len as usize]),
+            Side::Server => None,
+        }
+    }
 
     fn is_open(&self, side: Side) -> bool {
         self.open[side as usize] != 0
@@ -299,6 +314,11 @@ pub fn connect(name: &[u8]) -> Result<u8, ConnectError> {
         CONNECT_REFUSED.fetch_add(1, Ordering::Relaxed);
         return Err(ConnectError::NoListener);
     };
+    // **server 側の名前は listener の名前である**（受け継ぐ。[`Connection::sender_name`]）。
+    let (server_name, server_name_len) = {
+        let state = LISTENERS[listener].lock();
+        (state.name, state.name_len)
+    };
     let mut created = None;
     for (index, slot) in CONNECTIONS.iter().enumerate() {
         let mut connection = slot.lock();
@@ -309,6 +329,8 @@ pub fn connect(name: &[u8]) -> Result<u8, ConnectError> {
         connection.in_use = true;
         connection.listener = listener as u8;
         connection.open = [1, 1];
+        connection.server_name = server_name;
+        connection.server_name_len = server_name_len;
         created = Some(index as u8);
         break;
     }
@@ -706,6 +728,18 @@ pub fn queue_fd(conn: u8, side: Side, shm: u8) -> bool {
     queued
 }
 
+/// `side` へ送ってくる側の名前を `out` へコピーし、長さを返す（2026-10-26。`recvmsg` の `msg_name`）。**名前が無ければ `None`。**
+pub fn sender_name(conn: u8, side: Side, out: &mut [u8; NAME_MAX]) -> Option<usize> {
+    let slot = CONNECTIONS.get(conn as usize)?;
+    let state = slot.lock();
+    if !state.in_use {
+        return None;
+    }
+    let name = state.sender_name(side)?;
+    out[..name.len()].copy_from_slice(name);
+    Some(name.len())
+}
+
 /// 自分の側へ渡された fd を取る（`ADR-0065`）。**無ければ `None`。**
 pub fn take_fd(conn: u8, side: Side) -> Option<u8> {
     let slot = CONNECTIONS.get(conn as usize)?;
@@ -757,6 +791,21 @@ mod tests {
         connection.open = [1, 1];
         connection.accepted = true;
         assert!(!connection.waits_for_accept(3));
+    }
+
+    /// **client 側が受けると、送り手は server 側で、listener の名前を持つ。server 側が受けると、送り手は名前を持たない**
+    /// （2026-10-26。Linux の `unix_stream_connect` と `unix_copy_addr`）。
+    #[test]
+    fn only_the_client_side_hears_a_sender_name() {
+        let mut connection = Connection::EMPTY;
+        connection.in_use = true;
+        connection.server_name[..9].copy_from_slice(b"wayland-0");
+        connection.server_name_len = 9;
+        assert_eq!(
+            connection.sender_name(Side::Client),
+            Some(&b"wayland-0"[..])
+        );
+        assert_eq!(connection.sender_name(Side::Server), None);
     }
 
     #[test]

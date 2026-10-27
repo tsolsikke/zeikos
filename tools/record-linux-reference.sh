@@ -116,5 +116,7 @@ record_with_one_pipe wl-iovec-threads-rust
 record wl-ppoll-rust
 # memfd を伸ばす 2 回目の ftruncate（2026-10-26）。
 record wl-memfd-grow-rust
+# recvmsg が msghdr へ書き戻す欄（2026-10-26）。
+record wl-recvmsg-name-rust
 record m1-c
 record m3a-c

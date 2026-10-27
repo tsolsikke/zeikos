@@ -21,12 +21,13 @@ mod layout;
 pub use layout::{
     cmsg_one_fd_bytes, dirent64_record, dirent64_record_len, fb_fix_screeninfo_bytes,
     fb_var_screeninfo_bytes, input_event_bytes, parse_cmsg_one_fd, parse_drm_clip_rect,
-    parse_iovec, parse_msghdr, parse_pollfd, parse_sockaddr_un, parse_timespec, set_pollfd_revents,
-    timespec_bytes, winsize_bytes, CmsgOneFd, Dirent64, DrmClipRect, FbBitfield, FbFixScreeninfo,
-    FbVarScreeninfo, InputEvent, Iovec, Msghdr, Pollfd, SockaddrUn, Stat, Timespec, Winsize,
-    CMSG_ONE_FD_LEN, DIRENT64_ALIGN, DIRENT64_HEADER_LEN, DRM_CLIP_RECT_LEN, FB_FIX_SCREENINFO_LEN,
-    FB_VAR_SCREENINFO_LEN, INPUT_EVENT_LEN, IOVEC_LEN, MSGHDR_CONTROLLEN, MSGHDR_LEN, POLLFD_LEN,
-    SOCKADDR_UN_LEN, TIMESPEC_LEN, WINSIZE_LEN,
+    parse_iovec, parse_msghdr, parse_pollfd, parse_sockaddr_un, parse_timespec, scm_one_fd_room,
+    set_pollfd_revents, sockaddr_un_bytes, timespec_bytes, winsize_bytes, CmsgOneFd, Dirent64,
+    DrmClipRect, FbBitfield, FbFixScreeninfo, FbVarScreeninfo, InputEvent, Iovec, Msghdr, Pollfd,
+    SockaddrUn, Stat, Timespec, Winsize, CMSG_ONE_FD_LEN, DIRENT64_ALIGN, DIRENT64_HEADER_LEN,
+    DRM_CLIP_RECT_LEN, FB_FIX_SCREENINFO_LEN, FB_VAR_SCREENINFO_LEN, INPUT_EVENT_LEN, IOVEC_LEN,
+    MSGHDR_CONTROLLEN, MSGHDR_FLAGS, MSGHDR_LEN, MSGHDR_NAMELEN, POLLFD_LEN, SOCKADDR_UN_LEN,
+    TIMESPEC_LEN, WINSIZE_LEN,
 };
 
 mod request;
@@ -41,11 +42,11 @@ pub use values::{
     EPOLL_EVENT_LEN, EV_KEY, FBIOGET_FSCREENINFO, FBIOGET_VSCREENINFO, FB_TYPE_PACKED_PIXELS,
     FB_VISUAL_TRUECOLOR, FD_CLOEXEC, FIONBIO, GRND_INSECURE, GRND_NONBLOCK, GRND_RANDOM,
     ITIMERSPEC_LEN, MAP_ANONYMOUS, MAP_FIXED, MAP_FIXED_NOREPLACE, MFD_ALLOW_SEALING, MFD_CLOEXEC,
-    MFD_NAME_MAX_LEN, MSG_CMSG_CLOEXEC, MSG_DONTWAIT, MSG_NOSIGNAL, O_ACCMODE, O_APPEND, O_CLOEXEC,
-    O_CREAT, O_NONBLOCK, O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY, POLLERR, POLLHUP, POLLIN, POLLNVAL,
-    PROT_EXEC, PROT_READ, PROT_WRITE, SCM_RIGHTS, SEEK_CUR, SEEK_END, SEEK_SET, SOCK_CLOEXEC,
-    SOCK_NONBLOCK, SOCK_STREAM, SOCK_TYPE_MASK, SOL_SOCKET, TFD_CLOEXEC, TFD_NONBLOCK,
-    TFD_TIMER_ABSTIME, TIOCGWINSZ,
+    MFD_NAME_MAX_LEN, MSG_CMSG_CLOEXEC, MSG_CTRUNC, MSG_DONTWAIT, MSG_NOSIGNAL, O_ACCMODE,
+    O_APPEND, O_CLOEXEC, O_CREAT, O_NONBLOCK, O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY, POLLERR,
+    POLLHUP, POLLIN, POLLNVAL, PROT_EXEC, PROT_READ, PROT_WRITE, SCM_RIGHTS, SEEK_CUR, SEEK_END,
+    SEEK_SET, SOCK_CLOEXEC, SOCK_NONBLOCK, SOCK_STREAM, SOCK_TYPE_MASK, SOL_SOCKET, TFD_CLOEXEC,
+    TFD_NONBLOCK, TFD_TIMER_ABSTIME, TIOCGWINSZ,
 };
 
 pub mod x86_64;

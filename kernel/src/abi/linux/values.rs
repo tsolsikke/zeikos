@@ -175,6 +175,10 @@ pub const MSG_NOSIGNAL: u64 = 0x4000;
 /// 2026-10-19）。
 pub const MSG_CMSG_CLOEXEC: u64 = 0x4000_0000;
 
+/// `MSG_CTRUNC`（Linux の値）。`recvmsg` が `msg_flags` に立てる。**補助データの置き場が足りず、渡された fd を捨てた**
+/// （2026-10-26）。
+pub const MSG_CTRUNC: u64 = 0x8;
+
 /// `SOL_SOCKET`（`cmsghdr` の level）。
 pub const SOL_SOCKET: u32 = 1;
 

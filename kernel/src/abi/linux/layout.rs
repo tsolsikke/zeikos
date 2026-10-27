@@ -65,8 +65,14 @@ pub const POLLFD_LEN: usize = 8;
 /// `msg_controllen` 40・`msg_flags` 48。glibc の `bits/socket.h`）。
 pub const MSGHDR_LEN: usize = 56;
 
+/// `struct msghdr` の `msg_namelen` の位置（`int`）。**`recvmsg` が、送り手の名前の長さを書き戻す欄である**（2026-10-26）。
+pub const MSGHDR_NAMELEN: usize = 8;
+
 /// `struct msghdr` の `msg_controllen` の位置。**`recvmsg` が、書いた補助データの長さを書き戻す欄である。**
 pub const MSGHDR_CONTROLLEN: usize = 40;
+
+/// `struct msghdr` の `msg_flags` の位置（`int`）。**`recvmsg` が書き戻す欄である**（2026-10-26）。
+pub const MSGHDR_FLAGS: usize = 48;
 
 /// `struct iovec` のバイト数（`iov_base` 0・`iov_len` 8。glibc の `bits/types/struct_iovec.h`）。
 pub const IOVEC_LEN: usize = 16;
@@ -74,6 +80,9 @@ pub const IOVEC_LEN: usize = 16;
 /// fd を 1 つ運ぶ補助データのバイト数（`CMSG_LEN(sizeof(int))`）。`struct cmsghdr`（`cmsg_len` 0・`cmsg_level` 8・
 /// `cmsg_type` 12 の 16 バイト。glibc の `bits/socket.h`）と、fd の 4 バイトである。
 pub const CMSG_ONE_FD_LEN: usize = 20;
+
+/// fd を 1 つ運ぶ補助データが占める長さ（`CMSG_SPACE(sizeof(int))`。[`CMSG_ONE_FD_LEN`] を 8 バイト境界へ切り上げた 24）。
+pub const CMSG_ONE_FD_SPACE: u64 = 24;
 
 /// 生入力イベント 1 つのバイト数（`ADR-0066` の Y-a）。**Linux の `struct input_event` の
 /// 配置に合わせる**（`ADR-0020`。`tv_sec`(8)＋`tv_usec`(8)＋`type`(2)＋`code`(2)＋`value`(4)）。
@@ -381,6 +390,8 @@ pub fn parse_drm_clip_rect(raw: &[u8; DRM_CLIP_RECT_LEN]) -> DrmClipRect {
 pub struct Msghdr {
     /// `msg_name`（宛先の名前を指す）。
     pub name: u64,
+    /// `msg_namelen`（`msg_name` の置き場のバイト数。符号つきの `int`）。
+    pub namelen: i32,
     /// `msg_iov`（`struct iovec` の並びを指す）。
     pub iov: u64,
     /// `msg_iovlen`（`struct iovec` の数）。
@@ -396,6 +407,7 @@ pub fn parse_msghdr(raw: &[u8; MSGHDR_LEN]) -> Msghdr {
     let u64_at = |off: usize| u64::from_le_bytes(raw[off..off + 8].try_into().unwrap());
     Msghdr {
         name: u64_at(0),
+        namelen: i32::from_le_bytes(raw[MSGHDR_NAMELEN..MSGHDR_NAMELEN + 4].try_into().unwrap()),
         iov: u64_at(16),
         iovlen: u64_at(24),
         control: u64_at(32),
@@ -448,6 +460,28 @@ pub fn cmsg_one_fd_bytes(cmsg: &CmsgOneFd) -> [u8; CMSG_ONE_FD_LEN] {
     out[12..16].copy_from_slice(&cmsg.kind.to_le_bytes());
     out[16..20].copy_from_slice(&cmsg.fd.to_le_bytes());
     out
+}
+
+/// `recvmsg` で fd を 1 つ受けるとき、補助データの置き場に入るか（2026-10-26）。**入るなら、書き戻す `msg_controllen`**
+/// （使った長さ）を返す。
+///
+/// **Linux の `scm_detach_fds` の形である。** 置き場が NULL か、`cmsghdr` の 16 バイトの後に fd の 4 バイトが入らないと、fd は
+/// 渡さない（呼び手は fd を捨て、`MSG_CTRUNC` を立てる）。入るなら、使った長さは 24（`CMSG_SPACE(4)`）で、置き場がそれより
+/// 短ければ置き場の長さである（20 から 23 なら、その長さ）。
+pub fn scm_one_fd_room(control: u64, controllen: u64) -> Option<u64> {
+    (control != 0 && controllen >= CMSG_ONE_FD_LEN as u64)
+        .then(|| controllen.min(CMSG_ONE_FD_SPACE))
+}
+
+/// `sockaddr_un` を組む（2026-10-26。`recvmsg` の `msg_name`）。**長さは `sun_family` の 2 バイトと名前と NUL の 1 バイトで、
+/// Linux が `bind` で控える長さと同じである**（`unix_mkname_bsd`）。名前は [`SOCKADDR_UN_LEN`] から 3 引いた長さまでを
+/// 受ける（呼び手の名前は、それより短い）。
+pub fn sockaddr_un_bytes(family: u16, path: &[u8]) -> ([u8; SOCKADDR_UN_LEN as usize], usize) {
+    let mut out = [0u8; SOCKADDR_UN_LEN as usize];
+    let path = &path[..path.len().min(out.len() - 3)];
+    out[0..2].copy_from_slice(&family.to_le_bytes());
+    out[2..2 + path.len()].copy_from_slice(path);
+    (out, 2 + path.len() + 1)
 }
 
 /// `struct input_event` に書く値（`ADR-0066` の Y-a）。
@@ -723,6 +757,7 @@ mod tests {
         }
         let read = parse_msghdr(&raw);
         assert_eq!(read.name, 0x1716_1514_1312_1110, "msg_name @0");
+        assert_eq!(read.namelen, 0x1b1a_1918, "msg_namelen @8, an int");
         assert_eq!(read.iov, 0x2726_2524_2322_2120, "msg_iov @16");
         assert_eq!(read.iovlen, 0x2f2e_2d2c_2b2a_2928, "msg_iovlen @24");
         assert_eq!(read.control, 0x3736_3534_3332_3130, "msg_control @32");
@@ -739,6 +774,61 @@ mod tests {
         let read = parse_iovec(&raw);
         assert_eq!(read.base, 0x4746_4544_4342_4140, "iov_base @0");
         assert_eq!(read.len, 0x4f4e_4d4c_4b4a_4948, "iov_len @8");
+    }
+
+    /// `recvmsg` が書き戻す `msghdr` の欄の位置（`gcc` の `offsetof` で測って確かめた。2026-10-26。`sys/socket.h`）。
+    #[test]
+    fn the_msghdr_fields_recvmsg_writes_back_follow_the_linux_layout() {
+        assert_eq!(MSGHDR_NAMELEN, 8, "msg_namelen");
+        assert_eq!(MSGHDR_CONTROLLEN, 40, "msg_controllen");
+        assert_eq!(MSGHDR_FLAGS, 48, "msg_flags");
+        let mut raw = [0u8; MSGHDR_LEN];
+        raw[MSGHDR_NAMELEN..MSGHDR_NAMELEN + 4].copy_from_slice(&(-1i32).to_le_bytes());
+        assert_eq!(parse_msghdr(&raw).namelen, -1, "msg_namelen is signed");
+    }
+
+    /// fd を 1 つ受けるときの、補助データの置き場の長さと、書き戻す `msg_controllen`（Linux の `scm_detach_fds`。WSL で測った
+    /// 値は `linux-programs/reference/wl-recvmsg-name-rust.txt` にある）。
+    #[test]
+    fn one_fd_fits_only_when_the_control_holds_a_header_and_an_int() {
+        assert_eq!(scm_one_fd_room(0, 64), None, "no control");
+        assert_eq!(scm_one_fd_room(0x1000, 0), None, "0 bytes");
+        assert_eq!(scm_one_fd_room(0x1000, 16), None, "only the header");
+        assert_eq!(scm_one_fd_room(0x1000, 19), None, "one byte short");
+        assert_eq!(scm_one_fd_room(0x1000, 20), Some(20), "CMSG_LEN(4)");
+        assert_eq!(
+            scm_one_fd_room(0x1000, 23),
+            Some(23),
+            "short of CMSG_SPACE(4)"
+        );
+        assert_eq!(scm_one_fd_room(0x1000, 24), Some(24), "CMSG_SPACE(4)");
+        assert_eq!(
+            scm_one_fd_room(0x1000, 64),
+            Some(24),
+            "more than one fd needs"
+        );
+    }
+
+    /// `recvmsg` の `msg_name` に書く `sockaddr_un`。**長さは 2 + 名前 + NUL である**（WSL で測った値は
+    /// `linux-programs/reference/wl-recvmsg-name-rust.txt` にある）。
+    #[test]
+    fn a_sockaddr_un_is_built_with_the_nul_counted() {
+        let (out, len) = sockaddr_un_bytes(1, b"/tmp/seinas/recvmsg-name.sock");
+        assert_eq!(len, 32, "2 + 29 + NUL");
+        assert_eq!(u16_at(&out, 0), 1, "sun_family @0");
+        assert_eq!(&out[2..31], b"/tmp/seinas/recvmsg-name.sock", "sun_path @2");
+        assert_eq!(out[31], 0, "the NUL is part of the length");
+        let longest = [b'x'; 107];
+        assert_eq!(
+            sockaddr_un_bytes(1, &longest).1,
+            110,
+            "the longest name fills sockaddr_un"
+        );
+        assert_eq!(
+            sockaddr_un_bytes(1, b"").1,
+            3,
+            "an empty name still has the NUL"
+        );
     }
 
     /// fd を 1 つ運ぶ補助データ（`struct cmsghdr` と fd）の欄の位置と `cmsg_len`（`CMSG_LEN(sizeof(int))` は 20。

@@ -1,0 +1,16 @@
+wl-recvmsg-name-rust: main starts with 4 argument(s)
+wl-recvmsg-name-rust: from the connecting side: returned 1, msg_namelen 0, the name untouched = true, msg_flags 0x0, msg_controllen 0
+wl-recvmsg-name-rust: from the accepted side: returned 1, msg_namelen 32, sun_family 1, sun_path "/tmp/seinas/recvmsg-name.sock", untouched after the NUL = true, msg_flags 0x0, msg_controllen 0
+wl-recvmsg-name-rust: with a 4-byte name: returned 1, msg_namelen 32, wrote the first 4 bytes = true, untouched after them = true
+wl-recvmsg-name-rust: with a 0-byte name: returned 1, msg_namelen 32, the name untouched = true
+wl-recvmsg-name-rust: with msg_namelen -1: returned EINVAL = true, msg_namelen -1, the byte stayed for the next recvmsg = true
+wl-recvmsg-name-rust: with no name and msg_namelen -1: returned 1, msg_namelen -1
+wl-recvmsg-name-rust: with nothing to read: returned EAGAIN = true, msg_namelen 128, msg_flags 0x7fff, msg_controllen 64, the name untouched = true
+wl-recvmsg-name-rust: an fd with 64 bytes of control: returned 1, msg_flags 0x0, msg_controllen 24, received an fd = true, FD_CLOEXEC = false, a new fd was left open = false, the control untouched past msg_controllen = true
+wl-recvmsg-name-rust: an fd with 64 bytes of control and MSG_CMSG_CLOEXEC: returned 1, msg_flags 0x40000000, msg_controllen 24, received an fd = true, FD_CLOEXEC = true, a new fd was left open = false, the control untouched past msg_controllen = true
+wl-recvmsg-name-rust: an fd with 20 bytes of control: returned 1, msg_flags 0x0, msg_controllen 20, received an fd = true, FD_CLOEXEC = false, a new fd was left open = false, the control untouched past msg_controllen = true
+wl-recvmsg-name-rust: an fd with no control: returned 1, msg_flags 0x8, msg_controllen 0, received an fd = false, FD_CLOEXEC = false, a new fd was left open = false, the control untouched past msg_controllen = true
+wl-recvmsg-name-rust: an fd with 16 bytes of control: returned 1, msg_flags 0x8, msg_controllen 0, received an fd = false, FD_CLOEXEC = false, a new fd was left open = false, the control untouched past msg_controllen = true
+wl-recvmsg-name-rust: an fd with 19 bytes of control: returned 1, msg_flags 0x8, msg_controllen 0, received an fd = false, FD_CLOEXEC = false, a new fd was left open = false, the control untouched past msg_controllen = true
+wl-recvmsg-name-rust: done
+exit status: 4

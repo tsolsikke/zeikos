@@ -667,6 +667,9 @@ const LINUX_PROGRAMS: &[&str] = &[
     // **memfd を伸ばす 2 回目の ftruncate**（2026-10-26。`ADR-0065` の Addendum。`linux-socket-test` のビルドだけが起動時に
     // 起こす）。
     "wl-memfd-grow-rust",
+    // **`recvmsg` が `msghdr` へ書き戻す欄**（2026-10-26。`ADR-0065` の Addendum。`linux-socket-test` のビルドだけが起動時に
+    // 起こす）。
+    "wl-recvmsg-name-rust",
     // **壁の時計**（2026-10-20。`ADR-0090`。`realtime-test` のビルドだけが起動時に起こす）。
     "wl-realtime-rust",
     // **ZeikOS と Linux で結果が違うイメージ**（マップ中の memfd を縮める ftruncate。`memfd-shrink-test` のビルドだけが起こす）。

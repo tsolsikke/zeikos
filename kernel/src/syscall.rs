@@ -60,16 +60,17 @@ use crate::abi::linux::x86_64::{
 use crate::abi::linux::{
     cmsg_one_fd_bytes, dirent64_record, dirent64_record_len, fb_fix_screeninfo_bytes,
     fb_var_screeninfo_bytes, parse_cmsg_one_fd, parse_drm_clip_rect, parse_iovec, parse_msghdr,
-    parse_pollfd, parse_sockaddr_un, parse_timespec, set_pollfd_revents, timespec_bytes,
-    winsize_bytes, CmsgOneFd, Dirent64, DrmClipRect, FbBitfield, FbFixScreeninfo, FbVarScreeninfo,
-    Iovec, Msghdr, Stat, Timespec, Winsize, AF_UNIX, CLOCK_MONOTONIC, CLOCK_REALTIME,
-    CMSG_ONE_FD_LEN, DIRENT64_ALIGN, DIRENT64_HEADER_LEN, DRM_CLIP_RECT_LEN, DT_DIR, DT_REG,
-    DT_UNKNOWN, EFD_CLOEXEC, EFD_NONBLOCK, EFD_SEMAPHORE, EPOLL_CLOEXEC, EPOLL_CTL_ADD,
-    EPOLL_CTL_DEL, EPOLL_CTL_MOD, EPOLL_EVENT_LEN, FBIOGET_FSCREENINFO, FBIOGET_VSCREENINFO,
-    FB_TYPE_PACKED_PIXELS, FB_VISUAL_TRUECOLOR, FD_CLOEXEC, FIONBIO, GRND_INSECURE, GRND_NONBLOCK,
-    GRND_RANDOM, INPUT_EVENT_LEN, IOVEC_LEN, ITIMERSPEC_LEN, MAP_ANONYMOUS, MAP_FIXED,
-    MAP_FIXED_NOREPLACE, MFD_ALLOW_SEALING, MFD_CLOEXEC, MFD_NAME_MAX_LEN, MSGHDR_CONTROLLEN,
-    MSGHDR_LEN, MSG_CMSG_CLOEXEC, MSG_DONTWAIT, MSG_NOSIGNAL, O_ACCMODE, O_APPEND, O_CLOEXEC,
+    parse_pollfd, parse_sockaddr_un, parse_timespec, scm_one_fd_room, set_pollfd_revents,
+    sockaddr_un_bytes, timespec_bytes, winsize_bytes, CmsgOneFd, Dirent64, DrmClipRect, FbBitfield,
+    FbFixScreeninfo, FbVarScreeninfo, Iovec, Msghdr, Stat, Timespec, Winsize, AF_UNIX,
+    CLOCK_MONOTONIC, CLOCK_REALTIME, CMSG_ONE_FD_LEN, DIRENT64_ALIGN, DIRENT64_HEADER_LEN,
+    DRM_CLIP_RECT_LEN, DT_DIR, DT_REG, DT_UNKNOWN, EFD_CLOEXEC, EFD_NONBLOCK, EFD_SEMAPHORE,
+    EPOLL_CLOEXEC, EPOLL_CTL_ADD, EPOLL_CTL_DEL, EPOLL_CTL_MOD, EPOLL_EVENT_LEN,
+    FBIOGET_FSCREENINFO, FBIOGET_VSCREENINFO, FB_TYPE_PACKED_PIXELS, FB_VISUAL_TRUECOLOR,
+    FD_CLOEXEC, FIONBIO, GRND_INSECURE, GRND_NONBLOCK, GRND_RANDOM, INPUT_EVENT_LEN, IOVEC_LEN,
+    ITIMERSPEC_LEN, MAP_ANONYMOUS, MAP_FIXED, MAP_FIXED_NOREPLACE, MFD_ALLOW_SEALING, MFD_CLOEXEC,
+    MFD_NAME_MAX_LEN, MSGHDR_CONTROLLEN, MSGHDR_FLAGS, MSGHDR_LEN, MSGHDR_NAMELEN,
+    MSG_CMSG_CLOEXEC, MSG_CTRUNC, MSG_DONTWAIT, MSG_NOSIGNAL, O_ACCMODE, O_APPEND, O_CLOEXEC,
     O_CREAT, O_NONBLOCK, O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY, POLLERR, POLLFD_LEN, POLLHUP, POLLIN,
     POLLNVAL, PROT_EXEC, PROT_READ, PROT_WRITE, SCM_RIGHTS, SEEK_CUR, SEEK_END, SEEK_SET,
     SOCKADDR_UN_LEN, SOCK_CLOEXEC, SOCK_NONBLOCK, SOCK_STREAM, SOCK_TYPE_MASK, SOL_SOCKET,
@@ -77,8 +78,8 @@ use crate::abi::linux::{
 };
 use crate::abi::linux::{
     E2BIG, EACCES, EADDRINUSE, EAFNOSUPPORT, EAGAIN, EBADF, EBUSY, ECHILD, ECONNREFUSED, EEXIST,
-    EFAULT, EFBIG, EINTR, EINVAL, EIO, EISCONN, EISDIR, ELOOP, EMFILE, EMSGSIZE, ENAMETOOLONG,
-    ENOBUFS, ENODEV, ENOENT, ENOEXEC, ENOLCK, ENOMEM, ENOSPC, ENOSYS, ENOTCONN, ENOTDIR, ENOTEMPTY,
+    EFAULT, EFBIG, EINTR, EINVAL, EIO, EISCONN, EISDIR, ELOOP, EMFILE, ENAMETOOLONG, ENOBUFS,
+    ENODEV, ENOENT, ENOEXEC, ENOLCK, ENOMEM, ENOSPC, ENOSYS, ENOTCONN, ENOTDIR, ENOTEMPTY,
     ENOTSOCK, ENOTTY, EPERM, EPIPE, EPROTONOSUPPORT, EROFS, ESPIPE, ESRCH,
 };
 #[cfg(feature = "linux-socket-test")]
@@ -4450,8 +4451,12 @@ unsafe fn undo_shared_mapping(
 /// `msghdr` を読んで、iov の 1 本目と `SCM_RIGHTS` の fd 1 つを取り出す（`ADR-0065`）。
 ///
 /// **形は Wayland が打つものに絞る**——**iov は 1 本、補助データは `SCM_RIGHTS` の fd 1 つ。**
-/// **それ以外は `-EMSGSIZE` / `-EINVAL` で断る**（黙って別の形を通さない）。
+/// **それ以外は `-EINVAL` で断る**（黙って別の形を通さない）。
 struct ParsedMsg {
+    /// `msg_name`（`recvmsg` が送り手の名前を書く置き場。NULL なら書かない）。
+    name: u64,
+    /// `msg_namelen`（置き場の長さ。`name` が NULL でなければ 0 以上）。
+    namelen: i32,
     iov_base: u64,
     iov_len: u64,
     control: u64,
@@ -4459,7 +4464,7 @@ struct ParsedMsg {
     control_fd: Option<u64>,
 }
 
-/// `msghdr` の欄を読む（56 バイト）。**iov は 1 本だけ受ける。**
+/// `msghdr` の欄を読む（56 バイト）。**iov は 1 本だけ受ける。** `want_fd` が真なのは `sendmsg` のときである。
 ///
 /// # 安全性
 ///
@@ -4483,14 +4488,20 @@ unsafe fn read_msghdr(
     }
     let Msghdr {
         name,
+        namelen,
         iov,
         iovlen,
         control,
         controllen,
     } = parse_msghdr(&hdr);
     // **受け付ける形を絞る（`ADR-0065`）。** **一覧は `ADR-0065` の「`msghdr` の絞った範囲」に
-    // 在る。** **`msg_name` は NULL だけ**（繋がったストリームは宛先を持たない）。
-    if name != 0 {
+    // 在る。** **`sendmsg` の `msg_name` は NULL だけ**（繋がったストリームは宛先を持たない）。
+    if want_fd && name != 0 {
+        return Err(EINVAL);
+    }
+    // **`recvmsg` は `msg_name` の置き場を受ける**（2026-10-26。送り手の名前を書き戻す）。**置き場があって長さが負なら
+    // `-EINVAL`**——Linux の `__copy_msghdr` と同じで、置き場が NULL なら長さは見ない。
+    if name != 0 && namelen < 0 {
         return Err(EINVAL);
     }
     // **`msg_iovlen` は 1 だけ**（散らばり集めは持たない）。
@@ -4539,6 +4550,8 @@ unsafe fn read_msghdr(
         control_fd = Some(cmsg.fd as u64);
     }
     Ok(ParsedMsg {
+        name,
+        namelen,
         iov_base,
         iov_len,
         control,
@@ -4664,59 +4677,60 @@ unsafe fn recvmsg_from_ring3(
     } else if !crate::socket::readable_or_gone(conn, side) {
         return (-EAGAIN) as u64;
     }
-    // **渡された fd が在れば、自分の表へ据え、cmsghdr を書き戻す。**
+    // **渡された fd が在れば、自分の表へ据え、cmsghdr を書く。**
+    //
+    // **補助データの置き場が足りなければ、fd を捨てて `MSG_CTRUNC` を立て、バイトは返す**（2026-10-26。Linux の
+    // `scm_detach_fds`。置き場が NULL か、20 バイトに足りないか、書けないとき）。2026-10-25 までは `-EMSGSIZE` を返し、
+    // 据えた fd は表に残っていた。
+    let mut truncated = false;
+    let mut controllen_used = 0;
     if let Some(shm) = crate::socket::take_fd(conn, side) {
-        // **`MSG_CMSG_CLOEXEC` なら、受け取った fd に `FD_CLOEXEC` の印を立てる**（2026-10-20）。
-        let inserted = crate::vfs::with_current_files(|files| {
-            files.insert_with_cloexec(crate::vfs::File::Shm { shm }, flags & MSG_CMSG_CLOEXEC != 0)
-        });
-        let new_fd = match inserted {
-            Ok(new_fd) => new_fd as u64,
-            Err(error) => {
-                crate::shm::detach(shm);
-                return (-errno_for_file_table(error)) as u64;
+        let room = match scm_one_fd_room(parsed.control, parsed.controllen) {
+            // SAFETY: 呼び出し元契約による。
+            Some(used) => unsafe {
+                validate_user_range_for_write(
+                    page_table_root,
+                    direct_map,
+                    parsed.control,
+                    CMSG_ONE_FD_LEN as u64,
+                )
             }
+            .map(|cslice| (cslice, used)),
+            None => None,
         };
-        if parsed.control == 0 || parsed.controllen < CMSG_ONE_FD_LEN as u64 {
-            return (-EMSGSIZE) as u64;
+        if let Some((cslice, used)) = room {
+            // **`MSG_CMSG_CLOEXEC` なら、受け取った fd に `FD_CLOEXEC` の印を立てる**（2026-10-20）。
+            let inserted = crate::vfs::with_current_files(|files| {
+                files.insert_with_cloexec(
+                    crate::vfs::File::Shm { shm },
+                    flags & MSG_CMSG_CLOEXEC != 0,
+                )
+            });
+            let new_fd = match inserted {
+                Ok(new_fd) => new_fd as u64,
+                Err(error) => {
+                    crate::shm::detach(shm);
+                    return (-errno_for_file_table(error)) as u64;
+                }
+            };
+            // **cmsghdr（cmsg_len=20, level=SOL_SOCKET, type=SCM_RIGHTS）＋ fd を書く。**
+            let cbuf = cmsg_one_fd_bytes(&CmsgOneFd {
+                level: SOL_SOCKET,
+                kind: SCM_RIGHTS,
+                fd: new_fd as u32,
+            });
+            // SAFETY: 検証済み 20 バイト。
+            unsafe { copy_to_user(&cslice, 0, &cbuf) };
+            controllen_used = used;
+            crate::shm::note_fd_received();
+        } else {
+            crate::shm::detach(shm);
+            truncated = true;
         }
-        // **cmsghdr（cmsg_len=20, level=SOL_SOCKET, type=SCM_RIGHTS）＋ fd を書く。**
-        let cbuf = cmsg_one_fd_bytes(&CmsgOneFd {
-            level: SOL_SOCKET,
-            kind: SCM_RIGHTS,
-            fd: new_fd as u32,
-        });
-        // SAFETY: 呼び出し元契約による。
-        let Some(cslice) = (unsafe {
-            validate_user_range_for_write(
-                page_table_root,
-                direct_map,
-                parsed.control,
-                CMSG_ONE_FD_LEN as u64,
-            )
-        }) else {
-            return (-EFAULT) as u64;
-        };
-        // SAFETY: 検証済み 20 バイト。
-        unsafe { copy_to_user(&cslice, 0, &cbuf) };
-        // **msg_controllen を 20 に書き戻す。**
-        // SAFETY: 呼び出し元契約による。
-        if let Some(mslice) = unsafe {
-            validate_user_range_for_write(
-                page_table_root,
-                direct_map,
-                msg + MSGHDR_CONTROLLEN as u64,
-                8,
-            )
-        } {
-            // SAFETY: 検証済み 8 バイト。
-            unsafe { copy_to_user(&mslice, 0, &(CMSG_ONE_FD_LEN as u64).to_le_bytes()) };
-        }
-        crate::shm::note_fd_received();
     }
     // **バイトを読む**（ソケットの読みと同じ経路）。
     // SAFETY: 呼び出し元契約による。
-    unsafe {
+    let read = unsafe {
         read_from_socket(
             StreamEnd { conn, side, wait },
             parsed.iov_base,
@@ -4725,7 +4739,112 @@ unsafe fn recvmsg_from_ring3(
             direct_map,
             bkl,
         )
+    };
+    if (read as i64) < 0 {
+        return read;
     }
+    // **読めたら、`msghdr` の欄を書き戻す**（2026-10-26。読めなければ、どの欄も書かない。Linux の `____sys_recvmsg`）。
+    let written = RecvmsgWriteBack {
+        msg_flags: (flags & MSG_CMSG_CLOEXEC) | if truncated { MSG_CTRUNC } else { 0 },
+        controllen_used,
+    };
+    // SAFETY: 呼び出し元契約による。
+    match unsafe {
+        write_back_recvmsg(
+            msg,
+            &parsed,
+            conn,
+            side,
+            written,
+            page_table_root,
+            direct_map,
+        )
+    } {
+        Ok(()) => read,
+        Err(errno) => (-errno) as u64,
+    }
+}
+
+/// `recvmsg` が `msghdr` へ書き戻す値のうち、fd を受けたときに決まるもの。
+#[derive(Clone, Copy)]
+struct RecvmsgWriteBack {
+    /// `msg_flags` に書く値（渡された `MSG_CMSG_CLOEXEC` と、fd を捨てたときの `MSG_CTRUNC`）。
+    msg_flags: u64,
+    /// 補助データに使った長さ（`msg_controllen` に書く。fd を受けなければ 0）。
+    controllen_used: u64,
+}
+
+/// `recvmsg` が読めた後に、`msghdr` の欄を書き戻す（2026-10-26）。**Linux の `____sys_recvmsg` と同じ順である。**
+///
+/// 1. `msg_name` が NULL でなければ、`msg_namelen` に送り手の名前の長さを書き、名前を置き場の長さまで書く（`move_addr_to_user`）。
+///    送り手が名前を持たなければ（繋いだ側から受けたとき）、長さは 0 で、置き場は書かない。
+/// 2. `msg_flags` に、渡された `MSG_CMSG_CLOEXEC` と、fd を捨てたときの `MSG_CTRUNC` を書く（呼び手が組む）。渡した値は残さない。
+/// 3. `msg_controllen` に、補助データに使った長さを書く。fd を受けなければ 0 である。
+///
+/// # 安全性
+///
+/// 呼び出し元契約により `page_table_root` / `direct_map` は有効。
+unsafe fn write_back_recvmsg(
+    msg: u64,
+    parsed: &ParsedMsg,
+    conn: u8,
+    side: crate::socket::Side,
+    written: RecvmsgWriteBack,
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+) -> Result<(), i64> {
+    // SAFETY: 呼び出し元契約による。
+    let Some(mslice) = (unsafe {
+        validate_user_range_for_write(page_table_root, direct_map, msg, MSGHDR_LEN as u64)
+    }) else {
+        return Err(EFAULT);
+    };
+    if parsed.name != 0 {
+        let mut name = [0u8; crate::socket::NAME_MAX];
+        let (addr, addr_len) = match crate::socket::sender_name(conn, side, &mut name) {
+            Some(len) => sockaddr_un_bytes(AF_UNIX as u16, &name[..len]),
+            None => ([0u8; SOCKADDR_UN_LEN as usize], 0),
+        };
+        // SAFETY: 検証済みの 56 バイトの内側（`msg_namelen` は 8 から 4 バイト）。
+        unsafe {
+            copy_to_user(
+                &mslice,
+                MSGHDR_NAMELEN as u64,
+                &(addr_len as i32).to_le_bytes(),
+            )
+        };
+        // **書くのは置き場の長さまで**（`read_msghdr` が 0 以上を確かめた）。**長さは切り詰める前のものを書く。**
+        let copy_len = addr_len.min(parsed.namelen as usize);
+        if copy_len > 0 {
+            // SAFETY: 呼び出し元契約による。
+            let Some(nslice) = (unsafe {
+                validate_user_range_for_write(
+                    page_table_root,
+                    direct_map,
+                    parsed.name,
+                    copy_len as u64,
+                )
+            }) else {
+                return Err(EFAULT);
+            };
+            // SAFETY: 検証済み `copy_len` バイト。
+            unsafe { copy_to_user(&nslice, 0, &addr[..copy_len]) };
+        }
+    }
+    // SAFETY: 検証済みの 56 バイトの内側（`msg_flags` は 48 から 4 バイト、`msg_controllen` は 40 から 8 バイト）。
+    unsafe {
+        copy_to_user(
+            &mslice,
+            MSGHDR_FLAGS as u64,
+            &(written.msg_flags as u32).to_le_bytes(),
+        );
+        copy_to_user(
+            &mslice,
+            MSGHDR_CONTROLLEN as u64,
+            &written.controllen_used.to_le_bytes(),
+        );
+    }
+    Ok(())
 }
 
 /// [`SYS_SPAWN_DETACHED`] の本体。**引数のコピーは [`spawn_from_ring3`] と同じ形である。**

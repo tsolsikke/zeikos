@@ -24405,6 +24405,8 @@ fn cmd_linux_socket_test() -> Result<()> {
     let ppoll_ended = format!("spawn: /bin/linux/{ppoll} ended");
     let grow = "wl-memfd-grow-rust";
     let grow_ended = format!("spawn: /bin/linux/{grow} ended");
+    let recvmsg_name = "wl-recvmsg-name-rust";
+    let recvmsg_name_ended = format!("spawn: /bin/linux/{recvmsg_name} ended");
     let deadline = Instant::now() + PIPE_TEST_TIMEOUT;
     loop {
         if child.was_cut() {
@@ -24652,6 +24654,19 @@ fn cmd_linux_socket_test() -> Result<()> {
         .lines()
         .find(|line| line.contains(&grow_ended))
         .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
+    // **`recvmsg` が `msghdr` へ書き戻す欄**（2026-10-26。`ADR-0065` の Addendum）。終わり方と Linux の参照で見る（`msg_namelen`・
+    // `msg_flags`・`msg_controllen` の値と、置き場が足りないときに fd が残らないことが行に出る）。
+    let recvmsg_name_ran = serial.contains(&format!("{recvmsg_name_ended} (Exited(4))"));
+    let recvmsg_name_matched = linux_program_output_matches(
+        &workspace_root,
+        recvmsg_name,
+        &serial,
+        LinuxReferenceEnvironment::ExactCount,
+    )?;
+    let recvmsg_name_unknown_free = serial
+        .lines()
+        .find(|line| line.contains(&recvmsg_name_ended))
+        .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
     // **memfd のフラグと名前・封・fstat・作り方ごとの `FD_CLOEXEC`**（2026-10-20。`ADR-0065` の Addendum）。終わり方と Linux の
     // 参照で見る（封と `F_GETFD` の値が行に出る）。
     let memfd_ran = serial.contains(&format!("{memfd_ended} (Exited(4))"));
@@ -24747,6 +24762,13 @@ fn cmd_linux_socket_test() -> Result<()> {
         "{context}: {grow} printed what Linux prints (linux-programs/reference/{grow}.txt) = {grow_matched}"
     );
     println!("{context}: {grow} hit no number the kernel does not know = {grow_unknown_free}");
+    println!("{context}: {recvmsg_name} ended with status 4 = {recvmsg_name_ran}");
+    println!(
+        "{context}: {recvmsg_name} printed what Linux prints (linux-programs/reference/{recvmsg_name}.txt) = {recvmsg_name_matched}"
+    );
+    println!(
+        "{context}: {recvmsg_name} hit no number the kernel does not know = {recvmsg_name_unknown_free}"
+    );
     println!("{context}: {memfd} ended with status 4 = {memfd_ran}");
     println!(
         "{context}: {memfd} printed what Linux prints (linux-programs/reference/{memfd}.txt) = {memfd_matched}"
@@ -24791,6 +24813,9 @@ fn cmd_linux_socket_test() -> Result<()> {
         && grow_ran
         && grow_matched
         && grow_unknown_free
+        && recvmsg_name_ran
+        && recvmsg_name_matched
+        && recvmsg_name_unknown_free
         && memfd_ran
         && memfd_matched
         && memfd_unknown_free
@@ -24813,6 +24838,7 @@ fn cmd_linux_socket_test() -> Result<()> {
                 || l.contains(iovecs)
                 || l.contains(ppoll)
                 || l.contains(grow)
+                || l.contains(recvmsg_name)
                 || l.contains(memfd)
                 || l.contains("[ERROR]")
         })
