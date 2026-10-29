@@ -673,6 +673,9 @@ const LINUX_PROGRAMS: &[&str] = &[
     // **受け取られないまま閉じた接続の `SCM_RIGHTS` の fd を手放す**（2026-10-27。`ADR-0065` の Addendum。`linux-socket-test` の
     // ビルドだけが起動時に起こす）。
     "wl-close-queued-fd-rust",
+    // **共有メモリのマッピングの数と、共有のマッピングの `munmap`、マップしていない memfd を縮める `ftruncate`**（2026-10-30。
+    // `ADR-0065` の Addendum。`linux-socket-test` のビルドだけが起動時に起こす）。
+    "wl-shm-mapping-refs-rust",
     // **壁の時計**（2026-10-20。`ADR-0090`。`realtime-test` のビルドだけが起動時に起こす）。
     "wl-realtime-rust",
     // **ZeikOS と Linux で結果が違うイメージ**（マップ中の memfd を縮める ftruncate。`memfd-shrink-test` のビルドだけが起こす）。

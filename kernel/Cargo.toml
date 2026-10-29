@@ -1368,6 +1368,12 @@ memfd-ignores-allow-sealing-test = []
 # 破壊（2026-10-20。ADR-0065 の Addendum）: 足した封を持たない。F_GET_SEALS が 0 を返し、イメージが 94 で終わる。
 # `--critical-test memfd-seals-not-kept`。
 memfd-seals-not-kept-test = []
+# 破壊（2026-10-30。ADR-0065 の Addendum）: 共有メモリの munmap で、マップしたページの数を引かない。フレームが返らず、
+# wl-shm-mapping-refs-rust が全体の上限で ftruncate に断られて 95 で終わる。`--critical-test shm-munmap-keeps-maps`。
+shm-munmap-keeps-maps-test = []
+# 破壊（2026-10-30。ADR-0065 の Addendum）: 共有メモリのフレームを、最後に外したときの TLB の世代を待たずに返す。返す直前の
+# 確かめ直しが名指しの行を出す。`--critical-test shm-release-ignores-generation`。
+shm-release-ignores-generation-test = []
 # 確かめ（2026-10-20。ADR-0090）: 壁の時計（CLOCK_REALTIME）を読む Linux 向けのイメージ（wl-realtime-rust）を起動時に起こす。
 # 値はイメージが標準エラーへ出し、xtask が起動の前後のホストの時刻と比べる。`cargo xtask run --realtime-test`。
 realtime-test = []

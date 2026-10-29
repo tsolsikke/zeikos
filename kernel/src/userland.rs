@@ -1504,6 +1504,10 @@ pub fn load_user_program_with(
         };
         DESTROYS_IN_PROGRESS.fetch_sub(1, core::sync::atomic::Ordering::SeqCst);
         note_destroy(slot, retired, quarantine.held_count());
+        // **共有メモリのマッピングの、マップしたページの数を引く**（2026-10-30。`crate::shm` の「マッピングの数と、返す
+        // 時期」）。空間を壊した後に引く——リーフはもう無いので、最後のページなら `crate::shm` が上げる世代は「外し終えた後」
+        // になる。フレームは、その世代を全部の CPU が通り過ぎてから返る。BKL を持ったまま呼ぶ。
+        release_shared_mappings_of_ended_process();
         drop(bkl);
         if threads_ended > 0 {
             report_threads_ended_with_the_process(
@@ -3699,6 +3703,17 @@ fn borrow_allocator_by_yielding() -> Option<crate::frame_allocator::Loan> {
     }
 }
 
+/// 終わったプロセスの表から共有メモリのマッピングを外し、マップしていたページの数を `crate::shm` から引く（2026-10-30）。
+/// 表は次のプロセスを載せるときに上書きされるだけで、ほかに見る所が無い。スレッドは表を分け合うので、プロセスごとに 1 回である。
+fn release_shared_mappings_of_ended_process() {
+    let mut taken: crate::mappings::Released = [None; crate::mappings::MAX_MAPPINGS];
+    let count = crate::mappings::with_loaded(|map| map.take_shared_memory(&mut taken));
+    for mapping in taken.iter().take(count).flatten() {
+        if let crate::mappings::MappingKind::SharedMemory { shm } = mapping.kind {
+            crate::shm::map_detach(shm, mapping.pages() as u32);
+        }
+    }
+}
 #[cfg(test)]
 mod tests {
     /// 既定に `HOME` が入っていること（f-1。`ADR-0052` の Decision 5）。

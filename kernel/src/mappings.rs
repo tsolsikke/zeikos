@@ -59,9 +59,13 @@ pub enum MappingKind {
 }
 
 impl MappingKind {
-    /// `munmap` で外せる種類か。
+    /// `munmap` で外せる種類か。**共有メモリも外せる**（2026-10-30。フレームは返さず、`crate::shm` がマップしたページの数を
+    /// 引く）。
     pub const fn can_unmap(self) -> bool {
-        matches!(self, MappingKind::Anonymous)
+        matches!(
+            self,
+            MappingKind::Anonymous | MappingKind::SharedMemory { .. }
+        )
     }
 
     /// `MAP_FIXED` が上に置き換えてよい種類か（外して置く）。
@@ -114,7 +118,8 @@ pub enum MapError {
     BadRange,
     /// 範囲が、マッピングの一部にだけ掛かる（マッピングの全体だけを求める口で）。`-EINVAL`。
     PartOfAMapping,
-    /// 範囲に、外せない種類のマッピング（イメージ・スタック・見張り・共有メモリ・画面。`munmap` ではヒープも）が掛かる。`-EINVAL`。
+    /// 範囲に、外せない種類のマッピング（イメージ・スタック・見張り・画面。`munmap` ではヒープも。`MAP_FIXED` と `mprotect` では
+    /// 共有メモリも）が掛かる。`-EINVAL`。
     NotRemovable,
     /// 置きたい範囲に、マッピングが在る（`MAP_FIXED_NOREPLACE`。`-EEXIST`）、または登録の範囲が重なる。
     Overlap,
@@ -557,6 +562,22 @@ impl MemoryMap {
             None if end == start => Ok(()),
             None => self.register(start, end, MappingKind::Heap, true, true),
         }
+    }
+
+    /// 共有メモリのマッピングを、表から外して `out` へ置く（2026-10-30。プロセスの終わりが、マップしたページの数を
+    /// `crate::shm` から引くために呼ぶ）。置いた数を返す。**外すので、2 度呼んでも 2 度は引かない。**
+    pub fn take_shared_memory(&mut self, out: &mut Released) -> usize {
+        let mut taken = 0;
+        for slot in self.entries.iter_mut() {
+            if let Some(mapping) = slot {
+                if matches!(mapping.kind, MappingKind::SharedMemory { .. }) {
+                    out[taken] = Some(*mapping);
+                    taken += 1;
+                    *slot = None;
+                }
+            }
+        }
+        taken
     }
 
     /// `address` を含むマッピング。

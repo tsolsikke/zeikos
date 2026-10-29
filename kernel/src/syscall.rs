@@ -1047,7 +1047,7 @@ unsafe fn dispatch(
         // `spawn` の経路には載っていない**——**`mmap` は `brk` と同じ `map_4kib` を使う。**
         // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
         SYS_MEMFD_CREATE => unsafe {
-            memfd_create_from_ring3(args[0], args[1], page_table_root, direct_map)
+            memfd_create_from_ring3(args[0], args[1], page_table_root, direct_map, bkl)
         },
         SYS_FTRUNCATE => ftruncate_from_ring3(args[0], args[1], bkl),
         SYS_FLOCK => sys_flock(args[0], args[1], bkl),
@@ -3763,8 +3763,10 @@ const ANONYMOUS_MMAP_MAX: u64 = 16 * 1024 * 1024;
 ///
 /// - 範囲に掛かる無名のマッピングを外す。一部にだけ掛かるマッピングは、残る部分を分けて表に戻す。ページを外してフレームを返す。
 /// - 範囲にどのマッピングも掛かっていなければ 0（Linux と同じ）。
-/// - イメージ・スタック・ガードページ・ヒープ・共有メモリ・画面に掛かる範囲は `-EINVAL`（何も変えない）。ヒープは `brk` が
-///   持つので外さない。共有メモリと画面は、参照数とバックバッファの扱いが要る（`docs/deferred-decisions.md`）。
+/// - 共有メモリのマッピングも外す（2026-10-30。一部だけでもよい）。リーフを外すだけでフレームは返さず、`crate::shm` が
+///   マップしたページの数を引く（フレームは、fd とマップしたページが全部無くなり、TLB の世代が退いてから返る）。
+/// - イメージ・スタック・ガードページ・ヒープ・画面に掛かる範囲は `-EINVAL`（何も変えない）。ヒープは `brk` が持つので外さない。
+///   画面は、バックバッファの扱いが要る（`docs/deferred-decisions.md`）。
 ///
 /// # Safety
 ///
@@ -4159,6 +4161,26 @@ unsafe fn release_range_and_unmap(
         if !piece.present && cfg!(feature = "munmap-skips-retained-test") {
             continue;
         }
+        // **共有メモリの断片は、リーフを外すだけでフレームは返さない**（2026-10-30。持ち主は `crate::shm`）。外したページの数を
+        // 引き、最後のページなら `crate::shm` が TLB の世代を上げて控える（フレームは、その世代を全部の CPU が通り過ぎてから
+        // 返る）。
+        if let crate::mappings::MappingKind::SharedMemory { shm } = piece.kind {
+            let mut page = piece.start;
+            while page < piece.end {
+                if let Some(virt) = common::addr::VirtAddr::new(page) {
+                    // SAFETY: 稼働中のページテーブルから、このプロセスの共有メモリのページを外す。フレームは持ち主
+                    // （`crate::shm`）が参照の数で返すので、ここでは返さない。この CPU の TLB からは `unmap_4kib` が消す。
+                    let _ = unsafe { table.unmap_4kib(virt) };
+                }
+                page += PAGE_SIZE;
+            }
+            // 破壊テスト (2026-10-30, shm-munmap-keeps-maps-test): 外したページを引かない。フレームが返らず、
+            // `wl-shm-mapping-refs-rust` が共有メモリの上限で `memfd_create` に断られる。
+            if !cfg!(feature = "shm-munmap-keeps-maps-test") {
+                crate::shm::map_detach(shm, piece.pages() as u32);
+            }
+            continue;
+        }
         let mut page = piece.start;
         while page < piece.end {
             if let Some(virt) = common::addr::VirtAddr::new(page) {
@@ -4213,6 +4235,7 @@ unsafe fn memfd_create_from_ring3(
     flags: u64,
     page_table_root: PhysAddr,
     direct_map: DirectMap,
+    bkl: &mut Option<crate::bkl::BklGuard>,
 ) -> u64 {
     if flags & !(MFD_CLOEXEC | MFD_ALLOW_SEALING) != 0 {
         return (-EINVAL) as u64;
@@ -4225,8 +4248,16 @@ unsafe fn memfd_create_from_ring3(
         Err(E2BIG) => return (-EINVAL) as u64,
         Err(errno) => return (-errno) as u64,
     }
-    let Some(shm) = crate::shm::create(flags & MFD_ALLOW_SEALING != 0) else {
-        return (-ENOMEM) as u64;
+    // **欄が無ければ、返す途中の分を返してから 1 度だけ作り直す**（2026-10-30。[`release_shm_before_refusing`]）。
+    let shm = match crate::shm::create(flags & MFD_ALLOW_SEALING != 0) {
+        Some(shm) => shm,
+        None if release_shm_before_refusing(bkl) => {
+            match crate::shm::create(flags & MFD_ALLOW_SEALING != 0) {
+                Some(shm) => shm,
+                None => return (-ENOMEM) as u64,
+            }
+        }
+        None => return (-ENOMEM) as u64,
     };
     let inserted = crate::vfs::with_current_files(|files| {
         files.insert_with_cloexec(crate::vfs::File::Shm { shm }, flags & MFD_CLOEXEC != 0)
@@ -4244,35 +4275,116 @@ unsafe fn memfd_create_from_ring3(
 /// [`crate::shm::set_size`] の doc（2026-10-26。伸ばす向きを受けた。`ADR-0065` の Addendum）。
 #[inline(never)]
 fn ftruncate_from_ring3(fd: u64, size: u64, bkl: &mut Option<crate::bkl::BklGuard>) -> u64 {
-    // **fd の表を読む前に借りる**（2026-10-08。[`borrow_allocator`]。借りられるまで待つ。引数だけの確かめは無い）。
-    let Some(mut allocator) = borrow_allocator(bkl) else {
-        return (-ENOMEM) as u64;
-    };
-    let shm = match shm_of(fd) {
-        Ok(shm) => shm,
-        Err(errno) => return errno,
-    };
-    match crate::shm::set_size(shm, size, &mut allocator) {
-        crate::shm::TruncateOutcome::Pages(_) => 0,
-        crate::shm::TruncateOutcome::TooLarge => (-EFBIG) as u64,
-        crate::shm::TruncateOutcome::Sealed => (-EPERM) as u64,
-        crate::shm::TruncateOutcome::NoRoom => (-ENOMEM) as u64,
-        crate::shm::TruncateOutcome::Shrink => report_shrink_refused(shm, size),
-        crate::shm::TruncateOutcome::NoShm => (-EBADF) as u64,
+    // **断る前に 1 度だけ、返す途中の共有メモリを返して（世代を待って）やり直す**（2026-10-30）——全体の上限かフレームの
+    // 不足（`NoRoom`）と、縮める向きで世代を待つとき（`NotRetired`）である。待つ間は BKL を放すので、やり直しは fd の表から
+    // 読み直す（2026-10-23 の決まり。待った後に、待つ前に読んだものを使わない）。
+    for attempt in 0..2 {
+        // **fd の表を読む前に借りる**（2026-10-08。[`borrow_allocator`]。借りられるまで待つ。引数だけの確かめは無い）。
+        let Some(mut allocator) = borrow_allocator(bkl) else {
+            return (-ENOMEM) as u64;
+        };
+        let shm = match shm_of(fd) {
+            Ok(shm) => shm,
+            Err(errno) => return errno,
+        };
+        let outcome = crate::shm::set_size(shm, size, &mut allocator);
+        // 待つ前に返す（待つ間、アロケータを持たない）。
+        drop(allocator);
+        match outcome {
+            crate::shm::TruncateOutcome::Pages(_) => return 0,
+            crate::shm::TruncateOutcome::TooLarge => return (-EFBIG) as u64,
+            crate::shm::TruncateOutcome::Sealed => return (-EPERM) as u64,
+            crate::shm::TruncateOutcome::NoRoom
+                if attempt == 0 && release_shm_before_refusing(bkl) => {}
+            crate::shm::TruncateOutcome::NoRoom => return (-ENOMEM) as u64,
+            crate::shm::TruncateOutcome::NotRetired(generation)
+                if attempt == 0 && wait_for_shm_generation(generation, bkl) => {}
+            // 待っても世代が退かない（上限を越えた。プロセスの終わりの印が立った）。縮めずに `-ENOMEM` を返す。
+            crate::shm::TruncateOutcome::NotRetired(_) => return (-ENOMEM) as u64,
+            crate::shm::TruncateOutcome::Shrink => return report_shrink_refused(shm, size),
+            crate::shm::TruncateOutcome::NoShm => return (-EBADF) as u64,
+        }
     }
+    (-ENOMEM) as u64
 }
 
-/// 縮める `ftruncate` を名指しして断る（2026-10-15。`ADR-0065` の Addendum。2026-10-26 から縮める向きだけ）。**`-EINVAL`**——
-/// 表はマップの数を持たないので、マップ中かどうかで分けられない。断ることで「マップ中の memfd を縮めない」が守られる。
-/// マップしていない memfd を縮めることは、マッピングの数を持つ課題の後である。
+/// 返す途中の共有メモリの世代を待つ上限（ティック。2026-10-30）。世代は、全部の CPU が 1 ティック以内に BKL を通って
+/// 進めるので、2 ティックで足りる。余裕を見て 4 にした。
+const SHM_GENERATION_WAIT_LIMIT_TICKS: u64 = 4;
+
+/// TLB の世代 `generation` を全部の CPU が通り過ぎるまで、1 ティックずつ眠って待つ（2026-10-30）。通り過ぎたら真。
+/// 上限（[`SHM_GENERATION_WAIT_LIMIT_TICKS`]）を越えたか、プロセスの終わりの印が立ったら偽。
+///
+/// **眠る間は BKL を放す**（[`sleep_until_ticks`]）。自分の CPU の世代は、起きて BKL を取り直すときに進む
+/// （`crate::bkl` の `flush_if_generation_is_stale`）。ほかの CPU は、タイマの入口で進める。
+///
+/// 破壊テスト (2026-10-30, shm-release-ignores-generation-test): `crate::shm` の側で世代を見ないので、ここへは来ない。
+fn wait_for_shm_generation(generation: u64, bkl: &mut Option<crate::bkl::BklGuard>) -> bool {
+    for _ in 0..SHM_GENERATION_WAIT_LIMIT_TICKS {
+        if crate::bkl::generation_is_retired(generation) {
+            return true;
+        }
+        if bkl.is_none()
+            || sleep_until_ticks(
+                crate::arch::x86_64::monotonic_ticks().saturating_add(1),
+                bkl,
+            ) == Woke::ProcessEnded
+        {
+            return false;
+        }
+    }
+    crate::bkl::generation_is_retired(generation)
+}
+
+/// 共有メモリの欄・全体の上限・フレームが足りずに断る前に、返す途中の共有メモリを返す（2026-10-30。`ADR-0065` の
+/// Addendum）。返せるものが無ければ、返す途中の分が待っている世代を待ってから返す。**何か返せたら真**（呼び手は 1 度だけ
+/// やり直す）。返す途中の分が無ければ、待たずに偽。
+///
+/// 返す途中の分は、最後に外したときの TLB の世代を全部の CPU が通り過ぎるまで返らない。すぐに「作る→マップ→閉じる→外す」を
+/// 繰り返すと、前の回の分がまだ返っていないので、待たないと上限に当たる。
+fn release_shm_before_refusing(bkl: &mut Option<crate::bkl::BklGuard>) -> bool {
+    if !crate::shm::release_pending_exists() {
+        return false;
+    }
+    if crate::shm::release_pending() > 0 {
+        return true;
+    }
+    let Some(generation) = crate::shm::pending_generation() else {
+        return false;
+    };
+    wait_for_shm_generation(generation, bkl) && crate::shm::release_pending() > 0
+}
+
+/// 共有メモリのマップしたページの数より多く引こうとしたことを、名指しして出す（2026-10-30。`crate::shm` の `map_detach` が
+/// 呼ぶ）。**出てはいけない行である**（足す数と引く数が釣り合っていない）。
+#[inline(never)]
+#[cold]
+pub fn report_shm_maps_underflow(shm: usize, mapped: u32, unmapping: u32) {
+    serial_line(format_args!(
+        "[ERROR] shm: shm {shm} has {mapped} mapped page(s) but {unmapping} are being unmapped; the counts of mmap and \
+         munmap do not balance"
+    ));
+}
+
+/// 共有メモリのフレームを、最後に外したときの TLB の世代を全部の CPU が通り過ぎる前に返そうとしたことを、名指しして出す
+/// （2026-10-30。`crate::shm` の `free_frames` が、返す直前に確かめ直して呼ぶ）。**出てはいけない行である。**
+#[inline(never)]
+#[cold]
+pub fn report_shm_released_before_retired(pages: usize, generation: u64) {
+    serial_line(format_args!(
+        "[ERROR] shm: {pages} shared page(s) went back to the allocator before every CPU passed the TLB generation          {generation} of their last unmap"
+    ));
+}
+
+/// マップ中の memfd を縮める `ftruncate` を名指しして断る（2026-10-15。`ADR-0065` の Addendum。2026-10-30 からマップ中のとき
+/// だけ）。**`-EINVAL`**——Linux は通し、外れたページに触ると `SIGBUS` になる（シグナルを配る段の後で合わせる）。
 #[inline(never)]
 #[cold]
 fn report_shrink_refused(shm: u8, size: u64) -> u64 {
     let (pages, refs) = crate::shm::size_and_refs(shm).unwrap_or((0, 0));
     serial_line(format_args!(
-        "shm: ftruncate refused: shm {shm} already has {pages} page(s) ({refs} reference(s)); the shrink to {size} \
-         byte(s) is -EINVAL, so a mapped memfd is never shrunk (shrinking an unmapped memfd comes with the work that \
-         counts the mappings)"
+        "shm: ftruncate refused: shm {shm} already has {pages} page(s) ({refs} reference(s)) and is mapped; the shrink \
+         to {size} byte(s) is -EINVAL, so a mapped memfd is never shrunk"
     ));
     (-EINVAL) as u64
 }
@@ -4417,6 +4529,10 @@ unsafe fn mmap_from_ring3(
                 (want_pages * crate::shm::PAGE_SIZE) as u64,
             )
         };
+    } else {
+        // **マップし終えたページを数える**（2026-10-30。`crate::shm` の「マッピングの数と、返す時期」）。fd を全部閉じても、
+        // マップしている間はフレームが返らない。上で引いたページの内側なので、実体は在る（BKL を放していない）。
+        crate::shm::map_attach(shm, want_pages as u32);
     }
     let tables_taken = free_before_map.saturating_sub(allocator.free_frame_count());
     crate::userland::note_post_load_frames(tables_taken as usize);
@@ -8434,7 +8550,12 @@ fn borrow_allocator_counting(
 ) -> (Option<crate::frame_allocator::Loan>, u64) {
     let mut waited = 0;
     loop {
-        if let Some(loan) = crate::frame_allocator::Loan::take() {
+        if let Some(mut loan) = crate::frame_allocator::Loan::take() {
+            // **返す途中の共有メモリのうち、世代が退いたものを先に返す**（2026-10-30）。アイドルの定常経路は、CPU が忙しい間は
+            // 回らないので、アロケータを借りる所でも返す（印が無ければ何もしない）。
+            if crate::shm::release_pending_exists() {
+                crate::shm::release_retired_into(&mut loan);
+            }
             return (Some(loan), waited);
         }
         if waited >= ALLOCATOR_WAIT_LIMIT_TICKS || bkl.is_none() {

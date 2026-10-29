@@ -120,5 +120,7 @@ record wl-memfd-grow-rust
 record wl-recvmsg-name-rust
 # 受け取られないまま閉じた接続の SCM_RIGHTS の fd（2026-10-27）。
 record wl-close-queued-fd-rust
+# 共有メモリのマッピングの数と munmap、マップしていない memfd を縮める ftruncate（2026-10-30）。
+record wl-shm-mapping-refs-rust
 record m1-c
 record m3a-c

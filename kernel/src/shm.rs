@@ -14,9 +14,20 @@
 //! リーフの PTE の空きビット 9 で目印を付ける**（`mmap` が `map_4kib` に `shared: true` で頼む）。
 //! **`AddressSpace::detach` は目印の立ったリーフを集めない**——**Linux が `struct page` 相当の
 //! 管理で空きビットを使うのと同じ思想である**（規模が合わないので `struct page` 相当の表は
-//! 持たず、ここが参照数を持つ）。**最後の fd が閉じたときにアロケータへ返す。** **`spawn` の
+//! 持たず、ここが参照数を持つ）。**最後の fd が閉じ、マップしたページを全部外したときにアロケータへ返す**（2026-10-30。
+//! それまでは fd だけを数えていて、マップしたまま fd を全部閉じるとフレームが返った）。**`spawn` の
 //! 会計は共有フレームを除く**（(A-3)。ウィンドウの間に取ったまま返っていない分を `consumed` から引く）。
 //!
+//! # マッピングの数と、返す時期（2026-10-30。`ADR-0065` の Addendum）
+//!
+//! fd の数（`refs`）とは別に、**マップしているページの数**（`maps`。全部のプロセスを合わせて）を持つ。`mmap` が足し、
+//! `munmap` とプロセスの終わりが引く。ページで数えるので、途中だけを外して 1 つのマッピングが 2 つに分かれても、呼び手は
+//! 分かれたことを知らなくてよい。
+//!
+//! **最後のページを外したときに TLB の世代を上げ、その世代を欄に控える**（[`map_detach`]）。フレームを返すのは、`refs` と
+//! `maps` が 0 になり、**かつ控えた世代を全部の CPU が通り過ぎた後**である（`crate::bkl::generation_is_retired`。`ADR-0027`
+//! の不変条件）。まだ通り過ぎていなければ「返す途中」の印を付けて残し、後で返す（[`release_retired_into`]）。一度もマップ
+//! されなかった実体は、どの TLB にも載っていないので待たない。
 //! # `detach` は自分でアロケータを借りる（`close` と `Drop` の両方から来る）
 //!
 //! **`detach` は `close` からも表の `Drop`（プロセスの終わり）からも来る。** **`Drop` は引数で
@@ -58,9 +69,16 @@ struct Shm {
     pages: usize,
     /// 大きさ（バイト。`pages * PAGE_SIZE` 以下）。
     len: u64,
-    /// この実体を指す fd の数。**0 でフレームを返す。**
+    /// この実体を指す fd の数（`SCM_RIGHTS` で渡す途中のものを含む）。**`maps` と一緒に 0 になったらフレームを返す。**
     refs: u32,
-    /// 参照は 0 になったが、アロケータが借りられずにフレームをまだ返せていない（2026-10-08）。**使う側からは、在らない
+    /// マップしているページの数（全部のプロセスを合わせて。2026-10-30）。`mmap` が足し、`munmap` とプロセスの終わりが引く。
+    maps: u32,
+    /// 一度でもマップされたか（2026-10-30）。マップされたことの無いフレームは、どの CPU の TLB にも載っていない。
+    ever_mapped: bool,
+    /// 最後のページを外したときの TLB の世代（2026-10-30）。フレームは、全部の CPU がこの世代を通り過ぎてから返す。
+    unmapped_generation: u64,
+    /// 参照は 0 になったが、フレームをまだ返せていない（2026-10-08 はアロケータが借りられないとき。2026-10-30 から、TLB の
+    /// 世代を全部の CPU が通り過ぎていないときも）。**使う側からは、在らない
     /// ものとして見える**（[`Shm::live`]）。欄は空かないので、作り直しにも使われない。
     releasing: bool,
     /// 封のビット（`F_SEAL_*`。2026-10-20）。**持って答えるだけで、まだ効かない**——縮める・伸ばす `ftruncate` と、書ける
@@ -76,6 +94,9 @@ impl Shm {
         pages: 0,
         len: 0,
         refs: 0,
+        maps: 0,
+        ever_mapped: false,
+        unmapped_generation: 0,
         releasing: false,
         seals: 0,
     };
@@ -93,6 +114,9 @@ impl Shm {
         self.pages = 0;
         self.len = 0;
         self.refs = 0;
+        self.maps = 0;
+        self.ever_mapped = false;
+        self.unmapped_generation = 0;
         self.releasing = false;
         self.seals = 0;
     }
@@ -113,6 +137,11 @@ static SHARED_FRAMES_HELD: AtomicU64 = AtomicU64::new(0);
 
 /// 返す途中の実体が在るか（BKL を取らずに読める印。2026-10-08。アイドルの定常経路が見る）。
 static RELEASE_PENDING: AtomicBool = AtomicBool::new(false);
+/// 世代を待ってから返した実体の数（2026-10-30。計測）。
+static RELEASED_AFTER_GENERATION: AtomicU64 = AtomicU64::new(0);
+/// 世代を全部の CPU が通り過ぎる前に返した実体の数（2026-10-30）。**0 でなければ誤りである**——返す直前に確かめ直し、
+/// 数えて名指しの行を出す（`crate::syscall::report_shm_released_before_retired`）。
+static RELEASED_BEFORE_RETIRED: AtomicU64 = AtomicU64::new(0);
 
 macro_rules! gauge {
     ($name:ident, $static:ident) => {
@@ -126,6 +155,8 @@ gauge!(released, RELEASED);
 gauge!(mapped_pages, MAPPED_PAGES);
 gauge!(fds_sent, FDS_SENT);
 gauge!(fds_received, FDS_RECEIVED);
+gauge!(released_after_generation, RELEASED_AFTER_GENERATION);
+gauge!(released_before_retired, RELEASED_BEFORE_RETIRED);
 /// いまアロケータから取ったままの共有フレームの数（`ADR-0065` の (A-3)。会計がウィンドウの差で読む）。
 pub fn frames_held() -> u64 {
     SHARED_FRAMES_HELD.load(Ordering::Relaxed)
@@ -220,8 +251,12 @@ pub enum TruncateOutcome {
     Pages(usize),
     /// 1 つの上限（[`MAX_SHM_PAGES`]）を越える（`-EFBIG`）。
     TooLarge,
-    /// 縮める向き（`-EINVAL`。マッピングの数を持つまで受けない。`ADR-0065` の 2026-10-15 の Addendum）。
+    /// マップ中の実体を縮める向き（`-EINVAL`。`ADR-0065` の 2026-10-15 の Addendum。Linux は通し、外れたページに触ると
+    /// `SIGBUS`。マップしていなければ縮める。2026-10-30）。
     Shrink,
+    /// マップしていない実体を縮めるが、最後に外したときの TLB の世代を、まだ全部の CPU が通り過ぎていない（2026-10-30）。
+    /// 呼び手は世代を待ってから、もう 1 度呼ぶ。
+    NotRetired(u64),
     /// `F_SEAL_GROW` が立っているのに伸ばす（`-EPERM`）。
     Sealed,
     /// 全体の上限（[`MAX_SHM_TOTAL_PAGES`]）を越えるか、フレームが足りない（`-ENOMEM`）。
@@ -248,18 +283,38 @@ pub enum TruncatePlan {
     Same(usize),
     /// 伸ばす。`want` ページにし、`more` ページを新しく取る（ページ数が変わらない伸ばしなら 0）。
     Grow { want: usize, more: usize },
+    /// 縮める（2026-10-30。マップしていないときだけ）。`want` ページにし、後ろのページを返す。
+    Shrink { want: usize },
     /// 断る。
     Refuse(TruncateOutcome),
 }
 
-/// 今の大きさ `len`（バイト）・ページ数 `pages`・封 `seals`・全体で取っているページ数 `held` から、`size` への `ftruncate` の
-/// 判断を返す。
-pub fn truncate_plan(len: u64, pages: usize, seals: u32, held: usize, size: u64) -> TruncatePlan {
+/// 今の大きさ `len`（バイト）・ページ数 `pages`・封 `seals`・全体で取っているページ数 `held`・マップ中か（`mapped`）から、
+/// `size` への `ftruncate` の判断を返す。
+///
+/// 縮める向き（2026-10-30）は、`F_SEAL_SHRINK` なら `-EPERM`（Linux の `shmem_setattr`）、マップ中なら `-EINVAL`
+/// （ZeikOS の差）、どちらでもなければ縮める。
+pub fn truncate_plan(
+    len: u64,
+    pages: usize,
+    seals: u32,
+    held: usize,
+    mapped: bool,
+    size: u64,
+) -> TruncatePlan {
     if size == len {
         return TruncatePlan::Same(pages);
     }
     if size < len {
-        return TruncatePlan::Refuse(TruncateOutcome::Shrink);
+        if seals & F_SEAL_SHRINK != 0 {
+            return TruncatePlan::Refuse(TruncateOutcome::Sealed);
+        }
+        if mapped {
+            return TruncatePlan::Refuse(TruncateOutcome::Shrink);
+        }
+        return TruncatePlan::Shrink {
+            want: pages_for(size),
+        };
     }
     let want = pages_for(size);
     if want > MAX_SHM_PAGES {
@@ -286,8 +341,10 @@ pub fn truncate_plan(len: u64, pages: usize, seals: u32, held: usize, size: u64)
 ///   [`TruncateOutcome::TooLarge`]（`inode_newsize_ok` の `-EFBIG`）、`F_SEAL_GROW` が立っていれば [`TruncateOutcome::Sealed`]
 ///   （`shmem_setattr` の `-EPERM`）。その後に全体の上限とフレームを見る（[`TruncateOutcome::NoRoom`]）。**既にあるマッピングは
 ///   触らない**——伸ばした分は、後から `mmap` すれば見える（Linux と同じ）。
-/// - **縮める**は [`TruncateOutcome::Shrink`] で断る。マッピングの数を持つまでは、マップ中かどうかを分けられない
-///   （`ADR-0065` の 2026-10-15 の Addendum、`ADR-0085` の決定 6）。
+/// - **縮める**（2026-10-30）。`F_SEAL_SHRINK` なら [`TruncateOutcome::Sealed`]。マップ中なら [`TruncateOutcome::Shrink`] で
+///   断る（`ADR-0065` の 2026-10-15 の Addendum、`ADR-0085` の決定 6）。マップしていなければ、後ろのページを返して縮める。
+///   一度でもマップされた実体で、最後に外したときの TLB の世代をまだ全部の CPU が通り過ぎていなければ、返さずに
+///   [`TruncateOutcome::NotRetired`] を返す（呼び手が待ってから、もう 1 度呼ぶ）。
 ///
 /// **ページは `ftruncate` の時点で取り、0 で埋める**（Linux は書いた時点で取る。`ADR-0065` の Addendum の「合わせなかったもの」）。
 /// システムコールの中なので、埋める間は BKL を持ち、割り込みも止まっている。
@@ -303,17 +360,23 @@ pub fn set_size(
     allocator: &mut crate::frame_allocator::FrameAllocator,
 ) -> TruncateOutcome {
     let index = shm as usize;
-    let (already, len, seals) = {
+    let (already, len, seals, maps) = {
         let shms = SHMS.lock();
         if index >= MAX_SHM || !shms[index].live() {
             return TruncateOutcome::NoShm;
         }
-        (shms[index].pages, shms[index].len, shms[index].seals)
+        (
+            shms[index].pages,
+            shms[index].len,
+            shms[index].seals,
+            shms[index].maps,
+        )
     };
     let held = SHARED_FRAMES_HELD.load(Ordering::Relaxed) as usize;
-    let (want, more) = match truncate_plan(len, already, seals, held, size) {
+    let (want, more) = match truncate_plan(len, already, seals, held, maps != 0, size) {
         TruncatePlan::Same(pages) => return TruncateOutcome::Pages(pages),
         TruncatePlan::Grow { want, more } => (want, more),
+        TruncatePlan::Shrink { want } => return shrink(index, want, size, allocator),
         #[cfg(not(feature = "shm-ftruncate-shrinks-mapped-test"))]
         TruncatePlan::Refuse(outcome) => return outcome,
         #[cfg(feature = "shm-ftruncate-shrinks-mapped-test")]
@@ -367,6 +430,42 @@ pub fn set_size(
         shms[index].len = size;
     }
     SHARED_FRAMES_HELD.fetch_add(more as u64, Ordering::Relaxed);
+    TruncateOutcome::Pages(want)
+}
+
+/// マップしていない実体を `want` ページへ縮め、後ろのページのフレームを返す（2026-10-30。[`set_size`] の縮める向き）。
+/// 一度でもマップされた実体で、最後に外したときの世代をまだ全部の CPU が通り過ぎていなければ、何も変えずに
+/// [`TruncateOutcome::NotRetired`] を返す。
+fn shrink(
+    index: usize,
+    want: usize,
+    size: u64,
+    allocator: &mut crate::frame_allocator::FrameAllocator,
+) -> TruncateOutcome {
+    let mut shms = SHMS.lock();
+    let slot = &mut shms[index];
+    if slot.ever_mapped
+        && !cfg!(feature = "shm-release-ignores-generation-test")
+        && !crate::bkl::generation_is_retired(slot.unmapped_generation)
+    {
+        return TruncateOutcome::NotRetired(slot.unmapped_generation);
+    }
+    let already = slot.pages;
+    // **返す直前に確かめ直す**（[`free_frames`] と同じ。破壊テストで世代を見ない形だけが、ここへ来る）。
+    if slot.ever_mapped && !crate::bkl::generation_is_retired(slot.unmapped_generation) {
+        RELEASED_BEFORE_RETIRED.fetch_add(1, Ordering::Relaxed);
+        crate::syscall::report_shm_released_before_retired(
+            already - want,
+            slot.unmapped_generation,
+        );
+    }
+    for frame in &slot.frames[want..already] {
+        let _ = allocator.deallocate_frame(*frame);
+    }
+    slot.frames[want..already].fill(PhysAddr::new_const(0));
+    slot.pages = want;
+    slot.len = size;
+    SHARED_FRAMES_HELD.fetch_sub((already - want) as u64, Ordering::Relaxed);
     TruncateOutcome::Pages(want)
 }
 
@@ -437,7 +536,7 @@ pub fn attach(shm: u8) -> bool {
     true
 }
 
-/// 参照を 1 つ減らす。**0 でアロケータへフレームを返す。** **自分でアロケータを借りる**
+/// 参照を 1 つ減らす。**`refs` と `maps` が 0 になったら、フレームを返す**（`retire`）。**自分でアロケータを借りる**
 /// （`close` と表の `Drop` の両方から来る）。
 ///
 /// 破壊テスト (`ADR-0065`, shm-close-keeps-refs): 参照を減らさない。**フレームが返らず、
@@ -452,26 +551,117 @@ pub fn detach(shm: u8) {
     {
         shms[index].refs = shms[index].refs.saturating_sub(1);
     }
-    if shms[index].refs != 0 {
+    retire(&mut shms[index]);
+}
+
+/// `pages` ページをマップしたことを数える（2026-10-30。`mmap` が、マップし終えた後に呼ぶ）。無い共有メモリなら偽。
+pub fn map_attach(shm: u8, pages: u32) -> bool {
+    let index = shm as usize;
+    let mut shms = SHMS.lock();
+    if index >= MAX_SHM || !shms[index].live() {
+        return false;
+    }
+    shms[index].maps = shms[index].maps.saturating_add(pages);
+    shms[index].ever_mapped = true;
+    true
+}
+
+/// `pages` ページを外したことを数える（2026-10-30。`munmap` とプロセスの終わりが、リーフを外した後に呼ぶ）。**最後のページを
+/// 外したら、TLB の世代を上げて控える**——外し終えてから上げるので、その世代を全部の CPU が通り過ぎれば、どの TLB にも
+/// 古い翻訳は残っていない（`crate::bkl::generation_is_retired` の doc）。`refs` も 0 なら、フレームを返す（`retire`）。
+///
+/// **BKL を持って呼ぶこと**（世代を上げるため）。
+///
+/// 破壊テスト (2026-10-30, shm-munmap-keeps-maps-test): `munmap` の分を引かない（呼び手の側。`crate::syscall`）。
+pub fn map_detach(shm: u8, pages: u32) {
+    let index = shm as usize;
+    let mut shms = SHMS.lock();
+    if index >= MAX_SHM || !shms[index].in_use {
         return;
     }
-    // **参照が 0 になった。** **表を空ける前に、アロケータを借りる**（2026-10-08）。借りられなければ、フレームを持ったまま
-    // 返す途中の印を付けて残す（アイドルの定常経路が [`release_pending`] で返す）。
-    if shms[index].pages > 0 {
-        let Some(mut allocator) = crate::frame_allocator::Loan::take() else {
-            shms[index].releasing = true;
-            RELEASE_PENDING.store(true, Ordering::SeqCst);
-            return;
-        };
-        free_frames(&mut shms[index], &mut allocator);
-    } else {
-        shms[index].clear();
-        RELEASED.fetch_add(1, Ordering::Relaxed);
+    let slot = &mut shms[index];
+    // **足した数より多く引くのは、数え方の不具合である**（2026-10-30）。黙って 0 に止めると不具合が隠れるので、名指しの行を
+    // 出し、デバッグビルドでは止める。リリースビルドでは 0 に止めて続ける（マップしたページが残っていても、ここから先は
+    // 返す時期を早めない——`maps` を 0 にした後は、世代を待って返す）。
+    if pages > slot.maps {
+        crate::syscall::report_shm_maps_underflow(index, slot.maps, pages);
+        debug_assert!(
+            pages <= slot.maps,
+            "shm {index}: unmapping {pages} page(s) but only {} are mapped",
+            slot.maps
+        );
+    }
+    slot.maps = slot.maps.saturating_sub(pages);
+    if slot.maps == 0 {
+        crate::bkl::note_mapping_changed();
+        slot.unmapped_generation = crate::bkl::tlb_generation();
+    }
+    if slot.live() {
+        retire(slot);
     }
 }
 
-/// 実体のフレームをアロケータへ返して、欄を空ける（2026-10-08。[`detach`] と [`release_pending`] の共通の本体）。
+/// フレームを返す時期（2026-10-30。**純粋。ホストで検査する**）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReleaseWhen {
+    /// まだ参照（fd か、マップしたページ）が在る。
+    NotYet,
+    /// すぐ返してよい（一度もマップされなかったか、最後に外したときの世代を全部の CPU が通り過ぎた）。
+    Now,
+    /// 最後に外したときの世代を、全部の CPU が通り過ぎるのを待つ。
+    AfterGeneration,
+}
+
+/// `refs`・`maps`・一度でもマップされたか・控えた世代を全部の CPU が通り過ぎたか（`retired`）から、返す時期を決める。
+pub fn release_when(refs: u32, maps: u32, ever_mapped: bool, retired: bool) -> ReleaseWhen {
+    if refs != 0 || maps != 0 {
+        ReleaseWhen::NotYet
+    } else if !ever_mapped || retired {
+        ReleaseWhen::Now
+    } else {
+        ReleaseWhen::AfterGeneration
+    }
+}
+
+/// 参照が無くなっていれば、フレームを返すか、返す途中の印を付ける（2026-10-30。[`detach`] と [`map_detach`] の共通の本体）。
+///
+/// **表を空ける前に、アロケータを借りる**（2026-10-08）。借りられなければ、フレームを持ったまま返す途中の印を付けて残す。
+/// 控えた世代をまだ全部の CPU が通り過ぎていなければ、同じく印を付けて残す。どちらも [`release_retired_into`] が後で返す。
+///
+/// 破壊テスト (2026-10-30, shm-release-ignores-generation-test): 世代を見ず、参照が無くなればすぐ返す。返す直前の確かめ直し
+/// （`free_frames`）が、名指しの行を出す。
+fn retire(slot: &mut Shm) {
+    let retired = cfg!(feature = "shm-release-ignores-generation-test")
+        || crate::bkl::generation_is_retired(slot.unmapped_generation);
+    match release_when(slot.refs, slot.maps, slot.ever_mapped, retired) {
+        ReleaseWhen::NotYet => {}
+        ReleaseWhen::Now if slot.pages == 0 => {
+            slot.clear();
+            RELEASED.fetch_add(1, Ordering::Relaxed);
+        }
+        ReleaseWhen::Now => match crate::frame_allocator::Loan::take() {
+            Some(mut allocator) => free_frames(slot, &mut allocator),
+            None => {
+                slot.releasing = true;
+                RELEASE_PENDING.store(true, Ordering::SeqCst);
+            }
+        },
+        ReleaseWhen::AfterGeneration => {
+            slot.releasing = true;
+            RELEASE_PENDING.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
+/// 実体のフレームをアロケータへ返して、欄を空ける（2026-10-08。`retire` と [`release_retired_into`] の共通の本体）。
+///
+/// **返す直前に、控えた世代を全部の CPU が通り過ぎたかを確かめ直す**（2026-10-30）。一度でもマップされた実体で、まだ通り
+/// 過ぎていなければ誤りなので、数えて名指しの行を出す（返すのは止めない——止めると、別の形で漏れる）。
 fn free_frames(slot: &mut Shm, allocator: &mut crate::frame_allocator::FrameAllocator) {
+    if slot.ever_mapped && !crate::bkl::generation_is_retired(slot.unmapped_generation) {
+        RELEASED_BEFORE_RETIRED.fetch_add(1, Ordering::Relaxed);
+        crate::syscall::report_shm_released_before_retired(slot.pages, slot.unmapped_generation);
+    }
     for frame in slot.frames.iter().take(slot.pages) {
         let _ = allocator.deallocate_frame(*frame);
     }
@@ -485,41 +675,102 @@ pub fn release_pending_exists() -> bool {
     RELEASE_PENDING.load(Ordering::SeqCst)
 }
 
+/// 返す途中の実体のうち、返せるもの（控えた世代を全部の CPU が通り過ぎたもの）のフレームを、借りたアロケータへ返す
+/// （2026-10-30）。返した実体の数。**BKL を持って呼ぶこと**（世代の判定のため）。
+///
+/// 呼ぶ所は 3 つある——アイドルの定常経路（[`release_pending`]）、システムコールがアロケータを借りた直後
+/// （`crate::syscall` の `borrow_allocator_counting`）、`memfd_create` と `ftruncate` が `-ENOMEM` を返す前（同じく
+/// `crate::syscall`。返す途中の分が残っているせいで断らないため）。
+pub fn release_retired_into(allocator: &mut crate::frame_allocator::FrameAllocator) -> usize {
+    let mut shms = SHMS.lock();
+    let mut released = 0;
+    let mut left = false;
+    for slot in shms.iter_mut().filter(|slot| slot.in_use && slot.releasing) {
+        if crate::bkl::generation_is_retired(slot.unmapped_generation) {
+            if slot.ever_mapped {
+                RELEASED_AFTER_GENERATION.fetch_add(1, Ordering::Relaxed);
+            }
+            free_frames(slot, allocator);
+            released += 1;
+        } else {
+            left = true;
+        }
+    }
+    RELEASE_PENDING.store(left, Ordering::SeqCst);
+    released
+}
+
+/// 返す途中の実体が待っている世代のうち、いちばん新しいもの（2026-10-30）。無ければ `None`。**これを全部の CPU が通り
+/// 過ぎれば、返す途中の実体は全部返せる。**
+pub fn pending_generation() -> Option<u64> {
+    let shms = SHMS.lock();
+    shms.iter()
+        .filter(|slot| slot.in_use && slot.releasing)
+        .map(|slot| slot.unmapped_generation)
+        .max()
+}
+
+/// 返す途中の実体を、TLB の世代が退くのを待って返す（2026-10-30。起動時の確かめが、共有メモリの数を出す前に呼ぶ）。待った
+/// ティックの数を返す。**上限は `limit_ticks`**（世代は、全部の CPU が 1 ティック以内に BKL を通って進める）。**BKL を持たずに
+/// 呼ぶこと**——返すときだけ取る。ほかの CPU が世代を進めるには、取れる必要がある。
+pub fn release_pending_within(limit_ticks: u64) -> u64 {
+    let started = crate::arch::x86_64::monotonic_ticks();
+    while release_pending_exists()
+        && crate::arch::x86_64::monotonic_ticks() < started.saturating_add(limit_ticks)
+    {
+        {
+            let _bkl = crate::bkl::acquire(crate::bkl::KernelEntry::SteadyLoop);
+            release_pending();
+        }
+        core::hint::spin_loop();
+    }
+    crate::arch::x86_64::monotonic_ticks().saturating_sub(started)
+}
+
 /// 返す途中の実体のフレームを返す（2026-10-08。アイドルの定常経路から、BKL を持って呼ぶ）。返した実体の数。**アロケータが
-/// 借りられなければ何もしない**（次の機会に返す）。
+/// 借りられなければ何もしない**（次の機会に返す）。2026-10-30 から、控えた世代を全部の CPU が通り過ぎたものだけを返す
+/// （[`release_retired_into`]）。
 pub fn release_pending() -> usize {
     let Some(mut allocator) = crate::frame_allocator::Loan::take() else {
         return 0;
     };
-    let mut shms = SHMS.lock();
-    let mut released = 0;
-    for slot in shms.iter_mut().filter(|slot| slot.in_use && slot.releasing) {
-        free_frames(slot, &mut allocator);
-        released += 1;
-    }
-    RELEASE_PENDING.store(false, Ordering::SeqCst);
-    released
+    release_retired_into(&mut allocator)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// 返す時期（2026-10-30）。fd とマップしたページのどちらかが残っていれば返さない。両方が無くなったら、一度もマップされ
+    /// なかったか、最後に外したときの世代を全部の CPU が通り過ぎていれば、すぐ返す。そうでなければ世代を待つ。
+    #[test]
+    fn frames_go_back_only_after_the_fds_the_mappings_and_the_generation_are_gone() {
+        assert_eq!(release_when(1, 0, false, true), ReleaseWhen::NotYet);
+        assert_eq!(release_when(0, 3, true, true), ReleaseWhen::NotYet);
+        assert_eq!(release_when(1, 3, true, false), ReleaseWhen::NotYet);
+        assert_eq!(release_when(0, 0, false, false), ReleaseWhen::Now);
+        assert_eq!(release_when(0, 0, true, true), ReleaseWhen::Now);
+        assert_eq!(
+            release_when(0, 0, true, false),
+            ReleaseWhen::AfterGeneration
+        );
+    }
+
     #[test]
     fn truncate_plan_follows_the_linux_order() {
         const PAGE: u64 = PAGE_SIZE as u64;
         // 同じ大きさは何もしない。
         assert_eq!(
-            truncate_plan(256_000, 63, 0, 63, 256_000),
+            truncate_plan(256_000, 63, 0, 63, false, 256_000),
             TruncatePlan::Same(63)
         );
         // 初めての ftruncate は 0 からの伸ばし。タスクバーの pool が 2 枚目のバッファで伸びる形も。
         assert_eq!(
-            truncate_plan(0, 0, 0, 0, 256_000),
+            truncate_plan(0, 0, 0, 0, false, 256_000),
             TruncatePlan::Grow { want: 63, more: 63 }
         );
         assert_eq!(
-            truncate_plan(256_000, 63, 0, 63, 512_000),
+            truncate_plan(256_000, 63, 0, 63, false, 512_000),
             TruncatePlan::Grow {
                 want: 125,
                 more: 62
@@ -527,44 +778,61 @@ mod tests {
         );
         // ページ数の変わらない伸ばし。
         assert_eq!(
-            truncate_plan(100, 1, 0, 1, 200),
+            truncate_plan(100, 1, 0, 1, false, 200),
             TruncatePlan::Grow { want: 1, more: 0 }
         );
-        // 縮める向きは、ページ数が同じでも断る。
+        // 縮める向き（2026-10-30）。マップ中なら断り（-EINVAL）、マップしていなければ縮める。F_SEAL_SHRINK なら、マップ中かに
+        // よらず -EPERM（Linux の shmem_setattr）。
         assert_eq!(
-            truncate_plan(200, 1, 0, 1, 100),
+            truncate_plan(200, 1, 0, 1, true, 100),
             TruncatePlan::Refuse(TruncateOutcome::Shrink)
+        );
+        assert_eq!(
+            truncate_plan(512_000, 125, 0, 125, false, 256_000),
+            TruncatePlan::Shrink { want: 63 }
+        );
+        assert_eq!(
+            truncate_plan(PAGE, 1, 0, 1, false, 0),
+            TruncatePlan::Shrink { want: 0 }
+        );
+        assert_eq!(
+            truncate_plan(2 * PAGE, 2, F_SEAL_SHRINK, 2, true, PAGE),
+            TruncatePlan::Refuse(TruncateOutcome::Sealed)
+        );
+        assert_eq!(
+            truncate_plan(2 * PAGE, 2, F_SEAL_GROW, 2, false, PAGE),
+            TruncatePlan::Shrink { want: 1 }
         );
         // 1 つの上限ちょうどは通り、1 バイト越えると -EFBIG。封より先に見る（Linux の setattr_prepare の後に封）。
         let max = MAX_SHM_PAGES as u64 * PAGE;
         assert_eq!(
-            truncate_plan(0, 0, 0, 0, max),
+            truncate_plan(0, 0, 0, 0, false, max),
             TruncatePlan::Grow {
                 want: MAX_SHM_PAGES,
                 more: MAX_SHM_PAGES
             }
         );
         assert_eq!(
-            truncate_plan(0, 0, F_SEAL_GROW, 0, max + 1),
+            truncate_plan(0, 0, F_SEAL_GROW, 0, false, max + 1),
             TruncatePlan::Refuse(TruncateOutcome::TooLarge)
         );
         // F_SEAL_GROW なら伸ばせない。F_SEAL_SHRINK だけなら伸ばせる。
         assert_eq!(
-            truncate_plan(PAGE, 1, F_SEAL_GROW, 1, 2 * PAGE),
+            truncate_plan(PAGE, 1, F_SEAL_GROW, 1, false, 2 * PAGE),
             TruncatePlan::Refuse(TruncateOutcome::Sealed)
         );
         assert_eq!(
-            truncate_plan(PAGE, 1, F_SEAL_SHRINK, 1, 2 * PAGE),
+            truncate_plan(PAGE, 1, F_SEAL_SHRINK, 1, false, 2 * PAGE),
             TruncatePlan::Grow { want: 2, more: 1 }
         );
         // 全体の上限ちょうどは通り、1 ページ越えると -ENOMEM。
         let held = MAX_SHM_TOTAL_PAGES - 1;
         assert_eq!(
-            truncate_plan(0, 0, 0, held, PAGE),
+            truncate_plan(0, 0, 0, held, false, PAGE),
             TruncatePlan::Grow { want: 1, more: 1 }
         );
         assert_eq!(
-            truncate_plan(0, 0, 0, held, 2 * PAGE),
+            truncate_plan(0, 0, 0, held, false, 2 * PAGE),
             TruncatePlan::Refuse(TruncateOutcome::NoRoom)
         );
     }

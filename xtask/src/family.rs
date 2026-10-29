@@ -280,6 +280,7 @@ pub const PATH_RULES: &[PathRule] = &[
             "linux-programs/wl-memfd-grow-rust.rs",
             "linux-programs/wl-recvmsg-name-rust.rs",
             "linux-programs/wl-close-queued-fd-rust.rs",
+            "linux-programs/wl-shm-mapping-refs-rust.rs",
         ],
         reach: Reach::Families(&[Family::Ipc, Family::Interrupts]),
     },

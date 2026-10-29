@@ -780,6 +780,7 @@ kernel::quarantine::tests::what_is_still_held_can_be_counted_per_generation
 kernel::ring::tests::a_full_ring_takes_nothing_more
 kernel::ring::tests::the_capacity_is_the_parameter
 kernel::ring::tests::the_ring_wraps_without_losing_order
+kernel::shm::tests::frames_go_back_only_after_the_fds_the_mappings_and_the_generation_are_gone
 kernel::shm::tests::pages_round_up
 kernel::shm::tests::seals_are_added_the_way_linux_adds_them
 kernel::shm::tests::truncate_plan_follows_the_linux_order

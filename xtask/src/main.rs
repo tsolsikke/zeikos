@@ -909,6 +909,34 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
+    // **共有メモリのマッピングの数と、返す時期の破壊テスト 2 件（2026-10-30。`ADR-0065` の Addendum）。**
+    CriticalTest {
+        name: "shm-munmap-keeps-maps",
+        feature: "linux-socket-test,shm-munmap-keeps-maps-test",
+        expected_markers: &[
+            "wl-shm-mapping-refs-rust: ftruncate to 16 MiB failed at round",
+            "with errno 12; exiting with 95",
+            "ended Ok(Exited(95)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &[
+            "20 rounds of memfd_create, a 16 MiB ftruncate, mmap, close and munmap: all succeeded = true",
+            "zash: ready",
+        ],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    CriticalTest {
+        name: "shm-release-ignores-generation",
+        feature: "linux-socket-test,shm-release-ignores-generation-test",
+        expected_markers: &[
+            "[ERROR] shm: ",
+            "shared page(s) went back to the allocator before every CPU passed the TLB generation",
+        ],
+        forbidden_markers: &[],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
     CriticalTest {
         name: "eagain-passes-fd",
         feature: "linux-socket-test,eagain-passes-fd-test",
@@ -24717,6 +24745,8 @@ fn cmd_linux_socket_test() -> Result<()> {
     let recvmsg_name_ended = format!("spawn: /bin/linux/{recvmsg_name} ended");
     let queued = "wl-close-queued-fd-rust";
     let queued_ended = format!("spawn: /bin/linux/{queued} ended");
+    let refs = "wl-shm-mapping-refs-rust";
+    let refs_ended = format!("spawn: /bin/linux/{refs} ended");
     let deadline = Instant::now() + PIPE_TEST_TIMEOUT;
     loop {
         if child.was_cut() {
@@ -24990,6 +25020,19 @@ fn cmd_linux_socket_test() -> Result<()> {
         .lines()
         .find(|line| line.contains(&queued_ended))
         .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
+    // **共有メモリのマッピングの数と、共有のマッピングの `munmap`、マップしていない memfd を縮める `ftruncate`**（2026-10-30。
+    // `ADR-0065` の Addendum）。終わり方と Linux の参照で見る。
+    let refs_ran = serial.contains(&format!("{refs_ended} (Exited(4))"));
+    let refs_matched = linux_program_output_matches(
+        &workspace_root,
+        refs,
+        &serial,
+        LinuxReferenceEnvironment::ExactCount,
+    )?;
+    let refs_unknown_free = serial
+        .lines()
+        .find(|line| line.contains(&refs_ended))
+        .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
     // **memfd のフラグと名前・封・fstat・作り方ごとの `FD_CLOEXEC`**（2026-10-20。`ADR-0065` の Addendum）。終わり方と Linux の
     // 参照で見る（封と `F_GETFD` の値が行に出る）。
     let memfd_ran = serial.contains(&format!("{memfd_ended} (Exited(4))"));
@@ -25097,6 +25140,11 @@ fn cmd_linux_socket_test() -> Result<()> {
         "{context}: {queued} printed what Linux prints (linux-programs/reference/{queued}.txt) = {queued_matched}"
     );
     println!("{context}: {queued} hit no number the kernel does not know = {queued_unknown_free}");
+    println!("{context}: {refs} ended with status 4 = {refs_ran}");
+    println!(
+        "{context}: {refs} printed what Linux prints (linux-programs/reference/{refs}.txt) = {refs_matched}"
+    );
+    println!("{context}: {refs} hit no number the kernel does not know = {refs_unknown_free}");
     println!("{context}: {memfd} ended with status 4 = {memfd_ran}");
     println!(
         "{context}: {memfd} printed what Linux prints (linux-programs/reference/{memfd}.txt) = {memfd_matched}"
@@ -25147,6 +25195,9 @@ fn cmd_linux_socket_test() -> Result<()> {
         && queued_ran
         && queued_matched
         && queued_unknown_free
+        && refs_ran
+        && refs_matched
+        && refs_unknown_free
         && memfd_ran
         && memfd_matched
         && memfd_unknown_free
@@ -25171,6 +25222,7 @@ fn cmd_linux_socket_test() -> Result<()> {
                 || l.contains(grow)
                 || l.contains(recvmsg_name)
                 || l.contains(queued)
+                || l.contains(refs)
                 || l.contains(memfd)
                 || l.contains("[ERROR]")
         })
@@ -36414,7 +36466,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 67,
-    full: 557,
+    full: 559,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` とスクリプトのグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

@@ -2741,6 +2741,8 @@ fn run_init(logger: &mut Logger<Serial>, console: Option<&mut Console>) -> ! {
                 ));
                 // **共有メモリの計測（`ADR-0065`）。** **既定の起動では `syscall-test` の
                 // mmap の検査の分だけ動く。** **スクリプトのグループ（`socket-test`）が読む。**
+                // **マップしていた分は、TLB の世代が退くまで「返す途中」で残るので、待って返してから数える**（2026-10-30）。
+                kernel::shm::release_pending_within(10);
                 logger.info(format_args!(
                     "shm: created {}, released {}, mapped pages {}; fds sent {}, received {}",
                     kernel::shm::created(),
@@ -6932,6 +6934,14 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
             b"/bin/linux/wl-close-queued-fd-rust",
             b"wl-close-queued-fd-rust\0/etc/motd\0a\0b\0",
         );
+        // **共有メモリのマッピングの数と、共有のマッピングの `munmap`、マップしていない memfd を縮める `ftruncate`**（2026-10-30。
+        // `ADR-0065` の Addendum）。判定は `cargo xtask run --linux-socket-test`（Linux の参照と突き合わせる）と、破壊テスト 2 つ
+        // （`--critical-test shm-munmap-keeps-maps`・`shm-release-ignores-generation`）。
+        verify_linux_program(
+            logger,
+            b"/bin/linux/wl-shm-mapping-refs-rust",
+            b"wl-shm-mapping-refs-rust\0/etc/motd\0a\0b\0",
+        );
         // **memfd のフラグと名前・封・fstat・作り方ごとの `FD_CLOEXEC`**（2026-10-20。`ADR-0065` の Addendum）。判定は
         // `cargo xtask run --linux-socket-test`（Linux の参照と突き合わせる）と、破壊テスト 2 つ（`--critical-test
         // memfd-ignores-allow-sealing`・`memfd-seals-not-kept`）。
@@ -7030,10 +7040,13 @@ fn verify_dup_ends(logger: &mut Logger<Serial>) {
         b"/bin/linux/wl-dup-ends-rust",
         b"wl-dup-ends-rust\0/etc/motd\0a\0b\0",
     );
+    // **マップしていた分は、TLB の世代が退くまで「返す途中」で残る**（2026-10-30。`kernel::shm` の「マッピングの数と、返す
+    // 時期」）。退くのを待って返してから数える。
+    let waited_ticks = kernel::shm::release_pending_within(10);
     let after = kernel::shm::frames_held();
     logger.info(format_args!(
         "dup-ends: /bin/linux/wl-dup-ends-rust (shape b) left the shared memory holding {before} frame(s) before it ran \
-         and {after} after it ended"
+         and {after} after it ended (after waiting {waited_ticks} tick(s) for the frames that waited on the TLB generation)"
     ));
     verify_linux_program_with_one_pipe(
         logger,
@@ -10390,6 +10403,8 @@ fn load_embedded_user_program(logger: &mut Logger<Serial>) -> Result<(), UserLoa
         }
         // **会計のために短く借りる（S11-3）。** 読むだけなので、すぐ返す。
         let free_before = frame_count_now(logger);
+        // **共有フレームの数も控える**（2026-10-30。下の `shared_net`）。
+        let shared_before = kernel::shm::frames_held();
         // **子の会計を 0 に戻す（S11-5）。** このプログラムが `spawn` で起動した
         // 子の隔離は、下の突き合わせで足す。
         kernel::userland::reset_spawn_accounting();
@@ -10423,7 +10438,11 @@ fn load_embedded_user_program(logger: &mut Logger<Serial>) -> Result<(), UserLoa
         // 「消えたまま」と数え、前の破棄のフレームがこのウィンドウで返った分（`released_others`）は足し戻す。
         let destroy = kernel::userland::last_destroy();
         let own_still = destroy.still_quarantined();
-        let consumed = (free_before as i64 - frame_count_now(logger) as i64
+        // **共有フレームを `consumed` から除く**（2026-10-30。`spawn` の会計と同じ。`ADR-0065` の (A-3)）。マップした共有メモリの
+        // フレームは、最後に外したときの TLB の世代が退くまで「返す途中」で残る（`kernel::shm` の「マッピングの数と、返す時期」）
+        // ——プロセスの終わりで外した分は、このウィンドウの後で返る。`AddressSpace::detach` が集めないので、隔離にも入らない。
+        let shared_net = kernel::shm::frames_held().saturating_sub(shared_before) as i64;
+        let consumed = (free_before as i64 - frame_count_now(logger) as i64 - shared_net
             + destroy.released_others as i64
             + kernel::userland::spawn_released_others() as i64)
             .max(0) as usize;
@@ -14724,6 +14743,16 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "memfd-seals-not-kept-test",
         cfg!(feature = "memfd-seals-not-kept-test"),
         "足した封を持たない",
+    ),
+    (
+        "shm-munmap-keeps-maps-test",
+        cfg!(feature = "shm-munmap-keeps-maps-test"),
+        "共有メモリの munmap で、マップしたページの数を引かない",
+    ),
+    (
+        "shm-release-ignores-generation-test",
+        cfg!(feature = "shm-release-ignores-generation-test"),
+        "共有メモリのフレームを、TLB の世代を待たずに返す",
     ),
     // プロセスの終わりの印が、どの待ちも起こす（2026-10-20。`ADR-0085` の Addendum）。
     (
