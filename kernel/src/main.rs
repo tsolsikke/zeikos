@@ -6929,6 +6929,17 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
             b"/bin/linux/wl-memfd-grow-rust",
             b"wl-memfd-grow-rust\0/etc/motd\0a\0b\0",
         );
+        // **memfd のフラグと名前・封・fstat・作り方ごとの `FD_CLOEXEC`**（2026-10-20。`ADR-0065` の Addendum）。判定は
+        // `cargo xtask run --linux-socket-test`（Linux の参照と突き合わせる）と、破壊テスト 2 つ（`--critical-test
+        // memfd-ignores-allow-sealing`・`memfd-seals-not-kept`）。
+        verify_linux_program(
+            logger,
+            b"/bin/linux/wl-memfd-seals-rust",
+            b"wl-memfd-seals-rust\0/etc/motd\0a\0b\0",
+        );
+        // **ここから後ろは、2026-10-26 から足したイメージである**（`recvmsg` の書き戻し・閉じた接続の fd・共有メモリのマッピングの
+        // 数）。前にあるイメージを見る critical-test（memfd の 2 件は上限 20 秒の 98% だった）を遅らせないよう、後ろへ足す
+        // （2026-10-30 の全検査で、前に足した分で上限を越えた）。
         // **`recvmsg` が `msghdr` へ書き戻す欄**（2026-10-26。`ADR-0065` の Addendum）。判定は `cargo xtask run --linux-socket-test`
         // （Linux の参照と突き合わせる）。
         verify_linux_program(
@@ -6942,14 +6953,6 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
             logger,
             b"/bin/linux/wl-close-queued-fd-rust",
             b"wl-close-queued-fd-rust\0/etc/motd\0a\0b\0",
-        );
-        // **memfd のフラグと名前・封・fstat・作り方ごとの `FD_CLOEXEC`**（2026-10-20。`ADR-0065` の Addendum）。判定は
-        // `cargo xtask run --linux-socket-test`（Linux の参照と突き合わせる）と、破壊テスト 2 つ（`--critical-test
-        // memfd-ignores-allow-sealing`・`memfd-seals-not-kept`）。
-        verify_linux_program(
-            logger,
-            b"/bin/linux/wl-memfd-seals-rust",
-            b"wl-memfd-seals-rust\0/etc/motd\0a\0b\0",
         );
         // **共有メモリのマッピングの数と、共有のマッピングの `munmap`、マップしていない memfd を縮める `ftruncate`**（2026-10-30。
         // `ADR-0065` の Addendum）。判定は `cargo xtask run --linux-socket-test`（Linux の参照と突き合わせる）。**並びの最後に
