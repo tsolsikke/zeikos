@@ -9,8 +9,9 @@
 //! 2. そのマッピングの `munmap` が 0 を返す。
 //! 3. 3 ページのマッピングの真ん中の 1 ページだけを `munmap` する。前と後ろのページは読める。残りを外す。
 //! 4. 1 つの memfd で「`mmap`→`munmap`」を 70 回くり返す（ZeikOS の 1 プロセスのマッピングの数 64 より多い）。
-//! 5. 「`memfd_create`→16 MiB の `ftruncate`→`mmap`→最初と最後のバイトに書く→`close`→`munmap`」を、間を置かずに 20 回
-//!    くり返す（ZeikOS の共有メモリの欄 16 と、全体の上限 64 MiB より多い）。失敗したら名指しの行を出して 95 で終わる。
+//! 5. 「`memfd_create`→`ftruncate`→`mmap`→最初と最後のバイトに書く→`close`→`munmap`」を、間を置かずに 20 回くり返す。
+//!    最初の 5 回は 16 MiB（ZeikOS の全体の上限 64 MiB より多い）、残りは 1 ページで、合わせて ZeikOS の共有メモリの欄 16 より
+//!    多い（全部を 16 MiB にしないのは、0 で埋める時間を抑えるため）。失敗したら名指しの行を出して 95 で終わる。
 //! 6. マップして外した後の memfd は、`ftruncate` で縮められる。縮めた後の `fstat` の大きさと、残ったページの中身を見る。
 //!    `F_SEAL_SHRINK` を足すと、縮める `ftruncate` は `EPERM`。
 //!
@@ -39,7 +40,9 @@ const EPERM: i32 = 1;
 const MAP_ROUNDS: usize = 70;
 /// 5 でくり返す回数（ZeikOS の共有メモリの欄 16 より多い）。
 const POOL_ROUNDS: usize = 20;
-/// 5 の 1 回の大きさ（16 MiB。4 回で ZeikOS の全体の上限 64 MiB に届く）。
+/// 5 で大きくする回数（4 回で ZeikOS の全体の上限 64 MiB に届く）。
+const LARGE_ROUNDS: usize = 5;
+/// 5 の大きい回の大きさ（16 MiB）。
 const POOL_BYTES: usize = 16 * 1024 * 1024;
 
 /// `struct stat` の `st_size` の位置（x86_64）。
@@ -203,27 +206,28 @@ fn main() {
 
     // 5. 作る→大きくする→マップ→閉じる→外す、を間を置かずにくり返す
     for round in 0..POOL_ROUNDS {
+        let bytes = if round < LARGE_ROUNDS { POOL_BYTES } else { PAGE };
         let fd = new_memfd(0);
         if fd < 0 {
             fail(&format!("memfd_create failed at round {round} with errno {}", errno()), 95);
         }
         // SAFETY: このプログラムが作った fd。
-        if unsafe { ftruncate(fd, POOL_BYTES as i64) } != 0 {
-            fail(&format!("ftruncate to 16 MiB failed at round {round} with errno {}", errno()), 95);
+        if unsafe { ftruncate(fd, bytes as i64) } != 0 {
+            fail(&format!("ftruncate to {bytes} bytes failed at round {round} with errno {}", errno()), 95);
         }
-        let at = map(fd, POOL_BYTES);
+        let at = map(fd, bytes);
         if at.is_null() {
-            fail(&format!("mmap of 16 MiB failed at round {round} with errno {}", errno()), 95);
+            fail(&format!("mmap of {bytes} bytes failed at round {round} with errno {}", errno()), 95);
         }
         write_at(at, 0, 1);
-        write_at(at, POOL_BYTES - 1, 2);
+        write_at(at, bytes - 1, 2);
         close_fd(fd);
-        if unmap(at, POOL_BYTES) != 0 {
-            fail(&format!("munmap of 16 MiB failed at round {round} with errno {}", errno()), 95);
+        if unmap(at, bytes) != 0 {
+            fail(&format!("munmap of {bytes} bytes failed at round {round} with errno {}", errno()), 95);
         }
     }
     println!(
-        "{NAME}: {POOL_ROUNDS} rounds of memfd_create, a 16 MiB ftruncate, mmap, close and munmap: all succeeded = true"
+        "{NAME}: {POOL_ROUNDS} rounds of memfd_create, ftruncate ({LARGE_ROUNDS} of them to 16 MiB), mmap, close and munmap: all succeeded = true"
     );
 
     // 6. マップして外した後の memfd を縮める

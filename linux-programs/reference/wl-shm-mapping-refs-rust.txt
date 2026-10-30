@@ -3,7 +3,7 @@ wl-shm-mapping-refs-rust: after closing the fd, the mapping still reads the patt
 wl-shm-mapping-refs-rust: munmap of the shared mapping returned 0
 wl-shm-mapping-refs-rust: munmap of the middle page returned 0, the first and last pages still read = true, and the rest unmapped = true
 wl-shm-mapping-refs-rust: 70 rounds of mmap and munmap on one memfd: all succeeded = true
-wl-shm-mapping-refs-rust: 20 rounds of memfd_create, a 16 MiB ftruncate, mmap, close and munmap: all succeeded = true
+wl-shm-mapping-refs-rust: 20 rounds of memfd_create, ftruncate (5 of them to 16 MiB), mmap, close and munmap: all succeeded = true
 wl-shm-mapping-refs-rust: after munmap, ftruncate to one page returned 0, fstat says 4096 byte(s), and the first byte reads 0x77
 wl-shm-mapping-refs-rust: with F_SEAL_SHRINK, shrinking failed with EPERM = true (seal 0)
 wl-shm-mapping-refs-rust: done

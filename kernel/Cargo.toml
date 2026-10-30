@@ -1368,6 +1368,9 @@ memfd-ignores-allow-sealing-test = []
 # 破壊（2026-10-20。ADR-0065 の Addendum）: 足した封を持たない。F_GET_SEALS が 0 を返し、イメージが 94 で終わる。
 # `--critical-test memfd-seals-not-kept`。
 memfd-seals-not-kept-test = []
+# 確かめ（2026-10-30。ADR-0065 の Addendum）: 共有メモリのマッピングの数のイメージ（wl-shm-mapping-refs-rust）だけを起動時に
+# 起こす。破壊テスト 2 つの構成である（linux-socket-test の並びの全部を通すと、時間の上限に当たる）。
+shm-mapping-test = []
 # 破壊（2026-10-30。ADR-0065 の Addendum）: 共有メモリの munmap で、マップしたページの数を引かない。フレームが返らず、
 # wl-shm-mapping-refs-rust が全体の上限で ftruncate に断られて 95 で終わる。`--critical-test shm-munmap-keeps-maps`。
 shm-munmap-keeps-maps-test = []

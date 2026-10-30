@@ -700,6 +700,15 @@ pub fn release_retired_into(allocator: &mut crate::frame_allocator::FrameAllocat
     released
 }
 
+/// 返す途中の実体が持っているフレームの数（2026-10-30。起動時の確かめの会計が、ウィンドウの前後の差で読む）。
+pub fn pending_frames() -> u64 {
+    let shms = SHMS.lock();
+    shms.iter()
+        .filter(|slot| slot.in_use && slot.releasing)
+        .map(|slot| slot.pages as u64)
+        .sum()
+}
+
 /// 返す途中の実体が待っている世代のうち、いちばん新しいもの（2026-10-30）。無ければ `None`。**これを全部の CPU が通り
 /// 過ぎれば、返す途中の実体は全部返せる。**
 pub fn pending_generation() -> Option<u64> {

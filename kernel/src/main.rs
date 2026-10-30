@@ -6820,6 +6820,15 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
         b"/bin/linux/m3a-memfd-shrink-rust",
         b"m3a-memfd-shrink-rust\0/etc/motd\0a\0b\0",
     );
+    // **共有メモリのマッピングの数と返す時期の破壊テストの構成**（2026-10-30。`ADR-0065` の Addendum）。`linux-socket-test` の
+    // 並びの全部を通すと時間の上限に当たるので、このイメージだけを起こす。判定は `--critical-test shm-munmap-keeps-maps`・
+    // `shm-release-ignores-generation`。`linux-socket-test` のビルドでは、あちらの並びの最後で起こす。
+    #[cfg(all(feature = "shm-mapping-test", not(feature = "linux-socket-test")))]
+    verify_linux_program(
+        logger,
+        b"/bin/linux/wl-shm-mapping-refs-rust",
+        b"wl-shm-mapping-refs-rust\0/etc/motd\0a\0b\0",
+    );
     // **Seinas の listen のソケットとロックファイルの一連**（`ADR-0087`。2026-10-16）。`std` の `UnixListener`・`UnixStream`・
     // `File::try_lock` で、ロック → bind → listen → connect → close で放す、を 3 組通す。ロックファイルを ext2 に作って
     // 消すので `linux-socket-test` のビルドだけが起こす。判定は `cargo xtask run --linux-socket-test`（Linux の参照と
@@ -6934,14 +6943,6 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
             b"/bin/linux/wl-close-queued-fd-rust",
             b"wl-close-queued-fd-rust\0/etc/motd\0a\0b\0",
         );
-        // **共有メモリのマッピングの数と、共有のマッピングの `munmap`、マップしていない memfd を縮める `ftruncate`**（2026-10-30。
-        // `ADR-0065` の Addendum）。判定は `cargo xtask run --linux-socket-test`（Linux の参照と突き合わせる）と、破壊テスト 2 つ
-        // （`--critical-test shm-munmap-keeps-maps`・`shm-release-ignores-generation`）。
-        verify_linux_program(
-            logger,
-            b"/bin/linux/wl-shm-mapping-refs-rust",
-            b"wl-shm-mapping-refs-rust\0/etc/motd\0a\0b\0",
-        );
         // **memfd のフラグと名前・封・fstat・作り方ごとの `FD_CLOEXEC`**（2026-10-20。`ADR-0065` の Addendum）。判定は
         // `cargo xtask run --linux-socket-test`（Linux の参照と突き合わせる）と、破壊テスト 2 つ（`--critical-test
         // memfd-ignores-allow-sealing`・`memfd-seals-not-kept`）。
@@ -6949,6 +6950,15 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
             logger,
             b"/bin/linux/wl-memfd-seals-rust",
             b"wl-memfd-seals-rust\0/etc/motd\0a\0b\0",
+        );
+        // **共有メモリのマッピングの数と、共有のマッピングの `munmap`、マップしていない memfd を縮める `ftruncate`**（2026-10-30。
+        // `ADR-0065` の Addendum）。判定は `cargo xtask run --linux-socket-test`（Linux の参照と突き合わせる）。**並びの最後に
+        // 置く**——0 で埋める大きい `ftruncate` を含むので、前に置くと、後のイメージを見る critical-test が時間の上限に当たる
+        // （2026-10-30 の全検査で踏んだ）。
+        verify_linux_program(
+            logger,
+            b"/bin/linux/wl-shm-mapping-refs-rust",
+            b"wl-shm-mapping-refs-rust\0/etc/motd\0a\0b\0",
         );
     }
     // **壁の時計**（2026-10-20。`ADR-0090`）。値は起動のたびに変わるので、`realtime-test` のビルドだけが起こす。判定は
@@ -10403,8 +10413,8 @@ fn load_embedded_user_program(logger: &mut Logger<Serial>) -> Result<(), UserLoa
         }
         // **会計のために短く借りる（S11-3）。** 読むだけなので、すぐ返す。
         let free_before = frame_count_now(logger);
-        // **共有フレームの数も控える**（2026-10-30。下の `shared_net`）。
-        let shared_before = kernel::shm::frames_held();
+        // **返す途中の共有フレームの数も控える**（2026-10-30。下の `pending_net`）。
+        let pending_before = kernel::shm::pending_frames();
         // **子の会計を 0 に戻す（S11-5）。** このプログラムが `spawn` で起動した
         // 子の隔離は、下の突き合わせで足す。
         kernel::userland::reset_spawn_accounting();
@@ -10438,11 +10448,13 @@ fn load_embedded_user_program(logger: &mut Logger<Serial>) -> Result<(), UserLoa
         // 「消えたまま」と数え、前の破棄のフレームがこのウィンドウで返った分（`released_others`）は足し戻す。
         let destroy = kernel::userland::last_destroy();
         let own_still = destroy.still_quarantined();
-        // **共有フレームを `consumed` から除く**（2026-10-30。`spawn` の会計と同じ。`ADR-0065` の (A-3)）。マップした共有メモリの
-        // フレームは、最後に外したときの TLB の世代が退くまで「返す途中」で残る（`kernel::shm` の「マッピングの数と、返す時期」）
-        // ——プロセスの終わりで外した分は、このウィンドウの後で返る。`AddressSpace::detach` が集めないので、隔離にも入らない。
-        let shared_net = kernel::shm::frames_held().saturating_sub(shared_before) as i64;
-        let consumed = (free_before as i64 - frame_count_now(logger) as i64 - shared_net
+        // **返す途中の共有フレームを `consumed` から除く**（2026-10-30）。マップした共有メモリのフレームは、最後に外したときの
+        // TLB の世代が退くまで「返す途中」で残る（`kernel::shm` の「マッピングの数と、返す時期」）——プロセスの終わりで外した
+        // 分は、このウィンドウの後で返る。`AddressSpace::detach` が集めないので、隔離にも入らない。**除くのは返す途中の分だけで
+        // ある**——参照が減らずに残ったフレーム（破壊テスト `shm-close-keeps-refs`）は、今までどおり消えたまま数える。
+        // 増えた分も減った分も数える（ウィンドウの前に返す途中になった分が、ウィンドウの中で返ることがある）。
+        let pending_net = kernel::shm::pending_frames() as i64 - pending_before as i64;
+        let consumed = (free_before as i64 - frame_count_now(logger) as i64 - pending_net
             + destroy.released_others as i64
             + kernel::userland::spawn_released_others() as i64)
             .max(0) as usize;
@@ -14743,6 +14755,11 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "memfd-seals-not-kept-test",
         cfg!(feature = "memfd-seals-not-kept-test"),
         "足した封を持たない",
+    ),
+    (
+        "shm-mapping-test",
+        cfg!(feature = "shm-mapping-test"),
+        "共有メモリのマッピングの数のイメージ（wl-shm-mapping-refs-rust）だけを起動時に起こす（確かめ。破壊ではない）",
     ),
     (
         "shm-munmap-keeps-maps-test",

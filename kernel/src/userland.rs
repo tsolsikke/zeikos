@@ -3338,7 +3338,10 @@ pub fn spawn_with_loan(
     // **失うもの**——**`consumed == quarantined` の素の等式（共有分について）。**
     // **覆う判定**——**`shm` の created==released（フレームは参照数で返る。`shm:` の計測）。**
     let shared_after = crate::shm::frames_held();
-    let shared_net = shared_after.saturating_sub(shared_before) as usize;
+    // **増えた分も減った分も数える**（2026-10-30）。返す途中の共有メモリ（`crate::shm` の「マッピングの数と、返す時期」）は、
+    // ウィンドウの前に返す途中になり、ウィンドウの中で返ることがある——そのフレームは空きを増やすが、この空間が返したもの
+    // ではない。以前は増えた分だけを数え、減った分を 0 に切り詰めていた（`m1-rust` で「190 消えて 191 隔離」と 1 つずれた）。
+    let shared_net = shared_after as i64 - shared_before as i64;
     // **その場で返した分と、途中で退いて返した分は、消えた数に入らない**（2026-10-07）。**隔離に残る分だけが「消えたまま」
     // である。** 前の破棄のフレームがこのウィンドウの中で返っていれば（`released_others`）、その分を消えた数へ足し戻す。
     let destroy = last_destroy();
@@ -3347,7 +3350,7 @@ pub fn spawn_with_loan(
     // **アイドルがウィンドウの中で返した前の破棄の分も足し戻す**（2026-10-15）。主スレッドが futex で眠る間はアイドルが走り、
     // 隔離に残っていたフレームを返す——その分はウィンドウの前後の差を減らすが、この空間が消したものではない。
     let released_by_idle = idle_released_frames().saturating_sub(idle_released_before);
-    let consumed = (free_before as i64 - free_after as i64 - shared_net as i64
+    let consumed = (free_before as i64 - free_after as i64 - shared_net
         + destroy.released_others as i64
         + released_by_children as i64
         + released_by_idle as i64)

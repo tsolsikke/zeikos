@@ -912,23 +912,20 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
     // **共有メモリのマッピングの数と、返す時期の破壊テスト 2 件（2026-10-30。`ADR-0065` の Addendum）。**
     CriticalTest {
         name: "shm-munmap-keeps-maps",
-        feature: "linux-socket-test,shm-munmap-keeps-maps-test",
+        feature: "shm-mapping-test,shm-munmap-keeps-maps-test",
         expected_markers: &[
-            "wl-shm-mapping-refs-rust: ftruncate to 16 MiB failed at round",
+            "wl-shm-mapping-refs-rust: ftruncate to 16777216 bytes failed at round",
             "with errno 12; exiting with 95",
             "ended Ok(Exited(95)), expected Exited(4)",
             "halting",
         ],
-        forbidden_markers: &[
-            "20 rounds of memfd_create, a 16 MiB ftruncate, mmap, close and munmap: all succeeded = true",
-            "zash: ready",
-        ],
+        forbidden_markers: &["mmap, close and munmap: all succeeded = true", "zash: ready"],
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
     CriticalTest {
         name: "shm-release-ignores-generation",
-        feature: "linux-socket-test,shm-release-ignores-generation-test",
+        feature: "shm-mapping-test,shm-release-ignores-generation-test",
         expected_markers: &[
             "[ERROR] shm: ",
             "shared page(s) went back to the allocator before every CPU passed the TLB generation",
@@ -24753,7 +24750,8 @@ fn cmd_linux_socket_test() -> Result<()> {
             break;
         }
         let text = read_lossy(&serial_log);
-        if text.contains(&memfd_ended) || text.contains("[ERROR]") || Instant::now() >= deadline {
+        // **並びの最後のイメージ（`wl-shm-mapping-refs-rust`。2026-10-30 から）が終わるまで待つ。**
+        if text.contains(&refs_ended) || text.contains("[ERROR]") || Instant::now() >= deadline {
             break;
         }
         metrics::sleep_poll(PANIC_TEST_POLL_INTERVAL);
