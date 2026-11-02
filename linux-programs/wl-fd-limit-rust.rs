@@ -7,20 +7,21 @@
 //! 2. listener と、それへ繋いだクライアント 2 本と、memfd を開き、listener の複製で fd の表を `EMFILE` まで埋める。埋まった
 //!    ときに開いている fd の数が上限と同じことを見る。
 //! 3. 1 つ空けて `F_DUPFD` が最後の空きに置け、次の `F_DUPFD` が `EMFILE` で断られることを見る。
-//! 4. 1 つ空けて `accept` が最後の空きに置け、次の `accept` が `EMFILE` で断られることを見る。
+//! 4. 1 つ空けて `accept` が最後の空きに置け、次の `accept` が `EMFILE` で断られることを見る。表が埋まったまま、`accept4` が
+//!    確かめる順（開いていない fd・知らないフラグ・表の空き・ソケットでない fd・listener でないソケット）を errno で見る。1 つ
+//!    空けて、断られた 2 本目の接続が待ち行列に残っていて受けられることを、相手から送った 1 バイトで見る（2026-11-03。
+//!    `ADR-0091` の Addendum）。
 //! 5. 1 つ空けて、クライアントから `SCM_RIGHTS` で送った memfd を `recvmsg` が最後の空きに置け、表が埋まった後にもう 1 度送った
 //!    memfd は渡らないことを見る。**このときも `recvmsg` は受けたバイトを返し、`msg_flags` は `MSG_CTRUNC`、`msg_controllen` は 0
 //!    である**（2026-10-27 に行へ足した。Linux の形）。
 //!
-//! # Linux との差（`ADR-0091`）
+//! # 以前の Linux との差（`ADR-0091`）
 //!
-//! 行は、両方で同じになる所（最後の空きには置ける、次は断られる・fd が渡らない）だけを言う。表が埋まったときの答え方には、
-//! 差が 1 つある。
+//! 表が埋まったときの答え方に、差が 2 つあった。どちらも Linux の形へ直したので、今は全部の行が Linux と同じになる。
 //!
-//! - **`accept`**: Linux は先に fd の空きを見て `EMFILE` を返し、接続は待ち行列に残る（1 つ空ければ次の `accept` で受けられる）。
-//!   ZeikOS は待ち行列から接続を取ってから置けずに閉じるので、接続は失われ、相手は EOF を見る。
-//!
-//! `recvmsg` の `SCM_RIGHTS` の差（ZeikOS は `-EMFILE` を返し、バイトはソケットに残っていた）は、2026-10-27 に Linux の形へ直した。
+//! - **`recvmsg` の `SCM_RIGHTS`**: ZeikOS は `-EMFILE` を返し、バイトはソケットに残っていた。2026-10-27 に直した。
+//! - **`accept`**: ZeikOS は待ち行列から接続を取ってから置けずに閉じていたので、接続は失われ、相手は EOF を見ていた。
+//!   2026-11-03 に、取る前に空きを見る形へ直した。直す前の形では、1 つ空けた後の `accept` が `EAGAIN` で断られ、93 で終わる。
 //!
 //! 終了ステータスは引数の数（4）。Linux でも同じ行を出す（`linux-programs/reference/wl-fd-limit-rust.txt`）。
 //!
@@ -30,6 +31,7 @@
 //! `/bin/linux` に置く。**起動時に起こすのは `linux-socket-test` のビルドだけである。**
 
 use std::fs;
+use std::io::Write;
 use std::os::fd::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 
@@ -45,6 +47,10 @@ const RLIMIT_NOFILE: i32 = 7;
 const MFD_CLOEXEC: u32 = 1;
 const SOL_SOCKET: i32 = 1;
 const SCM_RIGHTS: i32 = 1;
+/// `accept4` の知らないフラグ（`SOCK_CLOEXEC` でも `SOCK_NONBLOCK` でもないビット）。
+const UNKNOWN_ACCEPT_FLAG: i32 = 1;
+/// 開いていない fd（上限より大きい）。
+const NOT_OPEN_FD: i32 = 1000;
 /// 表を埋める回数の上限（`EMFILE` が来なければ、名指しの行を出して終わる）。
 const FILL_MAX: usize = 4096;
 
@@ -86,6 +92,8 @@ extern "C" {
     fn getrlimit(resource: i32, limit: *mut [u64; 2]) -> i32;
     fn setrlimit(resource: i32, limit: *const [u64; 2]) -> i32;
     fn accept(fd: i32, addr: *mut u8, len: *mut u32) -> i32;
+    fn accept4(fd: i32, addr: *mut u8, len: *mut u32, flags: i32) -> i32;
+    fn read(fd: i32, buf: *mut u8, count: usize) -> isize;
     fn memfd_create(name: *const u8, flags: u32) -> i32;
     fn sendmsg(fd: i32, msg: *const MsgHdr, flags: i32) -> isize;
     fn recvmsg(fd: i32, msg: *mut MsgHdr, flags: i32) -> isize;
@@ -115,6 +123,17 @@ fn close_fd(fd: i32) {
 fn accept_on(listener: i32) -> i32 {
     // SAFETY: 相手のアドレスは受け取らない。
     unsafe { accept(listener, std::ptr::null_mut(), std::ptr::null_mut()) }
+}
+
+/// `accept4` が断ったときの errno。**受けてしまったら、閉じて 0 を返す。**
+fn accept4_errno(fd: i32, flags: i32) -> i32 {
+    // SAFETY: 相手のアドレスは受け取らない。
+    let got = unsafe { accept4(fd, std::ptr::null_mut(), std::ptr::null_mut(), flags) };
+    if got >= 0 {
+        close_fd(got);
+        return 0;
+    }
+    errno()
 }
 
 /// `sendmsg` で 1 バイトと fd を送る。
@@ -190,7 +209,7 @@ fn main() {
     let _ = fs::remove_file(PATH);
     let listener = UnixListener::bind(PATH).unwrap_or_else(|error| fail(&format!("bind failed: {error}"), 90));
     let first = UnixStream::connect(PATH).unwrap_or_else(|error| fail(&format!("connect failed: {error}"), 90));
-    let _second = UnixStream::connect(PATH).unwrap_or_else(|error| fail(&format!("connect failed: {error}"), 90));
+    let mut second = UnixStream::connect(PATH).unwrap_or_else(|error| fail(&format!("connect failed: {error}"), 90));
     // SAFETY: NUL で終わる名前を渡す。
     let memfd = unsafe { memfd_create(b"fd-limit\0".as_ptr(), MFD_CLOEXEC) };
     if memfd < 0 {
@@ -231,6 +250,34 @@ fn main() {
     if accepted < 0 {
         fail("the first accept failed", 92);
     }
+    println!(
+        "{NAME}: with the table full, accept4 answers errno {} on an fd that is not open with unknown flags, {} on a memfd with unknown flags, {} on a memfd and {} on a connected socket",
+        accept4_errno(NOT_OPEN_FD, UNKNOWN_ACCEPT_FLAG),
+        accept4_errno(memfd, UNKNOWN_ACCEPT_FLAG),
+        accept4_errno(memfd, 0),
+        accept4_errno(first.as_raw_fd(), 0)
+    );
+
+    // 1 つ空けて、断られた 2 本目の接続を受ける。直す前の形で眠らないように、listener を待たない形にしておく。
+    close_fd(fillers.pop().unwrap_or_else(|| fail("nothing was filled", 91)));
+    println!(
+        "{NAME}: with one free slot, accept4 answers errno {} on a memfd and {} on a connected socket",
+        accept4_errno(memfd, 0),
+        accept4_errno(first.as_raw_fd(), 0)
+    );
+    listener.set_nonblocking(true).unwrap_or_else(|error| fail(&format!("set_nonblocking failed: {error}"), 90));
+    let queued = accept_on(source);
+    if queued < 0 {
+        fail(&format!("an accept after freeing one fd failed with errno {}", errno()), 93);
+    }
+    second.write_all(b"s").unwrap_or_else(|error| fail(&format!("write failed: {error}"), 90));
+    let mut byte = [0u8; 1];
+    // SAFETY: `byte` はこの関数の中で生きている 1 バイトである。
+    let got = unsafe { read(queued, byte.as_mut_ptr(), 1) };
+    println!(
+        "{NAME}: after one fd was freed, accept took the connection that had waited in the queue = {}",
+        got == 1 && byte[0] == b's'
+    );
 
     // recvmsg の SCM_RIGHTS
     close_fd(fillers.pop().unwrap_or_else(|| fail("nothing was filled", 91)));
@@ -252,6 +299,7 @@ fn main() {
         close_fd(fd);
     }
     close_fd(received);
+    close_fd(queued);
     close_fd(accepted);
     close_fd(memfd);
     drop(listener);

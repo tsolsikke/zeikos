@@ -3276,8 +3276,19 @@ fn listen_from_ring3(fd: u64, _backlog: u64) -> u64 {
 /// - **受けた fd の印は、`accept4` の `SOCK_NONBLOCK` だけで決まる。** listener の印は引き継がない（Linux と同じ。
 ///   `accept` で受けた fd は待つ）。
 ///
+/// # 確かめる順と、fd の表の空き（2026-11-03。`ADR-0091` の Addendum）
+///
+/// **Linux の `__sys_accept4` と同じ順に見る**——fd が開いていなければ `-EBADF`、`flags` に知らないビットがあれば
+/// `-EINVAL`、fd の表に空きが無ければ `-EMFILE`、ソケットでなければ `-ENOTSOCK`、listener でなければ `-EINVAL`。
+/// **空きは待ち行列から取る前に見る**ので、`-EMFILE` のとき接続は待ち行列に残り、1 つ空ければ次の `accept` で受けられる。
+/// **待って起きた後にも見直す**——眠っている間に、同じプロセスの別のスレッドが表を埋めうる（Linux は待つ前に番号を
+/// 取っておくので、この形では埋めた側が `-EMFILE` を受ける。こちらは `accept` の側が受ける）。
+///
 /// 破壊テスト (`ADR-0064`, socket-accept-does-not-wait): 待たずに `-EAGAIN` を返す。
 /// **`sockd` が `accept failed` で終わる。**
+///
+/// 破壊テスト (2026-11-03, accept-takes-before-checking-test): 空きを見ずに待ち行列から取る（直す前の形）。**取った接続は
+/// 表に置けずに閉じられ、`wl-fd-limit-rust` の 1 つ空けた後の `accept` が `-EAGAIN` で断られる。**
 ///
 /// # Safety
 ///
@@ -3292,14 +3303,20 @@ unsafe fn accept_from_ring3(
     direct_map: DirectMap,
     bkl: &mut Option<crate::bkl::BklGuard>,
 ) -> u64 {
+    if let Err(error) = crate::vfs::with_current_files(|files| files.get(fd as usize).map(|_| ())) {
+        return (-errno_for_file_table(error)) as u64;
+    }
+    if flags & !(SOCK_CLOEXEC | SOCK_NONBLOCK) != 0 {
+        return (-EINVAL) as u64;
+    }
+    if !accept_has_free_slot() {
+        return (-EMFILE) as u64;
+    }
     let listener = match socket_state_of(fd) {
         Ok(crate::vfs::SocketState::Listener { listener }) => listener,
         Ok(_) => return (-EINVAL) as u64,
         Err(errno) => return errno,
     };
-    if flags & !(SOCK_CLOEXEC | SOCK_NONBLOCK) != 0 {
-        return (-EINVAL) as u64;
-    }
     let listener_nonblocking = socket_nonblocking_of(fd);
     if addr != 0 {
         // **書けることを先に見る**（取った接続を戻せないため）。`addrlen` は `socklen_t`（4 バイト）。
@@ -3343,6 +3360,8 @@ unsafe fn accept_from_ring3(
                         return (-EFAULT) as u64;
                     }
                 }
+                // **空きは上で見たので、置けないことは無い**（見てからここまで BKL を持ち続けている）。置けなければ、
+                // 取った接続の server 側を閉じる——相手は EOF を見る。
                 let inserted = crate::vfs::with_current_files(|files| {
                     files.insert_with_cloexec(
                         crate::vfs::File::Socket {
@@ -3359,7 +3378,6 @@ unsafe fn accept_from_ring3(
                 return match inserted {
                     Ok(new_fd) => new_fd as u64,
                     Err(error) => {
-                        // **表が満杯なら、取った接続の server 側を閉じる**——相手は EOF を見る。
                         crate::socket::close_end(conn, crate::socket::Side::Server);
                         (-errno_for_file_table(error)) as u64
                     }
@@ -3387,10 +3405,22 @@ unsafe fn accept_from_ring3(
                     {
                         return (-EINTR) as u64;
                     }
+                    // **眠っている間に表が埋まったら、取らずに断る**（上の doc の「確かめる順」）。
+                    if !accept_has_free_slot() {
+                        return (-EMFILE) as u64;
+                    }
                 }
             }
         }
     }
+}
+
+/// `accept4` が待ち行列から取る前に、今のプロセスの fd の表に空きが在るか（2026-11-03）。
+///
+/// 破壊テスト (2026-11-03, accept-takes-before-checking-test): 常に真を返す（直す前の形。[`accept_from_ring3`] の doc）。
+fn accept_has_free_slot() -> bool {
+    cfg!(feature = "accept-takes-before-checking-test")
+        || crate::vfs::with_current_files(|files| files.has_free_slot())
 }
 
 /// [`SYS_CONNECT`] の本体。**名前で繋ぎ、fd をその場でストリームにする。**

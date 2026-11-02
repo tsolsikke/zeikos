@@ -6711,6 +6711,13 @@ fn verify_linux_programs_for_one_sabotage(logger: &mut Logger<Serial>) {
         b"/bin/linux/wl-relative-path-rust",
         b"wl-relative-path-rust\0/etc/motd\0a\0b\0",
     );
+    // **fd の表が満杯のときの `accept`**（2026-11-03。`ADR-0091` の Addendum）。`--critical-test accept-takes-before-checking`。
+    #[cfg(all(feature = "fd-limit-test", not(feature = "linux-socket-test")))]
+    verify_linux_program(
+        logger,
+        b"/bin/linux/wl-fd-limit-rust",
+        b"wl-fd-limit-rust\0/etc/motd\0a\0b\0",
+    );
     let _ = logger;
 }
 
@@ -6943,7 +6950,8 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
         // パイプは同時に 1 本なので、3 つ目の引数を変えて 2 回起こす（`b` は書き端、`c` は読み端の終わり方を見る）。
         verify_dup_ends(logger);
         // **fd の上限ちょうどまで開けて、1 つ越えると断られること**（2026-10-22。`ADR-0091`）。`F_DUPFD`・`accept`・`recvmsg` の
-        // `SCM_RIGHTS` のそれぞれで見る。判定は `cargo xtask run --linux-socket-test`（Linux の参照と突き合わせる）。
+        // `SCM_RIGHTS` のそれぞれで見る。判定は `cargo xtask run --linux-socket-test`（Linux の参照と突き合わせる）。破壊テストは
+        // `fd-limit-test` のビルドで起こす（`--critical-test accept-takes-before-checking`）。
         verify_linux_program(
             logger,
             b"/bin/linux/wl-fd-limit-rust",
@@ -14845,6 +14853,16 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "stat-refuses-relative-test",
         cfg!(feature = "stat-refuses-relative-test"),
         "stat が / で始まらないパスを断る（直す前の形）",
+    ),
+    (
+        "fd-limit-test",
+        cfg!(feature = "fd-limit-test"),
+        "wl-fd-limit-rust だけを起動時に起こす（破壊テストの構成。破壊ではない）",
+    ),
+    (
+        "accept-takes-before-checking-test",
+        cfg!(feature = "accept-takes-before-checking-test"),
+        "accept4 が fd の表の空きを見ずに待ち行列から取る（直す前の形）",
     ),
     (
         "shm-mapping-test",

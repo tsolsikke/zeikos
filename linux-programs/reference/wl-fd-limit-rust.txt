@@ -3,6 +3,9 @@ wl-fd-limit-rust: RLIMIT_NOFILE answers 32 for the soft limit and 32 for the har
 wl-fd-limit-rust: the table filled up with exactly as many open fds as the limit = true
 wl-fd-limit-rust: a dup into the last free slot succeeded and the next one failed with EMFILE = true
 wl-fd-limit-rust: an accept into the last free slot succeeded and the next one failed with EMFILE = true
+wl-fd-limit-rust: with the table full, accept4 answers errno 9 on an fd that is not open with unknown flags, 22 on a memfd with unknown flags, 24 on a memfd and 24 on a connected socket
+wl-fd-limit-rust: with one free slot, accept4 answers errno 88 on a memfd and 22 on a connected socket
+wl-fd-limit-rust: after one fd was freed, accept took the connection that had waited in the queue = true
 wl-fd-limit-rust: recvmsg put a passed memfd into the last free slot = true
 wl-fd-limit-rust: recvmsg into a full table handed over no fd = true
 wl-fd-limit-rust: recvmsg into a full table returned 1 (the byte), msg_flags 0x8, msg_controllen 0

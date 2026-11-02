@@ -947,6 +947,22 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
+    // **fd の表が満杯のときの `accept` の破壊テスト（2026-11-03。`ADR-0091` の Addendum）。** イメージだけを起こすビルドで走らせる。
+    CriticalTest {
+        name: "accept-takes-before-checking",
+        feature: "fd-limit-test,accept-takes-before-checking-test",
+        expected_markers: &[
+            "wl-fd-limit-rust: an accept after freeing one fd failed with errno 11; exiting with 93",
+            "ended Ok(Exited(93)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &[
+            "accept took the connection that had waited in the queue = true",
+            "zash: ready",
+        ],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
     CriticalTest {
         name: "eagain-passes-fd",
         feature: "nonblock-test,eagain-passes-fd-test",
@@ -36503,7 +36519,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 67,
-    full: 560,
+    full: 561,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` とスクリプトのグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

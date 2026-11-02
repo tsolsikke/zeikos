@@ -918,6 +918,11 @@ impl FileTable {
         Err(FileTableError::NoFreeDescriptor)
     }
 
+    /// 空いた番号が 1 つでも在るか（`accept4` が待ち行列から取る前に見る。2026-11-03。`ADR-0091` の Addendum）。
+    pub fn has_free_slot(&self) -> bool {
+        self.slots.iter().any(Option::is_none)
+    }
+
     /// 番号を閉じる。**開いていない番号は拒む。**
     pub fn remove(&mut self, fd: usize) -> Result<File, FileTableError> {
         let file = self
@@ -1060,6 +1065,25 @@ mod tests {
             "a reused number starts without the mark"
         );
         assert!(table.set_cloexec(MAX_OPEN_FILES - 1, true).is_err());
+    }
+
+    /// 空きの有無は、最後の 1 つが埋まった所で偽になり、1 つ閉じると真に戻る（2026-11-03）。
+    #[test]
+    fn a_free_slot_is_seen_until_the_last_one_is_taken() {
+        let mut table = FileTable::new();
+        for number in STDERR_FD + 1..MAX_OPEN_FILES {
+            assert!(table.has_free_slot());
+            table
+                .insert(File::new(inode(number as u32, 1, REGULAR)))
+                .unwrap();
+        }
+        assert!(!table.has_free_slot());
+        assert_eq!(
+            table.insert(File::new(inode(99, 1, REGULAR))),
+            Err(FileTableError::NoFreeDescriptor)
+        );
+        table.remove(STDERR_FD + 1).unwrap();
+        assert!(table.has_free_slot());
     }
 
     /// 試験用の inode。**ext2 のイメージを組み立てずに作る**（表の論理だけを見る）。
