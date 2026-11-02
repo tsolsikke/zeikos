@@ -164,7 +164,7 @@ common::ext2::tests::rejects_inode_numbers_outside_the_table
 common::ext2::tests::rejects_revision_zero
 common::ext2::tests::rejects_unknown_incompat_but_accepts_unknown_ro_compat_and_compat
 common::ext2::tests::rejects_zero_per_group
-common::ext2::tests::relative_paths_are_refused
+common::ext2::tests::relative_paths_start_at_the_root
 common::ext2::tests::reserved_inode_numbers_are_never_handed_out
 common::ext2::tests::resolves_a_path_to_the_file_it_names
 common::ext2::tests::resuming_past_the_end_yields_nothing

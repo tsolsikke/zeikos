@@ -1,0 +1,13 @@
+wl-relative-path-rust: main starts with 4 argument(s)
+wl-relative-path-rust: stat of tmp/seinas/relpath.txt returned 0, ./tmp/seinas/relpath.txt 0, ../tmp/seinas/relpath.txt 0
+wl-relative-path-rust: stat of tmp/seinas/no-such-file returned ENOENT, and of the empty path ENOENT
+wl-relative-path-rust: open of tmp/seinas/relpath.txt for reading gave an fd = true, and read the content = true
+wl-relative-path-rust: readlink of tmp/seinas/relpath.txt (not a link) returned EINVAL, and of tmp/seinas/nope ENOENT
+wl-relative-path-rust: mkdir of tmp/seinas/relpath-dir returned 0, it was there as /tmp/seinas/relpath-dir = true, and rmdir returned 0
+wl-relative-path-rust: unlink of tmp/seinas/relpath.txt returned 0, the file is gone = true, and unlink of tmp/seinas/nope returned ENOENT
+wl-relative-path-rust: getcwd with 64 bytes returned 2, and wrote "/\0"
+wl-relative-path-rust: getcwd with 2 bytes returned 2, wrote / and NUL = true, and left the rest = true
+wl-relative-path-rust: getcwd with 1 byte returned ERANGE, with 0 bytes ERANGE, and wrote nothing = true
+wl-relative-path-rust: getcwd into NULL with 64 bytes returned EFAULT
+wl-relative-path-rust: done
+exit status: 4

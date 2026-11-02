@@ -934,6 +934,19 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
+    // **相対パスの破壊テスト（2026-11-02。`ADR-0043` の Addendum）。** イメージだけを起こすビルドで走らせる。
+    CriticalTest {
+        name: "stat-refuses-relative",
+        feature: "relative-path-test,stat-refuses-relative-test",
+        expected_markers: &[
+            "wl-relative-path-rust: stat of a relative path failed with errno 22; exiting with 91",
+            "ended Ok(Exited(91)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &["stat of tmp/seinas/relpath.txt returned 0", "zash: ready"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
     CriticalTest {
         name: "eagain-passes-fd",
         feature: "nonblock-test,eagain-passes-fd-test",
@@ -24744,14 +24757,16 @@ fn cmd_linux_socket_test() -> Result<()> {
     let queued_ended = format!("spawn: /bin/linux/{queued} ended");
     let refs = "wl-shm-mapping-refs-rust";
     let refs_ended = format!("spawn: /bin/linux/{refs} ended");
+    let relpath = "wl-relative-path-rust";
+    let relpath_ended = format!("spawn: /bin/linux/{relpath} ended");
     let deadline = Instant::now() + PIPE_TEST_TIMEOUT;
     loop {
         if child.was_cut() {
             break;
         }
         let text = read_lossy(&serial_log);
-        // **並びの最後のイメージ（`wl-shm-mapping-refs-rust`。2026-10-30 から）が終わるまで待つ。**
-        if text.contains(&refs_ended) || text.contains("[ERROR]") || Instant::now() >= deadline {
+        // **並びの最後のイメージ（`wl-relative-path-rust`。2026-11-02 から）が終わるまで待つ。**
+        if text.contains(&relpath_ended) || text.contains("[ERROR]") || Instant::now() >= deadline {
             break;
         }
         metrics::sleep_poll(PANIC_TEST_POLL_INTERVAL);
@@ -25031,6 +25046,19 @@ fn cmd_linux_socket_test() -> Result<()> {
         .lines()
         .find(|line| line.contains(&refs_ended))
         .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
+    // **相対パスと空のパスと `getcwd`**（2026-11-02。`ADR-0043` の Addendum）。終わり方と Linux の参照で見る（Linux の側も
+    // 作業ディレクトリを `/` にして採った）。
+    let relpath_ran = serial.contains(&format!("{relpath_ended} (Exited(4))"));
+    let relpath_matched = linux_program_output_matches(
+        &workspace_root,
+        relpath,
+        &serial,
+        LinuxReferenceEnvironment::ExactCount,
+    )?;
+    let relpath_unknown_free = serial
+        .lines()
+        .find(|line| line.contains(&relpath_ended))
+        .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
     // **memfd のフラグと名前・封・fstat・作り方ごとの `FD_CLOEXEC`**（2026-10-20。`ADR-0065` の Addendum）。終わり方と Linux の
     // 参照で見る（封と `F_GETFD` の値が行に出る）。
     let memfd_ran = serial.contains(&format!("{memfd_ended} (Exited(4))"));
@@ -25143,6 +25171,13 @@ fn cmd_linux_socket_test() -> Result<()> {
         "{context}: {refs} printed what Linux prints (linux-programs/reference/{refs}.txt) = {refs_matched}"
     );
     println!("{context}: {refs} hit no number the kernel does not know = {refs_unknown_free}");
+    println!("{context}: {relpath} ended with status 4 = {relpath_ran}");
+    println!(
+        "{context}: {relpath} printed what Linux prints (linux-programs/reference/{relpath}.txt) = {relpath_matched}"
+    );
+    println!(
+        "{context}: {relpath} hit no number the kernel does not know = {relpath_unknown_free}"
+    );
     println!("{context}: {memfd} ended with status 4 = {memfd_ran}");
     println!(
         "{context}: {memfd} printed what Linux prints (linux-programs/reference/{memfd}.txt) = {memfd_matched}"
@@ -25196,6 +25231,9 @@ fn cmd_linux_socket_test() -> Result<()> {
         && refs_ran
         && refs_matched
         && refs_unknown_free
+        && relpath_ran
+        && relpath_matched
+        && relpath_unknown_free
         && memfd_ran
         && memfd_matched
         && memfd_unknown_free
@@ -25221,6 +25259,7 @@ fn cmd_linux_socket_test() -> Result<()> {
                 || l.contains(recvmsg_name)
                 || l.contains(queued)
                 || l.contains(refs)
+                || l.contains(relpath)
                 || l.contains(memfd)
                 || l.contains("[ERROR]")
         })
@@ -36464,7 +36503,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 67,
-    full: 559,
+    full: 560,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` とスクリプトのグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

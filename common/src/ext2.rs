@@ -302,8 +302,6 @@ pub enum Ext2Error {
     DirEntryRecordTooSmall { rec_len: u16, name_len: u8 },
     /// `rec_len` がブロックの残りを越えている（線3）。
     DirEntryRecordPastBlock { rec_len: u16, remaining: u32 },
-    /// パスが `/` で始まっていない。**現在位置を持たないので相対パスは引けない。**
-    PathNotAbsolute,
     /// パスの要素が [`MAX_PATH_COMPONENTS`] を越えた。
     ///
     /// **停止性のための上限ではない**（あちらの doc に理由がある）。
@@ -1203,7 +1201,13 @@ impl<'a> Ext2<'a> {
         })
     }
 
-    /// 絶対パスを inode へ解決する（S10-a）。
+    /// パスを inode へ解決する（S10-a）。
+    ///
+    /// # 相対パスもルートから引く（2026-11-02）
+    ///
+    /// **作業ディレクトリはいつも `/` である**（`ADR-0043` の Addendum。`chdir` は持たない）。`/` で始まらないパスも、
+    /// ルートから引く——Linux で作業ディレクトリが `/` のときと同じ答えになる。**空のパスは [`Ext2Error::NotFound`]**
+    /// （Linux の `-ENOENT`）。それまでは、`/` で始まらないパスを（空のパスも）断っていた。
     ///
     /// # 毎回ルートから辿る
     ///
@@ -1228,8 +1232,8 @@ impl<'a> Ext2<'a> {
     /// - **線4: 止まること。** **要素の数はパスの長さで決まり切っている。**
     ///   [`MAX_PATH_COMPONENTS`] は仕事の量の上限であって、止まる根拠ではない
     pub fn lookup(&self, path: &[u8]) -> Result<Inode, Ext2Error> {
-        if path.first() != Some(&PATH_SEPARATOR) {
-            return Err(Ext2Error::PathNotAbsolute);
+        if path.is_empty() {
+            return Err(Ext2Error::NotFound);
         }
 
         let mut current = self.inode(ROOT_INODE)?;
@@ -4349,14 +4353,32 @@ mod tests {
         );
     }
 
-    /// 相対パスは引けない。**現在位置を持たないからである。**
+    /// 相対パスはルートから引く（2026-11-02。作業ディレクトリはいつも `/`）。**`.` と `..` はディレクトリの項目として
+    /// 辿り、ルートの `..` はルート自身である。** 空のパスは無い名前（Linux の `-ENOENT`）。
     #[test]
-    fn relative_paths_are_refused() {
+    fn relative_paths_start_at_the_root() {
         let image = build_test_image();
         let fs = Ext2::parse(&image).unwrap();
-        for path in [&b""[..], &b"etc/motd"[..], &b"."[..], &b".."[..]] {
-            assert_eq!(fs.lookup(path), Err(Ext2Error::PathNotAbsolute));
-        }
+        assert_eq!(fs.lookup(b"etc/motd").unwrap().number, SHORT_FILE_INODE);
+        assert_eq!(fs.lookup(b"./etc/motd").unwrap().number, SHORT_FILE_INODE);
+        assert_eq!(fs.lookup(b"../etc/motd").unwrap().number, SHORT_FILE_INODE);
+        assert_eq!(
+            fs.lookup(b"etc/../etc/motd").unwrap().number,
+            SHORT_FILE_INODE
+        );
+        assert_eq!(fs.lookup(b".").unwrap().number, ROOT_INODE);
+        assert_eq!(
+            fs.lookup(b"..").unwrap().number,
+            ROOT_INODE,
+            "the root's .. is the root"
+        );
+        assert_eq!(fs.lookup(b"../..").unwrap().number, ROOT_INODE);
+        assert_eq!(fs.lookup(b"etc/nothing"), Err(Ext2Error::NotFound));
+        assert_eq!(
+            fs.lookup(b""),
+            Err(Ext2Error::NotFound),
+            "an empty path names nothing"
+        );
     }
 
     /// 無い名前は [`Ext2Error::NotFound`] である。

@@ -6704,6 +6704,13 @@ fn verify_linux_programs_for_one_sabotage(logger: &mut Logger<Serial>) {
         b"/bin/linux/wl-shm-mapping-refs-rust",
         b"wl-shm-mapping-refs-rust\0/etc/motd\0a\0b\0",
     );
+    // **相対パスと `getcwd`**（2026-11-02。`ADR-0043` の Addendum）。`--critical-test stat-refuses-relative`。
+    #[cfg(all(feature = "relative-path-test", not(feature = "linux-socket-test")))]
+    verify_linux_program(
+        logger,
+        b"/bin/linux/wl-relative-path-rust",
+        b"wl-relative-path-rust\0/etc/motd\0a\0b\0",
+    );
     let _ = logger;
 }
 
@@ -7004,6 +7011,14 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
             logger,
             b"/bin/linux/wl-shm-mapping-refs-rust",
             b"wl-shm-mapping-refs-rust\0/etc/motd\0a\0b\0",
+        );
+        // **相対パスと空のパスと `getcwd`**（2026-11-02。`ADR-0043` の Addendum。作業ディレクトリはいつも `/`）。判定は
+        // `cargo xtask run --linux-socket-test`（Linux の参照と突き合わせる）と、破壊テスト（`--critical-test
+        // stat-refuses-relative`。`relative-path-test` のビルドで起こす）。
+        verify_linux_program(
+            logger,
+            b"/bin/linux/wl-relative-path-rust",
+            b"wl-relative-path-rust\0/etc/motd\0a\0b\0",
         );
     }
     // **壁の時計**（2026-10-20。`ADR-0090`）。値は起動のたびに変わるので、`realtime-test` のビルドだけが起こす。判定は
@@ -14820,6 +14835,16 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "memfd-seals-test",
         cfg!(feature = "memfd-seals-test"),
         "wl-memfd-seals-rust だけを起動時に起こす（破壊テストの構成。破壊ではない）",
+    ),
+    (
+        "relative-path-test",
+        cfg!(feature = "relative-path-test"),
+        "wl-relative-path-rust だけを起動時に起こす（破壊テストの構成。破壊ではない）",
+    ),
+    (
+        "stat-refuses-relative-test",
+        cfg!(feature = "stat-refuses-relative-test"),
+        "stat が / で始まらないパスを断る（直す前の形）",
     ),
     (
         "shm-mapping-test",

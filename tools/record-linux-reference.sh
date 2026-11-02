@@ -25,6 +25,20 @@ record() {
     printf 'exit status: %d\n' "$status" >> "$ref/$name.txt"
     echo "recorded: $ref/$name.txt (exit status $status)"
 }
+# 作業ディレクトリを / にして起こす（2026-11-02。ZeikOS の作業ディレクトリはいつも /。相対パスを確かめるイメージのため）。
+record_from_root() {
+    name=$1
+    if [ ! -x "$bin/$name" ]; then
+        echo "skipped: $name (not built at $bin/$name)"
+        return
+    fi
+    set +e
+    (cd / && env -i "$bin/$name" "$root/kernel/fsimage/seed/etc/motd" a b) > "$ref/$name.txt"
+    status=$?
+    set -e
+    printf 'exit status: %d\n' "$status" >> "$ref/$name.txt"
+    echo "recorded: $ref/$name.txt (exit status $status)"
+}
 record_with_open_stdin() {
     name=$1
     if [ ! -x "$bin/$name" ]; then
@@ -122,5 +136,7 @@ record wl-recvmsg-name-rust
 record wl-close-queued-fd-rust
 # 共有メモリのマッピングの数と munmap、マップしていない memfd を縮める ftruncate（2026-10-30）。
 record wl-shm-mapping-refs-rust
+# 相対パスと空のパスと getcwd（2026-11-02。作業ディレクトリを / にして採る）。
+record_from_root wl-relative-path-rust
 record m1-c
 record m3a-c

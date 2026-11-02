@@ -45,12 +45,12 @@ use crate::abi::linux::x86_64::{
     stat_bytes, ARCH_GET_FS, ARCH_GET_GS, ARCH_SET_FS, ARCH_SET_GS, STAT_LEN, SYS_ACCEPT,
     SYS_ACCEPT4, SYS_ARCH_PRCTL, SYS_BIND, SYS_BRK, SYS_CLOCK_GETTIME, SYS_CLONE, SYS_CLOSE,
     SYS_CONNECT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FLOCK, SYS_FSTAT, SYS_FTRUNCATE,
-    SYS_FUTEX, SYS_GETDENTS64, SYS_GETPID, SYS_GETRANDOM, SYS_GETTID, SYS_IOCTL, SYS_LISTEN,
-    SYS_LSEEK, SYS_MADVISE, SYS_MEMFD_CREATE, SYS_MKDIR, SYS_MMAP, SYS_MPROTECT, SYS_MUNMAP,
-    SYS_NANOSLEEP, SYS_OPEN, SYS_POLL, SYS_PRLIMIT64, SYS_READ, SYS_READLINK, SYS_READV,
-    SYS_RECVFROM, SYS_RECVMSG, SYS_RMDIR, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SCHED_YIELD,
-    SYS_SENDMSG, SYS_SENDTO, SYS_SET_TID_ADDRESS, SYS_SIGALTSTACK, SYS_SOCKET, SYS_STAT, SYS_TKILL,
-    SYS_UNAME, SYS_UNLINK, SYS_WRITE, SYS_WRITEV,
+    SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETPID, SYS_GETRANDOM, SYS_GETTID, SYS_IOCTL,
+    SYS_LISTEN, SYS_LSEEK, SYS_MADVISE, SYS_MEMFD_CREATE, SYS_MKDIR, SYS_MMAP, SYS_MPROTECT,
+    SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPEN, SYS_POLL, SYS_PRLIMIT64, SYS_READ, SYS_READLINK,
+    SYS_READV, SYS_RECVFROM, SYS_RECVMSG, SYS_RMDIR, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK,
+    SYS_SCHED_YIELD, SYS_SENDMSG, SYS_SENDTO, SYS_SET_TID_ADDRESS, SYS_SIGALTSTACK, SYS_SOCKET,
+    SYS_STAT, SYS_TKILL, SYS_UNAME, SYS_UNLINK, SYS_WRITE, SYS_WRITEV,
 };
 use crate::abi::linux::x86_64::{
     SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_PWAIT, SYS_EPOLL_WAIT,
@@ -80,7 +80,7 @@ use crate::abi::linux::{
     E2BIG, EACCES, EADDRINUSE, EAFNOSUPPORT, EAGAIN, EBADF, EBUSY, ECHILD, ECONNREFUSED, EEXIST,
     EFAULT, EFBIG, EINTR, EINVAL, EIO, EISCONN, EISDIR, ELOOP, EMFILE, ENAMETOOLONG, ENOBUFS,
     ENODEV, ENOENT, ENOEXEC, ENOLCK, ENOMEM, ENOSPC, ENOSYS, ENOTCONN, ENOTDIR, ENOTEMPTY,
-    ENOTSOCK, ENOTTY, EPERM, EPIPE, EPROTONOSUPPORT, EROFS, ESPIPE, ESRCH,
+    ENOTSOCK, ENOTTY, EPERM, EPIPE, EPROTONOSUPPORT, ERANGE, EROFS, ESPIPE, ESRCH,
 };
 #[cfg(feature = "linux-socket-test")]
 use crate::abi::private::SYS_SLEEPS_READING;
@@ -1188,6 +1188,8 @@ unsafe fn dispatch(
             // SAFETY: 同上。
             unsafe { sys_readlink(args[0], args[1], args[2], page_table_root, direct_map) }
         }
+        // SAFETY: 同上。
+        SYS_GETCWD => unsafe { getcwd_from_ring3(args[0], args[1], page_table_root, direct_map) },
         SYS_FCNTL => sys_fcntl(args[0], args[1], args[2]),
         // **繋いだ相手から受ける `recvfrom` は `read` に `flags` を足した形である**（`ADR-0087`。musl の `recv`——Rust の std の
         // ソケットの `read`——はこれを打つ）。`src_addr`（相手の名前の置き場）は 0 だけ受け、`flags` は [`msg_flags_dont_wait`]
@@ -6193,16 +6195,21 @@ fn create_and_lookup(path: &[u8]) -> Result<common::ext2::Inode, i64> {
 /// # 最後の `/` で割る
 ///
 /// `/data/fresh` なら親が `/data`、名前が `fresh` である。
-/// **`/` で終わる形と、名前が空の形は断る**（`-EINVAL`）。
-/// **`/` を含まない形も断る**——**カレントディレクトリが無いので、
-/// 親を決める手段が無い**（`docs/foundation-inventory.md`）。
+/// **`/` で終わる形と、名前が空の形は断る**（`-EINVAL`）。**空のパスは `-ENOENT`**（Linux と同じ。2026-11-02）。
+/// **`/` を含まない形の親は `/` である**（2026-11-02。作業ディレクトリはいつも `/`。`ADR-0043` の Addendum）。
+/// それまでは、カレントディレクトリが無いので親を決める手段が無いとして断っていた。
 ///
 /// # 3 つが同じ割りを使う
 ///
 /// `O_CREAT` の `open`・`unlink`・`rmdir` である。**同じ規則で割らないと、
 /// 作れるが消せない名前が生じうる。**
 fn split_parent_and_name(path: &[u8]) -> Result<(&[u8], &[u8]), i64> {
-    let split = path.iter().rposition(|byte| *byte == b'/').ok_or(EINVAL)?;
+    if path.is_empty() {
+        return Err(ENOENT);
+    }
+    let Some(split) = path.iter().rposition(|byte| *byte == b'/') else {
+        return Ok((b"/", path));
+    };
     let (parent, name) = path.split_at(split);
     let name = &name[1..];
     if name.is_empty() {
@@ -6655,14 +6662,14 @@ unsafe fn sys_directory(
 ///
 /// # `openat`（257）はまだ無い
 ///
-/// **ZeikOS には作業ディレクトリが無い**ので、`dirfd` に渡すものが無い。
+/// **ZeikOS には作業ディレクトリが無かった**ので（2026-11-02 まで）、`dirfd` に渡すものが無い。
 /// **`AT_FDCWD` を受けるだけの引数を置いても、区別できる振る舞いが書けない**
 /// （`exit_group` を置いていなかった理由（[`dispatch`] の doc）と同じ形である）。
 /// そう考えて、作業ディレクトリを持つ段階で足すことにしていた。
 ///
 /// **この前提は 2026-10-04 に変わった**（`ADR-0074`）。Linux 向けの libc には、ファイルを開くときに `open` ではなく
-/// `openat` を呼ぶものがある（glibc。実測）。Linux のプログラムを動かす段で足す。作業ディレクトリが無い間は、`AT_FDCWD` と絶対パスだけを受ける
-/// 形になる見込みである。
+/// `openat` を呼ぶものがある（glibc。実測）。Linux のプログラムを動かす段で足す。**2026-11-02 から作業ディレクトリはいつも
+/// `/` である**（`ADR-0043` の Addendum。相対パスは `/` から引く）ので、`AT_FDCWD` は `/` を指す形になる見込みである。
 ///
 /// # 順序に意味がある
 ///
@@ -8144,6 +8151,39 @@ unsafe fn sys_uname(buf: u64, page_table_root: PhysAddr, direct_map: DirectMap) 
     0
 }
 
+/// [`SYS_GETCWD`] の本体（2026-11-02）。**作業ディレクトリはいつも `/` である**（`ADR-0043` の Addendum。`chdir` は持たない）。
+///
+/// 答え方は Linux の `getcwd`（`fs/d_path.c`）と同じ順である。WSL で、作業ディレクトリを `/` にして生の呼び出しで測った。
+///
+/// - 置き場の大きさ `size` が、名前と NUL（2 バイト）に足りなければ `-ERANGE`。置き場のアドレスは見ない（0 と 1 のとき）。
+/// - 足りれば、置き場の 2 バイトが書けるかを確かめ、書けなければ `-EFAULT`（NULL も）。
+/// - 書けたら `/` と NUL を書き、2（NUL を含む長さ）を返す。置き場の残りは書かない。
+///
+/// # Safety
+///
+/// `page_table_root` / `direct_map` が [`validate_user_range`] の契約を満たすこと。
+#[inline(never)]
+unsafe fn getcwd_from_ring3(
+    buf: u64,
+    size: u64,
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+) -> u64 {
+    const CWD: &[u8] = b"/\0";
+    if size < CWD.len() as u64 {
+        return (-ERANGE) as u64;
+    }
+    // SAFETY: 呼び出し元契約による。
+    let Some(slice) = (unsafe {
+        validate_user_range_for_write(page_table_root, direct_map, buf, CWD.len() as u64)
+    }) else {
+        return (-EFAULT) as u64;
+    };
+    // SAFETY: 検証済みの 2 バイト。
+    unsafe { copy_to_user(&slice, 0, CWD) };
+    CWD.len() as u64
+}
+
 /// `readlink(path, buf, bufsiz)`（2026-10-06）。**答えるのは `/proc/self/exe` だけ**（Rust の `std` が、自分の実行ファイルの
 /// 名前を求めて読む）。ext2 にシンボリックリンクはまだ無いので、ほかの道は `-EINVAL`（在るがリンクでない）か `-ENOENT`。
 /// 返すのは、載せたときに控えた名前（`crate::process_state`）で、長ければ `bufsiz` で切る（Linux と同じ。NUL は付けない）。
@@ -8726,6 +8766,11 @@ unsafe fn sys_stat(
         Err(errno) => return (-errno) as u64,
     };
 
+    // 破壊テスト (2026-11-02, stat-refuses-relative-test): `/` で始まらないパスを断る（直す前の形）。確かめのイメージ
+    // （`wl-relative-path-rust`）の、相対パスの `stat` が `-EINVAL` になり、イメージが名指しの行を出して 91 で終わる。
+    if cfg!(feature = "stat-refuses-relative-test") && name[..len].first() != Some(&b'/') {
+        return (-EINVAL) as u64;
+    }
     let fs = match crate::vfs::root_filesystem() {
         Ok(fs) => fs,
         Err(e) => return (-errno_for_ext2(e)) as u64,
@@ -9620,7 +9665,6 @@ fn errno_for_ext2(error: common::ext2::Ext2Error) -> i64 {
         // ここから下は、呼び出し側の引数に対する答えである。
         E::NotADirectory(_) => ENOTDIR,
         E::NotFound => ENOENT,
-        E::PathNotAbsolute => EINVAL,
         E::PathTooManyComponents(_) => ENAMETOOLONG,
     }
 }

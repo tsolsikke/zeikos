@@ -64,6 +64,9 @@ pub const EROFS: i64 = 30;
 /// `-ENAMETOOLONG`（パスが長すぎる）の errno（S10-b）。
 pub const ENAMETOOLONG: i64 = 36;
 
+/// `-ERANGE`（`getcwd` の置き場が、作業ディレクトリの名前と NUL に足りない）の errno（2026-11-02）。
+pub const ERANGE: i64 = 34;
+
 /// `-EIO`（入出力エラー）の errno（S10-b）。
 ///
 /// **イメージそのものが読めない形をここへ落とす。** 呼び出し側の引数の問題ではないので、

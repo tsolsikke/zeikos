@@ -1377,6 +1377,10 @@ socket-lock-test = []
 nonblock-test = []
 epoll-test = []
 memfd-seals-test = []
+relative-path-test = []
+# 破壊（2026-11-02。ADR-0043 の Addendum）: stat が / で始まらないパスを断る（直す前の形）。wl-relative-path-rust が名指しの行を
+# 出して 91 で終わる。`--critical-test stat-refuses-relative`（relative-path-test のビルド）。
+stat-refuses-relative-test = []
 # 破壊（2026-10-30。ADR-0065 の Addendum）: 共有メモリの munmap で、マップしたページの数を引かない。フレームが返らず、
 # wl-shm-mapping-refs-rust が全体の上限で ftruncate に断られて 95 で終わる。`--critical-test shm-munmap-keeps-maps`。
 shm-munmap-keeps-maps-test = []

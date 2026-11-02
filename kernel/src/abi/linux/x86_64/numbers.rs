@@ -130,6 +130,8 @@ pub const SYS_UNAME: u64 = 63;
 pub const SYS_FCNTL: u64 = 72;
 /// `readlink(path, buf, bufsiz)` の番号（2026-10-06。`__NR_readlink`）。
 pub const SYS_READLINK: u64 = 89;
+/// `getcwd(buf, size)` の番号（2026-11-02。`__NR_getcwd`）。作業ディレクトリはいつも `/` である（`ADR-0043` の Addendum）。
+pub const SYS_GETCWD: u64 = 79;
 /// `clone(flags, stack, parent_tid, child_tid, tls)` の番号（2026-10-14。`__NR_clone`。M3a）。
 pub const SYS_CLONE: u64 = 56;
 /// `sigaltstack(ss, old_ss)` の番号（2026-10-06。`__NR_sigaltstack`）。
