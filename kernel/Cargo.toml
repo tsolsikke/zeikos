@@ -1371,6 +1371,12 @@ memfd-seals-not-kept-test = []
 # 確かめ（2026-10-30。ADR-0065 の Addendum）: 共有メモリのマッピングの数のイメージ（wl-shm-mapping-refs-rust）だけを起動時に
 # 起こす。破壊テスト 2 つの構成である（linux-socket-test の並びの全部を通すと、時間の上限に当たる）。
 shm-mapping-test = []
+# 確かめ（2026-11-02）: 1 つのイメージだけを起動時に起こす、破壊テスト（critical-test）の構成。linux-socket-test の並びの全部を
+# 通すと、前のイメージの分（約 9 秒）だけ上限 20 秒に近づくため。新しいイメージの破壊テストも、この形で自分のビルドだけで起こす。
+socket-lock-test = []
+nonblock-test = []
+epoll-test = []
+memfd-seals-test = []
 # 破壊（2026-10-30。ADR-0065 の Addendum）: 共有メモリの munmap で、マップしたページの数を引かない。フレームが返らず、
 # wl-shm-mapping-refs-rust が全体の上限で ftruncate に断られて 95 で終わる。`--critical-test shm-munmap-keeps-maps`。
 shm-munmap-keeps-maps-test = []

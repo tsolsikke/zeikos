@@ -6657,6 +6657,56 @@ fn verify_bss_is_mapped(logger: &mut Logger<Serial>) {
     ));
 }
 
+/// 破壊テストの構成で、そのイメージだけを起こす（2026-11-02）。**`linux-socket-test` の並びの全部を通すと、前のイメージの分
+/// （約 9 秒）だけ上限 20 秒に近づくので、破壊テスト（critical-test）は、要るイメージだけを起こすビルドで走らせる。**
+/// `linux-socket-test` のビルドでは何もしない（あちらの並びで、同じイメージを Linux の参照と突き合わせる）。
+///
+/// **[`verify_linux_programs`] の頭で起こす**——既定の起動の Linux のイメージ（`m1-rust` から `m3a` の組まで。約 2.4 秒）より
+/// 前に起こし、壊した形ではそのイメージの判定の行と linux-check の停止で終わる。**新しいイメージの破壊テストも、ここに 1 つ
+/// 足して、自分のビルドだけで起こす。**
+fn verify_linux_programs_for_one_sabotage(logger: &mut Logger<Serial>) {
+    // **Seinas の listen のソケットとロックファイル**（`ADR-0087`）。`--critical-test flock-ignores-holder`・
+    // `flock-keeps-lock-after-close`。
+    #[cfg(all(feature = "socket-lock-test", not(feature = "linux-socket-test")))]
+    verify_linux_program(
+        logger,
+        b"/bin/linux/wl-socket-lock-rust",
+        b"wl-socket-lock-rust\0/etc/motd\0a\0b\0",
+    );
+    // **ソケットの待たない形と待つ形**。`--critical-test socket-ignores-nonblocking`・`msg-dontwait-ignored`・
+    // `eagain-passes-fd`。
+    #[cfg(all(feature = "nonblock-test", not(feature = "linux-socket-test")))]
+    verify_linux_program(
+        logger,
+        b"/bin/linux/wl-nonblock-rust",
+        b"wl-nonblock-rust\0/etc/motd\0a\0b\0",
+    );
+    // **epoll・eventfd・timerfd**（`ADR-0088`）。`--critical-test epoll-ignores-oneshot`・`timerfd-ignores-deadline`・
+    // `eventfd-write-does-not-wake-epoll`・`epoll-nested-never-ready`・`epoll-level-reported-once`。
+    #[cfg(all(feature = "epoll-test", not(feature = "linux-socket-test")))]
+    verify_linux_program(
+        logger,
+        b"/bin/linux/wl-epoll-rust",
+        b"wl-epoll-rust\0/etc/motd\0a\0b\0",
+    );
+    // **memfd のフラグと封**（`ADR-0065` の Addendum）。`--critical-test memfd-ignores-allow-sealing`・`memfd-seals-not-kept`。
+    #[cfg(all(feature = "memfd-seals-test", not(feature = "linux-socket-test")))]
+    verify_linux_program(
+        logger,
+        b"/bin/linux/wl-memfd-seals-rust",
+        b"wl-memfd-seals-rust\0/etc/motd\0a\0b\0",
+    );
+    // **共有メモリのマッピングの数と返す時期**（2026-10-30。`ADR-0065` の Addendum）。`--critical-test shm-munmap-keeps-maps`・
+    // `shm-release-ignores-generation`。
+    #[cfg(all(feature = "shm-mapping-test", not(feature = "linux-socket-test")))]
+    verify_linux_program(
+        logger,
+        b"/bin/linux/wl-shm-mapping-refs-rust",
+        b"wl-shm-mapping-refs-rust\0/etc/motd\0a\0b\0",
+    );
+    let _ = logger;
+}
+
 /// **Linux 向けのイメージ（musl の静的 PIE。`ADR-0074` の M1）を `spawn` で起こし、終了ステータスを判定の行に出す**（2026-10-06）。
 ///
 /// **起動時のプログラムの表と `bss-check` の後に置く**——`m1-rust` は `syscall` 命令を使い、`.bss` を持ち、`munmap` を打つので、
@@ -6668,6 +6718,7 @@ fn verify_bss_is_mapped(logger: &mut Logger<Serial>) {
 /// C 版（`/bin/linux/m1-c`）は、`linux-c-test` のビルドだけがイメージに持つので、そのときだけ起こす。**`m3a-rust`（スレッドを
 /// 1 つ作るイメージ）も同じ形で起こす**（2026-10-14）。
 fn verify_linux_programs(logger: &mut Logger<Serial>) {
+    verify_linux_programs_for_one_sabotage(logger);
     verify_linux_program(logger, b"/bin/linux/m1-rust", b"m1-rust\0/etc/motd\0a\0b\0");
     // **スレッドを 1 つ作って終わるイメージ（M3a。2026-10-14。`linux-programs/m3a-rust.rs`）。** 池のタスクが起きて走り、
     // `exit` で終わって刈り取られる所までを、起動のたびに通す（`thread:` の行が起動ログの参照に入る）。
@@ -6820,15 +6871,6 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
         b"/bin/linux/m3a-memfd-shrink-rust",
         b"m3a-memfd-shrink-rust\0/etc/motd\0a\0b\0",
     );
-    // **共有メモリのマッピングの数と返す時期の破壊テストの構成**（2026-10-30。`ADR-0065` の Addendum）。`linux-socket-test` の
-    // 並びの全部を通すと時間の上限に当たるので、このイメージだけを起こす。判定は `--critical-test shm-munmap-keeps-maps`・
-    // `shm-release-ignores-generation`。`linux-socket-test` のビルドでは、あちらの並びの最後で起こす。
-    #[cfg(all(feature = "shm-mapping-test", not(feature = "linux-socket-test")))]
-    verify_linux_program(
-        logger,
-        b"/bin/linux/wl-shm-mapping-refs-rust",
-        b"wl-shm-mapping-refs-rust\0/etc/motd\0a\0b\0",
-    );
     // **Seinas の listen のソケットとロックファイルの一連**（`ADR-0087`。2026-10-16）。`std` の `UnixListener`・`UnixStream`・
     // `File::try_lock` で、ロック → bind → listen → connect → close で放す、を 3 組通す。ロックファイルを ext2 に作って
     // 消すので `linux-socket-test` のビルドだけが起こす。判定は `cargo xtask run --linux-socket-test`（Linux の参照と
@@ -6937,9 +6979,9 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
             b"/bin/linux/wl-memfd-seals-rust",
             b"wl-memfd-seals-rust\0/etc/motd\0a\0b\0",
         );
-        // **ここから後ろは、2026-10-26 から足したイメージである**（`recvmsg` の書き戻し・閉じた接続の fd・共有メモリのマッピングの
-        // 数）。前にあるイメージを見る critical-test（memfd の 2 件は上限 20 秒の 98% だった）を遅らせないよう、後ろへ足す
-        // （2026-10-30 の全検査で、前に足した分で上限を越えた）。
+        // **新しいイメージの破壊テストは、自分のビルドだけで起こす**（2026-11-02）。この並びは `linux-socket-test` の
+        // Linux の参照との突き合わせのためのもので、破壊テスト（critical-test）はこの並びを通さない
+        // （[`verify_linux_programs_for_one_sabotage`]）。並びを通すと、前のイメージの分だけ上限 20 秒に近づく。
         // **`recvmsg` が `msghdr` へ書き戻す欄**（2026-10-26。`ADR-0065` の Addendum）。判定は `cargo xtask run --linux-socket-test`
         // （Linux の参照と突き合わせる）。
         verify_linux_program(
@@ -14758,6 +14800,26 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "memfd-seals-not-kept-test",
         cfg!(feature = "memfd-seals-not-kept-test"),
         "足した封を持たない",
+    ),
+    (
+        "socket-lock-test",
+        cfg!(feature = "socket-lock-test"),
+        "wl-socket-lock-rust だけを起動時に起こす（破壊テストの構成。破壊ではない）",
+    ),
+    (
+        "nonblock-test",
+        cfg!(feature = "nonblock-test"),
+        "wl-nonblock-rust だけを起動時に起こす（破壊テストの構成。破壊ではない）",
+    ),
+    (
+        "epoll-test",
+        cfg!(feature = "epoll-test"),
+        "wl-epoll-rust だけを起動時に起こす（破壊テストの構成。破壊ではない）",
+    ),
+    (
+        "memfd-seals-test",
+        cfg!(feature = "memfd-seals-test"),
+        "wl-memfd-seals-rust だけを起動時に起こす（破壊テストの構成。破壊ではない）",
     ),
     (
         "shm-mapping-test",

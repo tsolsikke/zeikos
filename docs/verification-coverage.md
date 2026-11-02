@@ -908,6 +908,8 @@ python3 tools/judgement-map.py /tmp/full.txt
 「検査が実際に働くこと」を確かめるため、意図的に壊した経路をfeatureとしてコードに残している。
 いずれも既定ビルドには入らない。
 
+**Linuxのイメージを使う破壊テストは、要るイメージだけを起こすビルドで走らせる**（2026-11-02）。`linux-socket-test`の並びの全部を通すと、前のイメージの分（約9秒）だけ上限20秒に近づき、memfdの2件は全検査で19.3秒（97%）だった。構成のfeatureは`socket-lock-test`・`nonblock-test`・`epoll-test`・`memfd-seals-test`・`shm-mapping-test`で、そのイメージを`kernel/src/main.rs`の`verify_linux_programs_for_one_sabotage`が、既定の起動のLinuxのイメージより前に起こす。判定の行と上限は変えていない。Linuxの参照との突き合わせは、今までどおり`linux-socket-test`が全部の並びで行う。**新しいイメージの破壊テストも、この形で自分のビルドだけで起こす。**
+
 | feature | 何を壊すか | 何を検証するか |
 |---|---|---|
 | `panic-test` | bootloaderで意図的にpanicする | パニックハンドラが停止とダンプを行うこと |

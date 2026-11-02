@@ -854,7 +854,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
     // 止まる。目印は、イメージの名指しの行と、止まるという事実（`halting`）で書く。
     CriticalTest {
         name: "flock-ignores-holder",
-        feature: "linux-socket-test,flock-ignores-holder-test",
+        feature: "socket-lock-test,flock-ignores-holder-test",
         expected_markers: &[
             "the second open took the lock for s while the first held it; exiting with 97",
             "ended Ok(Exited(97)), expected Exited(4)",
@@ -866,7 +866,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
     },
     CriticalTest {
         name: "flock-keeps-lock-after-close",
-        feature: "linux-socket-test,flock-keeps-lock-after-close-test",
+        feature: "socket-lock-test,flock-keeps-lock-after-close-test",
         expected_markers: &[
             "the lock for s stayed held after its holder closed; exiting with 98",
             "ended Ok(Exited(98)), expected Exited(4)",
@@ -881,7 +881,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
     // 引数の数でない状態で終わる。起動時の確かめが `expected Exited(4)` と名指しして止まる。
     CriticalTest {
         name: "socket-ignores-nonblocking",
-        feature: "linux-socket-test,socket-ignores-nonblocking-test",
+        feature: "nonblock-test,socket-ignores-nonblocking-test",
         expected_markers: &[
             "accept on a listener that does not wait took a connection instead of WouldBlock; exiting with 95",
             "ended Ok(Exited(95)), expected Exited(4)",
@@ -896,7 +896,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
     },
     CriticalTest {
         name: "msg-dontwait-ignored",
-        feature: "linux-socket-test,msg-dontwait-ignored-test",
+        feature: "nonblock-test,msg-dontwait-ignored-test",
         expected_markers: &[
             "recv with MSG_DONTWAIT on an empty stream waited and got bytes instead of EAGAIN; exiting with 96",
             "ended Ok(Exited(96)), expected Exited(4)",
@@ -936,7 +936,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
     },
     CriticalTest {
         name: "eagain-passes-fd",
-        feature: "linux-socket-test,eagain-passes-fd-test",
+        feature: "nonblock-test,eagain-passes-fd-test",
         expected_markers: &[
             "an fd arrived with the bytes sent before it, though sendmsg had returned EAGAIN; exiting with 94",
             "ended Ok(Exited(94)), expected Exited(4)",
@@ -951,7 +951,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
     // `expected Exited(4)` と名指しして止まる。
     CriticalTest {
         name: "epoll-ignores-oneshot",
-        feature: "linux-socket-test,epoll-ignores-oneshot-test",
+        feature: "epoll-test,epoll-ignores-oneshot-test",
         expected_markers: &[
             "a oneshot entry came back before it was modified; exiting with 91",
             "ended Ok(Exited(91)), expected Exited(4)",
@@ -966,7 +966,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
     },
     CriticalTest {
         name: "timerfd-ignores-deadline",
-        feature: "linux-socket-test,timerfd-ignores-deadline-test",
+        feature: "epoll-test,timerfd-ignores-deadline-test",
         expected_markers: &[
             "the absolute timer woke epoll before the time it was set for; exiting with 92",
             "ended Ok(Exited(92)), expected Exited(4)",
@@ -981,7 +981,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
     },
     CriticalTest {
         name: "eventfd-write-does-not-wake-epoll",
-        feature: "linux-socket-test,eventfd-write-does-not-wake-epoll-test",
+        feature: "epoll-test,eventfd-write-does-not-wake-epoll-test",
         expected_markers: &[
             "epoll woke only at its time limit, not when another thread wrote the eventfd; exiting with 87",
             "ended Ok(Exited(87)), expected Exited(4)",
@@ -996,7 +996,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
     },
     CriticalTest {
         name: "epoll-nested-never-ready",
-        feature: "linux-socket-test,epoll-nested-never-ready-test",
+        feature: "epoll-test,epoll-nested-never-ready-test",
         expected_markers: &[
             "the outer epoll did not wake when the inner one became ready; exiting with 90",
             "ended Ok(Exited(90)), expected Exited(4)",
@@ -1011,7 +1011,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
     },
     CriticalTest {
         name: "epoll-level-reported-once",
-        feature: "linux-socket-test,epoll-level-reported-once-test",
+        feature: "epoll-test,epoll-level-reported-once-test",
         expected_markers: &[
             "a level-triggered entry did not come back while it was still ready; exiting with 86",
             "ended Ok(Exited(86)), expected Exited(4)",
@@ -1061,7 +1061,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
     // 違いを自分で見つけ、名指しの行を出して引数の数でない状態で終わる。
     CriticalTest {
         name: "memfd-ignores-allow-sealing",
-        feature: "linux-socket-test,memfd-ignores-allow-sealing-test",
+        feature: "memfd-seals-test,memfd-ignores-allow-sealing-test",
         expected_markers: &[
             "a memfd made without MFD_ALLOW_SEALING took F_SEAL_SHRINK; exiting with 93",
             "ended Ok(Exited(93)), expected Exited(4)",
@@ -1073,7 +1073,7 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
     },
     CriticalTest {
         name: "memfd-seals-not-kept",
-        feature: "linux-socket-test,memfd-seals-not-kept-test",
+        feature: "memfd-seals-test,memfd-seals-not-kept-test",
         expected_markers: &[
             "F_GET_SEALS returned 0 after F_SEAL_SHRINK|F_SEAL_GROW were added; exiting with 94",
             "ended Ok(Exited(94)), expected Exited(4)",
