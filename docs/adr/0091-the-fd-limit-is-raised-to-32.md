@@ -63,3 +63,22 @@ Seinas のコンポジタは、クライアントが無くても 15 本、タス
 - コンポジタは、タスクバーが繋がった 17 本の形から、あと 15 本の fd を持てる。
 - 上限をこれより上げるときは、表の置き場を見直す（Alternatives の 2）。上限を 1 つ上げるごとに、`spawn` の道でスタックが 96 バイト増える。表の大きさの「4 KiB を越えない」テストで、上限は 42 までである。`FD_CLOEXEC` の印は `u32` なので、32 を越えるなら `u64` に広げる。
 - `accept` と `recvmsg` の `SCM_RIGHTS` は、表が埋まったときに Linux と違う答え方をする（Decision の「Linux との差」）。
+
+## Addendum（2026-11-03。表が埋まったときの`accept`をLinuxの形へ直した）
+
+**`accept4`は、待ち行列から接続を取る前にfdの表の空きを見るようにした。** 空きが無ければ`-EMFILE`を返し、接続は待ち行列に残る。1つ空ければ、次の`accept`でその接続を受けられる。Decisionの「Linuxとの差」の`accept`の項は、これで無くなった（`recvmsg`の`SCM_RIGHTS`の項は、2026-10-27に直してある）。
+
+**確かめる順も、Linuxの`__sys_accept4`に合わせた。**
+
+1. fdが開いていなければ`-EBADF`。
+2. `flags`に`SOCK_CLOEXEC`と`SOCK_NONBLOCK`の外のビットがあれば`-EINVAL`。
+3. fdの表に空きが無ければ`-EMFILE`。
+4. ソケットでなければ`-ENOTSOCK`、listenerでなければ`-EINVAL`。
+
+以前は、ソケットかどうかとlistenerかどうかを最初に見ていたので、表が埋まっているときにmemfdや繋がったソケットを渡すと、Linuxと違うerrnoを返していた（Linuxは`-EMFILE`）。
+
+**待って起きた後にも、空きを見直す。** 眠っている間に、同じプロセスの別のスレッドが表を埋めることがあるからである。Linuxは待つ前に番号を取っておくので、そのときは埋めた側が`-EMFILE`を受ける。ZeikOSでは`accept`の側が受け、接続は待ち行列に残る。番号を前もって取っておく形は、表に「取ってあるが中身の無い欄」を持ち込むことになるので、今回はしない。
+
+**合わせなかったところが1つある。** `addr`が書けないアドレスなら、ZeikOSは待ち行列から取る前に`-EFAULT`を返す。取った接続を戻せないためである（`ADR-0087`）。Linuxは受けた後で書き、書けなければ受けた接続を閉じる。待ち行列が空で、待たない印の立ったlistenerに書けない`addr`を渡すと、Linuxは`-EAGAIN`、ZeikOSは`-EFAULT`を返す。
+
+**確かめ。** `linux-programs/wl-fd-limit-rust.rs`（`linux-socket-test`のビルド）が、表が埋まったときの`accept4`のerrno（開いていないfdと知らないフラグ・memfdと知らないフラグ・memfd・繋がったソケット）と、1つ空けたときのerrno（memfd・繋がったソケット）を出し、1つ空けた後の`accept`が、断られた接続を受けられることを、相手から送った1バイトで見る。全部の行をLinuxの参照と突き合わせる。破壊テストは`--critical-test accept-takes-before-checking`（`fd-limit-test`のビルドで、このイメージだけを起こす）。
