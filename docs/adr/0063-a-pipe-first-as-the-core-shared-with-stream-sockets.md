@@ -343,3 +343,33 @@ Accepted
 - **直す前の形で止まることも確かめた**（2026-10-22。破壊テストは置かない）。5か所の直しだけを一時的に戻した作業ツリーで、形を1つずつ走らせた。4つとも`[ERROR] exception: vector=14 (#PF page fault)`で止まった。`munmap`の形はエラーコード0x2（ページが無い・書き・supervisor）、読むだけにした形は0x3（保護違反・書き・supervisor）で、`cr2`は書き先のページの先頭、RIPは`copy_to_user`が呼ぶ`write_volatile`だった。書いていた値（`rcx`）は、パイプの形では書いた1バイトの`x`（0x78）、`poll`の形では`struct pollfd`の先頭のバイト（fdの5）である。確かめのイメージそのものが、直しを戻すと止まる形なので、戻した変更は起動の`[ERROR]`で捕まる。
 - **端末と入力の読みは、読んで確かめた。** 待ちに入るのは、本物の打鍵を受ける前景の間だけで、眠っている間に別のスレッドが書き先を外す形を、打鍵の回で組む道具が無い。直した形はパイプと同じで、確かめを`read_bytes`・`read_events`の直前（loopの頭）に置き、確かめてから書くまでBKLを放さない。離鍵のようにバイトにならない合図で起きた周でも確かめるので、取ってから捨てるデータは無い。
 
+
+## Addendum（2026-11-04。`pipe2`と`pipe`、待たない印、パイプの`poll`）
+
+Waylandのコピーと貼り付けは、受け渡し1回ごとにパイプを1本作り、片方の端を`SCM_RIGHTS`で相手へ渡す。パイプを作れるのは今までシェルの`|`だけだったので、Linuxのプログラムから作る入口を足した。運ぶ形は`ADR-0065`の2026-11-04のAddendumにある。
+
+### 決めたこと
+
+- **`pipe2`（293）と`pipe`（22）を足した。** `pipe`は`pipe2(fds, 0)`と同じ形である（Linuxも`do_pipe2(fildes, 0)`を呼ぶ。muslの`pipe()`は22番を打つ）。作るパイプは、シェルの`|`と同じもの（`kernel/src/pipe.rs`）で、読み端と書き端を1つずつ付けて作る。読み手の予約は使わない。
+- **確かめる順はLinuxの`do_pipe2`と`__do_pipe_flags`と同じである。**
+  1. `flags`に`O_CLOEXEC`と`O_NONBLOCK`の外のビットがあれば`-EINVAL`。
+  2. パイプの表に空きが無ければ`-ENFILE`（Linuxの`create_pipe_files`が返す値）。
+  3. fdの表に空きが2つ無ければ`-EMFILE`。作る前に見る（`ADR-0091`の2026-11-03のAddendumの`accept4`と同じ形）。
+  4. 2つのfdを置き、`fds`の8バイトが書けなければ、置いた2つを表から外して端を閉じ、`-EFAULT`を返す（Linuxも、作った2つを手放してから`-EFAULT`を返す）。
+- **パイプの数を1本から8本にした**（`MAX_PIPES`）。プログラムが作ったパイプで、シェルの`|`が断られないようにするためである。1本は輪と数を合わせて約260バイトである。
+- **パイプの端に、待たない印を持たせた。** 立てるのは`pipe2(O_NONBLOCK)`・`fcntl(F_SETFL, O_NONBLOCK)`・`ioctl(FIONBIO)`で、ソケットと同じくfdの側が持つ。印が立っていれば、空の読みと、1バイトも入らない書きは、待たずに`-EAGAIN`を返す。`F_GETFL`は、読み端に`O_RDONLY`、書き端に`O_WRONLY`を答える（印が立っていれば`O_NONBLOCK`も）。
+- **`poll`と`ppoll`がパイプの端を受ける。** 今までは`-EBADF`で断っていた（Y-bの「パイプと端末はv1では受けない」）。読み端は`POLLIN`で待ち、データがあれば`POLLIN`、書き手が居なければ`POLLHUP`を返す。書き端は`POLLOUT`で待ち、空きがあれば`POLLOUT`、読み手が居なければ`POLLERR`を返す（Linuxの`pipe_poll`と同じ印）。ほかの`events`の形は、今までどおり`-EINVAL`である。
+- **読み手の居ない書き端は、空きがあれば書けるとする**（`poll`と`epoll`）。Linuxは`EPOLLOUT | EPOLLERR`を返す。今までは、読み手が居なければ書けるとしなかった。
+
+### Linuxとの差
+
+合わせなかったもの:
+
+- **`O_DIRECT`（パケットのパイプ）と`O_NOTIFICATION_PIPE`（watch queue）は断る。** Linuxはどちらも受ける。受けて無視すると、読み書きの区切りが違う形で進むので、名前のある行（`pipe2-refused:`）を出して`-EINVAL`を返す。どちらもWaylandとSeinasは使わない。
+- **`SIGPIPE`は送らない。** 読み手の居ないパイプへの書きは`-EPIPE`を返すだけである（ZeikOSはシグナルを持たない）。Linuxは`-EPIPE`を返し、`SIGPIPE`も送る。Rustのstdは起動時に`SIGPIPE`を無視するので、Rustのプログラムでは同じ形になる。持ち越しの表に行がある。
+- **輪は256バイトのままで、書きは部分書きである。** Linuxの輪は64 KiBで、`PIPE_BUF`（4096バイト）以下の書きはまとめて入るか待つ。ZeikOSは入るだけ入れて、入った数を返す（待たない印があれば、1バイトも入らないときだけ`-EAGAIN`）。`write_all`のように回して書くプログラムでは、同じ結果になる。持ち越しの表に行がある。
+- **待たない印は、fdのコピーごとに持つ。** Linuxはopen file descriptionに持つので、`dup`したfdや`SCM_RIGHTS`で渡したfdと共有する。ZeikOSはソケットと同じく、コピーごとに別に持つ（`kernel/src/vfs.rs`の`File::Socket`のdoc）。
+
+### 確かめ
+
+`linux-programs/wl-pipe-rust.rs`（`linux-socket-test`のビルド）が、`pipe`の読み書き、`pipe2`の`O_CLOEXEC`・`O_NONBLOCK`の`F_GETFD`と`F_GETFL`の値、空の読みと満杯の書きのerrno、`F_SETFL`で後から立てた印、知らないフラグのerrno、書けない置き場への`pipe2`を20回打った後の最小の空きfd、パイプの端の`poll`・`ppoll`・`epoll_wait`の印、別のスレッドの書きで起きる待ち続ける`poll`、読み手の居ないパイプへの書きのerrno、空きが1つの表への`pipe2`の`EMFILE`を出し、全部の行をLinuxの参照（`RLIMIT_NOFILE`を32に下げて採った）と突き合わせる。`O_DIRECT`の答えは標準エラーへ出し、判定にしない。破壊テストは`--critical-test pipe2-efault-keeps-ends`と`poll-refuses-pipes`（`linux-pipe-test`のビルドで、このイメージだけを起こす）。
