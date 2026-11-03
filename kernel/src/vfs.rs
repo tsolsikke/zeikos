@@ -221,14 +221,15 @@ pub const MAX_OPEN_FILES: usize = 32;
 ///
 /// fd の表は、スロットごとに遠征の深さの数までしか同時に在らない（`crate::process_state` の表と同じ形）。1 つの表は
 /// [`MAX_OPEN_FILES`] まで持つ。ほかに、次の `spawn` へ渡すために側道へ置いた端（スロットごとに読み端と書き端の 2 つ）と、
-/// 起動時の確かめがカーネルの側で持つ端（1 つ）がある。`SCM_RIGHTS` は共有メモリの fd だけを運ぶので、渡す途中で端を
-/// 持つものは無い。**fd の上限やプロセスの数を上げてこの値が 255 を越えたら、数の型を広げること。**
-/// 今のスロットの数と深さなら、`u8` のままで fd の上限 62 まで持つ。
+/// 起動時の確かめがカーネルの側で持つ端（1 つ）がある。**`SCM_RIGHTS` で渡す途中のパイプの端も、端を指すものとして数える**
+/// （2026-11-04。接続ごとに、向きごとに 1 つまで。[`CarriedFd`]）。**fd の上限やプロセスの数を上げてこの値が 255 を越えたら、
+/// 数の型を広げること。** 今のスロットの数と深さと接続の数なら、`u8` のままで fd の上限 58 まで持つ。
 pub const MAX_END_HOLDERS: usize = crate::arch::x86_64::USER_TASK_SLOTS
     * crate::arch::x86_64::MAX_EXCURSION_DEPTH
     * MAX_OPEN_FILES
     + 2 * crate::arch::x86_64::USER_TASK_SLOTS
-    + 1;
+    + 1
+    + 2 * crate::socket::MAX_CONNECTIONS;
 
 const _: () = assert!(
     MAX_END_HOLDERS <= u8::MAX as usize,
@@ -356,9 +357,12 @@ pub enum File {
     ///
     /// **番号で見ない。** **`a | b` の右の fd 0 に据える**——**表の中身で分岐するので、
     /// `read` は端末と同じ経路の手前で分かれる。**
-    PipeRead { pipe: u8 },
-    /// パイプの書き端（`ADR-0063` の (b3)）。**`a | b` の左の fd 1 に据える。**
-    PipeWrite { pipe: u8 },
+    ///
+    /// `nonblocking` は待たない印（`O_NONBLOCK`。2026-11-04）である。立てるのは `pipe2(O_NONBLOCK)`・`fcntl(F_SETFL, O_NONBLOCK)`・
+    /// `ioctl(FIONBIO)` で、ソケットと同じく fd の側が持つ（`SCM_RIGHTS` で運ぶと、印も一緒に運ぶ）。
+    PipeRead { pipe: u8, nonblocking: bool },
+    /// パイプの書き端（`ADR-0063` の (b3)）。**`a | b` の左の fd 1 に据える。** `nonblocking` は読み端と同じ。
+    PipeWrite { pipe: u8, nonblocking: bool },
     /// unix ドメインのストリームソケット（`ADR-0064`）。**1 つの fd で読み書き両方**——
     /// **向きは [`SocketState::Stream`] の `side` が持つ。** **`socket` → `bind`/`listen` →
     /// `accept`、または `socket` → `connect` で、状態がその場で進む**（[`FileTable::set_socket_state`]）。
@@ -382,7 +386,7 @@ pub enum File {
     /// 入力の生イベント（`ADR-0066` の Y-a）。**`read` が `struct input_event` を返す。**
     ///
     /// **前景の持ち主だけが `open_input` で開ける**（開く時点の1箇所で守る。`ADR-0066` の
-    /// 「入力 fd の前景の関所」）。**`SCM_RIGHTS` は shm の fd だけを運ぶので、この fd は相手の表へコピーされない**
+    /// 「入力 fd の前景の関所」）。**`SCM_RIGHTS` は shm とパイプの端の fd だけを運ぶので、この fd は相手の表へコピーされない**
     /// （開いた持ち主に留まる）。
     ///
     /// **`open` は開いたごとの番号で、参照を数える**（2026-10-19。`crate::input::open_handle`）。キーボードは 1 つだが、
@@ -393,7 +397,7 @@ pub enum File {
     /// **前景の系統だけが `open_screen` で開ける**（`crate::input::caller_is_foreground`）。
     /// **開くと図形モードへ入り、解放（`close` かプロセスの終わり）で抜ける**
     /// （[`File::release_end`]）。**`mmap` がバックバッファをマップし、`ioctl` が形を答えてコピーする。**
-    /// **画面は 1 つなので添字を持たない。** **`SCM_RIGHTS` は shm の fd だけを運ぶので、
+    /// **画面は 1 つなので添字を持たない。** **`SCM_RIGHTS` は shm とパイプの端の fd だけを運ぶので、
     /// この fd も相手の表へコピーされない。**
     Screen,
     /// eventfd（2026-10-19）。**`id` は `crate::eventfd` の表の番号で、参照を数える**——`F_DUPFD` のコピーは同じ項目を
@@ -411,16 +415,26 @@ pub enum File {
 impl File {
     /// パイプの読み端なら、その添字。
     pub fn pipe_read_end(&self) -> Option<u8> {
-        match self {
-            Self::PipeRead { pipe } => Some(*pipe),
-            _ => None,
-        }
+        self.pipe_read_parts().map(|(pipe, _)| pipe)
     }
 
     /// パイプの書き端なら、その添字。
     pub fn pipe_write_end(&self) -> Option<u8> {
+        self.pipe_write_parts().map(|(pipe, _)| pipe)
+    }
+
+    /// パイプの読み端なら、その添字と待たない印（2026-11-04）。
+    pub fn pipe_read_parts(&self) -> Option<(u8, bool)> {
         match self {
-            Self::PipeWrite { pipe } => Some(*pipe),
+            Self::PipeRead { pipe, nonblocking } => Some((*pipe, *nonblocking)),
+            _ => None,
+        }
+    }
+
+    /// パイプの書き端なら、その添字と待たない印（2026-11-04）。
+    pub fn pipe_write_parts(&self) -> Option<(u8, bool)> {
+        match self {
+            Self::PipeWrite { pipe, nonblocking } => Some((*pipe, *nonblocking)),
             _ => None,
         }
     }
@@ -441,12 +455,15 @@ impl File {
         }
     }
 
-    /// 待たない印を持つ種類（ソケット・eventfd・timerfd）なら、その印（`F_GETFL` が読む。2026-10-19）。
+    /// 待たない印を持つ種類（ソケット・eventfd・timerfd・パイプの端）なら、その印（`F_GETFL` が読む。2026-10-19。パイプの端は
+    /// 2026-11-04）。
     pub fn nonblocking(&self) -> Option<bool> {
         match self {
             Self::Socket { nonblocking, .. }
             | Self::EventFd { nonblocking, .. }
-            | Self::TimerFd { nonblocking, .. } => Some(*nonblocking),
+            | Self::TimerFd { nonblocking, .. }
+            | Self::PipeRead { nonblocking, .. }
+            | Self::PipeWrite { nonblocking, .. } => Some(*nonblocking),
             _ => None,
         }
     }
@@ -493,8 +510,8 @@ impl File {
                 conn: *conn,
                 side: *side as u8,
             }),
-            Self::PipeRead { pipe } => Some(Source::PipeRead { pipe: *pipe }),
-            Self::PipeWrite { pipe } => Some(Source::PipeWrite { pipe: *pipe }),
+            Self::PipeRead { pipe, .. } => Some(Source::PipeRead { pipe: *pipe }),
+            Self::PipeWrite { pipe, .. } => Some(Source::PipeWrite { pipe: *pipe }),
             Self::EventFd { id, .. } => Some(Source::EventFd { id: *id }),
             Self::TimerFd { id, .. } => Some(Source::TimerFd { id: *id }),
             Self::Epoll { id } => Some(Source::Epoll { id: *id }),
@@ -517,8 +534,12 @@ impl File {
         let mut copy = *self;
         match &mut copy {
             Self::Regular { lock, .. } => *lock = 0,
-            Self::PipeRead { pipe } => crate::pipe::attach_read_end(*pipe),
-            Self::PipeWrite { pipe } => crate::pipe::attach_write_end(*pipe),
+            Self::PipeRead { pipe, .. } => {
+                crate::pipe::attach_read_end(*pipe);
+            }
+            Self::PipeWrite { pipe, .. } => {
+                crate::pipe::attach_write_end(*pipe);
+            }
             Self::Socket {
                 state: SocketState::Stream { conn, side },
                 ..
@@ -588,12 +609,12 @@ impl File {
         match self {
             // **手放す端を指す epoll の項目は、最後の 1 つを閉じたときだけ外す**（2026-10-19。`crate::epoll` の「項目が指すもの」。
             // 2026-10-22 に端を数える形にしてから、コピーの 1 つを閉じても外れない）。
-            Self::PipeRead { pipe } => {
+            Self::PipeRead { pipe, .. } => {
                 if crate::pipe::close_read_end(*pipe) {
                     crate::epoll::forget(crate::epoll::Source::PipeRead { pipe: *pipe });
                 }
             }
-            Self::PipeWrite { pipe } => {
+            Self::PipeWrite { pipe, .. } => {
                 if crate::pipe::close_write_end(*pipe) {
                     crate::epoll::forget(crate::epoll::Source::PipeWrite { pipe: *pipe });
                 }
@@ -768,6 +789,75 @@ impl Drop for FileTable {
     }
 }
 
+/// `SCM_RIGHTS` で渡す途中の fd（2026-11-04。`ADR-0065` の Addendum）。**運べるのは共有メモリと、パイプの読み端・書き端である。**
+///
+/// **渡す途中のものも、端を指すものとして数える**——`sendmsg` が置くときに [`File::duplicate`] と同じく数を 1 つ足し、
+/// `recvmsg` が受け手の表へ置けば、その数を受け手の fd が引き継ぐ。受け取られずに手放されたとき（接続が閉じた、受け手の表が
+/// 満杯だった、補助データの置き場が足りなかった）は、[`CarriedFd::release`] が 1 つ引く。**そのため、書き端が渡す途中に在る
+/// 間は、送り手が自分の書き端を閉じても、読み手は EOF を見ない**（Linux と同じ。Linux は渡す途中の `struct file` の参照で
+/// 数える）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CarriedFd {
+    Shm { shm: u8 },
+    PipeRead { pipe: u8, nonblocking: bool },
+    PipeWrite { pipe: u8, nonblocking: bool },
+}
+
+impl CarriedFd {
+    /// 運べる種類なら、運ぶ形を返す（数はまだ足さない。足すのは [`CarriedFd::hold`]）。
+    pub fn of(file: &File) -> Option<Self> {
+        match *file {
+            File::Shm { shm } => Some(Self::Shm { shm }),
+            File::PipeRead { pipe, nonblocking } => Some(Self::PipeRead { pipe, nonblocking }),
+            File::PipeWrite { pipe, nonblocking } => Some(Self::PipeWrite { pipe, nonblocking }),
+            _ => None,
+        }
+    }
+
+    /// 受け手の表へ置く fd。
+    pub fn into_file(self) -> File {
+        match self {
+            Self::Shm { shm } => File::Shm { shm },
+            Self::PipeRead { pipe, nonblocking } => File::PipeRead { pipe, nonblocking },
+            Self::PipeWrite { pipe, nonblocking } => File::PipeWrite { pipe, nonblocking },
+        }
+    }
+
+    /// 渡す途中のものとして、数を 1 つ足す（`sendmsg` が置いた後）。**足せたら真。**
+    ///
+    /// # 足せないことは起きない
+    ///
+    /// 足せないのは、相手が使われていないか、数が 0 か、数が上限に当たっているときだけである。`sendmsg` は、送り手の表にその fd が
+    /// 在ることを確かめてから（`syscall` の `carried_fd_of`）、BKL を放さずにここを呼ぶので、相手は生きていて、数は送り手の fd の
+    /// 分の 1 以上ある。パイプの端の数は `u8` で、指せるものの数の上限 [`MAX_END_HOLDERS`]（渡す途中の分を含む）が 255 を越えない
+    /// ことをコンパイルの時に確かめている。共有メモリの数は `u32` である。**それでも偽なら、呼び手が名前のある `[ERROR]` の行を
+    /// 出す**——数が実際より少ないと、書き手が残っているのに読み手が EOF を見る、使っている端を早く片付ける、という形で後から
+    /// 出るので、その場で見えるようにする。
+    ///
+    /// 破壊テスト (2026-11-04, carried-pipe-end-not-counted-test): パイプの端は数を足さずに真を返す。**送り手が自分の書き端を閉じた
+    /// 所で、渡す途中の書き端が在るのに読み手が EOF を見る。**
+    pub fn hold(self) -> bool {
+        if cfg!(feature = "carried-pipe-end-not-counted-test") && !matches!(self, Self::Shm { .. })
+        {
+            return true;
+        }
+        match self {
+            Self::Shm { shm } => crate::shm::attach(shm),
+            Self::PipeRead { pipe, .. } => crate::pipe::attach_read_end(pipe),
+            Self::PipeWrite { pipe, .. } => crate::pipe::attach_write_end(pipe),
+        }
+    }
+
+    /// 受け取られなかった渡す途中のものを手放す（数を 1 つ引く。最後の 1 つなら、パイプの端を閉じ・共有メモリを返す）。
+    pub fn release(self) {
+        if cfg!(feature = "carried-pipe-end-not-counted-test") && !matches!(self, Self::Shm { .. })
+        {
+            return;
+        }
+        self.into_file().release_end();
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileTableError {
     /// 空きが無い（Linux なら `EMFILE`）。
@@ -918,6 +1008,11 @@ impl FileTable {
         Err(FileTableError::NoFreeDescriptor)
     }
 
+    /// 空いた番号の数（`pipe2` が 2 つの端を置く前に見る。2026-11-04）。
+    pub fn free_slots(&self) -> usize {
+        self.slots.iter().filter(|slot| slot.is_none()).count()
+    }
+
     /// 空いた番号が 1 つでも在るか（`accept4` が待ち行列から取る前に見る。2026-11-03。`ADR-0091` の Addendum）。
     pub fn has_free_slot(&self) -> bool {
         self.slots.iter().any(Option::is_none)
@@ -1007,7 +1102,9 @@ impl FileTable {
         match self.get_mut(fd)? {
             File::Socket { nonblocking, .. }
             | File::EventFd { nonblocking, .. }
-            | File::TimerFd { nonblocking, .. } => {
+            | File::TimerFd { nonblocking, .. }
+            | File::PipeRead { nonblocking, .. }
+            | File::PipeWrite { nonblocking, .. } => {
                 *nonblocking = on;
                 Ok(None)
             }
@@ -1078,12 +1175,34 @@ mod tests {
                 .unwrap();
         }
         assert!(!table.has_free_slot());
+        assert_eq!(table.free_slots(), 0);
         assert_eq!(
             table.insert(File::new(inode(99, 1, REGULAR))),
             Err(FileTableError::NoFreeDescriptor)
         );
         table.remove(STDERR_FD + 1).unwrap();
         assert!(table.has_free_slot());
+        assert_eq!(table.free_slots(), 1);
+    }
+
+    /// 渡す途中の形は、種類と待たない印を保ったまま fd へ戻る。運べない種類は形を持たない（2026-11-04）。
+    #[test]
+    fn a_carried_fd_keeps_its_kind_and_its_nonblocking_mark() {
+        for file in [
+            File::Shm { shm: 3 },
+            File::PipeRead {
+                pipe: 1,
+                nonblocking: true,
+            },
+            File::PipeWrite {
+                pipe: 2,
+                nonblocking: false,
+            },
+        ] {
+            assert_eq!(CarriedFd::of(&file).map(CarriedFd::into_file), Some(file));
+        }
+        assert_eq!(CarriedFd::of(&File::terminal()), None);
+        assert_eq!(CarriedFd::of(&File::Screen), None);
     }
 
     /// 試験用の inode。**ext2 のイメージを組み立てずに作る**（表の論理だけを見る）。

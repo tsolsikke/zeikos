@@ -61,6 +61,9 @@ pub const EBUSY: i64 = 16;
 /// （`docs/roadmap.md` の S10 の「実装しない」）。書き込みは S12 である。
 pub const EROFS: i64 = 30;
 
+/// `-ENFILE`（パイプの表が満杯で、パイプを作れない）の errno（2026-11-04。Linux の `create_pipe_files` が返す値）。
+pub const ENFILE: i64 = 23;
+
 /// `-ENAMETOOLONG`（パスが長すぎる）の errno（S10-b）。
 pub const ENAMETOOLONG: i64 = 36;
 

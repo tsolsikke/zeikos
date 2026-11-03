@@ -1,0 +1,22 @@
+wl-pipe-rust: main starts with 4 argument(s)
+wl-pipe-rust: a byte written to a pipe() write end came out of its read end = true
+wl-pipe-rust: pipe2(O_CLOEXEC) answers F_GETFD 1 for the read end and 1 for the write end
+wl-pipe-rust: pipe2(O_NONBLOCK) answers F_GETFL 0x800 for the read end and 0x801 for the write end; reading it empty failed with errno 11 and writing it full with errno 11
+wl-pipe-rust: F_SETFL(O_NONBLOCK) on a read end returned 0, F_GETFL then answers 0x800, and reading it empty failed with errno 11
+wl-pipe-rust: pipe2 with the unknown flag O_WRONLY returned -1 with errno 22
+wl-pipe-rust: pipe2 into an unwritable address failed with errno 14 all 20 times, left the lowest free fd where it was, and a pipe could still be made = true
+wl-pipe-rust: poll on pipe ends answers revents 0x0 for an empty read end, 0x1 with data, 0x4 for the write end, 0x10 for a read end without writers and 0xc for a write end without readers
+wl-pipe-rust: ppoll on a read end with data returned 1 with revents 0x1
+wl-pipe-rust: writing to a pipe without readers failed with errno 32
+wl-pipe-rust: poll with no timeout woke when another thread wrote = true
+wl-pipe-rust: epoll_wait on pipe ends answers 0 event(s) for an empty read end, 0x1 with data, 0x10 for a read end without writers and 0xc for a write end without readers
+wl-pipe-rust: while the passed write end was in flight, reading the pipe returned -1 with errno 11 (sendmsg returned 1)
+wl-pipe-rust: a byte written through the passed write end came out of the read end = true
+wl-pipe-rust: after the passed write end was closed, reading the pipe returned 0
+wl-pipe-rust: a byte written while the read end was in flight came out of the passed read end = true
+wl-pipe-rust: after the connection carrying the write end was closed unread, reading the pipe returned 0
+wl-pipe-rust: recvmsg into a full table returned 1 with msg_flags 0x8 and msg_controllen 0, handed over no fd = true, and reading the pipe then returned 0
+wl-pipe-rust: with one free fd, pipe2 failed with errno 24 all 10 times and left the free fd free = true
+wl-pipe-rust: with two free fds, pipe2 succeeded = true
+wl-pipe-rust: done
+exit status: 4

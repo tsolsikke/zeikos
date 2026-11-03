@@ -1360,14 +1360,22 @@ pub fn load_user_program_with(
     // fd 0 が読み端、左は fd 1 が書き端になる。** **端末の欄を差し替える。**
     let slot = crate::arch::x86_64::current_excursion_slot();
     if let Some(pipe) = take_inherit_stdin(slot) {
-        process
-            .files
-            .replace(crate::vfs::STDIN_FD, crate::vfs::File::PipeRead { pipe });
+        process.files.replace(
+            crate::vfs::STDIN_FD,
+            crate::vfs::File::PipeRead {
+                pipe,
+                nonblocking: false,
+            },
+        );
     }
     if let Some(pipe) = take_inherit_stdout(slot) {
-        process
-            .files
-            .replace(crate::vfs::STDOUT_FD, crate::vfs::File::PipeWrite { pipe });
+        process.files.replace(
+            crate::vfs::STDOUT_FD,
+            crate::vfs::File::PipeWrite {
+                pipe,
+                nonblocking: false,
+            },
+        );
     }
 
     // **マッピングまではアロケータが要る。遠征では要らない。**

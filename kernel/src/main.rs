@@ -6718,6 +6718,14 @@ fn verify_linux_programs_for_one_sabotage(logger: &mut Logger<Serial>) {
         b"/bin/linux/wl-fd-limit-rust",
         b"wl-fd-limit-rust\0/etc/motd\0a\0b\0",
     );
+    // **pipe2 と、SCM_RIGHTS で運ぶパイプの端**（2026-11-04。`ADR-0063` と `ADR-0065` の Addendum）。`--critical-test
+    // carried-pipe-end-not-counted`・`pipe2-efault-keeps-ends`・`poll-refuses-pipes`。
+    #[cfg(all(feature = "linux-pipe-test", not(feature = "linux-socket-test")))]
+    verify_linux_program(
+        logger,
+        b"/bin/linux/wl-pipe-rust",
+        b"wl-pipe-rust\0/etc/motd\0a\0b\0",
+    );
     let _ = logger;
 }
 
@@ -7027,6 +7035,14 @@ fn verify_linux_programs(logger: &mut Logger<Serial>) {
             logger,
             b"/bin/linux/wl-relative-path-rust",
             b"wl-relative-path-rust\0/etc/motd\0a\0b\0",
+        );
+        // **`pipe2` と `pipe`、`SCM_RIGHTS` で運ぶパイプの端、パイプの `poll`・`epoll`**（2026-11-04。`ADR-0063` と `ADR-0065` の
+        // Addendum）。判定は `cargo xtask run --linux-socket-test`（Linux の参照と突き合わせる）と、破壊テスト 3 つ（`linux-pipe-test` の
+        // ビルドで起こす）。
+        verify_linux_program(
+            logger,
+            b"/bin/linux/wl-pipe-rust",
+            b"wl-pipe-rust\0/etc/motd\0a\0b\0",
         );
     }
     // **壁の時計**（2026-10-20。`ADR-0090`）。値は起動のたびに変わるので、`realtime-test` のビルドだけが起こす。判定は
@@ -14863,6 +14879,26 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "accept-takes-before-checking-test",
         cfg!(feature = "accept-takes-before-checking-test"),
         "accept4 が fd の表の空きを見ずに待ち行列から取る（直す前の形）",
+    ),
+    (
+        "linux-pipe-test",
+        cfg!(feature = "linux-pipe-test"),
+        "wl-pipe-rust だけを起動時に起こす（破壊テストの構成。破壊ではない）",
+    ),
+    (
+        "carried-pipe-end-not-counted-test",
+        cfg!(feature = "carried-pipe-end-not-counted-test"),
+        "SCM_RIGHTS で渡す途中のパイプの端を数えない",
+    ),
+    (
+        "pipe2-efault-keeps-ends-test",
+        cfg!(feature = "pipe2-efault-keeps-ends-test"),
+        "pipe2 の置き場が書けないとき、置いた 2 つの fd を表に残す",
+    ),
+    (
+        "poll-refuses-pipes-test",
+        cfg!(feature = "poll-refuses-pipes-test"),
+        "poll がパイプの端を受けない（直す前の形）",
     ),
     (
         "shm-mapping-test",

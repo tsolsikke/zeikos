@@ -963,6 +963,44 @@ const CRITICAL_TESTS: &[CriticalTest] = &[
         wait_for_full_timeout: false,
         min_heartbeats: None,
     },
+    // **`pipe2` と、`SCM_RIGHTS` で運ぶパイプの端の破壊テスト（2026-11-04。`ADR-0063` と `ADR-0065` の Addendum）。** イメージだけを
+    // 起こすビルドで走らせる。
+    CriticalTest {
+        name: "carried-pipe-end-not-counted",
+        feature: "linux-pipe-test,carried-pipe-end-not-counted-test",
+        expected_markers: &[
+            "wl-pipe-rust: the reader saw end of file while the write end was in flight; exiting with 93",
+            "ended Ok(Exited(93)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &["while the passed write end was in flight, reading the pipe returned -1", "zash: ready"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    CriticalTest {
+        name: "pipe2-efault-keeps-ends",
+        feature: "linux-pipe-test,pipe2-efault-keeps-ends-test",
+        expected_markers: &[
+            "wl-pipe-rust: pipe2 into an unwritable address left something behind",
+            "ended Ok(Exited(92)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &["left the lowest free fd where it was, and a pipe could still be made = true", "zash: ready"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
+    CriticalTest {
+        name: "poll-refuses-pipes",
+        feature: "linux-pipe-test,poll-refuses-pipes-test",
+        expected_markers: &[
+            "wl-pipe-rust: poll on a pipe end failed with errno 9; exiting with 94",
+            "ended Ok(Exited(94)), expected Exited(4)",
+            "halting",
+        ],
+        forbidden_markers: &["poll on pipe ends answers revents", "zash: ready"],
+        wait_for_full_timeout: false,
+        min_heartbeats: None,
+    },
     CriticalTest {
         name: "eagain-passes-fd",
         feature: "nonblock-test,eagain-passes-fd-test",
@@ -24775,14 +24813,16 @@ fn cmd_linux_socket_test() -> Result<()> {
     let refs_ended = format!("spawn: /bin/linux/{refs} ended");
     let relpath = "wl-relative-path-rust";
     let relpath_ended = format!("spawn: /bin/linux/{relpath} ended");
+    let pipes = "wl-pipe-rust";
+    let pipes_ended = format!("spawn: /bin/linux/{pipes} ended");
     let deadline = Instant::now() + PIPE_TEST_TIMEOUT;
     loop {
         if child.was_cut() {
             break;
         }
         let text = read_lossy(&serial_log);
-        // **並びの最後のイメージ（`wl-relative-path-rust`。2026-11-02 から）が終わるまで待つ。**
-        if text.contains(&relpath_ended) || text.contains("[ERROR]") || Instant::now() >= deadline {
+        // **並びの最後のイメージ（`wl-pipe-rust`。2026-11-04 から）が終わるまで待つ。**
+        if text.contains(&pipes_ended) || text.contains("[ERROR]") || Instant::now() >= deadline {
             break;
         }
         metrics::sleep_poll(PANIC_TEST_POLL_INTERVAL);
@@ -25075,6 +25115,19 @@ fn cmd_linux_socket_test() -> Result<()> {
         .lines()
         .find(|line| line.contains(&relpath_ended))
         .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
+    // **`pipe2` と `pipe`、パイプの `poll`・`epoll`、`SCM_RIGHTS` で運ぶパイプの端**（2026-11-04。`ADR-0063` と `ADR-0065` の
+    // Addendum）。終わり方と Linux の参照で見る（`RLIMIT_NOFILE` を 32 に下げて採った）。
+    let pipes_ran = serial.contains(&format!("{pipes_ended} (Exited(4))"));
+    let pipes_matched = linux_program_output_matches(
+        &workspace_root,
+        pipes,
+        &serial,
+        LinuxReferenceEnvironment::ExactCount,
+    )?;
+    let pipes_unknown_free = serial
+        .lines()
+        .find(|line| line.contains(&pipes_ended))
+        .is_some_and(|line| line.contains("(0 with a number the kernel does not know"));
     // **memfd のフラグと名前・封・fstat・作り方ごとの `FD_CLOEXEC`**（2026-10-20。`ADR-0065` の Addendum）。終わり方と Linux の
     // 参照で見る（封と `F_GETFD` の値が行に出る）。
     let memfd_ran = serial.contains(&format!("{memfd_ended} (Exited(4))"));
@@ -25194,6 +25247,11 @@ fn cmd_linux_socket_test() -> Result<()> {
     println!(
         "{context}: {relpath} hit no number the kernel does not know = {relpath_unknown_free}"
     );
+    println!("{context}: {pipes} ended with status 4 = {pipes_ran}");
+    println!(
+        "{context}: {pipes} printed what Linux prints (linux-programs/reference/{pipes}.txt) = {pipes_matched}"
+    );
+    println!("{context}: {pipes} hit no number the kernel does not know = {pipes_unknown_free}");
     println!("{context}: {memfd} ended with status 4 = {memfd_ran}");
     println!(
         "{context}: {memfd} printed what Linux prints (linux-programs/reference/{memfd}.txt) = {memfd_matched}"
@@ -25250,6 +25308,9 @@ fn cmd_linux_socket_test() -> Result<()> {
         && relpath_ran
         && relpath_matched
         && relpath_unknown_free
+        && pipes_ran
+        && pipes_matched
+        && pipes_unknown_free
         && memfd_ran
         && memfd_matched
         && memfd_unknown_free
@@ -25276,6 +25337,7 @@ fn cmd_linux_socket_test() -> Result<()> {
                 || l.contains(queued)
                 || l.contains(refs)
                 || l.contains(relpath)
+                || l.contains(pipes)
                 || l.contains(memfd)
                 || l.contains("[ERROR]")
         })
@@ -36519,7 +36581,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 67,
-    full: 561,
+    full: 564,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` とスクリプトのグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。

@@ -47,10 +47,10 @@ use crate::abi::linux::x86_64::{
     SYS_CONNECT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FLOCK, SYS_FSTAT, SYS_FTRUNCATE,
     SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETPID, SYS_GETRANDOM, SYS_GETTID, SYS_IOCTL,
     SYS_LISTEN, SYS_LSEEK, SYS_MADVISE, SYS_MEMFD_CREATE, SYS_MKDIR, SYS_MMAP, SYS_MPROTECT,
-    SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPEN, SYS_POLL, SYS_PRLIMIT64, SYS_READ, SYS_READLINK,
-    SYS_READV, SYS_RECVFROM, SYS_RECVMSG, SYS_RMDIR, SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK,
-    SYS_SCHED_YIELD, SYS_SENDMSG, SYS_SENDTO, SYS_SET_TID_ADDRESS, SYS_SIGALTSTACK, SYS_SOCKET,
-    SYS_STAT, SYS_TKILL, SYS_UNAME, SYS_UNLINK, SYS_WRITE, SYS_WRITEV,
+    SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPEN, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRLIMIT64, SYS_READ,
+    SYS_READLINK, SYS_READV, SYS_RECVFROM, SYS_RECVMSG, SYS_RMDIR, SYS_RT_SIGACTION,
+    SYS_RT_SIGPROCMASK, SYS_SCHED_YIELD, SYS_SENDMSG, SYS_SENDTO, SYS_SET_TID_ADDRESS,
+    SYS_SIGALTSTACK, SYS_SOCKET, SYS_STAT, SYS_TKILL, SYS_UNAME, SYS_UNLINK, SYS_WRITE, SYS_WRITEV,
 };
 use crate::abi::linux::x86_64::{
     SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_PWAIT, SYS_EPOLL_WAIT,
@@ -72,14 +72,14 @@ use crate::abi::linux::{
     MFD_NAME_MAX_LEN, MSGHDR_CONTROLLEN, MSGHDR_FLAGS, MSGHDR_LEN, MSGHDR_NAMELEN,
     MSG_CMSG_CLOEXEC, MSG_CTRUNC, MSG_DONTWAIT, MSG_NOSIGNAL, O_ACCMODE, O_APPEND, O_CLOEXEC,
     O_CREAT, O_NONBLOCK, O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY, POLLERR, POLLFD_LEN, POLLHUP, POLLIN,
-    POLLNVAL, PROT_EXEC, PROT_READ, PROT_WRITE, SCM_RIGHTS, SEEK_CUR, SEEK_END, SEEK_SET,
+    POLLNVAL, POLLOUT, PROT_EXEC, PROT_READ, PROT_WRITE, SCM_RIGHTS, SEEK_CUR, SEEK_END, SEEK_SET,
     SOCKADDR_UN_LEN, SOCK_CLOEXEC, SOCK_NONBLOCK, SOCK_STREAM, SOCK_TYPE_MASK, SOL_SOCKET,
     TFD_CLOEXEC, TFD_NONBLOCK, TFD_TIMER_ABSTIME, TIMESPEC_LEN, TIOCGWINSZ, WINSIZE_LEN,
 };
 use crate::abi::linux::{
     E2BIG, EACCES, EADDRINUSE, EAFNOSUPPORT, EAGAIN, EBADF, EBUSY, ECHILD, ECONNREFUSED, EEXIST,
-    EFAULT, EFBIG, EINTR, EINVAL, EIO, EISCONN, EISDIR, ELOOP, EMFILE, ENAMETOOLONG, ENOBUFS,
-    ENODEV, ENOENT, ENOEXEC, ENOLCK, ENOMEM, ENOSPC, ENOSYS, ENOTCONN, ENOTDIR, ENOTEMPTY,
+    EFAULT, EFBIG, EINTR, EINVAL, EIO, EISCONN, EISDIR, ELOOP, EMFILE, ENAMETOOLONG, ENFILE,
+    ENOBUFS, ENODEV, ENOENT, ENOEXEC, ENOLCK, ENOMEM, ENOSPC, ENOSYS, ENOTCONN, ENOTDIR, ENOTEMPTY,
     ENOTSOCK, ENOTTY, EPERM, EPIPE, EPROTONOSUPPORT, ERANGE, EROFS, ESPIPE, ESRCH,
 };
 #[cfg(feature = "linux-socket-test")]
@@ -1190,6 +1190,11 @@ unsafe fn dispatch(
         }
         // SAFETY: 同上。
         SYS_GETCWD => unsafe { getcwd_from_ring3(args[0], args[1], page_table_root, direct_map) },
+        // **`pipe` は `pipe2(fds, 0)` と同じ形である**（2026-11-04。Linux も `do_pipe2(fildes, 0)` を呼ぶ）。
+        // SAFETY: 同上。
+        SYS_PIPE => unsafe { pipe2_from_ring3(args[0], 0, page_table_root, direct_map) },
+        // SAFETY: 同上。
+        SYS_PIPE2 => unsafe { pipe2_from_ring3(args[0], args[1], page_table_root, direct_map) },
         SYS_FCNTL => sys_fcntl(args[0], args[1], args[2]),
         // **繋いだ相手から受ける `recvfrom` は `read` に `flags` を足した形である**（`ADR-0087`。musl の `recv`——Rust の std の
         // ソケットの `read`——はこれを打つ）。`src_addr`（相手の名前の置き場）は 0 だけ受け、`flags` は [`msg_flags_dont_wait`]
@@ -1418,7 +1423,8 @@ fn left_at_process_end(set: crate::task::WaitSet) -> bool {
     true
 }
 
-/// パイプの読み端から読む（`ADR-0063` の (b3)）。**空なら待つ。**
+/// パイプの読み端から読む（`ADR-0063` の (b3)）。**空なら待つ。** 待たない印（`nonblocking`。2026-11-04）が立っていれば、空のとき
+/// 待たずに `-EAGAIN` を返す（書き手が居なければ、印に関係なく 0 である）。
 ///
 /// # ウィンドウは構造で閉じている
 ///
@@ -1432,6 +1438,7 @@ fn left_at_process_end(set: crate::task::WaitSet) -> bool {
 /// 呼び出し元契約により `page_table_root` / `direct_map` は有効。
 unsafe fn read_from_pipe(
     pipe: u8,
+    nonblocking: bool,
     buf: u64,
     count: u64,
     page_table_root: PhysAddr,
@@ -1461,6 +1468,9 @@ unsafe fn read_from_pipe(
             }
             crate::pipe::ReadOutcome::Eof => return 0,
             crate::pipe::ReadOutcome::Empty => {
+                if nonblocking {
+                    return (-EAGAIN) as u64;
+                }
                 crate::pipe::note_reader_wait();
                 if sleep_released(
                     crate::task::WaitSet::single(crate::task::Wait::PipeReadable { pipe }),
@@ -1476,13 +1486,15 @@ unsafe fn read_from_pipe(
 
 /// パイプの書き端へ書く（`ADR-0063` の (b3)）。**満杯なら待つ。読み手が居なければ `-EPIPE`。**
 ///
-/// **部分書きである**——**入った数を返す。** **`userlib::write_all` が残りを回す。**
+/// **部分書きである**——**入った数を返す。** **`userlib::write_all` が残りを回す。** 待たない印（`nonblocking`。2026-11-04）が
+/// 立っていれば、1 バイトも入らないとき待たずに `-EAGAIN` を返す。
 ///
 /// # 安全性
 ///
 /// 呼び出し元契約により `page_table_root` / `direct_map` は有効。
 unsafe fn write_to_pipe(
     pipe: u8,
+    nonblocking: bool,
     buf: u64,
     count: u64,
     page_table_root: PhysAddr,
@@ -1509,6 +1521,9 @@ unsafe fn write_to_pipe(
             crate::pipe::WriteOutcome::Bytes(put) => return put as u64,
             crate::pipe::WriteOutcome::NoReader => return (-EPIPE) as u64,
             crate::pipe::WriteOutcome::Full => {
+                if nonblocking {
+                    return (-EAGAIN) as u64;
+                }
                 crate::pipe::note_writer_wait();
                 if sleep_released(
                     crate::task::WaitSet::single(crate::task::Wait::PipeWritable { pipe }),
@@ -1546,8 +1561,8 @@ fn socket_nonblocking_of(fd: u64) -> bool {
     .unwrap_or(false)
 }
 
-/// 待たない印を立てる・下ろす（`fcntl(F_SETFL)`・`ioctl(FIONBIO)`。2026-10-19）。印を持つのはソケット・eventfd・timerfd
-/// である。**ほかの種類では受けて無視し、立てる求めなら名前のある行を出す**——待たない前提で使ったプログラムが止まった
+/// 待たない印を立てる・下ろす（`fcntl(F_SETFL)`・`ioctl(FIONBIO)`。2026-10-19）。印を持つのはソケット・eventfd・timerfd・パイプの
+/// 端（2026-11-04）である。**ほかの種類では受けて無視し、立てる求めなら名前のある行を出す**——待たない前提で使ったプログラムが止まった
 /// とき、原因がすぐ分かるように。
 fn set_nonblocking_of(fd: u64, on: bool, by: &str) -> u64 {
     match crate::vfs::with_current_files(|files| files.set_nonblocking(fd as usize, on)) {
@@ -1567,8 +1582,8 @@ fn set_nonblocking_of(fd: u64, on: bool, by: &str) -> u64 {
 #[cold]
 fn report_nonblocking_ignored(fd: u64, kind: &str, by: &str) {
     serial_line(format_args!(
-        "nonblock-ignored: {by} asked fd {fd} (a {kind}) not to wait; only sockets, eventfds and timerfds honour it, so reads \
-         and writes on this fd still wait"
+        "nonblock-ignored: {by} asked fd {fd} (a {kind}) not to wait; only sockets, eventfds, timerfds and pipe ends honour \
+         it, so reads and writes on this fd still wait"
     ));
 }
 
@@ -2418,7 +2433,7 @@ const INPUT_READ_MAX: usize = 96;
 /// **呼んだ者が前景の系統でなければ `-EBADF`**（`crate::input::caller_is_foreground`。**Y-a では
 /// 大域の `foreground_is_claimed` を見ていた**——Y-c で直した）。**前景は
 /// プログラムの実行の間ずっと持たれる**ので、fd が前景より長生きしない。**`SCM_RIGHTS` は
-/// shm の fd だけを運ぶので、この fd は相手の表へコピーされない**（`ADR-0066` の「前景の関所」）。
+/// shm とパイプの端の fd だけを運ぶので、この fd は相手の表へコピーされない**（`ADR-0066` の「前景の関所」）。
 #[inline(never)]
 fn open_input_from_ring3() -> u64 {
     // **呼んだ者が前景の系統かを見る（Y-c で直した）。** **Y-a では大域の目印を見ていたので、
@@ -2519,7 +2534,7 @@ unsafe fn read_input_events(
 ///
 /// **[`open_input_from_ring3`] と同じ形である**——**呼んだ者が前景の系統でなければ `-EBADF`。**
 /// **fd は前景より長生きしない**（前景はプログラムの実行の間ずっと持たれる）**し、`SCM_RIGHTS` は
-/// shm の fd だけを運ぶので相手の表へコピーされない。**
+/// shm とパイプの端の fd だけを運ぶので相手の表へコピーされない。**
 ///
 /// # 表に入らなければ抜ける
 ///
@@ -2774,19 +2789,30 @@ pub fn poll_waits() -> u64 {
     POLL_WAITS.load(Ordering::Relaxed)
 }
 
-/// その fd を待つときの理由（`ADR-0066` の Y-b）。**`poll` が受ける fd はこの 3 種だけである。**
+/// その fd を待つときの理由（`ADR-0066` の Y-b）。**`poll` が受ける fd はこの 5 種だけである。**
 ///
 /// **入力 fd → [`crate::task::Wait::Keyboard`]、接続 → `SocketReadable`、listener →
-/// `SocketAcceptable`。** **`Wait` の種類は減らない**（`ADR-0066` のステップの注）——
-/// **対応づけるだけである。**
+/// `SocketAcceptable`、パイプの読み端 → `PipeReadable`、パイプの書き端 → `PipeWritable`。** **`Wait` の種類は減らない**
+/// （`ADR-0066` のステップの注）——**対応づけるだけである。**
 ///
-/// **パイプと端末は v1 では受けない**（`None` を返して `-EBADF`）。**見直すきっかけ：パイプを待つ
-/// プログラムが出たとき。**
+/// **パイプの端は 2026-11-04 に受けた**（Wayland のクライアントは、コピーと貼り付けのパイプを待つ）。**端末は受けない**（`None` を
+/// 返して `-EBADF`）。
+///
+/// 破壊テスト (2026-11-04, poll-refuses-pipes-test): パイプの端を受けない（直す前の形）。**確かめのイメージのパイプへの `poll` が
+/// `-EBADF` で断られる。**
 fn poll_reason_of(fd: u64) -> Option<crate::task::Wait> {
     crate::vfs::with_current_files(|files| {
         let file = files.get(fd as usize).ok()?;
         if file.is_input() {
             return Some(crate::task::Wait::Keyboard);
+        }
+        if !cfg!(feature = "poll-refuses-pipes-test") {
+            if let Some(pipe) = file.pipe_read_end() {
+                return Some(crate::task::Wait::PipeReadable { pipe });
+            }
+            if let Some(pipe) = file.pipe_write_end() {
+                return Some(crate::task::Wait::PipeWritable { pipe });
+            }
         }
         match file.socket_state() {
             Some(crate::vfs::SocketState::Stream { conn, side }) => {
@@ -2823,17 +2849,33 @@ fn sleeps_reading_from_ring3(fd: u64) -> u64 {
     }
 }
 
-/// その理由が今すぐ満たされているか（`ADR-0066` の Y-b）。**覗くだけで、取らない。**
+/// その理由が今すぐ満たされていれば、`revents` に立てる印（`ADR-0066` の Y-b。0 なら満たされていない）。**覗くだけで、取らない。**
 ///
 /// **取ってしまうと、どの理由で起きたかを返す前にイベントが消える**
 /// （`crate::input::has_raw_events` の doc）。
-fn poll_is_ready(reason: crate::task::Wait) -> bool {
+///
+/// **パイプの端は Linux の `pipe_poll` と同じ印を立てる**（2026-11-04）——読み端は、データがあれば `POLLIN`、書き手が居なければ
+/// `POLLHUP`。書き端は、空きがあれば `POLLOUT`、読み手が居なければ `POLLERR`。ほかは、満たされていれば `POLLIN` だけである。
+fn poll_revents_of(reason: crate::task::Wait) -> u16 {
+    let bit = |on: bool, mask: u16| if on { mask } else { 0 };
     match reason {
-        crate::task::Wait::Keyboard => crate::input::has_raw_events(),
-        crate::task::Wait::SocketReadable { conn, side } => crate::socket::readable(conn, side),
-        crate::task::Wait::SocketAcceptable { listener } => crate::socket::acceptable(listener),
-        // **[`poll_reason_of`] が返すのは上の 3 種だけである。** **残りは待てない。**
-        _ => false,
+        crate::task::Wait::Keyboard => bit(crate::input::has_raw_events(), POLLIN),
+        crate::task::Wait::SocketReadable { conn, side } => {
+            bit(crate::socket::readable(conn, side), POLLIN)
+        }
+        crate::task::Wait::SocketAcceptable { listener } => {
+            bit(crate::socket::acceptable(listener), POLLIN)
+        }
+        crate::task::Wait::PipeReadable { pipe } => {
+            let (has_data, no_writer) = crate::pipe::poll_read_end(pipe);
+            bit(has_data, POLLIN) | bit(no_writer, POLLHUP)
+        }
+        crate::task::Wait::PipeWritable { pipe } => {
+            let (room, no_reader) = crate::pipe::poll_write_end(pipe);
+            bit(room, POLLOUT) | bit(no_reader, POLLERR)
+        }
+        // **[`poll_reason_of`] が返すのは上の 5 種だけである。** **残りは待てない。**
+        _ => 0,
     }
 }
 
@@ -2869,9 +2911,9 @@ fn poll_is_ready(reason: crate::task::Wait) -> bool {
 ///
 /// # v1 の限界（見直すきっかけつき）
 ///
-/// - **`events` は [`POLLIN`] だけを受ける**（`POLLOUT` などは `-EINVAL`。[`POLLERR`] と [`POLLHUP`] は立っていても受ける。
-///   Linux が `events` に関係なく返す印なので、2026-10-24 に受けた）。**黙って無視すると、
-///   書ける待ちを頼んだ側が読める待ちで眠る。** **見直すきっかけ：書ける待ちが要るとき。**
+/// - **`events` は [`POLLIN`] だけを受ける。パイプの書き端だけは [`POLLOUT`] だけを受ける**（2026-11-04）。ほかの形は `-EINVAL`
+///   （[`POLLERR`] と [`POLLHUP`] は立っていても受ける。Linux が `events` に関係なく返す印なので、2026-10-24 に受けた）。
+///   **黙って無視すると、書ける待ちを頼んだ側が読める待ちで眠る。** **見直すきっかけ：ソケットの書ける待ちが要るとき。**
 /// - **締切つきの頼みは、fd を [`MAX_POLL_FDS`] より 1 つ少なく受ける**（2026-10-24。集合の 1 つを締切の
 ///   [`crate::task::Wait::Timer`] に使う）。**見直すきっかけ：締切つきで 4 本を見張る利用者が出たとき。**
 /// - **開いていない fd は `-EBADF` である**（Linux は `revents` に `POLLNVAL` を立てて
@@ -2982,12 +3024,18 @@ unsafe fn poll_with_timeout(
         }
         // **`POLLERR` と `POLLHUP` は、`events` に立っていても受ける**（2026-10-24）。Linux はこの 2 つを `events` に関係なく
         // 返すので、頼んでも意味は変わらない。wayland-client は `POLLIN | POLLERR` で待つ。
-        if request.events & !(POLLERR | POLLHUP) != POLLIN {
+        let wanted = request.events & !(POLLERR | POLLHUP);
+        if wanted != POLLIN && wanted != POLLOUT {
             return (-EINVAL) as u64;
         }
         let Some(reason) = poll_reason_of(request.fd as u64) else {
             return (-EBADF) as u64;
         };
+        // **パイプの書き端は `POLLOUT` で、ほかは `POLLIN` で待つ**（2026-11-04）。
+        let writable_end = matches!(reason, crate::task::Wait::PipeWritable { .. });
+        if writable_end != (wanted == POLLOUT) {
+            return (-EINVAL) as u64;
+        }
         *slot = Some(reason);
     }
     loop {
@@ -3003,7 +3051,8 @@ unsafe fn poll_with_timeout(
             let Some(reason) = *slot else {
                 continue;
             };
-            if !poll_is_ready(reason) {
+            let bits = poll_revents_of(reason);
+            if bits == 0 {
                 continue;
             }
             // 破壊テスト (Y-b, poll-mistakes-the-member): 隣の欄へ目印を付ける。**待ちも起こしも
@@ -3014,7 +3063,7 @@ unsafe fn poll_with_timeout(
             } else {
                 index
             };
-            revents[at] = POLLIN;
+            revents[at] = bits;
             ready += 1;
         }
         if ready > 0 {
@@ -4240,6 +4289,28 @@ unsafe fn release_range_and_unmap(
 }
 
 /// fd から共有メモリの添字を引く。**共有メモリでなければ `Err(-EBADF)`。**
+/// `SCM_RIGHTS` で渡す途中の fd の数を足せなかった行（2026-11-04。起きないはずの形。`crate::vfs::CarriedFd::hold` の doc）。
+#[inline(never)]
+#[cold]
+fn report_carried_fd_not_held(fd: u64, carried: crate::vfs::CarriedFd) {
+    serial_line(format_args!(
+        "[ERROR] sendmsg: fd {fd} ({carried:?}) was queued for SCM_RIGHTS but its count could not be raised; the reader may see \
+         end of file early, or the end may be released while still in use"
+    ));
+}
+
+/// `SCM_RIGHTS` で渡す fd の形（2026-11-04）。**運べるのは共有メモリとパイプの端で、それ以外の fd と無い fd は `-EBADF`**
+/// （運べない種類の扱いは、共有メモリだけを運んだときから変えていない）。
+fn carried_fd_of(fd: u64) -> Result<crate::vfs::CarriedFd, u64> {
+    let found = crate::vfs::with_current_files(|files| {
+        files
+            .get(fd as usize)
+            .ok()
+            .and_then(crate::vfs::CarriedFd::of)
+    });
+    found.ok_or((-EBADF) as u64)
+}
+
 fn shm_of(fd: u64) -> Result<u8, u64> {
     let found = crate::vfs::with_current_files(|files| {
         files.get(fd as usize).ok().and_then(|file| match file {
@@ -4751,17 +4822,23 @@ unsafe fn sendmsg_from_ring3(
     {
         return (-EAGAIN) as u64;
     }
-    // **fd を先に渡す**——**`SCM_RIGHTS`。共有メモリの fd を相手の待ち行列へ。**
-    if let Some(shm_fd) = parsed.control_fd {
-        let shm = match shm_of(shm_fd) {
-            Ok(shm) => shm,
+    // **fd を先に渡す**——**`SCM_RIGHTS`。共有メモリかパイプの端の fd を相手の待ち行列へ**（パイプの端は 2026-11-04 から）。
+    // **置けたら、渡す途中のものとして数を 1 つ足す**（`crate::vfs::CarriedFd` の doc。書き端なら、読み手の EOF を遅らせる）。
+    if let Some(passed_fd) = parsed.control_fd {
+        let carried = match carried_fd_of(passed_fd) {
+            Ok(carried) => carried,
             Err(errno) => return errno,
         };
-        if !crate::socket::queue_fd(conn, side, shm) {
+        if !crate::socket::queue_fd(conn, side, carried) {
             return (-EAGAIN) as u64;
         }
-        crate::shm::attach(shm);
-        crate::shm::note_fd_sent();
+        // **足せないことは起きない**（`CarriedFd::hold` の doc）。起きたら、名前のある行を出して続ける（止めない）。
+        if !carried.hold() {
+            report_carried_fd_not_held(passed_fd, carried);
+        }
+        if matches!(carried, crate::vfs::CarriedFd::Shm { .. }) {
+            crate::shm::note_fd_sent();
+        }
     }
     // **iov のバイトを書く**（ソケットの書きと同じ経路）。
     // SAFETY: 呼び出し元契約による。
@@ -4832,7 +4909,7 @@ unsafe fn recvmsg_from_ring3(
     // 2026-10-25 までは `-EMSGSIZE` を返し、据えた fd は表に残っていた。
     let mut truncated = false;
     let mut controllen_used = 0;
-    if let Some(shm) = crate::socket::take_fd(conn, side) {
+    if let Some(carried) = crate::socket::take_fd(conn, side) {
         let room = match scm_one_fd_room(parsed.control, parsed.controllen) {
             // SAFETY: 呼び出し元契約による。
             Some(used) => unsafe {
@@ -4849,10 +4926,7 @@ unsafe fn recvmsg_from_ring3(
         if let Some((cslice, used)) = room {
             // **`MSG_CMSG_CLOEXEC` なら、受け取った fd に `FD_CLOEXEC` の印を立てる**（2026-10-20）。
             let inserted = crate::vfs::with_current_files(|files| {
-                files.insert_with_cloexec(
-                    crate::vfs::File::Shm { shm },
-                    flags & MSG_CMSG_CLOEXEC != 0,
-                )
+                files.insert_with_cloexec(carried.into_file(), flags & MSG_CMSG_CLOEXEC != 0)
             });
             // **表が埋まっていれば、fd を捨てて `MSG_CTRUNC` を立て、バイトは返す**（2026-10-27。Linux の `scm_detach_fds` は、
             // fd を据えられなければ `cmsghdr` を書かずに `MSG_CTRUNC` を立てる）。2026-10-26 までは `-EMFILE` を返し、バイトは
@@ -4868,15 +4942,17 @@ unsafe fn recvmsg_from_ring3(
                     // SAFETY: 検証済み 20 バイト。
                     unsafe { copy_to_user(&cslice, 0, &cbuf) };
                     controllen_used = used;
-                    crate::shm::note_fd_received();
+                    if matches!(carried, crate::vfs::CarriedFd::Shm { .. }) {
+                        crate::shm::note_fd_received();
+                    }
                 }
                 Err(_) => {
-                    crate::shm::detach(shm);
+                    carried.release();
                     truncated = true;
                 }
             }
         } else {
-            crate::shm::detach(shm);
+            carried.release();
             truncated = true;
         }
     }
@@ -5846,11 +5922,21 @@ unsafe fn sys_read(
         files
             .get(fd as usize)
             .ok()
-            .and_then(|file| file.pipe_read_end())
+            .and_then(|file| file.pipe_read_parts())
     });
-    if let Some(pipe) = pipe_read {
+    if let Some((pipe, nonblocking)) = pipe_read {
         // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
-        return unsafe { read_from_pipe(pipe, buf, count, page_table_root, direct_map, bkl) };
+        return unsafe {
+            read_from_pipe(
+                pipe,
+                nonblocking,
+                buf,
+                count,
+                page_table_root,
+                direct_map,
+                bkl,
+            )
+        };
     }
 
     // **eventfd**（2026-10-19）。
@@ -8214,6 +8300,105 @@ unsafe fn getcwd_from_ring3(
     CWD.len() as u64
 }
 
+/// [`SYS_PIPE2`] と [`SYS_PIPE`] の本体（2026-11-04。`ADR-0063` の Addendum）。**パイプを 1 本作り、読み端と書き端を最小の空き fd に
+/// 置いて、2 つの番号を `fds`（`int[2]`）へ書く。** パイプは、シェルの `|` と同じもの（`crate::pipe`）である。
+///
+/// # 確かめる順（Linux の `do_pipe2` と `__do_pipe_flags`）
+///
+/// 1. `flags` に `O_CLOEXEC` と `O_NONBLOCK` の外のビットがあれば `-EINVAL`。**Linux が受ける `O_DIRECT`（パケットのパイプ）と
+///    `O_NOTIFICATION_PIPE`（watch queue）も断る**——受けて無視すると、読み書きの区切りが違う形で進む。断ったときは、名前のある
+///    行を出す。
+/// 2. パイプの表に空きが無ければ `-ENFILE`（Linux の `create_pipe_files` が返す値）。
+/// 3. fd の表に空きが 2 つ無ければ `-EMFILE`。**作る前に見る**（`accept4` と同じ形。`ADR-0091` の 2026-11-03 の Addendum）。
+/// 4. 作って 2 つの fd を置き、`fds` の 8 バイトが書けなければ、置いた 2 つを表から外し、端を閉じて `-EFAULT`（Linux も、作った
+///    2 つを手放してから `-EFAULT` を返す）。
+///
+/// 見てから置くまで BKL を放さないので、間に空きが埋まることは無い。
+///
+/// 破壊テスト (2026-11-04, pipe2-efault-keeps-ends-test): `-EFAULT` のとき、置いた 2 つを表に残す（片付けない）。**確かめのイメージの
+/// 書けない置き場への `pipe2` のたびに fd とパイプが減り、最小の空き fd が動く。**
+///
+/// # Safety
+///
+/// `page_table_root` / `direct_map` が [`validate_user_range`] の契約を満たすこと。
+#[inline(never)]
+unsafe fn pipe2_from_ring3(
+    fds: u64,
+    flags: u64,
+    page_table_root: PhysAddr,
+    direct_map: DirectMap,
+) -> u64 {
+    let unknown = flags & !(O_CLOEXEC | O_NONBLOCK);
+    if unknown != 0 {
+        report_pipe2_flags_refused(unknown);
+        return (-EINVAL) as u64;
+    }
+    if !crate::pipe::has_free_slot() {
+        return (-ENFILE) as u64;
+    }
+    if crate::vfs::with_current_files(|files| files.free_slots()) < 2 {
+        return (-EMFILE) as u64;
+    }
+    let Some(pipe) = crate::pipe::create_pair() else {
+        return (-ENFILE) as u64;
+    };
+    let nonblocking = flags & O_NONBLOCK != 0;
+    let cloexec = flags & O_CLOEXEC != 0;
+    let read_end = crate::vfs::File::PipeRead { pipe, nonblocking };
+    let write_end = crate::vfs::File::PipeWrite { pipe, nonblocking };
+    // **空きは上で見たので、置けないことは無い**（見てからここまで BKL を持ち続けている）。置けなければ、置けた分を外して端を閉じる。
+    let placed = crate::vfs::with_current_files(|files| {
+        let read = files.insert_with_cloexec(read_end, cloexec).ok();
+        let write = files.insert_with_cloexec(write_end, cloexec).ok();
+        (read, write)
+    });
+    let (Some(read_fd), Some(write_fd)) = placed else {
+        close_pipe2_ends(placed);
+        if placed.0.is_none() {
+            read_end.release_end();
+        }
+        if placed.1.is_none() {
+            write_end.release_end();
+        }
+        return (-EMFILE) as u64;
+    };
+    let mut pair = [0u8; 8];
+    pair[..4].copy_from_slice(&(read_fd as i32).to_le_bytes());
+    pair[4..].copy_from_slice(&(write_fd as i32).to_le_bytes());
+    // SAFETY: 呼び出し元契約による。
+    let Some(slice) =
+        (unsafe { validate_user_range_for_write(page_table_root, direct_map, fds, 8) })
+    else {
+        if !cfg!(feature = "pipe2-efault-keeps-ends-test") {
+            close_pipe2_ends((Some(read_fd), Some(write_fd)));
+        }
+        return (-EFAULT) as u64;
+    };
+    // SAFETY: 検証済みの 8 バイト。確かめてから BKL を放していない。
+    unsafe { copy_to_user(&slice, 0, &pair) };
+    0
+}
+
+/// `pipe2` が置いた fd を表から外し、端を閉じる（2026-11-04。`-EFAULT` と、置けなかったときの片付け）。**端は表の外で閉じる**
+/// ——閉じると読み手と書き手を起こし、epoll の項目を外す。
+fn close_pipe2_ends(placed: (Option<usize>, Option<usize>)) {
+    for fd in [placed.0, placed.1].into_iter().flatten() {
+        if let Ok(file) = crate::vfs::with_current_files(|files| files.remove(fd)) {
+            file.release_end();
+        }
+    }
+}
+
+/// `pipe2` が断ったフラグの行（2026-11-04）。
+#[inline(never)]
+#[cold]
+fn report_pipe2_flags_refused(unknown: u64) {
+    serial_line(format_args!(
+        "pipe2-refused: flags {unknown:#x} are not O_CLOEXEC or O_NONBLOCK; O_DIRECT and O_NOTIFICATION_PIPE, which Linux \
+         accepts, are refused too, so this pipe2 fails with EINVAL"
+    ));
+}
+
 /// `readlink(path, buf, bufsiz)`（2026-10-06）。**答えるのは `/proc/self/exe` だけ**（Rust の `std` が、自分の実行ファイルの
 /// 名前を求めて読む）。ext2 にシンボリックリンクはまだ無いので、ほかの道は `-EINVAL`（在るがリンクでない）か `-ENOENT`。
 /// 返すのは、載せたときに控えた名前（`crate::process_state`）で、長ければ `bufsiz` で切る（Linux と同じ。NUL は付けない）。
@@ -8299,12 +8484,20 @@ fn sys_fcntl(fd: u64, cmd: u64, arg: u64) -> u64 {
                 Err(error) => (-errno_for_file_table(error)) as u64,
             }
         }),
+        // **パイプの端は、読み端が `O_RDONLY`、書き端が `O_WRONLY` である**（2026-11-04。Linux の `create_pipe_files` が開く向き）。
         F_GETFL => crate::vfs::with_current_files(|files| match files.get(fd) {
-            Ok(file) => match file.nonblocking() {
-                Some(true) => O_RDWR | O_NONBLOCK,
-                Some(false) => O_RDWR,
-                None => 0,
-            },
+            Ok(file) => {
+                let access = match file {
+                    crate::vfs::File::PipeRead { .. } => O_RDONLY,
+                    crate::vfs::File::PipeWrite { .. } => O_WRONLY,
+                    _ => O_RDWR,
+                };
+                match file.nonblocking() {
+                    Some(true) => access | O_NONBLOCK,
+                    Some(false) => access,
+                    None => 0,
+                }
+            }
             Err(error) => (-errno_for_file_table(error)) as u64,
         }),
         F_SETFL => set_nonblocking_of(
@@ -9200,11 +9393,21 @@ unsafe fn sys_write(
         files
             .get(fd as usize)
             .ok()
-            .and_then(|file| file.pipe_write_end())
+            .and_then(|file| file.pipe_write_parts())
     });
-    if let Some(pipe) = pipe_write {
+    if let Some((pipe, nonblocking)) = pipe_write {
         // SAFETY: 呼び出し元契約により page_table_root / direct_map は有効。
-        return unsafe { write_to_pipe(pipe, buf, count, page_table_root, direct_map, bkl) };
+        return unsafe {
+            write_to_pipe(
+                pipe,
+                nonblocking,
+                buf,
+                count,
+                page_table_root,
+                direct_map,
+                bkl,
+            )
+        };
     }
 
     // **eventfd**（2026-10-19）。

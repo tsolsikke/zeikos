@@ -137,8 +137,10 @@ pub const EPOLL_EVENT_LEN: usize = 12;
 /// （2026-10-19。Rust の std の `set_nonblocking` が打つ）。
 pub const FIONBIO: u64 = 0x5421;
 
-/// `POLLIN`（読めるようになった）。**v1 が見る唯一のビットである。**
+/// `POLLIN`（読めるようになった）。
 pub const POLLIN: u16 = 0x001;
+/// `POLLOUT`（書けるようになった）。**パイプの書き端だけが受ける**（2026-11-04）。
+pub const POLLOUT: u16 = 0x004;
 /// `POLLERR`（誤りが起きた）。Linux は `events` に関係なく `revents` に立てるので、`events` に立っていても意味は変わらない
 /// （2026-10-24。wayland-client は `POLLIN | POLLERR` で待つ）。
 pub const POLLERR: u16 = 0x008;

@@ -1,9 +1,11 @@
 //! パイプ（`ADR-0063` の (b3)）。**片方向のバイトの通り道で、読む側が待ち、書く側が起こす。**
 //!
-//! # 1 本だけ、輪は 256 バイト
+//! # 8 本まで、輪は 256 バイト
 //!
-//! **利用者はシェルの `a | b` だけである。** **2 本目の Ring 3 が 1 本しか無いので、
-//! `a | b | c` は作れない**——**[`MAX_PIPES`] は 1 である。**
+//! **シェルの `a | b` は 1 本を使う。** **2 本目の Ring 3 が 1 本しか無いので、`a | b | c` は作れない。**
+//! **[`MAX_PIPES`] は 2026-11-04 に 1 から 8 にした**——`pipe2`（293）と `pipe`（22）で、Linux のプログラムもパイプを作るように
+//! なったためである（Wayland のコピーと貼り付けは、受け渡し 1 回ごとに 1 本を使う）。プログラムが作ったパイプでシェルの
+//! `|` が断られないように、数に余裕を持たせた。1 本は輪と数を合わせて約 260 バイトである。
 //!
 //! **輪は 256 バイトにした**（[`PIPE_RING`]）。**Linux の 4 KiB を採らない理由は、イメージに
 //! 4 KiB を超える種が無く、書き手が待つ機会が作れないことである**（「機会が無い」）。
@@ -39,8 +41,8 @@ use crate::ring::Ring;
 /// 輪の大きさ（バイト）。**256 の根拠はモジュールの doc にある。**
 pub const PIPE_RING: usize = 256;
 
-/// 同時に在れるパイプの数。**`a | b` に 1 本。**
-pub const MAX_PIPES: usize = 1;
+/// 同時に在れるパイプの数（2026-11-04 に 1 から 8 にした。モジュールの doc）。
+pub const MAX_PIPES: usize = 8;
 
 /// パイプ 1 本の状態。
 struct Pipe {
@@ -72,7 +74,7 @@ impl Pipe {
     }
 }
 
-static PIPES: [Locked<Pipe>; MAX_PIPES] = [Locked::new(Pipe::EMPTY)];
+static PIPES: [Locked<Pipe>; MAX_PIPES] = [const { Locked::new(Pipe::EMPTY) }; MAX_PIPES];
 
 /// 読み手が空で待った回数（計測）。
 static READER_WAITS: AtomicU64 = AtomicU64::new(0);
@@ -163,6 +165,30 @@ pub fn create(reserve_reader: bool) -> Option<u8> {
     None
 }
 
+/// 空いたパイプが在るか（`pipe2` が fd の表の空きを見る前に見る。2026-11-04）。**作らずに覗くだけである**——`pipe2` は、
+/// Linux と同じく、パイプが作れないこと（`-ENFILE`）を fd の表の空き（`-EMFILE`）より先に見る。
+pub fn has_free_slot() -> bool {
+    PIPES.iter().any(|slot| !slot.lock().in_use)
+}
+
+/// `pipe2`（293）と `pipe`（22）のパイプを 1 本作る（2026-11-04）。**読み端と書き端が 1 つずつ付いた状態で返す。** 読み手の
+/// 予約は使わない（両端を同じプロセスが受け取る）。**空いていなければ `None`。**
+pub fn create_pair() -> Option<u8> {
+    for (index, slot) in PIPES.iter().enumerate() {
+        let mut pipe = slot.lock();
+        if pipe.in_use {
+            continue;
+        }
+        *pipe = Pipe::EMPTY;
+        pipe.in_use = true;
+        pipe.readers = 1;
+        pipe.writers = 1;
+        CREATED.fetch_add(1, Ordering::Relaxed);
+        return Some(index as u8);
+    }
+    None
+}
+
 /// 予約していた読み手が起動した。**予約を読み端 1 つへ変える。** **予約が無ければ偽。**
 pub fn claim_reserved_reader(pipe: u8) -> bool {
     let Some(slot) = PIPES.get(pipe as usize) else {
@@ -221,15 +247,18 @@ pub fn poll_read_end(pipe: u8) -> (bool, bool) {
     (!state.ring.is_empty(), state.writers == 0)
 }
 
-/// 書き端の準備を覗く（epoll の問い合わせ。2026-10-19）。**読み手が居て、空きがあれば書ける。** 2 つ目は「読み手が
-/// 居ない」（`-EPIPE` になる）。
+/// 書き端の準備を覗く（epoll と poll の問い合わせ。2026-10-19）。1 つ目は「空きがある」、2 つ目は「読み手が居ない」
+/// （`-EPIPE` になる）。
+///
+/// **空きがあれば、読み手が居なくても書けるとする**（2026-11-04。Linux の `pipe_poll` と同じで、読み手の居ない書き端は
+/// `EPOLLOUT | EPOLLERR` になる）。2026-11-03 までは、読み手が居なければ書けるとしなかった。
 pub fn poll_write_end(pipe: u8) -> (bool, bool) {
     let Some(slot) = PIPES.get(pipe as usize) else {
         return (false, true);
     };
     let state = slot.lock();
     let no_reader = state.readers == 0 && !state.reserved_reader;
-    (!no_reader && state.ring.room() > 0, no_reader)
+    (state.ring.room() > 0, no_reader)
 }
 
 /// 溜まっているバイトを `dst` へ移す。**取れたら書き手を起こす**（空きができた）。
@@ -312,28 +341,33 @@ pub fn write_from(pipe: u8, src: &[u8]) -> WriteOutcome {
     outcome
 }
 
-/// 読み端を指すものを 1 つ足す（2026-10-22。`F_DUPFD` のコピー）。開いていないパイプには足さない。
-pub fn attach_read_end(pipe: u8) {
+/// 読み端を指すものを 1 つ足す（2026-10-22。`F_DUPFD` のコピー。2026-11-04 から `SCM_RIGHTS` で渡す途中のものも）。開いていない
+/// パイプには足さない。**足せたら真**（2026-11-04。渡す途中のものを数える側が、足せなかったことを名前のある行にする）。
+pub fn attach_read_end(pipe: u8) -> bool {
     let Some(slot) = PIPES.get(pipe as usize) else {
-        return;
+        return false;
     };
     let mut state = slot.lock();
-    if state.in_use && state.readers > 0 {
-        // `u8` は上に当たらない（`crate::vfs::MAX_END_HOLDERS` がコンパイルの時に確かめる）。
-        state.readers = state.readers.saturating_add(1);
+    // `u8` は上に当たらない（`crate::vfs::MAX_END_HOLDERS` がコンパイルの時に確かめる）。当たったら足さずに偽を返す。
+    if state.in_use && state.readers > 0 && state.readers < u8::MAX {
+        state.readers += 1;
+        return true;
     }
+    false
 }
 
-/// 書き端を指すものを 1 つ足す（2026-10-22。`F_DUPFD` のコピー）。開いていないパイプには足さない。
-pub fn attach_write_end(pipe: u8) {
+/// 書き端を指すものを 1 つ足す（読み端の [`attach_read_end`] と同じ形）。**足せたら真。**
+pub fn attach_write_end(pipe: u8) -> bool {
     let Some(slot) = PIPES.get(pipe as usize) else {
-        return;
+        return false;
     };
     let mut state = slot.lock();
-    if state.in_use && state.writers > 0 {
-        // `u8` は上に当たらない（`crate::vfs::MAX_END_HOLDERS` がコンパイルの時に確かめる）。
-        state.writers = state.writers.saturating_add(1);
+    // `u8` は上に当たらない（`crate::vfs::MAX_END_HOLDERS` がコンパイルの時に確かめる）。当たったら足さずに偽を返す。
+    if state.in_use && state.writers > 0 && state.writers < u8::MAX {
+        state.writers += 1;
+        return true;
     }
+    false
 }
 
 /// 読み端を 1 つ閉じる。**最後の読み手なら書き手を起こす**（`-EPIPE` を見に行かせる）。**最後の読み手だったら真**を返す

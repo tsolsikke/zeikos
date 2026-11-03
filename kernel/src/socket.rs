@@ -110,9 +110,9 @@ struct Connection {
     rings: [Ring<SOCKET_RING>; 2],
     /// 各側へ渡す途中の fd（`SCM_RIGHTS`。`[client が受ける, server が受ける]`。`ADR-0065`）。
     ///
-    /// **1 つだけ**——**`wl_shm.create_pool` は fd を 1 つ運ぶ。** **中身は共有メモリの添字
-    /// （`crate::shm`）で、`sendmsg` が置き、`recvmsg` が取る。**
-    pending_fd: [Option<u8>; 2],
+    /// **1 つだけ**——**`wl_shm.create_pool` は fd を 1 つ運ぶ。** **中身は共有メモリの添字か、パイプの端**
+    /// （[`crate::vfs::CarriedFd`]。パイプの端は 2026-11-04 から）で、`sendmsg` が置き、`recvmsg` が取る。
+    pending_fd: [Option<crate::vfs::CarriedFd>; 2],
     /// server 側の名前（繋いだ listener の名前。2026-10-26）。**`connect` の時にコピーする**——Linux は、受け付けた側に
     /// listener の名前を受け継がせる（`unix_stream_connect`）。listener を閉じても、受け付けた側の名前は残る。
     server_name: [u8; NAME_MAX],
@@ -614,7 +614,7 @@ pub fn close_end(conn: u8, side: Side) -> bool {
     let Some(slot) = CONNECTIONS.get(conn as usize) else {
         return false;
     };
-    // 手放す fd は、ロックを放した後で `crate::shm::detach` へ渡す（共有メモリのロックを、接続のロックの内側で取らない）。
+    // 手放す fd は、ロックを放した後で手放す（共有メモリとパイプのロックを、接続のロックの内側で取らない）。
     let mut released = [None, None];
     let closed = {
         let mut state = slot.lock();
@@ -638,8 +638,9 @@ pub fn close_end(conn: u8, side: Side) -> bool {
             true
         }
     };
-    for shm in released.into_iter().flatten() {
-        crate::shm::detach(shm);
+    // **渡す途中のパイプの書き端が最後の書き手なら、ここで読み手が EOF を見る**（`crate::vfs::CarriedFd` の doc）。
+    for carried in released.into_iter().flatten() {
+        carried.release();
     }
     if closed {
         wake_and_notify_epoll(Wait::SocketReadable {
@@ -714,10 +715,11 @@ pub fn close_listener(listener: u8) -> bool {
     true
 }
 
-/// `SCM_RIGHTS` で渡す fd（共有メモリの添字）を相手側の待ち行列へ置く（`ADR-0065`）。
+/// `SCM_RIGHTS` で渡す fd（共有メモリの添字か、パイプの端。2026-11-04）を相手側の待ち行列へ置く（`ADR-0065`）。**数は足さない**
+/// ——置けたら、呼び手が [`crate::vfs::CarriedFd::hold`] で足す。
 ///
 /// **既に 1 つ待っていれば偽**（最小のため 1 つだけ）。**相手側の読み手を起こす。**
-pub fn queue_fd(conn: u8, side: Side, shm: u8) -> bool {
+pub fn queue_fd(conn: u8, side: Side, carried: crate::vfs::CarriedFd) -> bool {
     let Some(slot) = CONNECTIONS.get(conn as usize) else {
         return false;
     };
@@ -727,7 +729,7 @@ pub fn queue_fd(conn: u8, side: Side, shm: u8) -> bool {
         if !state.in_use || state.pending_fd[peer].is_some() {
             false
         } else {
-            state.pending_fd[peer] = Some(shm);
+            state.pending_fd[peer] = Some(carried);
             true
         }
     };
@@ -752,8 +754,9 @@ pub fn sender_name(conn: u8, side: Side, out: &mut [u8; NAME_MAX]) -> Option<usi
     Some(name.len())
 }
 
-/// 自分の側へ渡された fd を取る（`ADR-0065`）。**無ければ `None`。**
-pub fn take_fd(conn: u8, side: Side) -> Option<u8> {
+/// 自分の側へ渡された fd を取る（`ADR-0065`）。**無ければ `None`。** 取ったものの数は、呼び手が受け手の表へ置くか、
+/// [`crate::vfs::CarriedFd::release`] で手放す。
+pub fn take_fd(conn: u8, side: Side) -> Option<crate::vfs::CarriedFd> {
     let slot = CONNECTIONS.get(conn as usize)?;
     let mut state = slot.lock();
     if !state.in_use {

@@ -679,6 +679,9 @@ const LINUX_PROGRAMS: &[&str] = &[
     // **相対パスと空のパスと `getcwd`**（2026-11-02。`ADR-0043` の Addendum。`linux-socket-test` と `relative-path-test` の
     // ビルドだけが起動時に起こす）。
     "wl-relative-path-rust",
+    // **`pipe2` と、`SCM_RIGHTS` で運ぶパイプの端**（2026-11-04。`ADR-0063` と `ADR-0065` の Addendum。`linux-socket-test` と
+    // `linux-pipe-test` のビルドだけが起動時に起こす）。
+    "wl-pipe-rust",
     // **壁の時計**（2026-10-20。`ADR-0090`。`realtime-test` のビルドだけが起動時に起こす）。
     "wl-realtime-rust",
     // **ZeikOS と Linux で結果が違うイメージ**（マップ中の memfd を縮める ftruncate。`memfd-shrink-test` のビルドだけが起こす）。

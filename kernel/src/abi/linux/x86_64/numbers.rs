@@ -132,6 +132,10 @@ pub const SYS_FCNTL: u64 = 72;
 pub const SYS_READLINK: u64 = 89;
 /// `getcwd(buf, size)` の番号（2026-11-02。`__NR_getcwd`）。作業ディレクトリはいつも `/` である（`ADR-0043` の Addendum）。
 pub const SYS_GETCWD: u64 = 79;
+/// `pipe(fds)` の番号（2026-11-04。`__NR_pipe`）。`pipe2(fds, 0)` と同じ形である（musl の `pipe()` はこれを打つ）。
+pub const SYS_PIPE: u64 = 22;
+/// `pipe2(fds, flags)` の番号（2026-11-04。`__NR_pipe2`）。
+pub const SYS_PIPE2: u64 = 293;
 /// `clone(flags, stack, parent_tid, child_tid, tls)` の番号（2026-10-14。`__NR_clone`。M3a）。
 pub const SYS_CLONE: u64 = 56;
 /// `sigaltstack(ss, old_ss)` の番号（2026-10-06。`__NR_sigaltstack`）。

@@ -282,6 +282,7 @@ pub const PATH_RULES: &[PathRule] = &[
             "linux-programs/wl-close-queued-fd-rust.rs",
             "linux-programs/wl-shm-mapping-refs-rust.rs",
             "linux-programs/wl-relative-path-rust.rs",
+            "linux-programs/wl-pipe-rust.rs",
         ],
         reach: Reach::Families(&[Family::Ipc, Family::Interrupts]),
     },

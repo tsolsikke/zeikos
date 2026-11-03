@@ -1386,6 +1386,18 @@ fd-limit-test = []
 # 置けずに閉じられ、wl-fd-limit-rust の 1 つ空けた後の accept が EAGAIN で断られて 93 で終わる。
 # `--critical-test accept-takes-before-checking`（fd-limit-test のビルド）。
 accept-takes-before-checking-test = []
+# 確かめ（2026-11-04）: wl-pipe-rust だけを起動時に起こす、破壊テストの構成（シェルの `|` の pipe-test とは別）。
+linux-pipe-test = []
+# 破壊（2026-11-04。ADR-0065 の Addendum）: SCM_RIGHTS で渡す途中のパイプの端を、端を指すものとして数えない。送り手が自分の
+# 書き端を閉じた所で読み手が EOF を見て、wl-pipe-rust が名指しの行を出して 93 で終わる。`--critical-test carried-pipe-end-not-counted`
+# （linux-pipe-test のビルド）。
+carried-pipe-end-not-counted-test = []
+# 破壊（2026-11-04。ADR-0063 の Addendum）: pipe2 の置き場が書けないとき、置いた 2 つの fd を表に残す。wl-pipe-rust が最小の空き
+# fd の動きを見て 92 で終わる。`--critical-test pipe2-efault-keeps-ends`（linux-pipe-test のビルド）。
+pipe2-efault-keeps-ends-test = []
+# 破壊（2026-11-04。ADR-0063 の Addendum）: poll がパイプの端を受けない（直す前の形）。wl-pipe-rust のパイプへの poll が EBADF で
+# 断られて 94 で終わる。`--critical-test poll-refuses-pipes`（linux-pipe-test のビルド）。
+poll-refuses-pipes-test = []
 # 破壊（2026-10-30。ADR-0065 の Addendum）: 共有メモリの munmap で、マップしたページの数を引かない。フレームが返らず、
 # wl-shm-mapping-refs-rust が全体の上限で ftruncate に断られて 95 で終わる。`--critical-test shm-munmap-keeps-maps`。
 shm-munmap-keeps-maps-test = []

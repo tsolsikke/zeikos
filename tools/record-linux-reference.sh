@@ -138,5 +138,7 @@ record wl-close-queued-fd-rust
 record wl-shm-mapping-refs-rust
 # 相対パスと空のパスと getcwd（2026-11-02。作業ディレクトリを / にして採る）。
 record_from_root wl-relative-path-rust
+# pipe2 と、SCM_RIGHTS で運ぶパイプの端（2026-11-04）。RLIMIT_NOFILE を ZeikOS の表の大きさまで下げてから、満杯の表を見る。
+record wl-pipe-rust
 record m1-c
 record m3a-c
