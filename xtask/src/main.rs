@@ -8435,7 +8435,9 @@ const SABOTAGE_JUDGEMENTS: &[NamedJudgement] = &[
     NamedJudgement {
         check: "pipe test",
         key: "wait-child-keeps-reservation",
-        signs: &["the content went through the pipe = false", "again once = false"],
+        // **2026-11-04 に判定を替えた。** パイプが 1 本だった間は、残った予約で次の `|` が `-EBUSY` になり、`again` が落ちた。
+        // 8 本にした後は、次の `|` が別のパイプで通るので、予約を消した数（`reservations dropped`）を見る判定で捕まえる。
+        signs: &["a missing right side did not hang = false", "(reservations dropped Some(0))"],
         note: "",
         reached: true,
     },

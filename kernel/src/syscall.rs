@@ -5324,7 +5324,8 @@ fn wait_child_from_ring3(handle: u64, bkl: &mut Option<crate::bkl::BklGuard>) ->
     // **使われなかった予約を消す**（この関数の doc）。
     //
     // 破壊テスト (`ADR-0063` の (b3), wait-child-keeps-reservation): 消さない。**右が見つからなかった
-    // 回の後、パイプが空かず、次の `|` が `-EBUSY` になる。**
+    // 回の後、予約が残ってパイプが空かない。** パイプが 1 本だった間は次の `|` が `-EBUSY` になったが、8 本にした後
+    // （2026-11-04）は次の `|` が別のパイプで通るので、判定「a missing right side did not hang」（予約を消した数が 0）で落ちる。
     #[cfg(not(feature = "wait-child-keeps-reservation"))]
     if let Some(pipe) =
         crate::userland::take_pending_stdin(crate::arch::x86_64::current_excursion_slot())

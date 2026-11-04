@@ -1051,7 +1051,7 @@ python3 tools/judgement-map.py /tmp/full.txt
 | `pipe-reader-not-reserved` | 読み手を予約しない（(b3)） | **右が起動する前の左の書きが`-EPIPE`にならないこと**（判定1の`hello`）。**3回続けて落ちた**（`writes without a reader`が11） |
 | `spawn-detached-returns-early` | 切り離して起動する入口が入場を待たずに1度譲って戻り、左の読み込みが貸し出しを持つ間に2ティック空回りする（(b3)） | **左がRing 3へ入ってから右を起動すること**（判定1・4・6。右が`cannot run`になる）。**待たないだけでは21本の`\|`で1度も重ならなかった**——**機会を作る形にした。** **最初は右の読み込みに空回りを入れて誤った**（システムコールの中はIF=0で永久に空回りする。`docs/troubleshooting.md`）。**3回続けて落ちた**（実測。右が5本とも`cannot run`） **判定8を足した（2026-09-21。`ADR-0066`のY-cの`--full`）**——**Y-cの`--full`で1度検出されなかった。衝突が中身を判定していないパイプに当たり、判定1・4・6が全部通った**（`docs/troubleshooting.md`）。**判定8「起こせなかった右は`/bin/nonexist`だけ」は衝突の位置に依らない**——**5回とも落ち、うち1回は判定8だけが検出した**（実測）。 |
 | `spawn-refuses-without-waiting-test`（2026-10-12） | `spawn`の入口と切り離したスロットの読み込みが、アロケータを待たずに1度だけ試す（直す前の形。`ADR-0084`）。`spawn-detached-returns-early`の重なりの上で走る | **右の`spawn`が、貸し出しが空くのを待ってから起動すること**（判定8「起こせなかった右は`/bin/nonexist`だけ」。待たない形では、重なった右が`-EAGAIN`で`cannot run`になる）。**`spawn-detached-returns-early`は、この日に破壊テストから確かめへ移した**——spawnが待つようになり、重なっても右が起動するので、落ちる判定が無くなった（`pipe-test --with spawn-detached-returns-early`の確かめになった。`ADR-0084`） |
-| `wait-child-keeps-reservation` | 待つ入口が使われなかった予約を消さない（(b3)） | **右が居なくても次の`\|`が通ること**（判定6の`again`）。**予約が残ってパイプが空かず、次の左が`-EBUSY`で起動できない。** **3回続けて落ちた** |
+| `wait-child-keeps-reservation` | 待つ入口が使われなかった予約を消さない（(b3)） | **右が居なかった回に、予約を消したこと**（判定「a missing right side did not hang」。予約を消した数が0になる）。**予約が残ってパイプが空かない。** パイプが1本だった間は、次の左が`-EBUSY`で起動できず、判定6の`again`で落ちた（3回続けて落ちた）。**2026-11-04にパイプを8本にした後は、次の`\|`が別のパイプで通るので、`again`では落ちない** |
 | `read-never-waits` | `read(0)`が待たずに`-EAGAIN`を返す（W2-c-2。`ADR-0061`） | **`read(0)`が空回りせずに待つこと**（`--shell-test`の判定1）。**落ちるのは3本である**（実測。2026-09-16）——**判定1（約145万回のシステムコールで584バイト。上限は1バイトあたり16）・判定2（`hlt`が0回）・判定5（待ちが0回）。** **3回続けて落ちた** |
 | `keyboard-does-not-wake` | IRQ1が積んでも、待っている者を起こさない（W2-c-2） | **積んだら必ず起こすこと**（関係の検出器。**待っている者が居たのに起こさなかった回数が0でない**）。**時間の上限では見ない**——**1回目の打鍵で出る。** **セッション全体も止まる**（シェルが永久に待つ）ので、落ちる判定は約50本である。**3回続けて落ちた** |
 | `idle-holds-bkl-across-hlt` | BSP用アイドルがBKLを取ったまま`hlt`する（W2-c-2） | **アイドルがロックを持ち込まないこと。** **再帰取得の検出で起動が止まる**ので、落ちる判定は全部である。**`bkl-hold-across-hlt-test`は流用できない**（あちらはハートビートのループに仕込み、`init`より前に発火するので、アイドルの場所が観測されない。実測）。**3回続けて落ちた** |
@@ -2006,7 +2006,7 @@ VirtualBoxの計数でベクタ0x42が打鍵4バイトで+4、8259のベクタ0x
 | ipc | pipe test | `pipe-reader-not-reserved` | `the content went through the pipe = false` … `hello once = false` | C | 3回とも同じ | — |
 | ipc | pipe test | `spawn-detached-returns-early` | `every right side started except the missing one = false` | A | 狙い以外が回で変わった | 2026-10-12に確かめへ移した（`ADR-0084`） |
 | ipc | pipe test | `spawn-refuses-without-waiting-test` | `every right side started except the missing one = false` | — | 2026-10-12。3回の測定はまだ | — |
-| ipc | pipe test | `wait-child-keeps-reservation` | `the content went through the pipe = false` … `again once = false` | A | 3回とも同じ | — |
+| ipc | pipe test | `wait-child-keeps-reservation` | `a missing right side did not hang = false` … `(reservations dropped Some(0))`（2026-11-04まで`the content went through the pipe = false` … `again once = false`） | A | 3回とも同じ | — |
 | ipc | socket test | `socket-accept-does-not-wait` | `accept_waited = false` | C | 3回とも同じ | — |
 | ipc | socket test | `socket-connect-ignores-name` | `an_unknown_name_is_refused = false` | C | 3回とも同じ | — |
 | ipc | socket test | `socket-bind-ignores-taken-name` | `a_taken_name_is_refused = false` | C | 3回とも同じ | — |
