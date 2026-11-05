@@ -47,8 +47,8 @@ use crate::abi::linux::x86_64::{
     SYS_CONNECT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FLOCK, SYS_FSTAT, SYS_FTRUNCATE,
     SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETPID, SYS_GETRANDOM, SYS_GETTID, SYS_IOCTL,
     SYS_LISTEN, SYS_LSEEK, SYS_MADVISE, SYS_MEMFD_CREATE, SYS_MKDIR, SYS_MMAP, SYS_MPROTECT,
-    SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPEN, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRLIMIT64, SYS_READ,
-    SYS_READLINK, SYS_READV, SYS_RECVFROM, SYS_RECVMSG, SYS_RMDIR, SYS_RT_SIGACTION,
+    SYS_MREMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPEN, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRLIMIT64,
+    SYS_READ, SYS_READLINK, SYS_READV, SYS_RECVFROM, SYS_RECVMSG, SYS_RMDIR, SYS_RT_SIGACTION,
     SYS_RT_SIGPROCMASK, SYS_SCHED_YIELD, SYS_SENDMSG, SYS_SENDTO, SYS_SET_TID_ADDRESS,
     SYS_SIGALTSTACK, SYS_SOCKET, SYS_STAT, SYS_TKILL, SYS_UNAME, SYS_UNLINK, SYS_WRITE, SYS_WRITEV,
 };
@@ -1195,6 +1195,8 @@ unsafe fn dispatch(
         SYS_PIPE => unsafe { pipe2_from_ring3(args[0], 0, page_table_root, direct_map) },
         // SAFETY: 同上。
         SYS_PIPE2 => unsafe { pipe2_from_ring3(args[0], args[1], page_table_root, direct_map) },
+        #[cfg(not(feature = "mremap-unknown-test"))]
+        SYS_MREMAP => refuse_mremap(args[0], args[1], args[2], args[3]),
         SYS_FCNTL => sys_fcntl(args[0], args[1], args[2]),
         // **繋いだ相手から受ける `recvfrom` は `read` に `flags` を足した形である**（`ADR-0087`。musl の `recv`——Rust の std の
         // ソケットの `read`——はこれを打つ）。`src_addr`（相手の名前の置き場）は 0 だけ受け、`flags` は [`msg_flags_dont_wait`]
@@ -8388,6 +8390,21 @@ fn close_pipe2_ends(placed: (Option<usize>, Option<usize>)) {
             file.release_end();
         }
     }
+}
+
+/// [`SYS_MREMAP`] の本体（2026-11-05。`ADR-0082` の Addendum）。**番号は知っているが、マッピングを動かさず、名前のある行を出して
+/// `-ENOMEM` を返す。** Linux でも、伸ばせないときに返す答えである。musl の `realloc` は、これを受けて新しい領域へコピーする道へ落ちる
+/// ので、呼び手の結果は変わらない（Seinas の壁紙が、大きな `Vec` を伸ばすときに打つ）。
+///
+/// 破壊テスト (2026-11-05, mremap-unknown-test): 番号を知らない形へ戻す（直す前の形）。**`--seinas-wallpaper-test` の判定
+/// 「no_unknown_number」が、壁紙の 25 番で落ちる。**
+#[cfg(not(feature = "mremap-unknown-test"))]
+fn refuse_mremap(old_address: u64, old_size: u64, new_size: u64, flags: u64) -> u64 {
+    serial_line(format_args!(
+        "mremap-refused: {old_address:#x} from {old_size} to {new_size} byte(s), flags {flags:#x}; mappings do not move here, so \
+         this mremap fails with ENOMEM"
+    ));
+    (-ENOMEM) as u64
 }
 
 /// `pipe2` が断ったフラグの行（2026-11-04）。

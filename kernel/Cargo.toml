@@ -705,7 +705,7 @@ seinas-test = []
 # （2026-10-21。C1S4。破壊テストではない）。成果物は tools/fetch-seinas.sh が target/linux-programs/ に取る（SHA-256 を固定）。
 # 既定のイメージには入れない——バイトが release に依るため。`cargo xtask run --seinas-standalone-test`。
 seinas-standalone-test = []
-# Seinas のタスクバー（release の seinas-taskbar）を、コンポジタと一緒にイメージの /bin/linux に入れる手元と CI の確かめ
+# Seinas のタスクバー・壁紙・zeyes-min と同梱の壁紙（release の成果物。2026-11-05 に壁紙と zeyes-min を足した。イメージは 64 MiB）を、コンポジタと一緒にイメージの /bin/linux に入れる手元と CI の確かめ
 # （2026-10-27。C2S1 の Sprint Goal。破壊テストではない）。成果物は tools/fetch-seinas.sh が取る（SHA-256 を固定）。
 # `cargo xtask run --seinas-taskbar-test`。
 seinas-taskbar-test = ["seinas-standalone-test"]
@@ -1395,6 +1395,9 @@ carried-pipe-end-not-counted-test = []
 # 破壊（2026-11-04。ADR-0063 の Addendum）: pipe2 の置き場が書けないとき、置いた 2 つの fd を表に残す。wl-pipe-rust が最小の空き
 # fd の動きを見て 92 で終わる。`--critical-test pipe2-efault-keeps-ends`（linux-pipe-test のビルド）。
 pipe2-efault-keeps-ends-test = []
+# 破壊（2026-11-05。ADR-0082 の Addendum）: mremap の番号を知らない形へ戻す（直す前の形）。`--seinas-wallpaper-test` の
+# no_unknown_number が壁紙の 25 番で落ちる。
+mremap-unknown-test = ["seinas-taskbar-test"]
 # 破壊（2026-11-04。ADR-0063 の Addendum）: poll がパイプの端を受けない（直す前の形）。wl-pipe-rust のパイプへの poll が EBADF で
 # 断られて 94 で終わる。`--critical-test poll-refuses-pipes`（linux-pipe-test のビルド）。
 poll-refuses-pipes-test = []

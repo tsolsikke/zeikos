@@ -3048,6 +3048,7 @@ const RUN_FLAGS: &[(&str, RunValue)] = &[
     ("--seinas-fbdev-test", RunValue::None),
     ("--seinas-standalone-test", RunValue::None),
     ("--seinas-taskbar-test", RunValue::None),
+    ("--seinas-wallpaper-test", RunValue::None),
     ("--ending", RunValue::Required),
     ("--compose-test", RunValue::None),
     ("--history-test", RunValue::None),
@@ -3120,6 +3121,7 @@ const RUN_FLAG_SCOPES: &[(&str, RunFlagScope)] = &[
             "--realtime-test",
             "--screen-test",
             "--seinas-standalone-test",
+            "--seinas-wallpaper-test",
             "--serial-test",
             "--shell-script-test",
             "--shell-test",
@@ -3921,6 +3923,25 @@ fn main() -> Result<()> {
             // **Seinas のタスクバー（2026-10-27。C2S1 の Sprint Goal）。** 成果物が無ければ名指しして飛ぶ。
             if rest.iter().any(|a| a == "--seinas-taskbar-test") {
                 return cmd_seinas_taskbar_test();
+            }
+            // **Seinas の壁紙（2026-11-05。C2S2）。** 成果物が無ければ名指しして飛ぶ。
+            if rest.iter().any(|a| a == "--seinas-wallpaper-test") {
+                let sabotage: Vec<&str> = rest
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, a)| *a == "--sabotage" && rest.get(i + 1).is_some())
+                    .filter_map(|(i, _)| rest.get(i + 1).map(|s| s.as_str()))
+                    .collect();
+                if sabotage.is_empty() {
+                    return cmd_seinas_wallpaper_test(&sabotage, true);
+                }
+                let result = cmd_seinas_wallpaper_test(&sabotage, false);
+                return finish_direct_sabotage(
+                    "seinas-wallpaper test",
+                    &sabotage,
+                    SabotageForm::Inverted,
+                    result,
+                );
             }
             if rest.iter().any(|a| a == "--fb-test") {
                 let sabotage: Vec<&str> = rest
@@ -8554,6 +8575,13 @@ const SABOTAGE_JUDGEMENTS: &[NamedJudgement] = &[
         reached: true,
     },
     NamedJudgement {
+        check: "seinas-wallpaper test",
+        key: "mremap-unknown-test",
+        signs: &["no_unknown_number = false"],
+        note: "",
+        reached: true,
+    },
+    NamedJudgement {
         check: "seinas-standalone test",
         key: "fb0-corrupts-one-pixel",
         signs: &["the_whole_screen_is_the_background = false"],
@@ -12255,16 +12283,33 @@ fn seinas_standalone_missing(workspace_root: &Path) -> Option<&'static str> {
 /// Seinas のタスクバーとコンポジタの成果物のうち、`target/linux-programs` に無いもの（無ければ `None`）。
 fn seinas_taskbar_missing(workspace_root: &Path) -> Option<&'static str> {
     seinas_standalone_missing(workspace_root).or_else(|| {
-        ["seinas-taskbar", "seinas-taskbar-third-party.tar.gz"]
-            .into_iter()
-            .find(|name| {
-                !workspace_root
-                    .join("target/linux-programs")
-                    .join(name)
-                    .is_file()
-            })
+        [
+            "seinas-taskbar",
+            "seinas-taskbar-third-party.tar.gz",
+            "seinas-wallpaper",
+            "seinas-wallpaper-third-party.tar.gz",
+            "zeyes-min",
+            "zeyes-min-third-party.tar.gz",
+            "seinas-wallpapers.tar.gz",
+        ]
+        .into_iter()
+        .find(|name| {
+            !workspace_root
+                .join("target/linux-programs")
+                .join(name)
+                .is_file()
+        })
     })
 }
+
+/// Seinas のタスクバーの地の色（v0.4.0。高さ 40 のうち、上の 1 行を除く全部）。
+const SEINAS_TASKBAR_COLOR: (u8, u8, u8) = (0x0f, 0x1b, 0x2f);
+
+/// Seinas のタスクバーの上の線の色（v0.4.0。いちばん上の 1 行）。
+const SEINAS_TASKBAR_EDGE: (u8, u8, u8) = (0x21, 0x30, 0x4a);
+
+/// Seinas のタスクバーの高さ（v0.4.0）。
+const SEINAS_TASKBAR_HEIGHT: u32 = 40;
 
 /// Seinas のタスクバーが「コンポジタが最初の往復に答えた」ことを示す行（v0.3.0。タスクバーの標準エラー）。
 const SEINAS_TASKBAR_ANSWERED_LINE: &str =
@@ -12469,7 +12514,7 @@ fn run_seinas_lines(
 /// 1. コンポジタが最初の 1 枚を出した（[`SEINAS_FIRST_PRESENT_LINE`] が 1 回）
 /// 2. タスクバーが繋いだ（[`SEINAS_TASKBAR_CONNECTED_LINE`]）
 /// 3. タスクバーの最初の往復に、コンポジタが答えた（[`SEINAS_TASKBAR_ANSWERED_LINE`]）
-/// 4. 画面の下の端の行に、背景の色 `191e28` のピクセルが 1 つも無い（タスクバーが描かれた）
+/// 4. 画面の下の端の行の全部が地の色 `0f1b2f` で、高さ 40 の上の 1 行の全部が線の色 `21304a`（v0.4.0 のタスクバーが描かれた）
 /// 5. 画面の上の端の行は、全部が背景の色（コンポジタが背景を描き、タスクバーは下に居る）
 /// 6. 撮った時に、2 つともまだ走っていた（終わりの行が無い）
 /// 7. `panicked` の行が無い
@@ -12519,7 +12564,11 @@ fn cmd_seinas_taskbar_test() -> Result<()> {
     let bottom_row = shown
         .as_ref()
         .map_or(0, |(_, height, _)| height.saturating_sub(1));
-    let bottom_background = row_pixels_of(&shown, bottom_row, SEINAS_BACKGROUND);
+    let bottom_taskbar = row_pixels_of(&shown, bottom_row, SEINAS_TASKBAR_COLOR);
+    let edge_row = shown.as_ref().map_or(0, |(_, height, _)| {
+        height.saturating_sub(SEINAS_TASKBAR_HEIGHT)
+    });
+    let edge_taskbar = row_pixels_of(&shown, edge_row, SEINAS_TASKBAR_EDGE);
     let top_background = row_pixels_of(&shown, 0, SEINAS_BACKGROUND);
     let width = shown.as_ref().map_or(0, |(width, _, _)| u64::from(*width));
     let judgements: [(&str, bool); 8] = [
@@ -12536,8 +12585,8 @@ fn cmd_seinas_taskbar_test() -> Result<()> {
             after.contains(SEINAS_TASKBAR_ANSWERED_LINE),
         ),
         (
-            "the_bottom_row_is_not_the_background",
-            bottom_background == Some(0),
+            "the_taskbar_has_its_colors",
+            width > 0 && bottom_taskbar == Some(width) && edge_taskbar == Some(width),
         ),
         (
             "the_top_row_is_the_background",
@@ -12571,7 +12620,7 @@ fn cmd_seinas_taskbar_test() -> Result<()> {
     }
     println!("{context}: no [ERROR] line = {no_error} (the first were {error_lines:?})");
     println!(
-        "{context}: (info) background pixels in the bottom row = {bottom_background:?}, in the top row = {top_background:?} (of {width})"
+        "{context}: (info) in the bottom row {bottom_taskbar:?} pixels are 0f1b2f, in the taskbar's top row {edge_taskbar:?} are 21304a, in the top row of the screen {top_background:?} are the background (of {width})"
     );
     println!(
         "{context}: (info) from the Enter of the second line: the taskbar's first round trip after {}, the usable area after {}",
@@ -12599,6 +12648,171 @@ fn cmd_seinas_taskbar_test() -> Result<()> {
         bail!("{context}: FAILED (judgements that fell: {failed:?}, ready = {ready}, typed = {typed}, no [ERROR] = {no_error})")
     }
 }
+
+/// Seinas の壁紙が同梱の壁紙を読んだことを示す行（v0.4.0。1280x800 の画面で、比のいちばん近い 16:9 の 1 枚を読む）。
+const SEINAS_WALLPAPER_CHOSEN_LINE: &str =
+    "seinas-wallpaper: the bundled wallpaper torch-16x9.png (1920x1080) for 1280x800";
+
+/// Seinas の壁紙が描き終えた行（v0.4.0）。
+const SEINAS_WALLPAPER_DREW_LINE: &str = "seinas-wallpaper: drew 1280x800";
+
+/// Seinas の壁紙がコンポジタへ繋いだことを示す行（v0.4.0。`connected to the compositor after N tries`）。
+const SEINAS_WALLPAPER_CONNECTED_LINE: &str = "seinas-wallpaper: connected to the compositor";
+
+/// Seinas の壁紙（release の `seinas-wallpaper`）を、同じ release のコンポジタと一緒に ZeikOS の上でそのまま走らせて確かめる
+/// （2026-11-05。C2S2）。**成果物が無ければ、名指しして飛ばす。** 同時に走れる Ring 3 が 2 本なので、タスクバーとは別の項目にする。
+/// シェルのプロンプトへ 2 行を打つ。
+///
+/// 1. `export WAYLAND_DISPLAY=/tmp/seinas/s-shell.sock`（壁紙が繋ぐ、シェルの部品のためのソケット）
+/// 2. `/bin/linux/seinas-wallpaper | /bin/linux/seinas-standalone --socket /tmp/seinas/s.sock --no-ime-socket`
+///
+/// 描き終えた行を待ってから、画面を撮って QEMU を止める（どちらも終わらない）。
+///
+/// **判定は 8 本**——
+///
+/// 1. コンポジタが最初の 1 枚を出した（[`SEINAS_FIRST_PRESENT_LINE`] が 1 回）
+/// 2. 壁紙が繋いだ（[`SEINAS_WALLPAPER_CONNECTED_LINE`]）
+/// 3. 同梱の 16:9 の壁紙を選んだ（[`SEINAS_WALLPAPER_CHOSEN_LINE`]）
+/// 4. 描き終えた（[`SEINAS_WALLPAPER_DREW_LINE`]）
+/// 5. 画面の上の端の行に、背景の色 `191e28` のピクセルが 1 つも無い（壁紙が画面に届いた）
+/// 6. 撮った時に、2 つともまだ走っていた（終わりの行が無い）
+/// 7. `panicked` の行が無い
+/// 8. 知らない番号を 1 つも打っていない（壁紙は大きな `Vec` を伸ばすときに `mremap` を打つ。`mremap-refused:` の行が出る）
+///
+/// と、`[ERROR]` が無いこと。
+fn cmd_seinas_wallpaper_test(features: &[&str], expect_pass: bool) -> Result<()> {
+    let context = if features.is_empty() {
+        "seinas-wallpaper-test".to_string()
+    } else {
+        format!("seinas-wallpaper-test {}", features.join("+"))
+    };
+    let context = context.as_str();
+    let workspace_root = workspace_root()?;
+    if let Some(missing) = seinas_taskbar_missing(&workspace_root) {
+        println!(
+            "{context}: skipped ({missing} is not at target/linux-programs; fetch it with tools/fetch-seinas.sh)"
+        );
+        note_skipped_item(&format!(
+            "{context} ({missing} is not at target/linux-programs; tools/fetch-seinas.sh)"
+        ));
+        return Ok(());
+    }
+    let mut all_features: Vec<&str> = vec!["seinas-taskbar-test"];
+    all_features.extend_from_slice(features);
+    let commands = [
+        "export WAYLAND_DISPLAY=/tmp/seinas/s-shell.sock",
+        "/bin/linux/seinas-wallpaper | /bin/linux/seinas-standalone --socket /tmp/seinas/s.sock --no-ime-socket",
+    ];
+    let SeinasRun {
+        stripped,
+        shown,
+        shown_ppm,
+        ready,
+        typed,
+        waited,
+        awaited_after: drew_after,
+        ..
+    } = run_seinas_lines(
+        context,
+        "wallpaper",
+        &all_features,
+        &commands,
+        &[SEINAS_WALLPAPER_DREW_LINE, SEINAS_FIRST_PRESENT_LINE],
+        None,
+    )?;
+    // **判定は、壁紙を起こした後の行だけで見る**（パイプの左が先に起きる。起動時の確かめのプログラムが、知らない番号を打つため）。
+    let after = stripped
+        .find("spawn: /bin/linux/seinas-wallpaper is")
+        .map_or("", |at| &stripped[at..]);
+    let top_background = row_pixels_of(&shown, 0, SEINAS_BACKGROUND);
+    let judgements: [(&str, bool); 8] = [
+        (
+            "seinas_presented_the_first_frame",
+            after.matches(SEINAS_FIRST_PRESENT_LINE).count() == 1,
+        ),
+        (
+            "the_wallpaper_connected",
+            after.contains(SEINAS_WALLPAPER_CONNECTED_LINE),
+        ),
+        (
+            "the_wallpaper_chose_the_bundled_file",
+            after.contains(SEINAS_WALLPAPER_CHOSEN_LINE),
+        ),
+        (
+            "the_wallpaper_drew",
+            after.contains(SEINAS_WALLPAPER_DREW_LINE),
+        ),
+        (
+            "the_top_row_is_not_the_background",
+            top_background == Some(0),
+        ),
+        (
+            "both_were_still_running_when_the_screen_was_taken",
+            shown.is_some()
+                && !after.contains("spawn: /bin/linux/seinas-standalone ended")
+                && !after.contains("spawn: /bin/linux/seinas-wallpaper ended"),
+        ),
+        ("nothing_panicked", !after.contains("panicked")),
+        (
+            "no_unknown_number",
+            !after.contains("syscall: the first system call the kernel does not know"),
+        ),
+    ];
+    let error_lines: Vec<&str> = stripped
+        .lines()
+        .filter(|line| line.contains("[ERROR]"))
+        .take(4)
+        .collect();
+    let no_error = error_lines.is_empty();
+    let failed: Vec<&str> = judgements
+        .iter()
+        .filter(|(_, held)| !held)
+        .map(|(name, _)| *name)
+        .collect();
+    for (name, held) in &judgements {
+        println!("{context}: {name} = {held}");
+    }
+    println!("{context}: no [ERROR] line = {no_error} (the first were {error_lines:?})");
+    println!(
+        "{context}: (info) background pixels in the top row = {top_background:?}; drew after {}",
+        drew_after.map_or("-".to_string(), |at| format!("{:.2} s", at.as_secs_f64()))
+    );
+    for info in after.lines().filter(|line| {
+        line.contains("seinas_standalone:")
+            || line.contains("seinas-wallpaper:")
+            || line.contains("mremap-refused:")
+            || line.contains("panicked")
+            || line.contains("syscall: the first system call")
+    }) {
+        println!("{context}: (info) {}", info.trim());
+    }
+    println!(
+        "{context}: (info) waited {:.1} s (ready = {ready}, typed = {typed}); the screen is at {}",
+        waited.as_secs_f64(),
+        shown_ppm.display()
+    );
+    let passed = ready && typed && failed.is_empty() && no_error;
+    match (passed, expect_pass) {
+        (true, true) => {
+            println!("{context}: PASS");
+            Ok(())
+        }
+        (true, false) => bail!("{context}: the sabotage was NOT caught; every judgement still held"),
+        (false, true) => bail!(
+            "{context}: FAILED (judgements that fell: {failed:?}, ready = {ready}, typed = {typed}, no [ERROR] = {no_error})"
+        ),
+        (false, false) => {
+            println!("{context}: FAILED (judgements that fell: {failed:?})");
+            println!("{context}: the sabotage was caught (this run is expected to fail)");
+            Ok(())
+        }
+    }
+}
+
+/// `--seinas-wallpaper-test` の破壊テスト（2026-11-05）。
+///
+/// - `mremap-unknown-test` —— `no_unknown_number`（`mremap` の番号を知らない形へ戻す。壁紙の 25 番で落ちる）
+const SEINAS_WALLPAPER_TEST_SABOTAGES: &[&str] = &["mremap-unknown-test"];
 
 /// `/dev/fb0` を Linux の fbdev の形で開き、書けば映ることを検査する（2026-10-07。`ADR-0083`。M2 の最初のステップ）。
 ///
@@ -33841,6 +34055,46 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
             }
         }
 
+        // **Seinas の壁紙（release の成果物）を、同じ release のコンポジタと一緒にそのまま走らせる**（2026-11-05。C2S2）。成果物が
+        // 無ければ名指しして飛ばす。
+        total += 1;
+        begin_item(
+            Family::Ipc,
+            "Seinas's wallpaper runs as shipped next to its compositor and covers the screen (skipped without the release artifact)",
+        );
+        match cmd_seinas_wallpaper_test(&[], true) {
+            Ok(()) => println!("--- seinas-wallpaper test: OK"),
+            Err(error) => {
+                println!("--- seinas-wallpaper test: FAILED ({error})");
+                failed.push("seinas-wallpaper test".to_string());
+            }
+        }
+        let mut batch = Batch::new("SEINAS_WALLPAPER_TEST_SABOTAGES");
+        let skipped = seinas_taskbar_missing(&workspace_root).is_some();
+        for sabotage in SEINAS_WALLPAPER_TEST_SABOTAGES {
+            total += 1;
+            batch.add(sabotage, move |failed, _retries| {
+                let label = format!("seinas-wallpaper-test {sabotage}");
+                begin_item(Family::Ipc, &label);
+                match cmd_seinas_wallpaper_test(&[sabotage], false) {
+                    Ok(()) if skipped => {
+                        println!("--- {label}: skipped (the release artifact is not there)")
+                    }
+                    Ok(()) => {
+                        report_inverted_judgement("seinas-wallpaper test", sabotage, &label, failed)
+                    }
+                    Err(error) => {
+                        println!(
+                            "--- {label}: FAILED [{}] ({error})",
+                            failure_category(&error)
+                        );
+                        failed.push(label.to_string());
+                    }
+                }
+            });
+        }
+        batch.run(&mut failed);
+
         total += 1;
         begin_item(
             Family::Ipc,
@@ -36285,6 +36539,10 @@ const ITEM_TABLES: &[(&str, usize)] = &[
         "SEINAS_STANDALONE_TEST_SABOTAGES",
         SEINAS_STANDALONE_TEST_SABOTAGES.len(),
     ),
+    (
+        "SEINAS_WALLPAPER_TEST_SABOTAGES",
+        SEINAS_WALLPAPER_TEST_SABOTAGES.len(),
+    ),
     ("SCREEN_TEST_SABOTAGES", SCREEN_TEST_SABOTAGES.len()),
     ("FB_TEST_SABOTAGES", FB_TEST_SABOTAGES.len()),
     ("COMPOSE_TEST_SABOTAGES", COMPOSE_TEST_SABOTAGES.len()),
@@ -36640,7 +36898,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 67,
-    full: 564,
+    full: 566,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` とスクリプトのグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。
@@ -38531,6 +38789,7 @@ fn batched_table_rows(table: &str) -> Option<Vec<String>> {
         "POLL_TEST_SABOTAGES" => names(POLL_TEST_SABOTAGES),
         "REALTIME_TEST_SABOTAGES" => names(REALTIME_TEST_SABOTAGES),
         "SEINAS_STANDALONE_TEST_SABOTAGES" => names(SEINAS_STANDALONE_TEST_SABOTAGES),
+        "SEINAS_WALLPAPER_TEST_SABOTAGES" => names(SEINAS_WALLPAPER_TEST_SABOTAGES),
         "SCREEN_TEST_SABOTAGES" => names(SCREEN_TEST_SABOTAGES),
         "COMPOSE_TEST_SABOTAGES" => names(COMPOSE_TEST_SABOTAGES),
         "MACHINE_VARIANT_CHECKS" => cases(MACHINE_VARIANT_CHECKS, |(name, _)| name),

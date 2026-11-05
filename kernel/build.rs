@@ -152,7 +152,7 @@ fn image_expectations(manifest_dir: &str) -> Vec<(&'static str, String)> {
         }
         seed_names.push(name);
     }
-    root_directories += ROOT_DIRS_MADE_BY_BUILD
+    root_directories += root_dirs_made_by_build()
         .iter()
         .filter(|name| !seed_names.iter().any(|seed_name| seed_name == *name))
         .count();
@@ -184,6 +184,18 @@ fn image_expectations(manifest_dir: &str) -> Vec<(&'static str, String)> {
     ]
 }
 
+/// このビルドでルートに足すディレクトリ（2026-11-05）。**`seinas-taskbar-test` のビルドだけは、同梱の壁紙の置き場の `/usr` が増える。**
+fn root_dirs_made_by_build() -> Vec<String> {
+    let mut names: Vec<String> = ROOT_DIRS_MADE_BY_BUILD
+        .iter()
+        .map(|name| name.to_string())
+        .collect();
+    if std::env::var("CARGO_FEATURE_SEINAS_TASKBAR_TEST").is_ok() {
+        names.push("usr".to_string());
+    }
+    names
+}
+
 /// `syscall-test` の 25 番が `getdents64` で数えるルートの項目の数（2026-10-09）。**イメージではなく、シードの名前と
 /// [`ROOT_DIRS_MADE_BY_BUILD`] から求める**——`syscall-test` はイメージの `/bin` に入るので、ビルドしたイメージから
 /// 数えると、プログラムを作る前にイメージが要る形（循環）になる。
@@ -201,7 +213,7 @@ fn expected_root_entries(manifest_dir: &str) -> usize {
                 .expect("a seed name is not UTF-8")
         })
         .collect();
-    names.extend(ROOT_DIRS_MADE_BY_BUILD.iter().map(|name| name.to_string()));
+    names.extend(root_dirs_made_by_build());
     names.sort();
     names.dedup();
     let count = names.len() + 3;
@@ -231,7 +243,7 @@ fn check_staging_root(manifest_dir: &str, staging: &str) {
         names
     };
     let mut expected = names_in(&format!("{manifest_dir}/fsimage/seed"));
-    expected.extend(ROOT_DIRS_MADE_BY_BUILD.iter().map(|name| name.to_string()));
+    expected.extend(root_dirs_made_by_build());
     expected.sort();
     expected.dedup();
     let actual = names_in(staging);
@@ -1355,6 +1367,15 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
     /// **中身は 59 ブロックしか使っていない**（`e2fsck` の実測。512 ブロック中）。
     /// **イメージを大きくしても中身は増えない。**
     const IMAGE_BYTES: u64 = 32 * 1024 * 1024;
+    /// `seinas-taskbar-test` のビルドのイメージの大きさ（2026-11-05）。**Seinas の v0.4.0 の実行ファイルと同梱の壁紙で約 21 MB 増え、
+    /// 32 MiB に入らない。** ほかのビルドは [`IMAGE_BYTES`] のままにする——全検査は項目ごとに装置のイメージを書くので、全部を
+    /// 大きくすると書く量が増える。
+    const SEINAS_IMAGE_BYTES: u64 = 64 * 1024 * 1024;
+    let image_size = if std::env::var("CARGO_FEATURE_SEINAS_TASKBAR_TEST").is_ok() {
+        SEINAS_IMAGE_BYTES
+    } else {
+        IMAGE_BYTES
+    };
     /// inode の数（`mke2fs -N`。2026-10-05）。
     ///
     /// **`mke2fs` の既定に任せない。** 既定はイメージの大きさから決まり、32 MiB では 8,192 個になる。inode の表だけで
@@ -1514,11 +1535,19 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
             });
         }
     }
-    // **Seinas のタスクバーは、`seinas-taskbar-test` のビルドだけが入れる**（2026-10-27。C2S1）。コンポジタと同じ release の
-    // 成果物で（`seinas-taskbar-test` は `seinas-standalone-test` を含むので、コンポジタも入る）、置き場の名前に版を入れない。
+    // **Seinas のタスクバー・壁紙・zeyes-min は、`seinas-taskbar-test` のビルドだけが入れる**（2026-10-27。C2S1。壁紙と zeyes-min は
+    // 2026-11-05）。コンポジタと同じ release の成果物で（`seinas-taskbar-test` は `seinas-standalone-test` を含むので、コンポジタも入る）、
+    // 置き場の名前に版を入れない。
     if std::env::var("CARGO_FEATURE_SEINAS_TASKBAR_TEST").is_ok() {
         let fetched = format!("{manifest_dir}/../target/linux-programs");
-        for name in ["seinas-taskbar", "seinas-taskbar-third-party.tar.gz"] {
+        for name in [
+            "seinas-taskbar",
+            "seinas-taskbar-third-party.tar.gz",
+            "seinas-wallpaper",
+            "seinas-wallpaper-third-party.tar.gz",
+            "zeyes-min",
+            "zeyes-min-third-party.tar.gz",
+        ] {
             let source = format!("{fetched}/{name}");
             println!("cargo:rerun-if-changed={source}");
             std::fs::copy(&source, format!("{staging}/bin/linux/{name}")).unwrap_or_else(|e| {
@@ -1527,6 +1556,20 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
                 )
             });
         }
+        // **同梱の壁紙**（2026-11-05）。壁紙は `XDG_DATA_DIRS` の既定（`/usr/local/share:/usr/share`）の下の `seinas/wallpapers` を
+        // 絶対パスで探すので、そこへ開く。アーカイブの最上位の `seinas-wallpapers-<版>/` は外す。
+        let wallpapers = format!("{fetched}/seinas-wallpapers.tar.gz");
+        println!("cargo:rerun-if-changed={wallpapers}");
+        let place = format!("{staging}/usr/share/seinas/wallpapers");
+        std::fs::create_dir_all(&place).expect("failed to create the wallpaper directory");
+        let unpacked = std::process::Command::new("tar")
+            .args(["-xzf", &wallpapers, "-C", &place, "--strip-components=1"])
+            .status()
+            .unwrap_or_else(|e| panic!("seinas-taskbar-test could not run tar: {e}"));
+        assert!(
+            unpacked.success(),
+            "seinas-taskbar-test needs {wallpapers} (fetch it with tools/fetch-seinas.sh)"
+        );
     }
     // **C の Linux 向けのプログラムは、`linux-c-test` のビルドだけが入れる**（2026-10-06）。`musl-gcc` で手で作った
     // もの（`tools/build-linux-programs.sh`）で、版が配布物に依るので既定のイメージには入れない。無ければ名指しして止まる。
@@ -1717,7 +1760,7 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
     // イメージの器を作る（ゼロ埋め）。
     let image = format!("{out_dir}/fs.img");
     let file = std::fs::File::create(&image).expect("failed to create the image file");
-    file.set_len(IMAGE_BYTES)
+    file.set_len(image_size)
         .expect("failed to size the image file");
     drop(file);
 
@@ -1862,7 +1905,7 @@ fn build_fs_image(manifest_dir: &str, out_dir: &str) {
             "// build.rs が生成した。手で編集しないこと。\n\
              pub const MKE2FS_VERSION: &str = {version:?};\n\
              pub const CC_VERSION: &str = {cc:?};\n\
-             pub const IMAGE_BYTES: u64 = {IMAGE_BYTES};\n\
+             pub const IMAGE_BYTES: u64 = {image_size};\n\
              pub const DIRECT_MAX_BYTES: u64 = {DIRECT_MAX_BYTES};\n\
              pub const DIRECT_MAX_LAST_BYTE: u8 = {direct_max_last};\n\
              pub const INDIRECT_FIRST_BYTES: u64 = {};\n\

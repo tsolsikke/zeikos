@@ -13867,7 +13867,7 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
     (
         "seinas-taskbar-test",
         cfg!(feature = "seinas-taskbar-test"),
-        "Seinas のタスクバーを、コンポジタと一緒にイメージの /bin/linux に入れる（確かめ。破壊ではない）",
+        "Seinas のタスクバー・壁紙・zeyes-min を、コンポジタと一緒にイメージの /bin/linux に入れる（確かめ。破壊ではない）",
     ),
     (
         "fb0-corrupts-one-pixel",
@@ -14879,6 +14879,11 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "accept-takes-before-checking-test",
         cfg!(feature = "accept-takes-before-checking-test"),
         "accept4 が fd の表の空きを見ずに待ち行列から取る（直す前の形）",
+    ),
+    (
+        "mremap-unknown-test",
+        cfg!(feature = "mremap-unknown-test"),
+        "mremap の番号を知らない形へ戻す（直す前の形）",
     ),
     (
         "linux-pipe-test",
