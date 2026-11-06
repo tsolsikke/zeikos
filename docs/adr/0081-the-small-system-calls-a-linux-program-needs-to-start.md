@@ -152,3 +152,13 @@ Seinasのコンポジタは、識別子を作るときに、Rustの`rand`を通�
 - **確かめの順をLinux（v6.18の`drivers/char/random.c`）にそろえた。** `flags`は`unsigned int`として読み（上の32ビットは見ない）、知らないビットは`-EINVAL`、`GRND_INSECURE | GRND_RANDOM`も`-EINVAL`、準備を待つ段は無く、書き先を確かめてから書く。長さ0は0を返す。以前は、`GRND_INSECURE | GRND_RANDOM`を受け、上の32ビットのどれかが立っていれば`-EINVAL`を返していた。
 - **Linuxとの差（直さない）。** 書き先の途中から書けないとき、Linuxは書けたバイト数を返し（後ろ16バイトがマップされていない32バイトで16）、ZeikOSは先に全体を確かめて`-EFAULT`を返す。`syscall-test`は、この形で`-EFAULT`を確かめ、差を控える1行を出す。1回に256バイトまでしか書かない件（上のDecision）は、今回は触らない。
 - **確かめ。** `syscall-test`の129番が、`flags` 0・`GRND_NONBLOCK`・`GRND_RANDOM`・`GRND_INSECURE`・`GRND_NONBLOCK|GRND_INSECURE`・上の32ビットだけを立てた値で16を、`GRND_INSECURE|GRND_RANDOM`と知らないビット（0x8）で`-EINVAL`を、NULLと長さ0で0を、後ろ半分がマップされていない32バイトで`-EFAULT`を見る。期待の値は、同じ組み合わせをWSL（6.18）のLinuxで生の`syscall`として打って取った（最後の形だけはLinuxが16を返す）。
+
+## Addendum（2026-11-06。`prctl`は`PR_SET_NAME`だけを受ける）
+
+Seinasのコンポジタは、クライアントが切れると片付けのスレッドを名前つきで作る。Rustのstdが`prctl(PR_SET_NAME)`（157）を打ち、失敗は無視する。番号を知らなかったので、カーネルが「知らない番号」の行を出していた。
+
+- **`PR_SET_NAME`は受けて0を返す。名前は持たない。** 名前を読むのは`/proc`と`PR_GET_NAME`だけで、どちらも無い。
+- **ほかのオプションは、`prctl-refused:`の行を出して`-EINVAL`を返す。**
+- **Linuxとの差。** 名前のアドレスを読まないので、読めないアドレスでも0を返す（Linuxは`-EFAULT`）。持ち越しの表に行がある。
+- **確かめ。** `--seinas-zeyes-exit-test`の`no_unknown_number`。
+

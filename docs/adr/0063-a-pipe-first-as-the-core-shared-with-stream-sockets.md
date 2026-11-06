@@ -373,3 +373,35 @@ Waylandのコピーと貼り付けは、受け渡し1回ごとにパイプを1�
 ### 確かめ
 
 `linux-programs/wl-pipe-rust.rs`（`linux-socket-test`のビルド）が、`pipe`の読み書き、`pipe2`の`O_CLOEXEC`・`O_NONBLOCK`の`F_GETFD`と`F_GETFL`の値、空の読みと満杯の書きのerrno、`F_SETFL`で後から立てた印、知らないフラグのerrno、書けない置き場への`pipe2`を20回打った後の最小の空きfd、パイプの端の`poll`・`ppoll`・`epoll_wait`の印、別のスレッドの書きで起きる待ち続ける`poll`、読み手の居ないパイプへの書きのerrno、空きが1つの表への`pipe2`の`EMFILE`を出し、全部の行をLinuxの参照（`RLIMIT_NOFILE`を32に下げて採った）と突き合わせる。`O_DIRECT`の答えは標準エラーへ出し、判定にしない。破壊テストは`--critical-test pipe2-efault-keeps-ends`と`poll-refuses-pipes`（`linux-pipe-test`のビルドで、このイメージだけを起こす）。
+
+## Addendum（2026-11-06。Ctrl+Cをカーネルで待っている子へ届ける）
+
+今までのCtrl+Cは、Ring 3を走っている子をティックが畳むだけで、カーネルで待っている子には届かなかった（上の限界）。Seinasのコンポジタとzeyes-minは、ほとんどの時間を`epoll_wait`や`poll`の中で眠るので、止められなかった。Seinasの資料の止め方はCtrl+Cである。
+
+### 決めたこと
+
+- **畳めなかった中断を、タイマの割り込みが、カーネルで待っている子へ届ける**（`kernel/src/syscall.rs`の`deliver_interrupt_to_waiting_child`）。届け方は`exit_group`と同じである。そのスロットの終わりの印を立て、待っているタスクを全部起こす。起きたタスクは`sleep_released`で印を見て`-EINTR`で戻り、システムコールの出口で終わる。新しい待ちは足していない。
+- **終了ステータスは130である**（シェルの慣習の128 + `SIGINT`）。
+- **1回の押しで終わらせるのは1本である。** 前景の系統の子（スロット0の深さ2以上。`a | b`の右）を先に見て、次に切り離した1本（スロット1）を見る。右が終われば、左はたいてい接続やパイプが切れて自分で終わる。
+- **キーボードを待っている子には届けない**（運用者の決定）。`zi`・`less`・`cat`は、Ctrl+Cの後も今までどおり走り続ける。待ちの理由の集合にキーボードが在れば、届けない（`kernel/src/task.rs`の`interrupt_reaches`）。
+
+### 割り込みの中から呼んでよい理由
+
+- タスクの状態の表はロックを持たず、BKLで守る。割り込みの入口がBKLを取り、同じCPUでの再取得は止まる形（`[ERROR] bkl: recursive acquisition`）なので、割り込まれた側がこのCPUでBKLを持っていることは無い。`Locked`は割り込みを止めて持つので、割り込まれた側がこのCPUで持っていることも無い。
+- 割り込みの中から待ちを起こす形には前例がある。キーボードの割り込みの`wake_tasks_waiting_on`と、ティックの`wake_expired_timers`で、どちらも同じ状態の表を書く。
+- シリアルの行は`open_direct_serial`の直の口で、ロックを取らない。
+
+### 頼みの寿命
+
+待っている子が居ないときは、頼みを降ろさない。シェルのプロンプトで押したCtrl+Cの頼みは残るが、`spawn`の入口の`clear_interrupt_request`が降ろす（切り離した1本も同じ道を通る）。だから、次に起こす子がいきなり終わることは無い。`--seinas-zeyes-test`が、プロンプトでCtrl+Cを打鍵した後に2本を起こして確かめる（`a_ctrl_c_at_the_prompt_did_not_carry_over`。破壊テスト`kill-keep-stale-interrupt-test`）。
+
+### Linuxとの差
+
+合わせなかったもの:
+
+- **キーボードを待っている子は終わらない。** Linuxのcookedな端末では、`SIGINT`で終わる。ZeikOSは端末のモードを持たず、`zi`の未保存の内容を失わないようにした。キーボードを待っている間に押した頼みは残り、子がRing 3を走っている所をティックが捉えると畳まれる（今までと同じ）。
+- **パイプラインの全部を同時に終わらせない。** Linuxは前景のプロセスグループの全部へ送る。ZeikOSは1回に1本である。
+
+### 確かめ
+
+`--seinas-zeyes-test`（コンポジタが待っている所へ届いて終わること。破壊テスト`interrupt-ignores-waiters-test`）、`--seinas-zeyes-exit-test`（`ctrl-c-detached-first-test`の構成で、zeyes-minだけを終わらせる）、キーボードを除く論理はホストのテスト、`--shell-test`（Ring 3を走っている子の畳む形は変わらない）。
