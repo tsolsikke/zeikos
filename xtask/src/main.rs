@@ -12355,6 +12355,143 @@ struct SeinasRun {
     optional_after: Option<Duration>,
 }
 
+/// Seinas の検査の 1 回の起動（2026-11-05）。**起動して、シェルへ打ち、ログを待ち、画面を撮り、QEMU を止める**までの部品である。
+struct SeinasSession {
+    context: String,
+    run: RunDir,
+    child: launch::QemuRun,
+    serial_log: PathBuf,
+    debug_log: PathBuf,
+    monitor_socket: PathBuf,
+    started: Instant,
+}
+
+impl SeinasSession {
+    /// `features` の構成で QEMU を起動する。
+    fn start(context: &str, monitor_name: &str, features: &[&str]) -> Result<Self> {
+        let workspace_root = workspace_root()?;
+        let run = RunDir::create(&workspace_root, context)?;
+        let ovmf_vars = prepare_ovmf_vars(&run)?;
+        let bootloader_efi = build_bootloader(&workspace_root, false)?;
+        let kernel_elf = build_kernel_with_features(&workspace_root, features)?;
+        let esp_dir = stage_esp(&run, &bootloader_efi, &kernel_elf)?;
+
+        let serial_log = run.serial_log();
+        let _ = fs::remove_file(&serial_log);
+        let debug_log = run.debug_log();
+        let _ = fs::remove_file(&debug_log);
+        let monitor_socket = run.monitor_socket(monitor_name);
+        let _ = fs::remove_file(&monitor_socket);
+        ensure_socket_path_fits(&monitor_socket)?;
+
+        let qemu_args = qemu_launch_args(&QemuLaunchOptions {
+            ovmf_code: Path::new(OVMF_CODE_PATH),
+            ovmf_vars: &ovmf_vars,
+            esp_dir: &esp_dir,
+            disk_image: &run.disk_image(),
+            serial: &SerialSink::File(serial_log.clone()),
+            debug_log: &debug_log,
+            display: DisplayMode::None,
+            monitor_socket: Some(&monitor_socket),
+            accelerator: Accelerator::Tcg,
+            debug_events: DebugEvents::IntAndCpuReset,
+        });
+        let outputs = [serial_log.as_path(), debug_log.as_path()];
+        let child = launch::spawn(&launch::Spec::new(
+            &qemu_args,
+            &outputs,
+            context,
+            Duration::ZERO,
+            launch::Deadline::Normal,
+        ))?;
+        Ok(Self {
+            context: context.to_string(),
+            run,
+            child,
+            serial_log,
+            debug_log,
+            monitor_socket,
+            started: Instant::now(),
+        })
+    }
+
+    /// シリアルのログに `marker` が `count` 回出るまで待つ。**`limit` を過ぎるか QEMU が切られたら偽。**
+    fn wait_for_count(&self, marker: &str, count: usize, limit: Duration) -> bool {
+        let deadline = Instant::now() + limit;
+        while Instant::now() < deadline && !self.child.was_cut() {
+            if read_lossy(&self.serial_log).matches(marker).count() >= count {
+                return true;
+            }
+            metrics::sleep_poll(PANIC_TEST_POLL_INTERVAL);
+        }
+        false
+    }
+
+    /// シリアルのログに `marker` が出るまで待つ。
+    fn wait_for(&self, marker: &str, limit: Duration) -> bool {
+        self.wait_for_count(marker, 1, limit)
+    }
+
+    /// シェルのプロンプトへ行を打つ（行の間に少し間をおく）。**打てたら真。**
+    fn type_lines(&self, lines: &[&str]) -> Result<bool> {
+        let mut stream = match connect_monitor_with_retry(&self.monitor_socket) {
+            Ok(stream) => stream,
+            Err(e) => {
+                println!("{}: could not reach the QEMU monitor: {e}", self.context);
+                return Ok(false);
+            }
+        };
+        for (index, line) in lines.iter().enumerate() {
+            if index > 0 {
+                metrics::sleep_fixed(SHELL_TEST_LINE_INTERVAL);
+            }
+            for key in monitor_keys_for(line)? {
+                if writeln!(stream, "sendkey {key}").is_err() {
+                    return Ok(false);
+                }
+                metrics::sleep_fixed(SHELL_TEST_KEY_INTERVAL);
+            }
+        }
+        Ok(true)
+    }
+
+    /// 画面を撮る。`name` は置き場のファイルの名前である。
+    fn shoot(&self, name: &str) -> (Option<(u32, u32, Vec<u8>)>, PathBuf) {
+        let ppm = self.run.file(name);
+        let _ = fs::remove_file(&ppm);
+        let shown = match capture_screendump(&self.monitor_socket, &ppm) {
+            Ok(()) => read_complete_ppm(&ppm, SCREENDUMP_FILE_TIMEOUT),
+            Err(e) => {
+                println!("{}: the screendump failed: {e}", self.context);
+                None
+            }
+        };
+        (shown, ppm)
+    }
+
+    /// QEMU を止めて、シリアルのログ（色の制御を除いたもの）を返す。**カーネルが起動しなかったら失敗。**
+    fn stop(mut self) -> Result<String> {
+        let qemu_exit = self
+            .child
+            .try_wait()
+            .ok()
+            .flatten()
+            .map(|status| format!("{status}"));
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        let _ = fs::remove_file(&self.monitor_socket);
+        let serial = read_lossy(&self.serial_log);
+        let qemu_debug = read_lossy(&self.debug_log);
+        if let BootOutcome::DidNotStart { firmware_rip } =
+            classify_boot(&serial, &qemu_debug, KERNEL_STARTED_MARKER)
+        {
+            report_did_not_start(&self.context, firmware_rip, qemu_exit.as_deref())?;
+            bail!("{}: the kernel did not start", self.context);
+        }
+        Ok(strip_ansi(&serial))
+    }
+}
+
 /// `features` の構成で起動し、シェルのプロンプトへ `commands` を打ち、`awaited` の行を順に待ってから画面を撮り、QEMU を止める
 /// （どのクライアントも、コンポジタも終わらない）。
 fn run_seinas_lines(
@@ -12365,127 +12502,41 @@ fn run_seinas_lines(
     awaited: &[&str],
     optional: Option<&str>,
 ) -> Result<SeinasRun> {
-    let workspace_root = workspace_root()?;
-    let run = RunDir::create(&workspace_root, context)?;
-    let ovmf_vars = prepare_ovmf_vars(&run)?;
-    let bootloader_efi = build_bootloader(&workspace_root, false)?;
-    let kernel_elf = build_kernel_with_features(&workspace_root, features)?;
-    let esp_dir = stage_esp(&run, &bootloader_efi, &kernel_elf)?;
-
-    let serial_log = run.serial_log();
-    let shown_ppm = run.file("shown.ppm");
-    for stale in [&serial_log, &shown_ppm] {
-        let _ = fs::remove_file(stale);
-    }
-    let debug_log = run.debug_log();
-    let _ = fs::remove_file(&debug_log);
-    let monitor_socket = run.monitor_socket(monitor_name);
-    let _ = fs::remove_file(&monitor_socket);
-    ensure_socket_path_fits(&monitor_socket)?;
-
-    let qemu_args = qemu_launch_args(&QemuLaunchOptions {
-        ovmf_code: Path::new(OVMF_CODE_PATH),
-        ovmf_vars: &ovmf_vars,
-        esp_dir: &esp_dir,
-        disk_image: &run.disk_image(),
-        serial: &SerialSink::File(serial_log.clone()),
-        debug_log: &debug_log,
-        display: DisplayMode::None,
-        monitor_socket: Some(&monitor_socket),
-        accelerator: Accelerator::Tcg,
-        debug_events: DebugEvents::IntAndCpuReset,
-    });
-    let outputs = [serial_log.as_path(), debug_log.as_path()];
-    let mut child = launch::spawn(&launch::Spec::new(
-        &qemu_args,
-        &outputs,
-        context,
-        Duration::ZERO,
-        launch::Deadline::Normal,
-    ))?;
-
-    let started = Instant::now();
-    let wait_for = |marker: &str, limit: Duration| -> bool {
-        let deadline = Instant::now() + limit;
-        while Instant::now() < deadline && !child.was_cut() {
-            if read_lossy(&serial_log).contains(marker) {
-                return true;
-            }
-            metrics::sleep_poll(PANIC_TEST_POLL_INTERVAL);
-        }
-        false
-    };
-
-    let ready = wait_for(SHELL_READY_MARKER, BOOT_READY_TIMEOUT);
+    let session = SeinasSession::start(context, monitor_name, features)?;
+    let ready = session.wait_for(SHELL_READY_MARKER, BOOT_READY_TIMEOUT);
     let mut typed = false;
-    // 2 行目の Enter を送った時刻（そこから測る）。
+    // 最後の行の Enter を送った時刻（そこから測る）。
     let mut entered = None;
     if ready {
         metrics::sleep_fixed(SHELL_TEST_LINE_INTERVAL);
-        match connect_monitor_with_retry(&monitor_socket) {
-            Ok(mut stream) => {
-                typed = true;
-                'lines: for (index, command) in commands.iter().enumerate() {
-                    if index > 0 {
-                        metrics::sleep_fixed(SHELL_TEST_LINE_INTERVAL);
-                    }
-                    for key in monitor_keys_for(command)? {
-                        if writeln!(stream, "sendkey {key}").is_err() {
-                            typed = false;
-                            break 'lines;
-                        }
-                        metrics::sleep_fixed(SHELL_TEST_KEY_INTERVAL);
-                    }
-                }
-                entered = Some(Instant::now());
-            }
-            Err(e) => println!("{context}: could not reach the QEMU monitor: {e}"),
-        }
+        typed = session.type_lines(commands)?;
+        entered = Some(Instant::now());
     }
     // **待つ行を順に待ってから撮る。** `optional` の行は時間を測るためだけに待つ（出なくても判定は落とさない）。撮る前に少し間を
     // おく——撮った時に 2 つがまだ走っていることも判定で見る。
     let mut awaited_after = None;
     let mut optional_after = None;
     let mut shown = None;
+    let mut shown_ppm = session.run.file("shown.ppm");
     if typed
         && awaited
             .iter()
-            .all(|line| wait_for(line, SCREEN_TEST_TIMEOUT))
+            .all(|line| session.wait_for(line, SCREEN_TEST_TIMEOUT))
     {
         awaited_after = entered.map(|at| at.elapsed());
         if let Some(line) = optional {
-            if wait_for(line, Duration::from_secs(10)) {
+            if session.wait_for(line, Duration::from_secs(10)) {
                 optional_after = entered.map(|at| at.elapsed());
             }
         }
         metrics::sleep_fixed(Duration::from_millis(2000));
-        match capture_screendump(&monitor_socket, &shown_ppm) {
-            Ok(()) => shown = read_complete_ppm(&shown_ppm, SCREENDUMP_FILE_TIMEOUT),
-            Err(e) => println!("{context}: the screendump failed: {e}"),
-        }
+        (shown, shown_ppm) = session.shoot("shown.ppm");
     }
-    let waited = started.elapsed();
-
+    let waited = session.started.elapsed();
     // **2 つとも終わらないので、撮ったら止める。**
-    let qemu_exit = child
-        .try_wait()
-        .ok()
-        .flatten()
-        .map(|status| format!("{status}"));
-    let _ = child.kill();
-    let _ = child.wait();
-    let _ = fs::remove_file(&monitor_socket);
-
-    let serial = read_lossy(&serial_log);
-    let qemu_debug = read_lossy(&debug_log);
-    if let BootOutcome::DidNotStart { firmware_rip } =
-        classify_boot(&serial, &qemu_debug, KERNEL_STARTED_MARKER)
-    {
-        report_did_not_start(context, firmware_rip, qemu_exit.as_deref())?;
-        bail!("{context}: the kernel did not start");
-    }
+    let stripped = session.stop()?;
     Ok(SeinasRun {
-        stripped: strip_ansi(&serial),
+        stripped,
         shown,
         shown_ppm,
         ready,
