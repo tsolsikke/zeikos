@@ -14881,6 +14881,16 @@ const TEST_HOOKS: &[(&str, bool, &str)] = &[
         "accept4 が fd の表の空きを見ずに待ち行列から取る（直す前の形）",
     ),
     (
+        "ctrl-c-detached-first-test",
+        cfg!(feature = "ctrl-c-detached-first-test"),
+        "Ctrl+C を届ける先で、切り離した 1 本を前景より先に見る（確かめの構成。破壊ではない）",
+    ),
+    (
+        "interrupt-ignores-waiters-test",
+        cfg!(feature = "interrupt-ignores-waiters-test"),
+        "Ctrl+C をカーネルで待っている子へ届けない（直す前の形）",
+    ),
+    (
         "mremap-unknown-test",
         cfg!(feature = "mremap-unknown-test"),
         "mremap の番号を知らない形へ戻す（直す前の形）",

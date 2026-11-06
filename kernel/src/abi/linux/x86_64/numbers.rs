@@ -138,6 +138,8 @@ pub const SYS_PIPE: u64 = 22;
 pub const SYS_PIPE2: u64 = 293;
 /// `mremap(old_addr, old_size, new_size, flags, new_addr)` の番号（2026-11-05。`__NR_mremap`）。受けて断る（`-ENOMEM`）。
 pub const SYS_MREMAP: u64 = 25;
+/// `prctl(option, arg2, arg3, arg4, arg5)` の番号（2026-11-05。`__NR_prctl`）。`PR_SET_NAME` だけを受ける。
+pub const SYS_PRCTL: u64 = 157;
 /// `clone(flags, stack, parent_tid, child_tid, tls)` の番号（2026-10-14。`__NR_clone`。M3a）。
 pub const SYS_CLONE: u64 = 56;
 /// `sigaltstack(ss, old_ss)` の番号（2026-10-06。`__NR_sigaltstack`）。

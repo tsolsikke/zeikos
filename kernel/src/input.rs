@@ -153,6 +153,12 @@ pub fn take_interrupt_request() -> bool {
     INTERRUPT_REQUESTED.swap(false, Ordering::SeqCst)
 }
 
+/// 中断が要求されているかを見る（2026-11-05。降ろさない）。**カーネルで待っている子が居るときだけ、
+/// `crate::syscall::deliver_interrupt_to_waiting_child` が [`take_interrupt_request`] で降ろす。**
+pub fn interrupt_requested() -> bool {
+    INTERRUPT_REQUESTED.load(Ordering::SeqCst)
+}
+
 /// 中断の要求を降ろす（S12 前の対策、C）。
 ///
 /// **子を起こす直前に呼ぶ。** 前の中断要求を新しい子へ持ち越さない。

@@ -694,6 +694,8 @@ const LINUX_PROGRAMS: &[&str] = &[
     // **`pipe2` と、`SCM_RIGHTS` で運ぶパイプの端**（2026-11-04。`ADR-0063` と `ADR-0065` の Addendum。`linux-socket-test` と
     // `linux-pipe-test` のビルドだけが起動時に起こす）。
     "wl-pipe-rust",
+    // **zeyes-min を続けて起こす、パイプの左のプログラム**（2026-11-05。`--seinas-zeyes-exit-test` が使う。起動時には起こさない）。
+    "wl-rerun-rust",
     // **壁の時計**（2026-10-20。`ADR-0090`。`realtime-test` のビルドだけが起動時に起こす）。
     "wl-realtime-rust",
     // **ZeikOS と Linux で結果が違うイメージ**（マップ中の memfd を縮める ftruncate。`memfd-shrink-test` のビルドだけが起こす）。

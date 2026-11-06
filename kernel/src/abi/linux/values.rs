@@ -137,6 +137,9 @@ pub const EPOLL_EVENT_LEN: usize = 12;
 /// （2026-10-19。Rust の std の `set_nonblocking` が打つ）。
 pub const FIONBIO: u64 = 0x5421;
 
+/// `PR_SET_NAME`（`prctl`。スレッドの名前を付ける。2026-11-05）。Rust の std が、名前つきのスレッドを作るときに打つ。
+pub const PR_SET_NAME: u64 = 15;
+
 /// `POLLIN`（読めるようになった）。
 pub const POLLIN: u16 = 0x001;
 /// `POLLOUT`（書けるようになった）。**パイプの書き端だけが受ける**（2026-11-04）。

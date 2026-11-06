@@ -47,10 +47,11 @@ use crate::abi::linux::x86_64::{
     SYS_CONNECT, SYS_EXIT, SYS_EXIT_GROUP, SYS_FCNTL, SYS_FLOCK, SYS_FSTAT, SYS_FTRUNCATE,
     SYS_FUTEX, SYS_GETCWD, SYS_GETDENTS64, SYS_GETPID, SYS_GETRANDOM, SYS_GETTID, SYS_IOCTL,
     SYS_LISTEN, SYS_LSEEK, SYS_MADVISE, SYS_MEMFD_CREATE, SYS_MKDIR, SYS_MMAP, SYS_MPROTECT,
-    SYS_MREMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPEN, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRLIMIT64,
-    SYS_READ, SYS_READLINK, SYS_READV, SYS_RECVFROM, SYS_RECVMSG, SYS_RMDIR, SYS_RT_SIGACTION,
-    SYS_RT_SIGPROCMASK, SYS_SCHED_YIELD, SYS_SENDMSG, SYS_SENDTO, SYS_SET_TID_ADDRESS,
-    SYS_SIGALTSTACK, SYS_SOCKET, SYS_STAT, SYS_TKILL, SYS_UNAME, SYS_UNLINK, SYS_WRITE, SYS_WRITEV,
+    SYS_MREMAP, SYS_MUNMAP, SYS_NANOSLEEP, SYS_OPEN, SYS_PIPE, SYS_PIPE2, SYS_POLL, SYS_PRCTL,
+    SYS_PRLIMIT64, SYS_READ, SYS_READLINK, SYS_READV, SYS_RECVFROM, SYS_RECVMSG, SYS_RMDIR,
+    SYS_RT_SIGACTION, SYS_RT_SIGPROCMASK, SYS_SCHED_YIELD, SYS_SENDMSG, SYS_SENDTO,
+    SYS_SET_TID_ADDRESS, SYS_SIGALTSTACK, SYS_SOCKET, SYS_STAT, SYS_TKILL, SYS_UNAME, SYS_UNLINK,
+    SYS_WRITE, SYS_WRITEV,
 };
 use crate::abi::linux::x86_64::{
     SYS_EPOLL_CREATE, SYS_EPOLL_CREATE1, SYS_EPOLL_CTL, SYS_EPOLL_PWAIT, SYS_EPOLL_WAIT,
@@ -72,9 +73,10 @@ use crate::abi::linux::{
     MFD_NAME_MAX_LEN, MSGHDR_CONTROLLEN, MSGHDR_FLAGS, MSGHDR_LEN, MSGHDR_NAMELEN,
     MSG_CMSG_CLOEXEC, MSG_CTRUNC, MSG_DONTWAIT, MSG_NOSIGNAL, O_ACCMODE, O_APPEND, O_CLOEXEC,
     O_CREAT, O_NONBLOCK, O_RDONLY, O_RDWR, O_TRUNC, O_WRONLY, POLLERR, POLLFD_LEN, POLLHUP, POLLIN,
-    POLLNVAL, POLLOUT, PROT_EXEC, PROT_READ, PROT_WRITE, SCM_RIGHTS, SEEK_CUR, SEEK_END, SEEK_SET,
-    SOCKADDR_UN_LEN, SOCK_CLOEXEC, SOCK_NONBLOCK, SOCK_STREAM, SOCK_TYPE_MASK, SOL_SOCKET,
-    TFD_CLOEXEC, TFD_NONBLOCK, TFD_TIMER_ABSTIME, TIMESPEC_LEN, TIOCGWINSZ, WINSIZE_LEN,
+    POLLNVAL, POLLOUT, PROT_EXEC, PROT_READ, PROT_WRITE, PR_SET_NAME, SCM_RIGHTS, SEEK_CUR,
+    SEEK_END, SEEK_SET, SOCKADDR_UN_LEN, SOCK_CLOEXEC, SOCK_NONBLOCK, SOCK_STREAM, SOCK_TYPE_MASK,
+    SOL_SOCKET, TFD_CLOEXEC, TFD_NONBLOCK, TFD_TIMER_ABSTIME, TIMESPEC_LEN, TIOCGWINSZ,
+    WINSIZE_LEN,
 };
 use crate::abi::linux::{
     E2BIG, EACCES, EADDRINUSE, EAFNOSUPPORT, EAGAIN, EBADF, EBUSY, ECHILD, ECONNREFUSED, EEXIST,
@@ -1197,6 +1199,7 @@ unsafe fn dispatch(
         SYS_PIPE2 => unsafe { pipe2_from_ring3(args[0], args[1], page_table_root, direct_map) },
         #[cfg(not(feature = "mremap-unknown-test"))]
         SYS_MREMAP => refuse_mremap(args[0], args[1], args[2], args[3]),
+        SYS_PRCTL => sys_prctl(args[0]),
         SYS_FCNTL => sys_fcntl(args[0], args[1], args[2]),
         // **繋いだ相手から受ける `recvfrom` は `read` に `flags` を足した形である**（`ADR-0087`。musl の `recv`——Rust の std の
         // ソケットの `read`——はこれを打つ）。`src_addr`（相手の名前の置き場）は 0 だけ受け、`flags` は [`msg_flags_dont_wait`]
@@ -7828,6 +7831,38 @@ fn mark_process_exited() {
     state.process_exited.store(true, Ordering::SeqCst);
 }
 
+/// Ctrl+C で終わった子の終了ステータス（2026-11-05。シェルの慣習の 128 + `SIGINT`）。
+const INTERRUPTED_BY_CTRL_C_STATUS: u64 = 130;
+
+/// 中断（Ctrl+C）の要求を、カーネルで待っている子へ届ける（2026-11-05。`ADR-0063` の Addendum）。**タイマの割り込みが、畳めなかった
+/// ときに呼ぶ。BKL の内側である。**
+///
+/// それまでの Ctrl+C は、Ring 3 を走っている子を畳むだけで、カーネルで待っている子（`epoll_wait` で眠るコンポジタなど）には届かな
+/// かった。届ける形は `exit_group` と同じで、そのスロットの終わりの印を立てて、待っているタスクを全部起こす。起きたタスクは待ちの
+/// 所（`sleep_released`）で印を見て `-EINTR` で戻り、システムコールの出口で終わる。スレッドも同じ道で終わる。
+///
+/// 破壊テスト (2026-11-05, interrupt-ignores-waiters-test): 届けない（直す前の形）。**コンポジタが Ctrl+C で終わらず、
+/// `--seinas-zeyes-test` の判定「the_compositor_ended_on_ctrl_c」が落ちる。**
+pub fn deliver_interrupt_to_waiting_child() {
+    if cfg!(feature = "interrupt-ignores-waiters-test") || !crate::input::interrupt_requested() {
+        return;
+    }
+    let Some(slot) = crate::task::slot_of_waiting_child() else {
+        return;
+    };
+    crate::input::take_interrupt_request();
+    let state = &SYSCALL_STATE[slot];
+    state
+        .process_exit_status
+        .store(INTERRUPTED_BY_CTRL_C_STATUS, Ordering::SeqCst);
+    state.process_end_setter.store(NO_THREAD, Ordering::SeqCst);
+    state.process_exited.store(true, Ordering::SeqCst);
+    let woken = crate::task::wake_waiting_tasks_of_slot(slot);
+    serial_line(format_args!(
+        "interrupt: Ctrl+C reached the process waiting in the kernel on slot {slot}; {woken} task(s) woken, status {INTERRUPTED_BY_CTRL_C_STATUS}"
+    ));
+}
+
 /// 今の池のスレッドのタスクが、プロセスを終わらせる印を立てた側か（[`end_thread_after_process_exit`] が、futex の待ちを
 /// 起こすかを決める）。
 fn process_end_set_by_current_thread() -> bool {
@@ -8405,6 +8440,19 @@ fn refuse_mremap(old_address: u64, old_size: u64, new_size: u64, flags: u64) -> 
          this mremap fails with ENOMEM"
     ));
     (-ENOMEM) as u64
+}
+
+/// [`SYS_PRCTL`] の本体（2026-11-05。`ADR-0081` の Addendum）。**`PR_SET_NAME` は受けて 0 を返し、名前は持たない。ほかは、名前のある行を
+/// 出して `-EINVAL` を返す。** Seinas のコンポジタは、クライアントの片付けのスレッドを名前つきで作る（Rust の std が打つ。失敗は無視する）。
+/// 名前を読むのは `/proc` と `PR_GET_NAME` だけで、どちらも無い。名前のアドレスは見ない（Linux は読めなければ `-EFAULT`）。
+fn sys_prctl(option: u64) -> u64 {
+    if option == PR_SET_NAME {
+        return 0;
+    }
+    serial_line(format_args!(
+        "prctl-refused: option {option} is not PR_SET_NAME; this prctl fails with EINVAL"
+    ));
+    (-EINVAL) as u64
 }
 
 /// `pipe2` が断ったフラグの行（2026-11-04）。

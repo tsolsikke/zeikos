@@ -815,6 +815,7 @@ kernel::task::tests::a_wait_set_only_looks_at_the_reasons_it_holds
 kernel::task::tests::an_application_processor_falls_back_to_its_own_idle_task
 kernel::task::tests::an_unrunnable_worker_is_skipped
 kernel::task::tests::blocked_and_finished_are_both_unselectable_but_distinct
+kernel::task::tests::ctrl_c_reaches_a_waiter_unless_the_keyboard_is_among_its_reasons
 kernel::task::tests::every_runnable_task_in_the_ring_is_chosen_within_one_round
 kernel::task::tests::from_main_the_first_runnable_worker_is_chosen
 kernel::task::tests::layer_two_skips_a_task_that_another_cpu_is_running

@@ -1395,6 +1395,12 @@ carried-pipe-end-not-counted-test = []
 # 破壊（2026-11-04。ADR-0063 の Addendum）: pipe2 の置き場が書けないとき、置いた 2 つの fd を表に残す。wl-pipe-rust が最小の空き
 # fd の動きを見て 92 で終わる。`--critical-test pipe2-efault-keeps-ends`（linux-pipe-test のビルド）。
 pipe2-efault-keeps-ends-test = []
+# 確かめ（2026-11-05。ADR-0063 の Addendum）: Ctrl+C を届ける先で、切り離した 1 本を前景より先に見る。zeyes-min だけを終わらせて、
+# コンポジタが残ることを確かめる構成（既定は前景が先）。`cargo xtask run --seinas-zeyes-exit-test`。
+ctrl-c-detached-first-test = ["seinas-taskbar-test"]
+# 破壊（2026-11-05。ADR-0063 の Addendum）: Ctrl+C をカーネルで待っている子へ届けない（直す前の形）。`--seinas-zeyes-test` の
+# the_compositor_ended_on_ctrl_c が落ちる。
+interrupt-ignores-waiters-test = ["seinas-taskbar-test"]
 # 破壊（2026-11-05。ADR-0082 の Addendum）: mremap の番号を知らない形へ戻す（直す前の形）。`--seinas-wallpaper-test` の
 # no_unknown_number が壁紙の 25 番で落ちる。
 mremap-unknown-test = ["seinas-taskbar-test"]

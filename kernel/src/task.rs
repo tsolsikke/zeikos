@@ -908,6 +908,35 @@ const fn ring3_slot_of(task: usize) -> usize {
     }
 }
 
+/// Ctrl+C を届ける、カーネルで待っている子のスロット（2026-11-05。`ADR-0063` の Addendum）。**居なければ `None`。**
+///
+/// **キーボードを待っている子には届けない**（運用者の決定。2026-11-06）——`zi`・`less`・`cat` は、Ctrl+C の後も今までどおり走り続ける。
+/// Linux の cooked な端末では、これらは `SIGINT` で終わる（`ADR-0063` の Addendum）。
+///
+/// **前景の系統（スロット 0）の子を先に見る**——シェルの `a | b` の右である。スロット 0 の深さ 1 はシェル自身なので、深さ 2 以上の
+/// ときだけ子である。次に、切り離して起動した 1 本（スロット 1。深さ 1 から子である）を見る。**1 回の押しで終わらせるのは 1 本で**
+/// （`crate::interrupts` の畳む形と同じ）、見るのは主スレッドのタスクが待っていることだけである。Ring 3 を走っている子には、今までどおり
+/// ティックが畳む形で届く。
+///
+/// `ctrl-c-detached-first-test` の構成は、切り離した 1 本を先に見る（zeyes-min だけを終わらせて、コンポジタが残ることを確かめる）。
+pub fn slot_of_waiting_child() -> Option<usize> {
+    let waiting = |task: usize| interrupt_reaches(scheduler::state(task));
+    let foreground = (waiting(MAIN_TASK) && scheduler::excursion_depth(MAIN_TASK) >= 2)
+        .then_some(ring3_slot_of(MAIN_TASK));
+    let detached = (waiting(RING3_TASK) && scheduler::excursion_depth(RING3_TASK) >= 1)
+        .then_some(ring3_slot_of(RING3_TASK));
+    if cfg!(feature = "ctrl-c-detached-first-test") {
+        detached.or(foreground)
+    } else {
+        foreground.or(detached)
+    }
+}
+
+/// その状態の主スレッドに Ctrl+C を届けるか（純粋な論理。2026-11-06）。**待っていて、待ちの理由にキーボードが無いときだけ真。**
+fn interrupt_reaches(state: TaskState) -> bool {
+    matches!(state, TaskState::Waiting(set) if !set.contains(Wait::Keyboard))
+}
+
 /// 足した 1 本の添字（W1-c-4。`init` の判定行に出す）。
 pub const fn ring3_task_index() -> usize {
     RING3_TASK
@@ -5192,6 +5221,20 @@ mod tests {
     ///
     /// **起こす条件そのものである**（`waits_on`）。**入れた 2 本の両方で真になり、
     /// 入れていない理由では偽になる。**
+    #[test]
+    fn ctrl_c_reaches_a_waiter_unless_the_keyboard_is_among_its_reasons() {
+        let mut socket = super::WaitSet::empty();
+        assert!(socket.push(super::Wait::SocketAcceptable { listener: 0 }));
+        assert!(super::interrupt_reaches(TaskState::Waiting(socket)));
+        let mut both = socket;
+        assert!(both.push(super::Wait::Keyboard));
+        assert!(!super::interrupt_reaches(TaskState::Waiting(both)));
+        assert!(!super::interrupt_reaches(TaskState::Waiting(
+            super::WaitSet::single(super::Wait::Keyboard)
+        )));
+        assert!(!super::interrupt_reaches(TaskState::Ready));
+    }
+
     #[test]
     fn a_wait_set_holds_more_than_one_reason() {
         let mut set = super::WaitSet::empty();

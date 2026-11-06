@@ -186,6 +186,8 @@ pub fn on_external_interrupt(
                 core::mem::forget(_bkl);
                 return ExitAction::FoldExcursion;
             }
+            // **畳めなかった中断は、カーネルで待っている子へ届ける**（2026-11-05。`ADR-0063` の Addendum）。BKL の内側である。
+            crate::syscall::deliver_interrupt_to_waiting_child();
             // AP もスケジューラへ入る（S4-c-3-2b）。
             //
             // S4-a から S4-c-3-2a までは、ここで AP を手前へ返していた。当時の AP は
@@ -407,8 +409,8 @@ fn should_fold_excursion(interrupted: &crate::arch::x86_64::Interrupted<'_>) -> 
     // **切り離して起動するスロットは深さ 1 でも終了させる（`ADR-0063` の (b3)）。** **そこに居るのは
     // 常に子で、シェルは居ない**——**`spin | cat` の `spin` はスロット 1 の深さ 1 である。**
     // **1 回の押しで終了させるのは 1 本である**（フラグは `take` で 1 回だけ消費される）。**両方が
-    // Ring 3 で回っていれば 2 回押す。** **カーネルの中で待っている子には届かない**
-    // （`ADR-0063` の (b3) の限界）。
+    // Ring 3 で回っていれば 2 回押す。** **カーネルの中で待っている子には、ここではなく
+    // `crate::syscall::deliver_interrupt_to_waiting_child` が届ける**（`ADR-0063` の 2026-11-06 の Addendum）。
     //
     // 破壊テスト (2026-09-28, kill-fold-ignore-detached-slot-test): 切り離したスロットも深さ 1 で弾く。**`spin | cat`
     // の `spin` が Ctrl+C で止まらなくなる**（`--shell-test` の「ctrl-c stopped the detached spin of a pipeline」が

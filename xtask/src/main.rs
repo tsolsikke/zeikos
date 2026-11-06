@@ -3049,6 +3049,8 @@ const RUN_FLAGS: &[(&str, RunValue)] = &[
     ("--seinas-standalone-test", RunValue::None),
     ("--seinas-taskbar-test", RunValue::None),
     ("--seinas-wallpaper-test", RunValue::None),
+    ("--seinas-zeyes-test", RunValue::None),
+    ("--seinas-zeyes-exit-test", RunValue::None),
     ("--ending", RunValue::Required),
     ("--compose-test", RunValue::None),
     ("--history-test", RunValue::None),
@@ -3122,6 +3124,7 @@ const RUN_FLAG_SCOPES: &[(&str, RunFlagScope)] = &[
             "--screen-test",
             "--seinas-standalone-test",
             "--seinas-wallpaper-test",
+            "--seinas-zeyes-test",
             "--serial-test",
             "--shell-script-test",
             "--shell-test",
@@ -3923,6 +3926,28 @@ fn main() -> Result<()> {
             // **Seinas のタスクバー（2026-10-27。C2S1 の Sprint Goal）。** 成果物が無ければ名指しして飛ぶ。
             if rest.iter().any(|a| a == "--seinas-taskbar-test") {
                 return cmd_seinas_taskbar_test();
+            }
+            // **zeyes-min（2026-11-05。C2S2 の M3）。** 成果物が無ければ名指しして飛ぶ。
+            if rest.iter().any(|a| a == "--seinas-zeyes-exit-test") {
+                return cmd_seinas_zeyes_exit_test();
+            }
+            if rest.iter().any(|a| a == "--seinas-zeyes-test") {
+                let sabotage: Vec<&str> = rest
+                    .iter()
+                    .enumerate()
+                    .filter(|(i, a)| *a == "--sabotage" && rest.get(i + 1).is_some())
+                    .filter_map(|(i, _)| rest.get(i + 1).map(|s| s.as_str()))
+                    .collect();
+                if sabotage.is_empty() {
+                    return cmd_seinas_zeyes_test(&sabotage, true);
+                }
+                let result = cmd_seinas_zeyes_test(&sabotage, false);
+                return finish_direct_sabotage(
+                    "seinas-zeyes test",
+                    &sabotage,
+                    SabotageForm::Inverted,
+                    result,
+                );
             }
             // **Seinas の壁紙（2026-11-05。C2S2）。** 成果物が無ければ名指しして飛ぶ。
             if rest.iter().any(|a| a == "--seinas-wallpaper-test") {
@@ -8575,6 +8600,20 @@ const SABOTAGE_JUDGEMENTS: &[NamedJudgement] = &[
         reached: true,
     },
     NamedJudgement {
+        check: "seinas-zeyes test",
+        key: "interrupt-ignores-waiters-test",
+        signs: &["the_compositor_ended_on_ctrl_c = false"],
+        note: "",
+        reached: true,
+    },
+    NamedJudgement {
+        check: "seinas-zeyes test",
+        key: "kill-keep-stale-interrupt-test",
+        signs: &["a_ctrl_c_at_the_prompt_did_not_carry_over = false"],
+        note: "",
+        reached: true,
+    },
+    NamedJudgement {
         check: "seinas-wallpaper test",
         key: "mremap-unknown-test",
         signs: &["no_unknown_number = false"],
@@ -12455,6 +12494,22 @@ impl SeinasSession {
         Ok(true)
     }
 
+    /// キーを 1 つ押す（`ctrl-c` など）。**送れたら真。**
+    fn press(&self, key: &str) -> bool {
+        match connect_monitor_with_retry(&self.monitor_socket) {
+            Ok(mut stream) => {
+                let sent = writeln!(stream, "sendkey {key}").is_ok();
+                // **モニターが読むまで繋いでおく**（すぐ切ると、打鍵が届かないことがある）。
+                metrics::sleep_fixed(SHELL_TEST_LINE_INTERVAL);
+                sent
+            }
+            Err(e) => {
+                println!("{}: could not reach the QEMU monitor: {e}", self.context);
+                false
+            }
+        }
+    }
+
     /// 画面を撮る。`name` は置き場のファイルの名前である。
     fn shoot(&self, name: &str) -> (Option<(u32, u32, Vec<u8>)>, PathBuf) {
         let ppm = self.run.file(name);
@@ -12864,6 +12919,394 @@ fn cmd_seinas_wallpaper_test(features: &[&str], expect_pass: bool) -> Result<()>
 ///
 /// - `mremap-unknown-test` —— `no_unknown_number`（`mremap` の番号を知らない形へ戻す。壁紙の 25 番で落ちる）
 const SEINAS_WALLPAPER_TEST_SABOTAGES: &[&str] = &["mremap-unknown-test"];
+
+/// 画面の 1 点の期待（x、y、色、何か）。
+type ZeyesWindowPoint = (u32, u32, (u8, u8, u8), &'static str);
+
+/// zeyes-min のウィンドウの色（v0.4.0。フォントもアイコンも無い形）。(x, y, 色, 何か) の並び。枠と影はコンポジタが描く。
+const ZEYES_WINDOW_POINTS: [ZeyesWindowPoint; 6] = [
+    (100, 18, (0x1a, 0x27, 0x3d), "the title bar"),
+    (10, 50, (0x6a, 0xb0, 0x5c), "the green body"),
+    (85, 100, (0xff, 0xff, 0xff), "the white of the left eye"),
+    (320, 150, (0x4c, 0x70, 0xa4), "the border"),
+    (322, 150, (0x14, 0x17, 0x1f), "the shadow"),
+    (
+        700,
+        400,
+        SEINAS_BACKGROUND,
+        "the background far from the window",
+    ),
+];
+
+/// `screendump` の 1 点がちょうどその色か（[`pixel_near`] は許容が 32 あるので、影と背景を分けられない）。
+fn pixel_is(image: &(u32, u32, Vec<u8>), x: u32, y: u32, expected: (u8, u8, u8)) -> bool {
+    let (width, height, rgb) = image;
+    if x >= *width || y >= *height {
+        return false;
+    }
+    let at = ((y * *width + x) * 3) as usize;
+    (rgb[at], rgb[at + 1], rgb[at + 2]) == expected
+}
+
+/// zeyes-min のウィンドウが、枠・影つきで画面に在るか（[`ZEYES_WINDOW_POINTS`] の全部が合い、左上の角が丸い）。
+fn zeyes_window_is_drawn(image: &Option<(u32, u32, Vec<u8>)>) -> bool {
+    let Some(image) = image.as_ref() else {
+        return false;
+    };
+    ZEYES_WINDOW_POINTS
+        .iter()
+        .all(|(x, y, color, _)| pixel_is(image, *x, *y, *color))
+        && !pixel_is(image, 0, 0, ZEYES_WINDOW_POINTS[0].2)
+}
+
+/// zeyes-min のウィンドウを出す 2 行。`left` はパイプの左である。
+fn zeyes_commands(left: &str) -> [String; 2] {
+    [
+        "export WAYLAND_DISPLAY=/tmp/seinas/s.sock".to_string(),
+        format!(
+            "{left} | /bin/linux/seinas-standalone --socket /tmp/seinas/s.sock --no-ime-socket"
+        ),
+    ]
+}
+
+/// コンポジタがウィンドウを受けた行（v0.4.0）。
+const SEINAS_NEW_TOPLEVEL_LINE: &str = "seinas_frontend: new toplevel";
+
+/// コンポジタが終わった行。Ctrl+C の終了ステータスで終わる。
+const SEINAS_ENDED_ON_CTRL_C_LINE: &str = "spawn: /bin/linux/seinas-standalone ended (Exited(130))";
+
+/// 終了の後に待つ長さ。
+const SEINAS_END_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// そのプログラムの終わりの行で、空間のフレームが全部戻ったか（`leaked=0` で、取った数と集めた数が同じ）。**行の前の方の
+/// `match=` は見ない**——もう 1 本が同時に走っている間は、アロケータの大域の差が合わない（カーネルが「比べなかった」と言う）。
+fn space_was_collected(log: &str, program: &str) -> bool {
+    log.lines()
+        .find(|line| line.contains(&format!("spawn: {program} ended")))
+        .and_then(|line| {
+            let (head, tail) = line.split_once("the destroy collected")?;
+            Some(head.contains("leaked=0") && tail.contains("(match=true)"))
+        })
+        .unwrap_or(false)
+}
+
+/// `judgements` と `[ERROR]` を出して、結果を返す（2026-11-05）。
+fn finish_seinas_judgements(
+    context: &str,
+    judgements: &[(&str, bool)],
+    stripped: &str,
+    expect_pass: bool,
+) -> Result<()> {
+    let error_lines: Vec<&str> = stripped
+        .lines()
+        .filter(|line| line.contains("[ERROR]"))
+        .take(4)
+        .collect();
+    let no_error = error_lines.is_empty();
+    let failed: Vec<&str> = judgements
+        .iter()
+        .filter(|(_, held)| !held)
+        .map(|(name, _)| *name)
+        .collect();
+    for (name, held) in judgements {
+        println!("{context}: {name} = {held}");
+    }
+    println!("{context}: no [ERROR] line = {no_error} (the first were {error_lines:?})");
+    let passed = failed.is_empty() && no_error;
+    match (passed, expect_pass) {
+        (true, true) => {
+            println!("{context}: PASS");
+            Ok(())
+        }
+        (true, false) => {
+            bail!("{context}: the sabotage was NOT caught; every judgement still held")
+        }
+        (false, true) => {
+            bail!("{context}: FAILED (judgements that fell: {failed:?}, no [ERROR] = {no_error})")
+        }
+        (false, false) => {
+            println!("{context}: FAILED (judgements that fell: {failed:?})");
+            println!("{context}: the sabotage was caught (this run is expected to fail)");
+            Ok(())
+        }
+    }
+}
+
+/// zeyes-min（release の成果物）のウィンドウを、同じ release のコンポジタの上に出し、**コンポジタの終わりで片付くこと**を確かめる
+/// （2026-11-05。C2S2 の M3）。**成果物が無ければ、名指しして飛ばす。** 同時に走れる Ring 3 が 2 本なので、壁紙とタスクバーは居ない。
+///
+/// 1. **シェルのプロンプトで Ctrl+C を打鍵した後に**、`export WAYLAND_DISPLAY=/tmp/seinas/s.sock` と
+///    `/bin/linux/zeyes-min | /bin/linux/seinas-standalone …` を打ち、ウィンドウの行を待って画面を撮る。プロンプトの Ctrl+C の頼みは
+///    `spawn` の入口が消すので、起こした 2 本はいきなり終わらない。
+/// 2. Ctrl+C を押す。コンポジタ（前景）が `epoll_wait` で待っているところへ届いて終わり、zeyes-min は接続が切れて終わる。プロンプトへ
+///    戻ったら画面を撮る。
+/// 3. 同じ行をもう 1 度打ち、ウィンドウがまた出ることを見る。**ソケットの名前・`/dev/fb0`・共有メモリが片付いていなければ、2 回目は
+///    起動できない。**
+///
+/// **判定は 12 本**——プロンプトの Ctrl+C が持ち越されない、ウィンドウの行（`new toplevel`）、zeyes-min の `configured`、枠と影を含むウィンドウの点（[`zeyes_window_is_drawn`]）、
+/// コンポジタが Ctrl+C の終了ステータスで終わった、2 つの空間のフレームが全部戻った（[`space_was_collected`]）、zeyes-min が接続の切れで終わった、
+/// 文字の画面へ戻った、2 回目のウィンドウの行と点、`panicked` が無い、知らない番号が無い。と、`[ERROR]` が無いこと。
+///
+/// **破壊テストは 1 つ**（[`SEINAS_ZEYES_TEST_SABOTAGES`]）。
+fn cmd_seinas_zeyes_test(features: &[&str], expect_pass: bool) -> Result<()> {
+    let context = if features.is_empty() {
+        "seinas-zeyes-test".to_string()
+    } else {
+        format!("seinas-zeyes-test {}", features.join("+"))
+    };
+    let context = context.as_str();
+    let workspace_root = workspace_root()?;
+    if let Some(missing) = seinas_taskbar_missing(&workspace_root) {
+        println!(
+            "{context}: skipped ({missing} is not at target/linux-programs; fetch it with tools/fetch-seinas.sh)"
+        );
+        note_skipped_item(&format!(
+            "{context} ({missing} is not at target/linux-programs; tools/fetch-seinas.sh)"
+        ));
+        return Ok(());
+    }
+    let mut all_features: Vec<&str> = vec!["seinas-taskbar-test"];
+    all_features.extend_from_slice(features);
+    let session = SeinasSession::start(context, "zeyes", &all_features)?;
+    let commands = zeyes_commands("/bin/linux/zeyes-min");
+    let lines: Vec<&str> = commands.iter().map(String::as_str).collect();
+    let ready = session.wait_for(SHELL_READY_MARKER, BOOT_READY_TIMEOUT);
+    let mut window = None;
+    let mut after_end = None;
+    let mut second_window = None;
+    let mut ended = false;
+    let mut carried_over = true;
+    if ready {
+        metrics::sleep_fixed(SHELL_TEST_LINE_INTERVAL);
+        // **プロンプトで押す。** 待っている子が居ないので、頼みは残ったまま次の `spawn` まで行く。
+        session.press("ctrl-c");
+        if session.type_lines(&lines)?
+            && session.wait_for(SEINAS_NEW_TOPLEVEL_LINE, SCREEN_TEST_TIMEOUT)
+            && session.wait_for("zeyes: configured to", SCREEN_TEST_TIMEOUT)
+        {
+            metrics::sleep_fixed(Duration::from_millis(3000));
+            window = session.shoot("window.ppm").0;
+            carried_over = read_lossy(&session.serial_log).contains("interrupt: Ctrl+C");
+            session.press("ctrl-c");
+            ended = session.wait_for(
+                "spawn: /bin/linux/seinas-standalone ended",
+                SEINAS_END_TIMEOUT,
+            ) && session
+                .wait_for("detached: /bin/linux/zeyes-min ended", SEINAS_END_TIMEOUT);
+        }
+        if ended {
+            metrics::sleep_fixed(Duration::from_millis(2000));
+            after_end = session.shoot("after-end.ppm").0;
+            if session.type_lines(&lines[1..])?
+                && session.wait_for_count(SEINAS_NEW_TOPLEVEL_LINE, 2, SCREEN_TEST_TIMEOUT)
+            {
+                metrics::sleep_fixed(Duration::from_millis(3000));
+                second_window = session.shoot("second-window.ppm").0;
+            }
+        }
+    }
+    let waited = session.started.elapsed();
+    let stripped = session.stop()?;
+    let after = stripped
+        .find("spawn: /bin/linux/zeyes-min is")
+        .map_or("", |at| &stripped[at..]);
+    // 文字の画面へ戻ったこと: ウィンドウの緑の地も、枠も、もう無い。
+    let text_screen_back = after_end.as_ref().is_some_and(|image| {
+        ZEYES_WINDOW_POINTS[..4]
+            .iter()
+            .all(|(x, y, color, _)| !pixel_is(image, *x, *y, *color))
+    });
+    let judgements = [
+        (
+            "a_ctrl_c_at_the_prompt_did_not_carry_over",
+            !carried_over && window.is_some(),
+        ),
+        (
+            "the_compositor_got_the_window",
+            after.contains(SEINAS_NEW_TOPLEVEL_LINE),
+        ),
+        (
+            "zeyes_was_configured",
+            after.contains("zeyes: configured to"),
+        ),
+        (
+            "the_window_is_drawn_with_frame_and_shadow",
+            zeyes_window_is_drawn(&window),
+        ),
+        (
+            "the_compositor_ended_on_ctrl_c",
+            after.contains(SEINAS_ENDED_ON_CTRL_C_LINE),
+        ),
+        (
+            "the_spaces_of_both_were_collected",
+            space_was_collected(after, "/bin/linux/seinas-standalone")
+                && space_was_collected(after, "/bin/linux/zeyes-min"),
+        ),
+        (
+            "zeyes_ended_when_the_connection_was_lost",
+            after.contains("detached: /bin/linux/zeyes-min ended"),
+        ),
+        ("the_text_screen_came_back", text_screen_back),
+        (
+            "the_second_run_got_the_window",
+            after.matches(SEINAS_NEW_TOPLEVEL_LINE).count() == 2,
+        ),
+        (
+            "the_second_window_is_drawn",
+            zeyes_window_is_drawn(&second_window),
+        ),
+        ("nothing_panicked", !after.contains("panicked")),
+        (
+            "no_unknown_number",
+            !after.contains("syscall: the first system call the kernel does not know"),
+        ),
+    ];
+    for info in after.lines().filter(|line| {
+        line.contains("zeyes:")
+            || line.contains("interrupt:")
+            || line.contains("seinas_standalone: presented")
+            || line.contains("spawn: /bin/linux/seinas-standalone ended")
+            || line.contains("detached: /bin/linux/zeyes-min")
+            || line.contains("panicked")
+            || line.contains("syscall: the first system call")
+    }) {
+        println!("{context}: (info) {}", info.trim());
+    }
+    println!(
+        "{context}: (info) waited {:.1} s (ready = {ready}, ended = {ended})",
+        waited.as_secs_f64()
+    );
+    finish_seinas_judgements(context, &judgements, &stripped, expect_pass)
+}
+
+/// `--seinas-zeyes-test` の破壊テスト（2026-11-05）。
+///
+/// - `interrupt-ignores-waiters-test` —— `the_compositor_ended_on_ctrl_c`（Ctrl+C をカーネルで待っている子へ届けない）
+/// - `kill-keep-stale-interrupt-test` —— `a_ctrl_c_at_the_prompt_did_not_carry_over`（`spawn` の入口が頼みを消さない）
+const SEINAS_ZEYES_TEST_SABOTAGES: &[&str] = &[
+    "interrupt-ignores-waiters-test",
+    "kill-keep-stale-interrupt-test",
+];
+
+/// `wl-rerun-rust` の 1 回が終わった行。
+const RERUN_ENDED_LINE: &str = "wl-rerun-rust: run ";
+
+/// zeyes-min が終わっても、コンポジタが壊れないことを確かめる（2026-11-05。C2S2 の M3）。**成果物が無ければ、名指しして飛ばす。**
+///
+/// `ctrl-c-detached-first-test` の構成（Ctrl+C を切り離した 1 本へ先に届ける）で、パイプの左に `wl-rerun-rust 2 5000 /bin/linux/zeyes-min`
+/// を置く。
+///
+/// 1. ウィンドウが出たら画面を撮り、Ctrl+C を押す。zeyes-min が終わり、コンポジタは残る。
+/// 2. 画面の全部が背景の色へ戻ったことを撮って見る（コンポジタが再描画した）。
+/// 3. `wl-rerun-rust` が 2 回目の zeyes-min を起こす。**コンポジタが次の接続を受け、ウィンドウがまた出る。**
+/// 4. Ctrl+C を押して 2 回目を終わらせ、もう 1 度押してコンポジタを終わらせる（クライアントの居ない終わり方）。
+///
+/// **判定は 8 本**と、`[ERROR]` が無いこと。
+fn cmd_seinas_zeyes_exit_test() -> Result<()> {
+    let context = "seinas-zeyes-exit-test";
+    let workspace_root = workspace_root()?;
+    if let Some(missing) = seinas_taskbar_missing(&workspace_root) {
+        println!(
+            "{context}: skipped ({missing} is not at target/linux-programs; fetch it with tools/fetch-seinas.sh)"
+        );
+        note_skipped_item(&format!(
+            "{context} ({missing} is not at target/linux-programs; tools/fetch-seinas.sh)"
+        ));
+        return Ok(());
+    }
+    let session = SeinasSession::start(context, "zeyes-exit", &["ctrl-c-detached-first-test"])?;
+    let commands = zeyes_commands("/bin/linux/wl-rerun-rust 2 5000 /bin/linux/zeyes-min");
+    let lines: Vec<&str> = commands.iter().map(String::as_str).collect();
+    let ready = session.wait_for(SHELL_READY_MARKER, BOOT_READY_TIMEOUT);
+    let mut window = None;
+    let mut gone = None;
+    let mut second_window = None;
+    let mut first_ended = false;
+    if ready {
+        metrics::sleep_fixed(SHELL_TEST_LINE_INTERVAL);
+        if session.type_lines(&lines)?
+            && session.wait_for(SEINAS_NEW_TOPLEVEL_LINE, SCREEN_TEST_TIMEOUT)
+            && session.wait_for("zeyes: configured to", SCREEN_TEST_TIMEOUT)
+        {
+            metrics::sleep_fixed(Duration::from_millis(3000));
+            window = session.shoot("window.ppm").0;
+            session.press("ctrl-c");
+            first_ended = session.wait_for(RERUN_ENDED_LINE, SEINAS_END_TIMEOUT);
+        }
+        if first_ended {
+            metrics::sleep_fixed(Duration::from_millis(1500));
+            gone = session.shoot("gone.ppm").0;
+            if session.wait_for_count(SEINAS_NEW_TOPLEVEL_LINE, 2, SCREEN_TEST_TIMEOUT) {
+                metrics::sleep_fixed(Duration::from_millis(3000));
+                second_window = session.shoot("second-window.ppm").0;
+                session.press("ctrl-c");
+                if session.wait_for(
+                    "detached: /bin/linux/wl-rerun-rust ended",
+                    SEINAS_END_TIMEOUT,
+                ) {
+                    metrics::sleep_fixed(Duration::from_millis(1000));
+                    session.press("ctrl-c");
+                    session.wait_for(
+                        "spawn: /bin/linux/seinas-standalone ended",
+                        SEINAS_END_TIMEOUT,
+                    );
+                }
+            }
+        }
+    }
+    let waited = session.started.elapsed();
+    let stripped = session.stop()?;
+    let after = stripped
+        .find("spawn: /bin/linux/wl-rerun-rust is")
+        .map_or("", |at| &stripped[at..]);
+    let judgements = [
+        ("the_window_is_drawn", zeyes_window_is_drawn(&window)),
+        (
+            "zeyes_ended_and_the_compositor_stayed",
+            after.contains("wl-rerun-rust: run 1 of 2 ended with status 130")
+                && first_ended
+                && gone.is_some(),
+        ),
+        (
+            "the_screen_went_back_to_the_background",
+            pixels_other_than(&gone, SEINAS_BACKGROUND) == Some(0),
+        ),
+        (
+            "the_compositor_took_the_next_connection",
+            after.matches(SEINAS_NEW_TOPLEVEL_LINE).count() == 2,
+        ),
+        (
+            "the_second_window_is_drawn",
+            zeyes_window_is_drawn(&second_window),
+        ),
+        (
+            "the_compositor_ended_after_its_clients",
+            after.contains(SEINAS_ENDED_ON_CTRL_C_LINE)
+                && space_was_collected(after, "/bin/linux/seinas-standalone"),
+        ),
+        ("nothing_panicked", !after.contains("panicked")),
+        (
+            "no_unknown_number",
+            !after.contains("syscall: the first system call the kernel does not know"),
+        ),
+    ];
+    for info in after.lines().filter(|line| {
+        line.contains("zeyes:")
+            || line.contains("interrupt:")
+            || line.contains("wl-rerun-rust:")
+            || line.contains("spawn: /bin/linux/seinas-standalone ended")
+            || line.contains("detached: /bin/linux/wl-rerun-rust")
+            || line.contains("panicked")
+            || line.contains("syscall: the first system call")
+    }) {
+        println!("{context}: (info) {}", info.trim());
+    }
+    println!(
+        "{context}: (info) waited {:.1} s (ready = {ready})",
+        waited.as_secs_f64()
+    );
+    finish_seinas_judgements(context, &judgements, &stripped, true)
+}
 
 /// `/dev/fb0` を Linux の fbdev の形で開き、書けば映ることを検査する（2026-10-07。`ADR-0083`。M2 の最初のステップ）。
 ///
@@ -34120,6 +34563,58 @@ fn cmd_check(full: bool, commit: bool, update_reference: bool) -> Result<()> {
                 failed.push("seinas-wallpaper test".to_string());
             }
         }
+        // **zeyes-min のウィンドウ（release の成果物）を、同じ release のコンポジタの上に出す**（2026-11-05。C2S2 の M3）。成果物が無ければ
+        // 名指しして飛ばす。
+        total += 1;
+        begin_item(
+            Family::Ipc,
+            "zeyes-min's window is drawn with its frame and shadow and the compositor ends cleanly on Ctrl+C (skipped without the release artifact)",
+        );
+        match cmd_seinas_zeyes_test(&[], true) {
+            Ok(()) => println!("--- seinas-zeyes test: OK"),
+            Err(error) => {
+                println!("--- seinas-zeyes test: FAILED ({error})");
+                failed.push("seinas-zeyes test".to_string());
+            }
+        }
+        total += 1;
+        begin_item(
+            Family::Ipc,
+            "the compositor outlives zeyes-min and takes the next connection (skipped without the release artifact)",
+        );
+        match cmd_seinas_zeyes_exit_test() {
+            Ok(()) => println!("--- seinas-zeyes-exit test: OK"),
+            Err(error) => {
+                println!("--- seinas-zeyes-exit test: FAILED ({error})");
+                failed.push("seinas-zeyes-exit test".to_string());
+            }
+        }
+        let mut batch = Batch::new("SEINAS_ZEYES_TEST_SABOTAGES");
+        let skipped = seinas_taskbar_missing(&workspace_root).is_some();
+        for sabotage in SEINAS_ZEYES_TEST_SABOTAGES {
+            total += 1;
+            batch.add(sabotage, move |failed, _retries| {
+                let label = format!("seinas-zeyes-test {sabotage}");
+                begin_item(Family::Ipc, &label);
+                match cmd_seinas_zeyes_test(&[sabotage], false) {
+                    Ok(()) if skipped => {
+                        println!("--- {label}: skipped (the release artifact is not there)")
+                    }
+                    Ok(()) => {
+                        report_inverted_judgement("seinas-zeyes test", sabotage, &label, failed)
+                    }
+                    Err(error) => {
+                        println!(
+                            "--- {label}: FAILED [{}] ({error})",
+                            failure_category(&error)
+                        );
+                        failed.push(label.to_string());
+                    }
+                }
+            });
+        }
+        batch.run(&mut failed);
+
         let mut batch = Batch::new("SEINAS_WALLPAPER_TEST_SABOTAGES");
         let skipped = seinas_taskbar_missing(&workspace_root).is_some();
         for sabotage in SEINAS_WALLPAPER_TEST_SABOTAGES {
@@ -36591,6 +37086,10 @@ const ITEM_TABLES: &[(&str, usize)] = &[
         SEINAS_STANDALONE_TEST_SABOTAGES.len(),
     ),
     (
+        "SEINAS_ZEYES_TEST_SABOTAGES",
+        SEINAS_ZEYES_TEST_SABOTAGES.len(),
+    ),
+    (
         "SEINAS_WALLPAPER_TEST_SABOTAGES",
         SEINAS_WALLPAPER_TEST_SABOTAGES.len(),
     ),
@@ -36949,7 +37448,7 @@ fn count_elements(text: &str) -> usize {
 /// 会計行の現在値。**検査を足したらここを上げ、あわせて会計行も更新すること。**
 const EXPECTED_CHECK_COUNT: ExpectedCheckCount = ExpectedCheckCount {
     base: 67,
-    full: 566,
+    full: 570,
 };
 
 /// `--shell-test` の破壊テストが `sendkey` とスクリプトのグループにどう分かれているか（`ADR-0063` の (b3) の (b)）。
@@ -38841,6 +39340,7 @@ fn batched_table_rows(table: &str) -> Option<Vec<String>> {
         "REALTIME_TEST_SABOTAGES" => names(REALTIME_TEST_SABOTAGES),
         "SEINAS_STANDALONE_TEST_SABOTAGES" => names(SEINAS_STANDALONE_TEST_SABOTAGES),
         "SEINAS_WALLPAPER_TEST_SABOTAGES" => names(SEINAS_WALLPAPER_TEST_SABOTAGES),
+        "SEINAS_ZEYES_TEST_SABOTAGES" => names(SEINAS_ZEYES_TEST_SABOTAGES),
         "SCREEN_TEST_SABOTAGES" => names(SCREEN_TEST_SABOTAGES),
         "COMPOSE_TEST_SABOTAGES" => names(COMPOSE_TEST_SABOTAGES),
         "MACHINE_VARIANT_CHECKS" => cases(MACHINE_VARIANT_CHECKS, |(name, _)| name),
